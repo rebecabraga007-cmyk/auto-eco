@@ -1,0 +1,17 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.xlsx
+*.xls
+*.csv
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.DS_Store
+.claude/
+relatorio_automacao_extraido.txt

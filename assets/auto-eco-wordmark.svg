@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 148" width="520" height="148" overflow="hidden" role="img" aria-labelledby="title desc">
+  <title id="title">Auto ECO</title>
+  <desc id="desc">Marca Auto ECO nas cores vinho e dourado.</desc>
+  <rect width="520" height="150" rx="0" fill="none"/>
+  <g transform="translate(8 16)">
+    <path d="M28 82h52L91 38h26L84 118H58l7-18H20l-11 18H-15L37 38h25L28 82Zm43 0 8-22-24 22h16Z" fill="#cbb068"/>
+    <path d="M109 38h30v80h-30V38Z" fill="#56181b"/>
+    <path d="M151 38h75v20h-47v10h42v19h-42v11h49v20h-77V38Z" fill="#56181b"/>
+    <path d="M239 78c0-24 19-42 48-42 19 0 34 8 42 21l-23 12c-4-7-10-10-19-10-12 0-20 8-20 19s8 19 20 19c9 0 15-3 19-10l23 12c-8 13-23 21-42 21-29 0-48-18-48-42Z" fill="#56181b"/>
+    <path d="M336 78c0-24 19-42 49-42s49 18 49 42-19 42-49 42-49-18-49-42Zm70 0c0-12-8-20-21-20s-21 8-21 20 8 20 21 20 21-8 21-20Z" fill="#56181b"/>
+    <path d="M448 38h30v80h-30V38Z" fill="#cbb068"/>
+    <path d="M148 129h300" stroke="#cbb068" stroke-width="8" stroke-linecap="square"/>
+  </g>
+</svg>
