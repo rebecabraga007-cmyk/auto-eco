@@ -89,13 +89,13 @@ def _unicos(valores: list[str]) -> list[str]:
     return saida
 
 
-# Indicadores de pessoa jurídica — sufixos legais e termos genéricos de empresa
+# Indicadores de pessoa jurídica — sufixos legais claros + termos inequívocos de empresa.
+# ATENÇÃO: evitar ambíguos como "me", "sc", "studio" que batem em nomes de pessoas.
 _EMPRESA_RE = re.compile(
-    r"\b(ltda|eireli|s\.?a\.?|s\.?c\.?|me\b|epp\b|"
-    r"construtora|incorporadora|empreendimentos|engenharia|"
-    r"construcoes|construcao|construção|projetos|arquitetura|"
-    r"associacao|associacao|condominio|condominium|grupo|holding|"
-    r"escritorio|studio|bureau)\b",
+    r"\b(ltda|eireli|epp\b|"
+    r"construtora|incorporadora|empreendimentos|"
+    r"construcoes|construcao|construção|"
+    r"associacao|associação|condominio|condomínio|holding)\b",
     re.IGNORECASE,
 )
 
@@ -449,12 +449,12 @@ class MaisObrasScraper:
         resultado.nome_arquiteto = obra.nome_profissional
         if obra.nome_profissional:
             if _eh_empresa(obra.nome_profissional):
+                # Apenas loga — empresa não é buscada no Mais Obras.
+                # Não seta resultado.erro: isso bloquearia o proprietário também.
                 logger.warning(
-                    "[%s] Empresa detectada no campo profissional — busca no Mais Obras ignorada",
+                    "[%s] Empresa detectada no campo profissional — busca ignorada",
                     obra.nome_profissional[:40],
                 )
-                if not resultado.erro:
-                    resultado.erro = "Empresa — sem busca"
             else:
                 try:
                     tels, emails = await self._coletar_contato_pessoa(
@@ -475,12 +475,11 @@ class MaisObrasScraper:
         resultado.nome_proprietario = obra.nome_proprietario
         if obra.nome_proprietario:
             if _eh_empresa(obra.nome_proprietario):
+                # Mesmo critério: apenas loga, não bloqueia o registro.
                 logger.warning(
-                    "[%s] Empresa detectada no campo proprietário — busca no Mais Obras ignorada",
+                    "[%s] Empresa detectada no campo proprietário — busca ignorada",
                     obra.nome_proprietario[:40],
                 )
-                if not resultado.erro:
-                    resultado.erro = "Empresa — sem busca"
             else:
                 try:
                     tels, emails = await self._coletar_contato_pessoa(
