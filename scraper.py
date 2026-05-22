@@ -315,17 +315,18 @@ class MaisObrasScraper:
         Replica o botao "Ver Mais": POST /api/pesquisa_contatos_api
         com o campo form-data `contato` contendo o dataset em JSON.
         """
-        # Monta payload exatamente como o site faz via dataset do botão Ver Mais:
-        # { nome, cidade, uf, nome_mae, cpfcnpj, sequence_id }
-        # 'cidade' é OBRIGATÓRIO — sem ela a API retorna vazio na chamada de detalhe.
+        # Monta payload replicando o comportamento do site:
+        # - Chamada de LISTA (sem sequence_id): { nome, cpfcnpj, uf }
+        # - Chamada de DETALHE (com sequence_id): { nome, cidade, uf, cpfcnpj, sequence_id }
+        # 'cidade' só vai na chamada de detalhe — o site extrai do Location do candidato.
         payload = {
             "nome": nome or "",
             "cpfcnpj": cpf_cnpj or "",
             "uf": uf or "",
-            "cidade": cidade or "",
         }
         if sequence_id:
             payload["sequence_id"] = sequence_id
+            payload["cidade"] = cidade or ""  # obrigatório na chamada de detalhe
 
         try:
             r = await self._client.post(
