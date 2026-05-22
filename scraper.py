@@ -306,6 +306,7 @@ class MaisObrasScraper:
         nome: str,
         cpf_cnpj: str = "",
         uf: str = "",
+        cidade: str = "",
         ccp: str = "0",
         sequence_id: str = "",
     ) -> dict:
@@ -336,16 +337,18 @@ class MaisObrasScraper:
                         nome[:30], len(candidatos),
                         [(c.get("Name", "?")[:25], c.get("Location", "")) for c in candidatos[:4]],
                     )
-                    escolhido = self._escolher_resultado_ver_mais(nome, uf, candidatos)
+                    escolhido = self._escolher_resultado_ver_mais(nome, uf, candidatos, cidade=cidade)
                     if escolhido and escolhido.get("SequentialId") and not sequence_id:
                         logger.info(
-                            "[%s] Ver Mais selecionado: '%s' (seq=%s)",
-                            nome[:30], escolhido.get("Name", "?")[:30], escolhido.get("SequentialId"),
+                            "[%s] Ver Mais selecionado: '%s' loc='%s' (seq=%s)",
+                            nome[:30], escolhido.get("Name", "?")[:30],
+                            escolhido.get("Location", ""), escolhido.get("SequentialId"),
                         )
                         return await self._buscar_ver_mais(
                             nome=escolhido.get("Name") or nome,
                             cpf_cnpj=cpf_cnpj,
                             uf=uf,
+                            cidade=cidade,
                             ccp=ccp,
                             sequence_id=str(escolhido.get("SequentialId")),
                         )
@@ -355,16 +358,23 @@ class MaisObrasScraper:
         return {}
 
     def _escolher_resultado_ver_mais(
-        self, nome: str, uf: str, resultados: list[dict]
+        self, nome: str, uf: str, resultados: list[dict], cidade: str = ""
     ) -> dict | None:
         """
         Escolhe o candidato mais provável na lista do Ver Mais.
+
+        Critérios de pontuação:
+          +4  nome exato
+          +2  nome parcial (substring)
+          +2  cidade bate com Location  ← novo: desempata homônimos de cidades diferentes
+          +1  UF bate com Location
 
         IMPORTANTE: retorna None se nenhum candidato tiver qualquer correspondência
         de nome com o buscado — evita pegar telefones de uma pessoa aleatória.
         """
         nome_norm = _normalizar(nome)
         uf_norm = _normalizar(uf)
+        cidade_norm = _normalizar(cidade)
 
         def score(item: dict) -> int:
             item_nome = _normalizar(item.get("Name", ""))
@@ -373,6 +383,8 @@ class MaisObrasScraper:
             if item_nome == nome_norm:
                 pontos += 4
             elif nome_norm and (nome_norm in item_nome or item_nome in nome_norm):
+                pontos += 2
+            if cidade_norm and cidade_norm in location:
                 pontos += 2
             if uf_norm and uf_norm in location:
                 pontos += 1
@@ -469,7 +481,7 @@ class MaisObrasScraper:
         return _unicos(telefones), _unicos(emails)
 
     async def _coletar_contato_pessoa(
-        self, nome: str, tipo: str, uf: str
+        self, nome: str, tipo: str, uf: str, cidade: str = ""
     ) -> tuple[list[str], list[str]]:
         # --- Etapa 1: /pesquisa_perfil ---
         resp = await self._buscar_perfil(nome=nome, tipo=tipo, uf=uf)
@@ -496,6 +508,7 @@ class MaisObrasScraper:
             nome=nome,
             cpf_cnpj=cpf_cnpj,
             uf=uf_ver_mais,
+            cidade=cidade,
         )
         telefones_vm, emails_vm = self._extrair_contato_ver_mais(resp_api)
         logger.info(
@@ -543,6 +556,7 @@ class MaisObrasScraper:
                         nome=obra.nome_profissional,
                         tipo="Profissional",
                         uf=obra.uf,
+                        cidade=obra.cidade,
                     )
                     if len(tels) > 0:
                         resultado.tel_arq_1 = tels[0]
@@ -568,6 +582,7 @@ class MaisObrasScraper:
                         nome=obra.nome_proprietario,
                         tipo="Proprietário",
                         uf=obra.uf,
+                        cidade=obra.cidade,
                     )
                     if len(tels) > 0:
                         resultado.tel_prop_1 = tels[0]
