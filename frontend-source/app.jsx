@@ -31,14 +31,25 @@ function App() {
   const [logLines, setLogLines] = useState([]);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [result, setResult] = useState(null);
+  const [jobId, setJobId] = useState(null);
   const cancelRef = useRef({ cancelled: false });
 
   useEffect(() => {
     if (!localStorage.getItem(ONBOARDING_KEY)) setShowOnboarding(true);
   }, []);
+
+  // Verifica conexão real com o servidor
   useEffect(() => {
-    const tick = setTimeout(() => setServerStatus("connected"), 900);
-    return () => clearTimeout(tick);
+    fetch("/health")
+      .then(r => r.json())
+      .then(data => {
+        if (data.status === "ok") {
+          setServerStatus(data.scraper_autenticado ? "connected" : "pending");
+        } else {
+          setServerStatus("offline");
+        }
+      })
+      .catch(() => setServerStatus("offline"));
   }, []);
 
   const pushLog = useCallback((text, kind = "") => {
@@ -71,65 +82,108 @@ function App() {
   };
 
   const handleSubmit = async () => {
-    if (!file || stage === "processing") return;
+    if (!file || stage === "processing" || stage === "uploading") return;
     cancelRef.current = { cancelled: false };
     setStage("uploading");
     setResult(null);
+    setJobId(null);
     pushLog(`Iniciando processamento: ${file.name}`);
-    pushLog("Enviando arquivo para o servidor…");
     if (meetime) pushLog("Modo Meetime ativado — exportará 1 linha por contato.", "warn");
 
-    await sleep(700);
-    if (cancelRef.current.cancelled) return;
-    pushLog("Arquivo recebido pelo servidor.", "ok");
-    await sleep(500);
-    pushLog("Convertendo planilha para .xlsx…");
-    await sleep(600);
-    pushLog("Lendo linhas de obras e contatos…");
+    // 1. Envia o arquivo e obtém job_id
+    const formData = new FormData();
+    formData.append("arquivo", file);
+    formData.append("modo_meetime", meetime ? "1" : "0");
 
-    const total = 47 + Math.floor(Math.random() * 30);
-    await sleep(400);
-    pushLog(`${total} obras encontradas. Iniciando consultas…`, "ok");
-    setStage("processing");
-    setProgress({ processed: 0, total, currentLine: "preparando…" });
-
-    let processed = 0, success = 0;
-    while (processed < total) {
-      if (cancelRef.current.cancelled) return;
-      await sleep(110 + Math.random() * 160);
-      processed++;
-      const name = SAMPLE_NAMES[Math.floor(Math.random() * SAMPLE_NAMES.length)];
-      const city = SAMPLE_CITIES[Math.floor(Math.random() * SAMPLE_CITIES.length)];
-      const found = Math.random() > 0.18;
-      if (found) success++;
-      const tag = found ? "OK" : "sem telefone";
-      const kind = found ? "ok" : "warn";
-      setProgress({
-        processed, total,
-        currentLine: `${name} · ${city}`,
-      });
-      if (processed % 4 === 0 || processed === total) {
-        pushLog(`${processed}/${total} · ${name.slice(0, 32)} · ${tag}`, kind);
+    let jid;
+    try {
+      pushLog("Enviando arquivo para o servidor…");
+      const res = await fetch("/enriquecer_async", { method: "POST", body: formData });
+      if (!res.ok) {
+        let detail = res.statusText;
+        try { const j = await res.json(); detail = j.detail || detail; } catch {}
+        pushLog(`Erro: ${detail}`, "err");
+        setStage("idle");
+        return;
       }
+      const data = await res.json();
+      jid = data.job_id;
+      setJobId(jid);
+      pushLog("Arquivo recebido. Detectando colunas com IA…", "ok");
+    } catch (err) {
+      pushLog(`Erro de conexão: ${err.message}`, "err");
+      setStage("idle");
+      return;
     }
 
-    await sleep(350);
-    pushLog("Gerando Excel final…");
-    await sleep(500);
-    const outputName = (file.name.replace(/\.[^.]+$/, "")) + (meetime ? "_meetime.xlsx" : "_enriquecido.xlsx");
-    pushLog(`Concluído: ${success}/${total} obras com telefone encontrado.`, "ok");
-    setStage("done");
-    setResult({ total, success, outputName });
+    // 2. Polling de progresso real
+    setStage("processing");
+    let lastLine = "";
+    while (true) {
+      if (cancelRef.current.cancelled) return;
+      await sleep(1200);
+      if (cancelRef.current.cancelled) return;
+
+      try {
+        const prog = await fetch(`/progresso/${jid}`).then(r => r.json());
+
+        // Exibe nova linha no terminal só quando mudar
+        if (prog.current_line && prog.current_line !== lastLine) {
+          lastLine = prog.current_line;
+          const kind = prog.status === "failed" ? "err"
+            : (prog.current_line || "").includes("OK") ? "ok"
+            : (prog.current_line || "").includes("sem telefone") ? "warn" : "";
+          pushLog(prog.current_line, kind);
+        }
+
+        setProgress({
+          processed: prog.processed || 0,
+          total: prog.total || 0,
+          currentLine: prog.current_contact || prog.current_line || "",
+        });
+
+        if (prog.status === "done") {
+          const outputName = (file.name.replace(/\.[^.]+$/, "")) +
+            (meetime ? "_meetime.xlsx" : "_enriquecido.xlsx");
+          const total = prog.total || 0;
+          const m = (prog.current_line || "").match(/(\d+)\/(\d+)/);
+          const success = m ? parseInt(m[1]) : 0;
+          pushLog(`Concluído: ${success}/${total} obras com telefone encontrado.`, "ok");
+          setStage("done");
+          setResult({ total, success, outputName, jobId: jid });
+          break;
+        }
+
+        if (prog.status === "failed") {
+          pushLog(`Erro: ${prog.error || "falha no processamento"}`, "err");
+          setStage("idle");
+          break;
+        }
+
+      } catch (err) {
+        pushLog(`Erro ao verificar progresso: ${err.message}`, "err");
+      }
+    }
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
+    if (!result || !result.jobId) return;
     pushLog(`Baixando ${result.outputName}…`, "ok");
-    const blob = new Blob(["Demo result for " + result.outputName], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = result.outputName;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    try {
+      const res = await fetch(`/resultado/${result.jobId}`);
+      if (!res.ok) {
+        pushLog("Erro ao baixar o arquivo.", "err");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = result.outputName;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      pushLog(`Erro ao baixar: ${err.message}`, "err");
+    }
   };
 
   const percent = progress.total
