@@ -357,68 +357,164 @@ class MaisObrasScraper:
             logger.debug(f"Erro em /api/pesquisa_contatos_api ({nome}): {e}")
         return {}
 
+    def _ia_localizar_candidato(
+        self, nome: str, cidade: str, uf: str, candidatos: list[dict]
+    ) -> dict | None:
+        """
+        Usa Mistral AI para interpretar qual candidato corresponde à localização esperada.
+        Lida com cidades abreviadas ou mal formatadas (ex: 'S.CARLOS' = 'São Carlos').
+        Chamado somente quando há ambiguidade (múltiplos candidatos ou localização suspeita).
+        """
+        try:
+            from mistralai import Mistral
+
+            api_key = os.getenv("MISTRAL_API_KEY", "")
+            if not api_key:
+                return None
+
+            client = Mistral(api_key=api_key)
+
+            lista = "\n".join(
+                f"[{i}] nome='{c.get('Name', '')}' local='{c.get('Location', '')}'"
+                for i, c in enumerate(candidatos)
+            )
+
+            prompt = f"""Você está identificando a pessoa certa em uma lista de candidatos de um banco de dados brasileiro.
+
+Pessoa buscada:
+- Nome: {nome}
+- Cidade esperada: {cidade or "(nao informada)"}
+- UF esperada: {uf or "(nao informada)"}
+
+Candidatos retornados pela API:
+{lista}
+
+Regras:
+- A cidade pode estar abreviada ou com formatacao diferente. Ex: "S.CARLOS" = "Sao Carlos", "RIB.PRETO" = "Ribeirao Preto", "S.J.RIO PRETO" = "Sao Jose do Rio Preto".
+- Considere o estado (UF) como critério secundário.
+- Se nenhum candidato bate com a cidade/UF esperada, responda null.
+
+Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem explicacao."""
+
+            response = client.chat.complete(
+                model="mistral-small-latest",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=5,
+            )
+
+            content = response.choices[0].message.content.strip()
+            if content.lower() in ("null", "none", ""):
+                logger.info(
+                    "IA Ver Mais: nenhum candidato bate com localização de '%s' (%s/%s)",
+                    nome[:30], cidade, uf,
+                )
+                return None
+
+            m = re.search(r"\d+", content)
+            if not m:
+                return None
+            idx = int(m.group())
+            if 0 <= idx < len(candidatos):
+                c = candidatos[idx]
+                logger.info(
+                    "IA Ver Mais: [%d] '%s' loc='%s' escolhido para '%s'",
+                    idx, c.get("Name", "?")[:30], c.get("Location", ""), nome[:30],
+                )
+                return c
+
+        except Exception as e:
+            logger.warning("Mistral falhou na seleção de candidato Ver Mais: %s", e)
+        return None
+
     def _escolher_resultado_ver_mais(
         self, nome: str, uf: str, resultados: list[dict], cidade: str = ""
     ) -> dict | None:
         """
-        Escolhe o candidato mais provável na lista do Ver Mais.
+        Escolhe o candidato certo na lista do Ver Mais em dois estágios:
 
-        Critérios de pontuação:
-          +4  nome exato
-          +2  nome parcial (substring)
-          +2  cidade bate com Location  ← novo: desempata homônimos de cidades diferentes
-          +1  UF bate com Location
+        1. Filtro por nome — descarta candidatos sem nenhuma correspondência de nome.
+           Se zero candidatos passam, retorna None (não arriscamos número errado).
 
-        IMPORTANTE: retorna None se nenhum candidato tiver qualquer correspondência
-        de nome com o buscado — evita pegar telefones de uma pessoa aleatória.
+        2. Desempate por localização — usa IA (Mistral) para interpretar cidade/UF
+           mesmo quando vierem abreviados ou mal formatados.
+           Fallback para score simples se Mistral falhar.
         """
         nome_norm = _normalizar(nome)
-        uf_norm = _normalizar(uf)
-        cidade_norm = _normalizar(cidade)
 
-        def score(item: dict) -> int:
+        def nome_score(item: dict) -> int:
             item_nome = _normalizar(item.get("Name", ""))
-            location = _normalizar(item.get("Location", ""))
-            pontos = 0
             if item_nome == nome_norm:
-                pontos += 4
-            elif nome_norm and (nome_norm in item_nome or item_nome in nome_norm):
-                pontos += 2
-            if cidade_norm and cidade_norm in location:
-                pontos += 2
-            if uf_norm and uf_norm in location:
-                pontos += 1
-            return pontos
+                return 4
+            if nome_norm and (nome_norm in item_nome or item_nome in nome_norm):
+                return 2
+            return 0
 
         candidatos = [r for r in resultados if isinstance(r, dict)]
         if not candidatos:
             return None
 
-        melhor = max(candidatos, key=score)
-        pontuacao = score(melhor)
-
-        # Sem nenhuma correspondência de nome → recusar para não retornar
-        # telefones de uma pessoa completamente diferente.
-        if pontuacao == 0:
+        max_nome = max(nome_score(c) for c in candidatos)
+        if max_nome == 0:
             logger.warning(
                 "Ver Mais: nenhum candidato com nome compativel para '%s' "
-                "(%d resultados) — descartando para evitar numero errado",
+                "(%d resultados) — descartando",
                 nome[:40], len(candidatos),
             )
             return None
 
-        if pontuacao < 2:
-            logger.warning(
-                "Ver Mais: correspondencia fraca (score=%d) para '%s' "
-                "→ selecionado '%s'",
-                pontuacao, nome[:30], melhor.get("Name", "?")[:30],
-            )
-        else:
-            logger.debug(
-                "Ver Mais: '%s' selecionado (score=%d) para '%s'",
-                melhor.get("Name", "?")[:30], pontuacao, nome[:30],
-            )
+        # Apenas candidatos com melhor score de nome
+        melhores = [c for c in candidatos if nome_score(c) == max_nome]
+        logger.debug(
+            "Ver Mais: %d candidato(s) com nome compativel para '%s'",
+            len(melhores), nome[:30],
+        )
 
+        uf_norm = _normalizar(uf)
+        cidade_norm = _normalizar(cidade)
+
+        def loc_score(item: dict) -> int:
+            location = _normalizar(item.get("Location", ""))
+            s = 0
+            if cidade_norm and cidade_norm in location:
+                s += 2
+            if uf_norm and uf_norm in location:
+                s += 1
+            return s
+
+        # Candidato único — verificar localização; usar IA se não bater
+        if len(melhores) == 1:
+            c = melhores[0]
+            if (cidade or uf) and loc_score(c) == 0:
+                logger.info(
+                    "Ver Mais: candidato único '%s' loc='%s' não bate com %s/%s — consultando IA",
+                    c.get("Name", "?")[:30], c.get("Location", ""), cidade, uf,
+                )
+                ia = self._ia_localizar_candidato(nome, cidade, uf, melhores)
+                if ia is None:
+                    logger.warning(
+                        "IA confirmou que '%s' loc='%s' nao corresponde a %s/%s — descartando",
+                        c.get("Name", "?")[:30], c.get("Location", ""), cidade, uf,
+                    )
+                    return None
+            return c
+
+        # Múltiplos candidatos com mesmo nome — IA desempata pela localização
+        logger.info(
+            "Ver Mais: %d candidatos com mesmo nome para '%s' — IA desempatando",
+            len(melhores), nome[:30],
+        )
+        ia = self._ia_localizar_candidato(nome, cidade, uf, melhores)
+        if ia:
+            return ia
+
+        # Fallback: score de localização simples
+        melhor = max(melhores, key=loc_score)
+        if loc_score(melhor) == 0:
+            logger.warning(
+                "Ver Mais: sem correspondência de localização para '%s' — usando primeiro da lista",
+                nome[:30],
+            )
         return melhor
 
     def _extrair_contato(self, resposta: dict) -> tuple[list[str], list[str]]:
