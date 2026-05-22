@@ -308,7 +308,6 @@ class MaisObrasScraper:
         cpf_cnpj: str = "",
         uf: str = "",
         cidade: str = "",
-        ccp: str = "0",
         sequence_id: str = "",
         log_cb=None,
     ) -> dict:
@@ -316,11 +315,14 @@ class MaisObrasScraper:
         Replica o botao "Ver Mais": POST /api/pesquisa_contatos_api
         com o campo form-data `contato` contendo o dataset em JSON.
         """
+        # Monta payload exatamente como o site faz via dataset do botão Ver Mais:
+        # { nome, cidade, uf, nome_mae, cpfcnpj, sequence_id }
+        # 'cidade' é OBRIGATÓRIO — sem ela a API retorna vazio na chamada de detalhe.
         payload = {
             "nome": nome or "",
             "cpfcnpj": cpf_cnpj or "",
             "uf": uf or "",
-            "ccp": ccp or "0",
+            "cidade": cidade or "",
         }
         if sequence_id:
             payload["sequence_id"] = sequence_id
@@ -344,17 +346,23 @@ class MaisObrasScraper:
                         log_cb(f"    ver_mais: {len(candidatos)} candidato(s) → {resumo}")
                     escolhido = self._escolher_resultado_ver_mais(nome, uf, candidatos, cidade=cidade, log_cb=log_cb)
                     if escolhido and escolhido.get("SequentialId") and not sequence_id:
+                        # Extrai cidade do candidato selecionado (formato "CIDADE - UF")
+                        # para replicar exatamente o que o site faz: usa a cidade do candidato,
+                        # não a cidade da obra — a API espera a cidade do registro.
+                        loc_raw = escolhido.get("Location") or ""
+                        loc_parts = loc_raw.split("-")
+                        cidade_candidato = loc_parts[0].strip() if loc_parts else cidade
+                        uf_candidato = loc_parts[1].strip() if len(loc_parts) > 1 else uf
                         logger.info(
-                            "[%s] Ver Mais selecionado: '%s' loc='%s' (seq=%s)",
+                            "[%s] Ver Mais selecionado: '%s' loc='%s' cidade='%s' uf='%s' (seq=%s)",
                             nome[:30], escolhido.get("Name", "?")[:30],
-                            escolhido.get("Location", ""), escolhido.get("SequentialId"),
+                            loc_raw, cidade_candidato, uf_candidato, escolhido.get("SequentialId"),
                         )
                         return await self._buscar_ver_mais(
                             nome=escolhido.get("Name") or nome,
                             cpf_cnpj=cpf_cnpj,
-                            uf=uf,
-                            cidade=cidade,
-                            ccp=ccp,
+                            uf=uf_candidato or uf,
+                            cidade=cidade_candidato or cidade,
                             sequence_id=str(escolhido.get("SequentialId")),
                             log_cb=log_cb,
                         )
