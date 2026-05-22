@@ -1,16 +1,13 @@
 """
 excel_handler.py
 ----------------
-Le a planilha exportada dos Favoritos do Mais Obras e gera uma saida limpa.
+Le qualquer planilha (.xlsx/.xls/.csv) e gera uma saida enriquecida.
 
-O arquivo original do Mais Obras costuma vir assim:
-  Linha 1: titulo "Meus Favoritos"
-  Linhas 2-3: vazias
-  Linha 4: cabecalho real
-  Linha 5+: dados
+A detecção de cabeçalhos é feita dinamicamente por IA (Mistral) ou por
+palavras-chave — o arquivo não precisa mais seguir o formato fixo do Mais Obras.
 
-A planilha enriquecida gerada por este modulo sempre sai assim:
-  Linha 1: cabecalho
+A planilha enriquecida gerada por este módulo sempre sai assim:
+  Linha 1: cabeçalho (colunas originais + colunas de contato)
   Linha 2+: dados
 """
 
@@ -26,14 +23,9 @@ from openpyxl.utils import get_column_letter
 
 logger = logging.getLogger(__name__)
 
-HEADER_ROW = 4
-DATA_START_ROW = 5
-
-COL_PROFISSIONAL = 0
-COL_PROPRIETARIO = 1
-COL_ENDERECO = 5
-COL_CIDADE = 8
-COL_UF = 9
+# ---------------------------------------------------------------------------
+# Constantes de formatação
+# ---------------------------------------------------------------------------
 
 COLUNAS_NOVAS = [
     "Telefone Arquiteto 1",
@@ -52,6 +44,10 @@ COR_HEADER_NOVO_FONT = "56181B"
 COR_ZEBRA = "FBF7EF"
 COR_BORDA = "E2D7C8"
 
+
+# ---------------------------------------------------------------------------
+# Modelo de dados
+# ---------------------------------------------------------------------------
 
 @dataclass
 class ObraRow:
@@ -81,28 +77,67 @@ def _chave(profissional: str, proprietario: str, cidade: str) -> str:
     return f"{_normalizar(profissional)}|{_normalizar(proprietario)}|{_normalizar(cidade)}"
 
 
-def carregar_excel(conteudo: bytes) -> tuple[openpyxl.Workbook, list[ObraRow]]:
-    """Carrega o Excel exportado dos favoritos e extrai as obras."""
+# ---------------------------------------------------------------------------
+# Carregamento com detecção dinâmica de cabeçalhos
+# ---------------------------------------------------------------------------
+
+def carregar_excel(conteudo: bytes) -> tuple[openpyxl.Workbook, list[ObraRow], int]:
+    """
+    Carrega qualquer planilha Excel e extrai as obras usando detecção inteligente
+    de cabeçalhos via Mistral AI (com fallback por palavras-chave).
+
+    Retorna:
+        (workbook, lista_de_obras, header_row_1indexed)
+        onde header_row_1indexed é a linha do cabeçalho no workbook (base-1).
+    """
+    from ai_header_detector import detectar_estrutura_planilha
+
     wb = openpyxl.load_workbook(io.BytesIO(conteudo))
     ws = wb.active
 
-    header_row = list(ws.iter_rows(min_row=HEADER_ROW, max_row=HEADER_ROW, values_only=True))[0]
-    if not any(h and "profissional" in str(h).lower() for h in header_row):
+    # Lê as primeiras 10 linhas para análise
+    max_row_sample = min(10, ws.max_row or 1)
+    primeiras_linhas = [
+        [cell for cell in row]
+        for row in ws.iter_rows(min_row=1, max_row=max_row_sample, values_only=True)
+    ]
+
+    # Detecta estrutura via IA
+    estrutura = detectar_estrutura_planilha(primeiras_linhas)
+
+    header_row_0idx: int = int(estrutura.get("header_row_index") or 0)
+    header_row_1idx: int = header_row_0idx + 1       # base-1 para openpyxl
+    data_start_row: int = header_row_1idx + 1
+
+    col_prof: int | None = estrutura.get("profissional")
+    col_prop: int | None = estrutura.get("proprietario")
+    col_cidade: int | None = estrutura.get("cidade")
+    col_uf: int | None = estrutura.get("uf")
+    col_end: int | None = estrutura.get("endereco")
+
+    # Valida: precisa de ao menos profissional ou proprietário
+    if col_prof is None and col_prop is None:
+        cabecalhos_detectados = [str(c or "") for c in primeiras_linhas[header_row_0idx]] if primeiras_linhas else []
         raise ValueError(
-            "Formato de arquivo nao reconhecido. "
-            "Esperava 'Nome do profissional' na linha 4. "
-            "Verifique se o arquivo foi exportado corretamente dos Favoritos do Mais Obras."
+            "Não foi possível identificar as colunas de profissional ou proprietário na planilha.\n"
+            f"Cabeçalhos detectados na linha {header_row_1idx}: {cabecalhos_detectados}\n"
+            "Verifique se o arquivo contém colunas com esses dados."
         )
 
-    obras = []
+    def _get_col(row: tuple, idx: int | None) -> str:
+        if idx is None or idx >= len(row):
+            return ""
+        return str(row[idx] or "").strip()
+
+    obras: list[ObraRow] = []
     for row_idx, row in enumerate(
-        ws.iter_rows(min_row=DATA_START_ROW, values_only=True), start=DATA_START_ROW
+        ws.iter_rows(min_row=data_start_row, values_only=True), start=data_start_row
     ):
-        profissional = str(row[COL_PROFISSIONAL] or "").strip()
-        proprietario = str(row[COL_PROPRIETARIO] or "").strip()
-        cidade = str(row[COL_CIDADE] or "").strip()
-        uf = str(row[COL_UF] or "").strip()
-        endereco = str(row[COL_ENDERECO] or "").strip()
+        profissional = _get_col(row, col_prof)
+        proprietario = _get_col(row, col_prop)
+        cidade = _get_col(row, col_cidade)
+        uf = _get_col(row, col_uf)
+        endereco = _get_col(row, col_end)
 
         if not profissional and not proprietario:
             continue
@@ -118,29 +153,52 @@ def carregar_excel(conteudo: bytes) -> tuple[openpyxl.Workbook, list[ObraRow]]:
             )
         )
 
-    logger.info("Excel carregado: %s obras encontradas.", len(obras))
-    return wb, obras
+    logger.info(
+        "Excel carregado: %d obras | header_row=%d | mapeamento=%s",
+        len(obras),
+        header_row_1idx,
+        {
+            "profissional": col_prof,
+            "proprietario": col_prop,
+            "cidade": col_cidade,
+            "uf": col_uf,
+            "endereco": col_end,
+        },
+    )
+    return wb, obras, header_row_1idx
 
+
+# ---------------------------------------------------------------------------
+# Enriquecimento
+# ---------------------------------------------------------------------------
 
 def enriquecer_excel(
     wb: openpyxl.Workbook,
     obras: list[ObraRow],
     contatos: list,
+    header_row: int = 1,
 ) -> bytes:
     """
     Gera uma planilha limpa para download.
-    A primeira linha da saida sempre contem o cabecalho, seguida pelas linhas de dados.
+    A primeira linha da saída sempre contém o cabeçalho, seguida pelas linhas de dados.
+
+    Args:
+        wb: workbook original (para copiar colunas e valores)
+        obras: lista de ObraRow extraídas
+        contatos: resultados do scraper
+        header_row: linha base-1 do cabeçalho no workbook original
     """
     ws_origem = wb.active
     mapa: dict[str, object] = {c.chave: c for c in contatos}
     mapa_por_row: dict[int, object] = {c.row_index: c for c in contatos}
 
+    # Determina última coluna com conteúdo no cabeçalho
     original_max_col = ws_origem.max_column
-    while original_max_col > 1 and not ws_origem.cell(HEADER_ROW, original_max_col).value:
+    while original_max_col > 1 and not ws_origem.cell(header_row, original_max_col).value:
         original_max_col -= 1
 
     headers = [
-        ws_origem.cell(HEADER_ROW, col).value or f"Coluna {col}"
+        ws_origem.cell(header_row, col).value or f"Coluna {col}"
         for col in range(1, original_max_col + 1)
     ]
 
@@ -157,13 +215,13 @@ def enriquecer_excel(
         ]
 
         if contato is None:
-            valores = ["", "", "", "", "", "", "Nao processado"]
+            novos_valores = ["", "", "", "", "", "", "Nao processado"]
         elif contato.erro:
-            valores = ["", "", "", "", "", "", f"Erro: {contato.erro[:60]}"]
+            novos_valores = ["", "", "", "", "", "", f"Erro: {contato.erro[:60]}"]
         else:
             tem_contato = bool(contato.tel_arq_1 or contato.tel_prop_1)
             status = "OK" if tem_contato else "Sem telefone cadastrado"
-            valores = [
+            novos_valores = [
                 contato.tel_arq_1,
                 contato.tel_arq_2,
                 contato.email_arq,
@@ -173,7 +231,7 @@ def enriquecer_excel(
                 status,
             ]
 
-        ws.append(valores_originais + valores)
+        ws.append(valores_originais + novos_valores)
         ws.row_dimensions[saida_row].height = 34
 
     _formatar_planilha(ws, original_max_col, len(headers) + len(COLUNAS_NOVAS), len(obras) + 1)
@@ -185,8 +243,12 @@ def enriquecer_excel(
     return output.read()
 
 
+# ---------------------------------------------------------------------------
+# Formatação
+# ---------------------------------------------------------------------------
+
 def _formatar_planilha(ws, primeira_col_enriquecida: int, total_cols: int, total_rows: int) -> None:
-    """Aplica uma formatacao simples, legivel e consistente para usuarios leigos."""
+    """Aplica formatação legível e consistente."""
     header_fill = PatternFill("solid", fgColor=COR_HEADER)
     new_header_fill = PatternFill("solid", fgColor=COR_HEADER_NOVO)
     zebra_fill = PatternFill("solid", fgColor=COR_ZEBRA)
@@ -243,7 +305,7 @@ def _formatar_planilha(ws, primeira_col_enriquecida: int, total_cols: int, total
 # ---------------------------------------------------------------------------
 
 def normalizar_tel(tel: str) -> str:
-    """Remove tudo que nao for digito. Ex: '(11) 9 9999-9999' -> '11999999999'."""
+    """Remove tudo que não for dígito. Ex: '(11) 9 9999-9999' -> '11999999999'."""
     if not tel:
         return ""
     return re.sub(r"\D", "", str(tel))

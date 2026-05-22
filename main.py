@@ -32,6 +32,7 @@ MAISOBRAS_EMAIL    = os.getenv("MAISOBRAS_EMAIL", "")
 MAISOBRAS_PASSWORD = os.getenv("MAISOBRAS_PASSWORD", "")
 API_TOKEN          = os.getenv("API_TOKEN", "")
 MAX_OBRAS          = int(os.getenv("MAX_OBRAS_PER_REQUEST", "1500"))
+MISTRAL_API_KEY    = os.getenv("MISTRAL_API_KEY", "")
 
 api_key_header = APIKeyHeader(name="X-API-Token", auto_error=False)
 
@@ -212,20 +213,9 @@ def _converter_csv_para_xlsx(conteudo_csv: bytes) -> bytes:
     ws_csv = wb_csv.active
     ws_csv.title = "Planilha"
 
-    # Se o cabecalho real esta na linha 1 (sem titulo), insere as 3 linhas do padrao Mais Obras
-    primeira = [str(v).lower() for v in linhas[0]]
-    if any("profissional" in v for v in primeira):
-        ws_csv.append(["Meus Favoritos"])
-        ws_csv.append([])
-        ws_csv.append([])
-
+    # Insere os dados diretamente — a detecção de cabeçalho é feita pela IA
     for linha in linhas:
         ws_csv.append(linha)
-
-    if ws_csv.max_row >= 4:
-        from openpyxl.styles import Font as _Font
-        for cell in ws_csv[4]:
-            cell.font = _Font(bold=True)
 
     output = io.BytesIO()
     wb_csv.save(output)
@@ -249,8 +239,8 @@ async def _processar_job(job_id: str, filename: str, conteudo: bytes, modo_meeti
             job.update(message="Convertendo .csv para .xlsx...", current_line="Convertendo .csv para .xlsx...")
             conteudo = _converter_csv_para_xlsx(conteudo)
 
-        job.update(message="Lendo planilha...", current_line="Lendo planilha...")
-        wb, obras = carregar_excel(conteudo)
+        job.update(message="Lendo planilha e detectando colunas com IA...", current_line="Detectando colunas via IA...")
+        wb, obras, header_row = carregar_excel(conteudo)
 
         if not obras:
             raise ValueError("Nenhuma obra encontrada no arquivo.")
@@ -285,7 +275,7 @@ async def _processar_job(job_id: str, filename: str, conteudo: bytes, modo_meeti
             excel_bytes = gerar_meetime_excel(obras, contatos)
             nome_saida = (filename or "favoritos").rsplit(".", 1)[0] + "_meetime.xlsx"
         else:
-            excel_bytes = enriquecer_excel(wb, obras, contatos)
+            excel_bytes = enriquecer_excel(wb, obras, contatos, header_row=header_row)
             nome_saida = (filename or "favoritos").rsplit(".", 1)[0] + "_enriquecido.xlsx"
 
         sucesso = sum(1 for c in contatos if c.tel_arq_1 or c.tel_prop_1)
@@ -424,9 +414,9 @@ async def enriquecer(
         except Exception as e:
             raise HTTPException(400, f"Erro ao converter .csv para .xlsx: {e}")
 
-    # Carrega e valida estrutura do Excel
+    # Carrega e detecta estrutura do Excel via IA
     try:
-        wb, obras = carregar_excel(conteudo)
+        wb, obras, header_row = carregar_excel(conteudo)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
@@ -453,7 +443,7 @@ async def enriquecer(
         if meetime:
             excel_bytes = gerar_meetime_excel(obras, contatos)
         else:
-            excel_bytes = enriquecer_excel(wb, obras, contatos)
+            excel_bytes = enriquecer_excel(wb, obras, contatos, header_row=header_row)
     except Exception as e:
         raise HTTPException(500, f"Erro ao gerar arquivo: {e}")
 
