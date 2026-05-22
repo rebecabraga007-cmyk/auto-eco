@@ -347,6 +347,12 @@ class MaisObrasScraper:
     def _escolher_resultado_ver_mais(
         self, nome: str, uf: str, resultados: list[dict]
     ) -> dict | None:
+        """
+        Escolhe o candidato mais provável na lista do Ver Mais.
+
+        IMPORTANTE: retorna None se nenhum candidato tiver qualquer correspondência
+        de nome com o buscado — evita pegar telefones de uma pessoa aleatória.
+        """
         nome_norm = _normalizar(nome)
         uf_norm = _normalizar(uf)
 
@@ -365,21 +371,57 @@ class MaisObrasScraper:
         candidatos = [r for r in resultados if isinstance(r, dict)]
         if not candidatos:
             return None
-        return max(candidatos, key=score)
+
+        melhor = max(candidatos, key=score)
+        pontuacao = score(melhor)
+
+        # Sem nenhuma correspondência de nome → recusar para não retornar
+        # telefones de uma pessoa completamente diferente.
+        if pontuacao == 0:
+            logger.warning(
+                "Ver Mais: nenhum candidato com nome compativel para '%s' "
+                "(%d resultados) — descartando para evitar numero errado",
+                nome[:40], len(candidatos),
+            )
+            return None
+
+        if pontuacao < 2:
+            logger.warning(
+                "Ver Mais: correspondencia fraca (score=%d) para '%s' "
+                "→ selecionado '%s'",
+                pontuacao, nome[:30], melhor.get("Name", "?")[:30],
+            )
+        else:
+            logger.debug(
+                "Ver Mais: '%s' selecionado (score=%d) para '%s'",
+                melhor.get("Name", "?")[:30], pontuacao, nome[:30],
+            )
+
+        return melhor
 
     def _extrair_contato(self, resposta: dict) -> tuple[list[str], list[str]]:
         """
         Extrai listas de telefones e e-mails da resposta de /pesquisa_perfil.
         Retorna (telefones, emails).
+
+        USA APENAS O PRIMEIRO item do perfil — evitar misturar telefones de pessoas
+        diferentes quando a API retorna múltiplos perfis para nomes ambíguos.
         """
         telefones: list[str] = []
         emails: list[str] = []
 
         perfil = resposta.get("perfil")
         if perfil and isinstance(perfil, list) and len(perfil) > 0:
-            for item in perfil:
-                tels_str = item.get("telefones") or ""
-                telefones.extend(_parse_telefones(tels_str))
+            if len(perfil) > 1:
+                logger.debug(
+                    "pesquisa_perfil retornou %d perfis — usando apenas o primeiro "
+                    "para evitar mistura de telefones de pessoas diferentes",
+                    len(perfil),
+                )
+            # Apenas o primeiro perfil (o mais relevante retornado pela API)
+            item = perfil[0]
+            tels_str = item.get("telefones") or ""
+            telefones.extend(_parse_telefones(tels_str))
 
         array_emails = resposta.get("emails")
         if array_emails and isinstance(array_emails, list):
