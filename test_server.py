@@ -31,7 +31,7 @@ from pathlib import Path
 
 import openpyxl
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Request, UploadFile
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 import uvicorn
 
@@ -60,7 +60,7 @@ else:
 # Importa módulos do projeto (excel_handler + scraper)
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).parent))
-from excel_handler import carregar_excel, enriquecer_excel
+from excel_handler import carregar_excel, enriquecer_excel, gerar_meetime_excel
 from scraper import ContatoObra, MaisObrasScraper
 
 # ---------------------------------------------------------------------------
@@ -2777,6 +2777,7 @@ function App() {
   const [logLines, setLogLines] = useState([]);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [result, setResult] = useState(null);
+  const [resultBlob, setResultBlob] = useState(null);
   const cancelRef = useRef({ cancelled: false });
 
   useEffect(() => {
@@ -2817,61 +2818,59 @@ function App() {
   };
 
   const handleSubmit = async () => {
-    if (!file || stage === "processing") return;
+    if (!file || stage === "processing" || stage === "uploading") return;
     cancelRef.current = { cancelled: false };
     setStage("uploading");
     setResult(null);
+    setResultBlob(null);
     pushLog(`Iniciando processamento: ${file.name}`);
-    pushLog("Enviando arquivo para o servidor…");
     if (meetime) pushLog("Modo Meetime ativado — exportará 1 linha por contato.", "warn");
 
-    await sleep(700);
-    if (cancelRef.current.cancelled) return;
-    pushLog("Arquivo recebido pelo servidor.", "ok");
-    await sleep(500);
-    pushLog("Convertendo planilha para .xlsx…");
-    await sleep(600);
-    pushLog("Lendo linhas de obras e contatos…");
+    const formData = new FormData();
+    formData.append("arquivo", file);
+    formData.append("modo_meetime", meetime ? "1" : "0");
 
-    const total = 47 + Math.floor(Math.random() * 30);
-    await sleep(400);
-    pushLog(`${total} obras encontradas. Iniciando consultas…`, "ok");
     setStage("processing");
-    setProgress({ processed: 0, total, currentLine: "preparando…" });
+    setProgress({ processed: 0, total: 0, currentLine: "Processando no servidor…" });
+    pushLog("Enviando arquivo para o servidor…");
 
-    let processed = 0, success = 0;
-    while (processed < total) {
-      if (cancelRef.current.cancelled) return;
-      await sleep(110 + Math.random() * 160);
-      processed++;
-      const name = SAMPLE_NAMES[Math.floor(Math.random() * SAMPLE_NAMES.length)];
-      const city = SAMPLE_CITIES[Math.floor(Math.random() * SAMPLE_CITIES.length)];
-      const found = Math.random() > 0.18;
-      if (found) success++;
-      const tag = found ? "OK" : "sem telefone";
-      const kind = found ? "ok" : "warn";
-      setProgress({
-        processed, total,
-        currentLine: `${name} · ${city}`,
-      });
-      if (processed % 4 === 0 || processed === total) {
-        pushLog(`${processed}/${total} · ${name.slice(0, 32)} · ${tag}`, kind);
+    try {
+      const res = await fetch("/enriquecer", { method: "POST", body: formData });
+
+      if (!res.ok) {
+        let detail = res.statusText;
+        try { const j = await res.json(); detail = j.detail || detail; } catch {}
+        pushLog(`Erro do servidor: ${detail}`, "err");
+        setStage("idle");
+        return;
       }
-    }
 
-    await sleep(350);
-    pushLog("Gerando Excel final…");
-    await sleep(500);
-    const outputName = (file.name.replace(/\.[^.]+$/, "")) + (meetime ? "_meetime.xlsx" : "_enriquecido.xlsx");
-    pushLog(`Concluído: ${success}/${total} obras com telefone encontrado.`, "ok");
-    setStage("done");
-    setResult({ total, success, outputName });
+      const blob = await res.blob();
+      const outputName = (file.name.replace(/\.[^.]+$/, "")) + (meetime ? "_meetime.xlsx" : "_enriquecido.xlsx");
+
+      // Busca resumo para exibir estatísticas
+      let total = 0, success = 0;
+      try {
+        const resumo = await fetch("/ultimo_resumo").then(r => r.json());
+        total = resumo.total || 0;
+        success = resumo.com_telefone || 0;
+      } catch {}
+
+      pushLog(`Concluído: ${success}/${total} com telefone encontrado.`, "ok");
+      setStage("done");
+      setResultBlob(blob);
+      setResult({ total, success, outputName });
+
+    } catch (err) {
+      pushLog(`Erro de conexão: ${err.message}`, "err");
+      setStage("idle");
+    }
   };
 
   const handleDownload = () => {
+    if (!resultBlob || !result) return;
     pushLog(`Baixando ${result.outputName}…`, "ok");
-    const blob = new Blob(["Demo result for " + result.outputName], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    const url = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(resultBlob);
     const a = document.createElement("a");
     a.href = url; a.download = result.outputName;
     document.body.appendChild(a); a.click(); a.remove();
@@ -3081,7 +3080,10 @@ def _converter_xls_para_xlsx(conteudo: bytes) -> bytes:
 
 
 @app.post("/enriquecer")
-async def enriquecer(arquivo: UploadFile = File(...)):
+async def enriquecer(
+    arquivo: UploadFile = File(...),
+    modo_meetime: str = Form("0"),
+):
     global _ultimo_resumo
 
     ext = (arquivo.filename or "").lower().rsplit(".", 1)[-1]
@@ -3094,18 +3096,24 @@ async def enriquecer(arquivo: UploadFile = File(...)):
             return JSONResponse({"detail": f"Erro ao converter .xls: {e}"}, status_code=400)
 
     try:
-        wb, obras = carregar_excel(conteudo)
+        wb, obras, header_row = carregar_excel(conteudo)
     except ValueError as e:
         return JSONResponse({"detail": str(e)}, status_code=400)
 
     if not obras:
         return JSONResponse({"detail": "Nenhuma obra encontrada."}, status_code=400)
 
-    logger.info(f"Processando {len(obras)} obras...")
+    logger.info(f"Processando {len(obras)} obras... (header_row={header_row})")
     contatos = await scraper.processar_lote(obras)
 
-    # Gera Excel enriquecido
-    excel_bytes = enriquecer_excel(wb, obras, contatos)
+    # Gera Excel (modo normal ou Meetime)
+    meetime = modo_meetime.strip() in ("1", "true", "on", "yes")
+    if meetime:
+        excel_bytes = gerar_meetime_excel(obras, contatos)
+        nome_saida = (arquivo.filename or "favoritos").rsplit(".", 1)[0] + "_meetime.xlsx"
+    else:
+        excel_bytes = enriquecer_excel(wb, obras, contatos, header_row=header_row)
+        nome_saida = (arquivo.filename or "favoritos").rsplit(".", 1)[0] + "_enriquecido.xlsx"
 
     # Monta resumo para a UI
     preview = []
@@ -3130,7 +3138,6 @@ async def enriquecer(arquivo: UploadFile = File(...)):
         "preview": preview,
     }
 
-    nome_saida = (arquivo.filename or "favoritos").rsplit(".", 1)[0] + "_enriquecido.xlsx"
     return Response(
         content=excel_bytes,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
