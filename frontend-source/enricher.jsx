@@ -204,8 +204,16 @@ function OptionRow({ checked, onChange, title, desc }) {
   );
 }
 
-function ProgressBlock({ processed, total, percent, currentLine }) {
+function ProgressBlock({ processed, total, percent, currentLine, etaSecs }) {
   const remaining = Math.max(0, total - processed);
+
+  function fmtEta(s) {
+    if (s == null) return "calculando…";
+    if (s < 60) return `~ ${s}s`;
+    const m = Math.floor(s / 60), r = s % 60;
+    return `~ ${m}m${r > 0 ? ` ${r}s` : ""}`;
+  }
+
   return (
     <div className="progress-block">
       <div className="progress-summary">
@@ -228,7 +236,7 @@ function ProgressBlock({ processed, total, percent, currentLine }) {
         </div>
         <div className="stat">
           <div className="stat-label">Estimativa</div>
-          <div className="stat-value">~ {Math.max(1, Math.round(remaining * 0.3))}s</div>
+          <div className="stat-value">{fmtEta(etaSecs)}</div>
           <div className="stat-sub">para concluir</div>
         </div>
       </div>

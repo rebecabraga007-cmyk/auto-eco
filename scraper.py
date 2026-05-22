@@ -89,6 +89,24 @@ def _unicos(valores: list[str]) -> list[str]:
     return saida
 
 
+# Indicadores de pessoa jurídica — sufixos legais e termos genéricos de empresa
+_EMPRESA_RE = re.compile(
+    r"\b(ltda|eireli|s\.?a\.?|s\.?c\.?|me\b|epp\b|"
+    r"construtora|incorporadora|empreendimentos|engenharia|"
+    r"construcoes|construcao|construção|projetos|arquitetura|"
+    r"associacao|associacao|condominio|condominium|grupo|holding|"
+    r"escritorio|studio|bureau)\b",
+    re.IGNORECASE,
+)
+
+
+def _eh_empresa(nome: str) -> bool:
+    """Retorna True se o nome parece ser pessoa jurídica (empresa/CNPJ)."""
+    if not nome:
+        return False
+    return bool(_EMPRESA_RE.search(_normalizar(nome)))
+
+
 # ---------------------------------------------------------------------------
 # Dataclass de resultado
 # ---------------------------------------------------------------------------
@@ -430,38 +448,54 @@ class MaisObrasScraper:
         # --- Arquiteto / Profissional ---
         resultado.nome_arquiteto = obra.nome_profissional
         if obra.nome_profissional:
-            try:
-                tels, emails = await self._coletar_contato_pessoa(
-                    nome=obra.nome_profissional,
-                    tipo="Profissional",
-                    uf=obra.uf,
+            if _eh_empresa(obra.nome_profissional):
+                logger.warning(
+                    "[%s] Empresa detectada no campo profissional — busca no Mais Obras ignorada",
+                    obra.nome_profissional[:40],
                 )
-                if len(tels) > 0:
-                    resultado.tel_arq_1 = tels[0]
-                if len(tels) > 1:
-                    resultado.tel_arq_2 = tels[1]
-                if emails:
-                    resultado.email_arq = emails[0]
-            except Exception as e:
-                logger.warning(f"[{obra.nome_profissional[:20]}] Erro arquiteto: {e}")
+                if not resultado.erro:
+                    resultado.erro = "Empresa — sem busca"
+            else:
+                try:
+                    tels, emails = await self._coletar_contato_pessoa(
+                        nome=obra.nome_profissional,
+                        tipo="Profissional",
+                        uf=obra.uf,
+                    )
+                    if len(tels) > 0:
+                        resultado.tel_arq_1 = tels[0]
+                    if len(tels) > 1:
+                        resultado.tel_arq_2 = tels[1]
+                    if emails:
+                        resultado.email_arq = emails[0]
+                except Exception as e:
+                    logger.warning(f"[{obra.nome_profissional[:20]}] Erro arquiteto: {e}")
 
         # --- Proprietário ---
         resultado.nome_proprietario = obra.nome_proprietario
         if obra.nome_proprietario:
-            try:
-                tels, emails = await self._coletar_contato_pessoa(
-                    nome=obra.nome_proprietario,
-                    tipo="Proprietário",
-                    uf=obra.uf,
+            if _eh_empresa(obra.nome_proprietario):
+                logger.warning(
+                    "[%s] Empresa detectada no campo proprietário — busca no Mais Obras ignorada",
+                    obra.nome_proprietario[:40],
                 )
-                if len(tels) > 0:
-                    resultado.tel_prop_1 = tels[0]
-                if len(tels) > 1:
-                    resultado.tel_prop_2 = tels[1]
-                if emails:
-                    resultado.email_prop = emails[0]
-            except Exception as e:
-                logger.warning(f"[{obra.nome_proprietario[:20]}] Erro proprietário: {e}")
+                if not resultado.erro:
+                    resultado.erro = "Empresa — sem busca"
+            else:
+                try:
+                    tels, emails = await self._coletar_contato_pessoa(
+                        nome=obra.nome_proprietario,
+                        tipo="Proprietário",
+                        uf=obra.uf,
+                    )
+                    if len(tels) > 0:
+                        resultado.tel_prop_1 = tels[0]
+                    if len(tels) > 1:
+                        resultado.tel_prop_2 = tels[1]
+                    if emails:
+                        resultado.email_prop = emails[0]
+                except Exception as e:
+                    logger.warning(f"[{obra.nome_proprietario[:20]}] Erro proprietário: {e}")
 
         logger.info(
             f"[{obra.nome_profissional[:18]:18}] "

@@ -27,12 +27,13 @@ function App() {
   const [stage, setStage] = useState("idle");
   const [file, setFile] = useState(null);
   const [meetime, setMeetime] = useState(false);
-  const [progress, setProgress] = useState({ processed: 0, total: 0, currentLine: "" });
+  const [progress, setProgress] = useState({ processed: 0, total: 0, currentLine: "", etaSecs: null });
   const [logLines, setLogLines] = useState([]);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [result, setResult] = useState(null);
   const [jobId, setJobId] = useState(null);
   const cancelRef = useRef({ cancelled: false });
+  const processingStartRef = useRef(null);
 
   useEffect(() => {
     if (!localStorage.getItem(ONBOARDING_KEY)) setShowOnboarding(true);
@@ -70,7 +71,7 @@ function App() {
     setLogLines([]);
     setResult(null);
     setStage("idle");
-    setProgress({ processed: 0, total: 0, currentLine: "" });
+    setProgress({ processed: 0, total: 0, currentLine: "", etaSecs: null });
     pushLog(`Arquivo selecionado: ${f.name}`, "ok");
   };
   const handleClear = () => {
@@ -78,7 +79,7 @@ function App() {
     setStage("idle");
     setResult(null);
     setLogLines([]);
-    setProgress({ processed: 0, total: 0, currentLine: "" });
+    setProgress({ processed: 0, total: 0, currentLine: "", etaSecs: null });
   };
 
   const handleSubmit = async () => {
@@ -118,6 +119,7 @@ function App() {
 
     // 2. Polling de progresso real
     setStage("processing");
+    processingStartRef.current = Date.now();
     let lastLine = "";
     while (true) {
       if (cancelRef.current.cancelled) return;
@@ -136,10 +138,20 @@ function App() {
           pushLog(prog.current_line, kind);
         }
 
+        const procNow = prog.processed || 0;
+        const totalNow = prog.total || 0;
+        const elapsedSec = (Date.now() - (processingStartRef.current || Date.now())) / 1000;
+        let etaSecs = null;
+        if (procNow > 0 && totalNow > procNow && elapsedSec > 2) {
+          const rate = procNow / elapsedSec; // obras/s
+          etaSecs = Math.max(1, Math.round((totalNow - procNow) / rate));
+        }
+
         setProgress({
-          processed: prog.processed || 0,
-          total: prog.total || 0,
+          processed: procNow,
+          total: totalNow,
           currentLine: prog.current_contact || prog.current_line || "",
+          etaSecs,
         });
 
         if (prog.status === "done") {
@@ -252,6 +264,7 @@ function App() {
                 total={progress.total}
                 percent={percent}
                 currentLine={progress.currentLine}
+                etaSecs={progress.etaSecs}
               />
             )}
 

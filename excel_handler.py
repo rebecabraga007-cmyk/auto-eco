@@ -144,6 +144,7 @@ def carregar_excel(conteudo: bytes) -> tuple[openpyxl.Workbook, list[ObraRow], i
             uf = extrair_uf_de_texto(endereco)
 
         if not profissional and not proprietario:
+            logger.warning("Linha %d ignorada: profissional e proprietario vazios", row_idx)
             continue
 
         obras.append(
