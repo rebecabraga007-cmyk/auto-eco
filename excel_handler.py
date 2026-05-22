@@ -21,6 +21,8 @@ import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from ai_header_detector import detectar_estrutura_planilha
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -90,8 +92,6 @@ def carregar_excel(conteudo: bytes) -> tuple[openpyxl.Workbook, list[ObraRow], i
         (workbook, lista_de_obras, header_row_1indexed)
         onde header_row_1indexed é a linha do cabeçalho no workbook (base-1).
     """
-    from ai_header_detector import detectar_estrutura_planilha
-
     wb = openpyxl.load_workbook(io.BytesIO(conteudo))
     ws = wb.active
 
