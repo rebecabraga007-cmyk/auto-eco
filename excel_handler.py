@@ -21,7 +21,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from ai_header_detector import detectar_estrutura_planilha
+from ai_header_detector import detectar_estrutura_planilha, extrair_uf_de_texto
 
 logger = logging.getLogger(__name__)
 
@@ -136,8 +136,12 @@ def carregar_excel(conteudo: bytes) -> tuple[openpyxl.Workbook, list[ObraRow], i
         profissional = _get_col(row, col_prof)
         proprietario = _get_col(row, col_prop)
         cidade = _get_col(row, col_cidade)
-        uf = _get_col(row, col_uf)
         endereco = _get_col(row, col_end)
+
+        # UF: coluna dedicada ou extrai do endereço
+        uf = _get_col(row, col_uf)
+        if not uf and endereco:
+            uf = extrair_uf_de_texto(endereco)
 
         if not profissional and not proprietario:
             continue

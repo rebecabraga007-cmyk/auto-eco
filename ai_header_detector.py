@@ -17,18 +17,35 @@ logger = logging.getLogger(__name__)
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 
 # Palavras-chave por campo (fallback sem IA)
+# ATENÇÃO: evitar substrings que colidam com outros campos
+# Ex: "socia" colide com "razão SOCIAl" → usar "socio" (não bate em "social")
 _KEYWORDS: dict[str, list[str]] = {
     "profissional": [
-        "profissional", "arquiteto", "engenheiro", "responsavel",
+        # Pessoa física / profissional liberal
+        "profissional", "arquiteto", "engenheiro",
         "tecnico", "projetista", "professional", "architect",
+        # Fallback — nome de empresa como identificador
+        "razao social", "nome fantasia", "empresa",
     ],
     "proprietario": [
+        # Pessoa física — dono ou cliente
         "proprietar", "cliente", "dono", "owner", "contratante",
-        "comprador", "tomador", "solicitante",
+        "comprador", "tomador", "solicitante", "responsavel",
+        # Sócios de empresas (CNPJ / Receita Federal)
+        # NÃO use "socia" — conflito com "razão SOCIAl", "capital SOCIAl"
+        "socio",   # bate em "socios", "sócio", "sócios"
+        "partner",
     ],
     "cidade": ["cidade", "municipio", "city", "localidade"],
-    "uf": ["uf", "estado", "state"],
+    "uf": ["uf", "estado", "state", "sigla", "sg_uf"],
     "endereco": ["endere", "logradouro", "rua", "address", "local"],
+}
+
+# Siglas de estados brasileiros — para extração do endereço quando não há coluna UF
+_UF_BR = {
+    "AC","AL","AM","AP","BA","CE","DF","ES","GO",
+    "MA","MG","MS","MT","PA","PB","PE","PI","PR",
+    "RJ","RN","RO","RR","RS","SC","SE","SP","TO",
 }
 
 
@@ -87,7 +104,7 @@ def _detectar_com_mistral(primeiras_linhas: list[list]) -> dict | None:
             indent=2,
         )
 
-        prompt = f"""Você analisa planilhas de obras de construção civil.
+        prompt = f"""Você analisa planilhas relacionadas a construção civil e empresas do setor.
 
 Receba as primeiras linhas de uma planilha (índice base 0) e identifique:
 1. Qual índice de linha contém os CABEÇALHOS das colunas
@@ -96,18 +113,24 @@ Receba as primeiras linhas de uma planilha (índice base 0) e identifique:
 Dados da planilha ({len(primeiras_linhas)} primeiras linhas):
 {linhas_str}
 
-Campos necessários:
-- profissional: nome do profissional / arquiteto / engenheiro / responsável técnico
-- proprietario: nome do proprietário / cliente / dono / contratante
-- cidade: nome da cidade / município da obra
-- uf: estado / UF (sigla de 2 letras: SP, RJ, MG, etc.)
-- endereco: endereço / logradouro / rua da obra (null se não existir)
+Campos necessários (mapeie o MELHOR candidato para cada um):
+- profissional: nome da pessoa física responsável / arquiteto / engenheiro / profissional
+  → Se não houver pessoa física, use coluna de nome da empresa / razão social / nome fantasia
+- proprietario: nome do proprietário / cliente / sócio / responsável legal / dono
+  → Coluna "Sócios" ou "Sócio" se presente
+- cidade: nome da cidade / município
+  → null se não houver coluna dedicada (mesmo que o endereço contenha a cidade)
+- uf: estado / UF / sigla do estado (SP, RJ, MG...)
+  → null se não houver coluna dedicada
+- endereco: endereço completo / logradouro / rua
+  → null se não existir
 
-Regras importantes:
-- Linhas com título genérico ("Meus Favoritos", "Relatório"), datas soltas ou células em branco NÃO são cabeçalhos
-- O cabeçalho real tem nomes de colunas descritivos (substantivos, labels)
-- Se não encontrar um campo, use null
-- Os índices são base-0 (primeira linha = 0, primeira coluna = 0)
+Regras:
+- Linhas com título genérico, datas soltas ou em branco NÃO são cabeçalho
+- Índices são base-0 (linha 0 = primeira linha, coluna 0 = primeira coluna)
+- Prefira mapear algo a deixar null — use o melhor candidato disponível
+- "Sócios", "Sócio", "Responsável" → proprietario
+- "Razão Social", "Nome Fantasia", "Empresa" → profissional (se não houver pessoa física)
 
 Responda SOMENTE com JSON válido, sem markdown, sem texto extra:
 {{
@@ -176,16 +199,18 @@ def _detectar_por_palavras_chave(primeiras_linhas: list[list]) -> dict:
             "endereco": None,
         }
         score = 0
+        colunas_usadas: set[int] = set()  # evita dois campos na mesma coluna
 
         for col_idx, cell in enumerate(row):
             cell_norm = _norm(str(cell or ""))
             if not cell_norm:
                 continue
             for campo, keywords in _KEYWORDS.items():
-                if mapeamento[campo] is None:
+                if mapeamento[campo] is None and col_idx not in colunas_usadas:
                     for kw in keywords:
                         if kw in cell_norm:
                             mapeamento[campo] = col_idx
+                            colunas_usadas.add(col_idx)
                             score += 1
                             break
 
@@ -201,3 +226,22 @@ def _detectar_por_palavras_chave(primeiras_linhas: list[list]) -> dict:
         melhor_mapeamento,
     )
     return {"header_row_index": melhor_linha, **melhor_mapeamento}
+
+
+# ---------------------------------------------------------------------------
+# Extração de UF a partir de valores de endereço
+# ---------------------------------------------------------------------------
+
+_RE_UF = re.compile(r"\b(" + "|".join(sorted(_UF_BR, reverse=True)) + r")\b")
+
+
+def extrair_uf_de_texto(texto: str) -> str:
+    """
+    Tenta encontrar uma sigla de estado brasileiro em um texto livre.
+    Exemplo: 'RUA FOO, 10 - JUNDIAI - SP' → 'SP'
+    Retorna '' se não encontrar.
+    """
+    if not texto:
+        return ""
+    m = _RE_UF.search(str(texto).upper())
+    return m.group(1) if m else ""
