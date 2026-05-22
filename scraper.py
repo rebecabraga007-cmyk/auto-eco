@@ -330,8 +330,18 @@ class MaisObrasScraper:
             if r.status_code == 200 and r.text.strip():
                 data = r.json()
                 if data.get("is_array") is True and isinstance(data.get("result"), list):
-                    escolhido = self._escolher_resultado_ver_mais(nome, uf, data["result"])
+                    candidatos = data["result"]
+                    logger.info(
+                        "[%s] Ver Mais lista: %d candidato(s) — %s",
+                        nome[:30], len(candidatos),
+                        [(c.get("Name", "?")[:25], c.get("Location", "")) for c in candidatos[:4]],
+                    )
+                    escolhido = self._escolher_resultado_ver_mais(nome, uf, candidatos)
                     if escolhido and escolhido.get("SequentialId") and not sequence_id:
+                        logger.info(
+                            "[%s] Ver Mais selecionado: '%s' (seq=%s)",
+                            nome[:30], escolhido.get("Name", "?")[:30], escolhido.get("SequentialId"),
+                        )
                         return await self._buscar_ver_mais(
                             nome=escolhido.get("Name") or nome,
                             cpf_cnpj=cpf_cnpj,
@@ -438,21 +448,36 @@ class MaisObrasScraper:
         telefones = []
         emails = []
 
+        # Incluir TODOS os telefones com FormattedNumber — não filtrar por Status
+        # porque não temos documentação do significado dos valores de Status da API.
+        # Filtrar por Status != 0 excluía potencialmente os números ativos (Status=0).
         for phone in dados.get("Phones") or []:
-            if phone.get("Status") != 0 and phone.get("FormattedNumber"):
-                telefones.append(phone["FormattedNumber"])
+            num = phone.get("FormattedNumber") or ""
+            if num:
+                telefones.append(num)
 
         for mail in dados.get("Emails") or []:
-            if mail.get("Status") != 0 and mail.get("Email"):
-                emails.append(mail["Email"])
+            addr = mail.get("Email") or ""
+            if addr:
+                emails.append(addr)
 
+        logger.info(
+            "Ver Mais extração: %d telefone(s) %d email(s) — raw phones: %s",
+            len(telefones), len(emails),
+            [p.get("FormattedNumber") for p in (dados.get("Phones") or [])],
+        )
         return _unicos(telefones), _unicos(emails)
 
     async def _coletar_contato_pessoa(
         self, nome: str, tipo: str, uf: str
     ) -> tuple[list[str], list[str]]:
+        # --- Etapa 1: /pesquisa_perfil ---
         resp = await self._buscar_perfil(nome=nome, tipo=tipo, uf=uf)
-        telefones, emails = self._extrair_contato(resp)
+        telefones_perfil, emails_perfil = self._extrair_contato(resp)
+        logger.info(
+            "[%s] pesquisa_perfil: %d tel, %d email — %s",
+            nome[:30], len(telefones_perfil), len(emails_perfil), telefones_perfil[:2],
+        )
 
         perfil = resp.get("perfil")
         cpf_cnpj = ""
@@ -461,15 +486,30 @@ class MaisObrasScraper:
             principal = next((p for p in perfil if p.get("cpfcnpj")), perfil[0])
             cpf_cnpj = principal.get("cpfcnpj") or ""
             uf_ver_mais = principal.get("uf") or uf
+            logger.info(
+                "[%s] cpfcnpj para Ver Mais: %s | uf: %s",
+                nome[:30], cpf_cnpj[:8] + "***" if cpf_cnpj else "(vazio)", uf_ver_mais,
+            )
 
+        # --- Etapa 2: Ver Mais (/api/pesquisa_contatos_api) ---
         resp_api = await self._buscar_ver_mais(
             nome=nome,
             cpf_cnpj=cpf_cnpj,
             uf=uf_ver_mais,
         )
-        telefones_api, emails_api = self._extrair_contato_ver_mais(resp_api)
+        telefones_vm, emails_vm = self._extrair_contato_ver_mais(resp_api)
+        logger.info(
+            "[%s] ver_mais: %d tel — %s",
+            nome[:30], len(telefones_vm), telefones_vm[:2],
+        )
 
-        return _unicos(telefones + telefones_api), _unicos(emails + emails_api)
+        # Ver Mais tem precedência: seus dados passaram por validação de nome.
+        # Só usa pesquisa_perfil como fallback quando Ver Mais não retornou nada.
+        if telefones_vm:
+            return _unicos(telefones_vm), _unicos(emails_vm or emails_perfil)
+
+        logger.info("[%s] Ver Mais vazio — usando fallback pesquisa_perfil", nome[:30])
+        return _unicos(telefones_perfil), _unicos(emails_perfil)
 
     # ------------------------------------------------------------------
     # Processamento de uma obra
