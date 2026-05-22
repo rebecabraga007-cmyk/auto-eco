@@ -257,15 +257,22 @@ async def _processar_job(job_id: str, filename: str, conteudo: bytes, modo_meeti
         def progress_callback(obra, contato):
             processed = int(job.get("processed", 0)) + 1
             nome = obra.nome_profissional or obra.nome_proprietario or "sem nome"
-            status = "OK" if (contato.tel_arq_1 or contato.tel_prop_1) else "sem telefone"
+            tem_tel = bool(contato.tel_arq_1 or contato.tel_prop_1)
+            status = "OK" if tem_tel else "sem telefone"
+            summary = f"Linha {obra.row_index} | {processed}/{len(obras)} | {nome[:50]} | {status}"
+
+            # Cabeçalho da linha
+            job["logs"].append({"text": f"─── {summary}", "kind": "ok" if tem_tel else "warn"})
+            # Logs detalhados do scraper (ARQ/PROP/perfil/ver_mais/IA)
+            for msg in getattr(contato, "log_messages", []):
+                kind = "ok" if "✓" in msg else ("warn" if "sem telefone" in msg or "empresa" in msg.lower() else "err" if "erro" in msg.lower() else "")
+                job["logs"].append({"text": msg, "kind": kind})
+
             job.update(
                 processed=processed,
                 current_row=obra.row_index,
                 current_contact=nome,
-                current_line=(
-                    f"Linha {obra.row_index} | {processed}/{len(obras)} | "
-                    f"{nome[:55]} | {status}"
-                ),
+                current_line=summary,
             )
 
         contatos = await scraper.processar_lote(obras, progress_callback=progress_callback)
@@ -322,6 +329,7 @@ async def enriquecer_async(
         "result": None,
         "output_name": "",
         "error": "",
+        "logs": [],   # lista de {"text": str, "kind": str} — drenada pelo frontend
     }
     meetime = modo_meetime.strip() in ("1", "true", "on", "yes")
     background_tasks.add_task(_processar_job, job_id, arquivo.filename or "favoritos", conteudo, meetime)
@@ -343,6 +351,7 @@ async def progresso(job_id: str):
         "current_line": job.get("current_line"),
         "message": job.get("message"),
         "error": job.get("error"),
+        "logs": job.get("logs", []),
     }
 
 

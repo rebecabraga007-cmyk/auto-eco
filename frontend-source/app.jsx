@@ -34,6 +34,7 @@ function App() {
   const [jobId, setJobId] = useState(null);
   const cancelRef = useRef({ cancelled: false });
   const processingStartRef = useRef(null);
+  const lastLogIdxRef = useRef(0);
 
   useEffect(() => {
     if (!localStorage.getItem(ONBOARDING_KEY)) setShowOnboarding(true);
@@ -72,6 +73,7 @@ function App() {
     setResult(null);
     setStage("idle");
     setProgress({ processed: 0, total: 0, currentLine: "", etaSecs: null });
+    lastLogIdxRef.current = 0;
     pushLog(`Arquivo selecionado: ${f.name}`, "ok");
   };
   const handleClear = () => {
@@ -80,6 +82,7 @@ function App() {
     setResult(null);
     setLogLines([]);
     setProgress({ processed: 0, total: 0, currentLine: "", etaSecs: null });
+    lastLogIdxRef.current = 0;
   };
 
   const handleSubmit = async () => {
@@ -129,8 +132,15 @@ function App() {
       try {
         const prog = await fetch(`/progresso/${jid}`).then(r => r.json());
 
-        // Exibe nova linha no terminal só quando mudar
-        if (prog.current_line && prog.current_line !== lastLine) {
+        // Drena logs detalhados acumulados no backend
+        if (Array.isArray(prog.logs) && prog.logs.length > lastLogIdxRef.current) {
+          const novos = prog.logs.slice(lastLogIdxRef.current);
+          lastLogIdxRef.current = prog.logs.length;
+          for (const entry of novos) {
+            pushLog(entry.text, entry.kind || "");
+          }
+        } else if (!prog.logs && prog.current_line && prog.current_line !== lastLine) {
+          // fallback para backend antigo sem campo logs
           lastLine = prog.current_line;
           const kind = prog.status === "failed" ? "err"
             : (prog.current_line || "").includes("OK") ? "ok"

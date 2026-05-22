@@ -27,7 +27,7 @@ import logging
 import os
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -124,6 +124,7 @@ class ContatoObra:
     tel_prop_2: str = ""
     email_prop: str = ""
     erro: str = ""
+    log_messages: list = field(default_factory=list)  # logs detalhados para o terminal da UI
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +310,7 @@ class MaisObrasScraper:
         cidade: str = "",
         ccp: str = "0",
         sequence_id: str = "",
+        log_cb=None,
     ) -> dict:
         """
         Replica o botao "Ver Mais": POST /api/pesquisa_contatos_api
@@ -337,7 +339,10 @@ class MaisObrasScraper:
                         nome[:30], len(candidatos),
                         [(c.get("Name", "?")[:25], c.get("Location", "")) for c in candidatos[:4]],
                     )
-                    escolhido = self._escolher_resultado_ver_mais(nome, uf, candidatos, cidade=cidade)
+                    if log_cb:
+                        resumo = " | ".join(f"'{c.get('Name','?')[:20]}' {c.get('Location','')}" for c in candidatos[:4])
+                        log_cb(f"    ver_mais: {len(candidatos)} candidato(s) → {resumo}")
+                    escolhido = self._escolher_resultado_ver_mais(nome, uf, candidatos, cidade=cidade, log_cb=log_cb)
                     if escolhido and escolhido.get("SequentialId") and not sequence_id:
                         logger.info(
                             "[%s] Ver Mais selecionado: '%s' loc='%s' (seq=%s)",
@@ -351,6 +356,7 @@ class MaisObrasScraper:
                             cidade=cidade,
                             ccp=ccp,
                             sequence_id=str(escolhido.get("SequentialId")),
+                            log_cb=log_cb,
                         )
                 return data
         except Exception as e:
@@ -358,7 +364,7 @@ class MaisObrasScraper:
         return {}
 
     def _ia_localizar_candidato(
-        self, nome: str, cidade: str, uf: str, candidatos: list[dict]
+        self, nome: str, cidade: str, uf: str, candidatos: list[dict], log_cb=None
     ) -> dict | None:
         """
         Usa Mistral AI para interpretar qual candidato corresponde à localização esperada.
@@ -405,10 +411,9 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
 
             content = response.choices[0].message.content.strip()
             if content.lower() in ("null", "none", ""):
-                logger.info(
-                    "IA Ver Mais: nenhum candidato bate com localização de '%s' (%s/%s)",
-                    nome[:30], cidade, uf,
-                )
+                msg = f"    IA: nenhum candidato bate com {cidade or uf} — descartando"
+                logger.info("IA Ver Mais: nenhum candidato bate com localização de '%s' (%s/%s)", nome[:30], cidade, uf)
+                if log_cb: log_cb(msg)
                 return None
 
             m = re.search(r"\d+", content)
@@ -417,18 +422,18 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
             idx = int(m.group())
             if 0 <= idx < len(candidatos):
                 c = candidatos[idx]
-                logger.info(
-                    "IA Ver Mais: [%d] '%s' loc='%s' escolhido para '%s'",
-                    idx, c.get("Name", "?")[:30], c.get("Location", ""), nome[:30],
-                )
+                msg = f"    IA: '{c.get('Name','?')[:30]}' loc='{c.get('Location','')}' ✓"
+                logger.info("IA Ver Mais: [%d] '%s' loc='%s' escolhido para '%s'", idx, c.get("Name","?")[:30], c.get("Location",""), nome[:30])
+                if log_cb: log_cb(msg)
                 return c
 
         except Exception as e:
             logger.warning("Mistral falhou na seleção de candidato Ver Mais: %s", e)
+            if log_cb: log_cb(f"    IA: falhou ({e}), usando score simples")
         return None
 
     def _escolher_resultado_ver_mais(
-        self, nome: str, uf: str, resultados: list[dict], cidade: str = ""
+        self, nome: str, uf: str, resultados: list[dict], cidade: str = "", log_cb=None
     ) -> dict | None:
         """
         Escolhe o candidato certo na lista do Ver Mais em dois estágios:
@@ -456,19 +461,13 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
 
         max_nome = max(nome_score(c) for c in candidatos)
         if max_nome == 0:
-            logger.warning(
-                "Ver Mais: nenhum candidato com nome compativel para '%s' "
-                "(%d resultados) — descartando",
-                nome[:40], len(candidatos),
-            )
+            msg = f"    ver_mais: nenhum candidato com nome compativel ({len(candidatos)} resultados) — descartando"
+            logger.warning("Ver Mais: nenhum candidato com nome compativel para '%s' (%d resultados) — descartando", nome[:40], len(candidatos))
+            if log_cb: log_cb(msg)
             return None
 
         # Apenas candidatos com melhor score de nome
         melhores = [c for c in candidatos if nome_score(c) == max_nome]
-        logger.debug(
-            "Ver Mais: %d candidato(s) com nome compativel para '%s'",
-            len(melhores), nome[:30],
-        )
 
         uf_norm = _normalizar(uf)
         cidade_norm = _normalizar(cidade)
@@ -486,35 +485,25 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
         if len(melhores) == 1:
             c = melhores[0]
             if (cidade or uf) and loc_score(c) == 0:
-                logger.info(
-                    "Ver Mais: candidato único '%s' loc='%s' não bate com %s/%s — consultando IA",
-                    c.get("Name", "?")[:30], c.get("Location", ""), cidade, uf,
-                )
-                ia = self._ia_localizar_candidato(nome, cidade, uf, melhores)
+                if log_cb: log_cb(f"    ver_mais: 1 candidato '{c.get('Name','?')[:25]}' loc='{c.get('Location','')}' — sem match de localização, consultando IA")
+                ia = self._ia_localizar_candidato(nome, cidade, uf, melhores, log_cb=log_cb)
                 if ia is None:
-                    logger.warning(
-                        "IA confirmou que '%s' loc='%s' nao corresponde a %s/%s — descartando",
-                        c.get("Name", "?")[:30], c.get("Location", ""), cidade, uf,
-                    )
                     return None
+            else:
+                if log_cb: log_cb(f"    ver_mais: candidato único '{c.get('Name','?')[:25]}' loc='{c.get('Location','')}' ✓")
             return c
 
         # Múltiplos candidatos com mesmo nome — IA desempata pela localização
-        logger.info(
-            "Ver Mais: %d candidatos com mesmo nome para '%s' — IA desempatando",
-            len(melhores), nome[:30],
-        )
-        ia = self._ia_localizar_candidato(nome, cidade, uf, melhores)
+        nomes_lista = ", ".join(f"'{c.get('Name','?')[:20]}' ({c.get('Location','')})" for c in melhores[:3])
+        if log_cb: log_cb(f"    ver_mais: {len(melhores)} candidatos com mesmo nome → IA desempata: {nomes_lista}")
+        ia = self._ia_localizar_candidato(nome, cidade, uf, melhores, log_cb=log_cb)
         if ia:
             return ia
 
         # Fallback: score de localização simples
         melhor = max(melhores, key=loc_score)
         if loc_score(melhor) == 0:
-            logger.warning(
-                "Ver Mais: sem correspondência de localização para '%s' — usando primeiro da lista",
-                nome[:30],
-            )
+            if log_cb: log_cb(f"    ver_mais: fallback — sem match de localização, usando '{melhor.get('Name','?')[:25]}'")
         return melhor
 
     def _extrair_contato(self, resposta: dict) -> tuple[list[str], list[str]]:
@@ -577,15 +566,17 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
         return _unicos(telefones), _unicos(emails)
 
     async def _coletar_contato_pessoa(
-        self, nome: str, tipo: str, uf: str, cidade: str = ""
+        self, nome: str, tipo: str, uf: str, cidade: str = "", log_cb=None
     ) -> tuple[list[str], list[str]]:
         # --- Etapa 1: /pesquisa_perfil ---
         resp = await self._buscar_perfil(nome=nome, tipo=tipo, uf=uf)
         telefones_perfil, emails_perfil = self._extrair_contato(resp)
-        logger.info(
-            "[%s] pesquisa_perfil: %d tel, %d email — %s",
-            nome[:30], len(telefones_perfil), len(emails_perfil), telefones_perfil[:2],
-        )
+        logger.info("[%s] pesquisa_perfil: %d tel, %d email — %s", nome[:30], len(telefones_perfil), len(emails_perfil), telefones_perfil[:2])
+        if log_cb:
+            if telefones_perfil:
+                log_cb(f"    perfil: {len(telefones_perfil)} tel → {', '.join(telefones_perfil[:2])}")
+            else:
+                log_cb(f"    perfil: sem telefone")
 
         perfil = resp.get("perfil")
         cpf_cnpj = ""
@@ -594,10 +585,7 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
             principal = next((p for p in perfil if p.get("cpfcnpj")), perfil[0])
             cpf_cnpj = principal.get("cpfcnpj") or ""
             uf_ver_mais = principal.get("uf") or uf
-            logger.info(
-                "[%s] cpfcnpj para Ver Mais: %s | uf: %s",
-                nome[:30], cpf_cnpj[:8] + "***" if cpf_cnpj else "(vazio)", uf_ver_mais,
-            )
+            logger.info("[%s] cpfcnpj para Ver Mais: %s | uf: %s", nome[:30], cpf_cnpj[:8] + "***" if cpf_cnpj else "(vazio)", uf_ver_mais)
 
         # --- Etapa 2: Ver Mais (/api/pesquisa_contatos_api) ---
         resp_api = await self._buscar_ver_mais(
@@ -605,18 +593,18 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
             cpf_cnpj=cpf_cnpj,
             uf=uf_ver_mais,
             cidade=cidade,
+            log_cb=log_cb,
         )
         telefones_vm, emails_vm = self._extrair_contato_ver_mais(resp_api)
-        logger.info(
-            "[%s] ver_mais: %d tel — %s",
-            nome[:30], len(telefones_vm), telefones_vm[:2],
-        )
+        logger.info("[%s] ver_mais: %d tel — %s", nome[:30], len(telefones_vm), telefones_vm[:2])
 
         # Ver Mais tem precedência: seus dados passaram por validação de nome.
         # Só usa pesquisa_perfil como fallback quando Ver Mais não retornou nada.
         if telefones_vm:
+            if log_cb: log_cb(f"    ver_mais tel: {', '.join(telefones_vm[:2])}")
             return _unicos(telefones_vm), _unicos(emails_vm or emails_perfil)
 
+        if log_cb: log_cb(f"    ver_mais: vazio — usando fallback perfil")
         logger.info("[%s] Ver Mais vazio — usando fallback pesquisa_perfil", nome[:30])
         return _unicos(telefones_perfil), _unicos(emails_perfil)
 
@@ -636,23 +624,23 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
             resultado.erro = "Scraper não autenticado"
             return resultado
 
+        log = resultado.log_messages.append  # atalho para logar na UI
+
         # --- Arquiteto / Profissional ---
         resultado.nome_arquiteto = obra.nome_profissional
         if obra.nome_profissional:
             if _eh_empresa(obra.nome_profissional):
-                # Apenas loga — empresa não é buscada no Mais Obras.
-                # Não seta resultado.erro: isso bloquearia o proprietário também.
-                logger.warning(
-                    "[%s] Empresa detectada no campo profissional — busca ignorada",
-                    obra.nome_profissional[:40],
-                )
+                logger.warning("[%s] Empresa detectada no campo profissional — busca ignorada", obra.nome_profissional[:40])
+                log(f"  ARQ: '{obra.nome_profissional[:45]}' → empresa, sem busca")
             else:
+                log(f"  ARQ: buscando '{obra.nome_profissional[:45]}'…")
                 try:
                     tels, emails = await self._coletar_contato_pessoa(
                         nome=obra.nome_profissional,
                         tipo="Profissional",
                         uf=obra.uf,
                         cidade=obra.cidade,
+                        log_cb=log,
                     )
                     if len(tels) > 0:
                         resultado.tel_arq_1 = tels[0]
@@ -660,25 +648,29 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
                         resultado.tel_arq_2 = tels[1]
                     if emails:
                         resultado.email_arq = emails[0]
+                    if tels:
+                        log(f"  ARQ ✓ tel: {tels[0]}" + (f", {tels[1]}" if len(tels) > 1 else ""))
+                    else:
+                        log(f"  ARQ: sem telefone")
                 except Exception as e:
                     logger.warning(f"[{obra.nome_profissional[:20]}] Erro arquiteto: {e}")
+                    log(f"  ARQ: erro — {e}")
 
         # --- Proprietário ---
         resultado.nome_proprietario = obra.nome_proprietario
         if obra.nome_proprietario:
             if _eh_empresa(obra.nome_proprietario):
-                # Mesmo critério: apenas loga, não bloqueia o registro.
-                logger.warning(
-                    "[%s] Empresa detectada no campo proprietário — busca ignorada",
-                    obra.nome_proprietario[:40],
-                )
+                logger.warning("[%s] Empresa detectada no campo proprietário — busca ignorada", obra.nome_proprietario[:40])
+                log(f"  PROP: '{obra.nome_proprietario[:45]}' → empresa, sem busca")
             else:
+                log(f"  PROP: buscando '{obra.nome_proprietario[:45]}'…")
                 try:
                     tels, emails = await self._coletar_contato_pessoa(
                         nome=obra.nome_proprietario,
                         tipo="Proprietário",
                         uf=obra.uf,
                         cidade=obra.cidade,
+                        log_cb=log,
                     )
                     if len(tels) > 0:
                         resultado.tel_prop_1 = tels[0]
@@ -686,8 +678,13 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
                         resultado.tel_prop_2 = tels[1]
                     if emails:
                         resultado.email_prop = emails[0]
+                    if tels:
+                        log(f"  PROP ✓ tel: {tels[0]}" + (f", {tels[1]}" if len(tels) > 1 else ""))
+                    else:
+                        log(f"  PROP: sem telefone")
                 except Exception as e:
                     logger.warning(f"[{obra.nome_proprietario[:20]}] Erro proprietário: {e}")
+                    log(f"  PROP: erro — {e}")
 
         logger.info(
             f"[{obra.nome_profissional[:18]:18}] "
