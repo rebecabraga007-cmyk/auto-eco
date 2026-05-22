@@ -124,10 +124,14 @@ def carregar_excel(conteudo: bytes) -> tuple[openpyxl.Workbook, list[ObraRow], i
             "Verifique se o arquivo contém colunas com esses dados."
         )
 
+    # Valores que indicam NULL em exportações de banco de dados (MySQL, PostgreSQL, etc.)
+    _NULL_INDICATORS = {r"\n", r"\N", "null", "NULL", "none", "None", "NA", "N/A", "#N/A"}
+
     def _get_col(row: tuple, idx: int | None) -> str:
         if idx is None or idx >= len(row):
             return ""
-        return str(row[idx] or "").strip()
+        val = str(row[idx] or "").strip()
+        return "" if val in _NULL_INDICATORS else val
 
     obras: list[ObraRow] = []
     for row_idx, row in enumerate(

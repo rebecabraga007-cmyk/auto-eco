@@ -604,7 +604,14 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
             if log_cb: log_cb(f"    ver_mais tel: {', '.join(telefones_vm[:2])}")
             return _unicos(telefones_vm), _unicos(emails_vm or emails_perfil)
 
-        if log_cb: log_cb(f"    ver_mais: vazio — usando fallback perfil")
+        # Inspeciona o tipo de retorno para distinguir no log
+        _vm_result = resp_api.get("result")
+        if not resp_api or resp_api == {}:
+            if log_cb: log_cb(f"    ver_mais: sem resposta da API — usando fallback perfil")
+        elif resp_api.get("is_array") and not resp_api.get("result"):
+            if log_cb: log_cb(f"    ver_mais: API não retornou candidatos — usando fallback perfil")
+        else:
+            if log_cb: log_cb(f"    ver_mais: candidato encontrado mas sem telefone — usando fallback perfil")
         logger.info("[%s] Ver Mais vazio — usando fallback pesquisa_perfil", nome[:30])
         return _unicos(telefones_perfil), _unicos(emails_perfil)
 
