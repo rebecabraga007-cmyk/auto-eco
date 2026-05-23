@@ -333,6 +333,15 @@ class MaisObrasScraper:
                 BASE_URL + "/api/pesquisa_contatos_api",
                 data={"contato": json.dumps(payload, ensure_ascii=False)},
             )
+            # Log de diagnóstico: sempre registra status e snippet da resposta
+            logger.info(
+                "[%s] Ver Mais HTTP %d | seq=%s | body[:120]=%s",
+                nome[:25], r.status_code, sequence_id or "(lista)",
+                r.text[:120] if r.text else "(vazio)",
+            )
+            if log_cb:
+                log_cb(f"    ver_mais HTTP {r.status_code} | {r.text[:80] if r.text else '(vazio)'}")
+
             if r.status_code == 200 and r.text.strip():
                 data = r.json()
                 if data.get("is_array") is True and isinstance(data.get("result"), list):
@@ -369,7 +378,9 @@ class MaisObrasScraper:
                         )
                 return data
         except Exception as e:
-            logger.debug(f"Erro em /api/pesquisa_contatos_api ({nome}): {e}")
+            logger.warning("Erro em /api/pesquisa_contatos_api (%s): %s", nome[:25], e)
+            if log_cb:
+                log_cb(f"    ver_mais ERRO: {e}")
         return {}
 
     def _ia_localizar_candidato(
