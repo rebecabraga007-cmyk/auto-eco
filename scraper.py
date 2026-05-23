@@ -133,14 +133,20 @@ class ContatoObra:
 
 class MaisObrasScraper:
     """
-    Scraper baseado em httpx (sem browser).
-    Mantém uma sessão autenticada e chama diretamente
-    o endpoint /pesquisa_perfil para cada obra.
+    Scraper com httpx para /pesquisa_perfil e Playwright para /api/pesquisa_contatos_api.
+    O Ver Mais exige sessão real de browser — httpx sozinho não consegue autenticar
+    nesse endpoint. O Playwright compartilha os cookies do login httpx.
     """
 
     def __init__(self):
         self._client: httpx.AsyncClient | None = None
         self._authenticated = False
+        # Playwright (Ver Mais)
+        self._pw = None
+        self._pw_browser = None
+        self._pw_context = None
+        self._pw_page = None
+        self._pw_lock = asyncio.Lock()   # serializa chamadas ao browser
 
     # ------------------------------------------------------------------
     # Ciclo de vida
@@ -155,11 +161,45 @@ class MaisObrasScraper:
         )
         logger.info("Cliente httpx iniciado.")
 
+        # Inicia Playwright para o Ver Mais
+        try:
+            from playwright.async_api import async_playwright
+            self._pw = await async_playwright().start()
+            self._pw_browser = await self._pw.chromium.launch(headless=True)
+            self._pw_context = await self._pw_browser.new_context(
+                user_agent=HEADERS["User-Agent"],
+                extra_http_headers={
+                    "Accept-Language": "pt-BR,pt;q=0.9",
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            )
+            self._pw_page = await self._pw_context.new_page()
+            logger.info("Playwright iniciado (Ver Mais ativo).")
+        except ImportError:
+            logger.warning("playwright não instalado — Ver Mais usará httpx (pode não funcionar).")
+        except Exception as e:
+            logger.warning("Playwright falhou ao iniciar: %s — Ver Mais usará httpx.", e)
+
     async def stop(self):
         if self._client:
             await self._client.aclose()
         self._authenticated = False
-        logger.info("Cliente httpx encerrado.")
+        for obj, method in [
+            (self._pw_page, "close"),
+            (self._pw_context, "close"),
+            (self._pw_browser, "close"),
+        ]:
+            if obj:
+                try:
+                    await getattr(obj, method)()
+                except Exception:
+                    pass
+        if self._pw:
+            try:
+                await self._pw.stop()
+            except Exception:
+                pass
+        logger.info("httpx e Playwright encerrados.")
 
     # ------------------------------------------------------------------
     # Login
@@ -253,6 +293,8 @@ class MaisObrasScraper:
                     if is_logado:
                         self._authenticated = True
                         logger.info(f"Login OK via {endpoint}. URL final: {r.url}")
+                        # Copia sessão httpx para o Playwright
+                        await self._sincronizar_sessao_playwright()
                         return True
 
                 # Se status 200 mas sem redirecionamento, pode ser que
@@ -263,6 +305,7 @@ class MaisObrasScraper:
                             if data.get("success") or data.get("status") == "ok":
                                 self._authenticated = True
                                 logger.info(f"Login OK via {endpoint} (JSON).")
+                                await self._sincronizar_sessao_playwright()
                                 return True
                         except Exception:
                             pass
@@ -273,6 +316,38 @@ class MaisObrasScraper:
         except Exception as e:
             logger.error(f"Erro durante login: {e}")
             return False
+
+    async def _sincronizar_sessao_playwright(self):
+        """
+        Copia cookies do httpx para o Playwright e navega para a área logada.
+        Necessário para que page.evaluate() possa chamar /api/pesquisa_contatos_api
+        com a mesma sessão autenticada.
+        """
+        if not self._pw_page:
+            return
+        try:
+            # Converte cookies httpx → formato Playwright
+            pw_cookies = []
+            for name, value in self._client.cookies.items():
+                pw_cookies.append({
+                    "name": name,
+                    "value": value,
+                    "domain": "www.maisobras.online",
+                    "path": "/",
+                })
+            if pw_cookies:
+                await self._pw_context.add_cookies(pw_cookies)
+                logger.info("Playwright: %d cookie(s) sincronizados.", len(pw_cookies))
+
+            # Navega para área logada para estabelecer contexto da página
+            await self._pw_page.goto(
+                BASE_URL + "/pesquisa_obras",
+                wait_until="domcontentloaded",
+                timeout=25000,
+            )
+            logger.info("Playwright: página pesquisa_obras carregada. URL=%s", self._pw_page.url)
+        except Exception as e:
+            logger.warning("Playwright sincronização de sessão falhou: %s", e)
 
     # ------------------------------------------------------------------
     # Coleta de contatos via /pesquisa_perfil
@@ -302,6 +377,62 @@ class MaisObrasScraper:
             logger.debug(f"Erro em /pesquisa_perfil ({nome}): {e}")
         return {}
 
+    async def _chamar_api_ver_mais(self, payload: dict, nome_log: str) -> tuple[int, dict]:
+        """
+        Faz UMA chamada HTTP ao /api/pesquisa_contatos_api.
+        Usa Playwright (browser com sessão real) se disponível; httpx como fallback.
+        Retorna (status_http, dict_resposta).
+        """
+        contato_json = json.dumps(payload, ensure_ascii=False)
+
+        # ── Playwright (preferencial) ───────────────────────────────────────
+        if self._pw_page:
+            async with self._pw_lock:
+                try:
+                    result = await self._pw_page.evaluate(
+                        """async ([url, contato]) => {
+                            const fd = new FormData();
+                            fd.append('contato', contato);
+                            try {
+                                const r = await fetch(url, {
+                                    method: 'POST',
+                                    body: fd,
+                                    headers: {'X-Requested-With': 'XMLHttpRequest'}
+                                });
+                                return {ok: true, status: r.status, body: await r.text()};
+                            } catch(e) {
+                                return {ok: false, status: 0, body: '', error: String(e)};
+                            }
+                        }""",
+                        [BASE_URL + "/api/pesquisa_contatos_api", contato_json],
+                    )
+                    status = result.get("status", 0)
+                    body = result.get("body", "")
+                    logger.info("[%s] Ver Mais PW HTTP %d | seq=%s | body[:120]=%s",
+                        nome_log[:25], status, payload.get("sequence_id", "(lista)"), body[:120])
+                    if status == 200 and body.strip():
+                        return status, json.loads(body)
+                    if not result.get("ok"):
+                        logger.warning("[%s] Ver Mais PW fetch error: %s", nome_log[:25], result.get("error"))
+                    return status, {}
+                except Exception as e:
+                    logger.warning("[%s] Ver Mais PW exception: %s", nome_log[:25], e)
+                    return 0, {}
+
+        # ── Fallback: httpx ─────────────────────────────────────────────────
+        try:
+            r = await self._client.post(
+                BASE_URL + "/api/pesquisa_contatos_api",
+                data={"contato": contato_json},
+            )
+            logger.info("[%s] Ver Mais httpx HTTP %d | seq=%s | body[:120]=%s",
+                nome_log[:25], r.status_code, payload.get("sequence_id", "(lista)"), r.text[:120])
+            if r.status_code == 200 and r.text.strip():
+                return r.status_code, json.loads(r.text)
+        except Exception as e:
+            logger.warning("[%s] Ver Mais httpx exception: %s", nome_log[:25], e)
+        return 0, {}
+
     async def _buscar_ver_mais(
         self,
         nome: str,
@@ -312,14 +443,12 @@ class MaisObrasScraper:
         log_cb=None,
     ) -> dict:
         """
-        Replica o botao "Ver Mais": POST /api/pesquisa_contatos_api
-        com o campo form-data `contato` contendo o dataset em JSON.
+        Fluxo Ver Mais em dois passos:
+          1. Chamada de LISTA (sem sequence_id) → retorna candidatos com Name/Location/SequentialId
+          2. Chamada de DETALHE (com sequence_id escolhido) → retorna Phones/Emails
+        Usa Playwright para autenticação real de browser.
         """
-        # Monta payload replicando o comportamento do site:
-        # - Chamada de LISTA (sem sequence_id): { nome, cpfcnpj, uf }
-        # - Chamada de DETALHE (com sequence_id): { nome, cidade, uf, cpfcnpj, sequence_id }
-        # 'cidade' só vai na chamada de detalhe — o site extrai do Location do candidato.
-        payload = {
+        payload: dict = {
             "nome": nome or "",
             "cpfcnpj": cpf_cnpj or "",
             "uf": uf or "",
@@ -328,60 +457,42 @@ class MaisObrasScraper:
             payload["sequence_id"] = sequence_id
             payload["cidade"] = cidade or ""  # obrigatório na chamada de detalhe
 
-        try:
-            r = await self._client.post(
-                BASE_URL + "/api/pesquisa_contatos_api",
-                data={"contato": json.dumps(payload, ensure_ascii=False)},
-            )
-            # Log de diagnóstico: sempre registra status e snippet da resposta
-            logger.info(
-                "[%s] Ver Mais HTTP %d | seq=%s | body[:120]=%s",
-                nome[:25], r.status_code, sequence_id or "(lista)",
-                r.text[:120] if r.text else "(vazio)",
-            )
-            if log_cb:
-                log_cb(f"    ver_mais HTTP {r.status_code} | {r.text[:80] if r.text else '(vazio)'}")
+        _status, data = await self._chamar_api_ver_mais(payload, nome)
 
-            if r.status_code == 200 and r.text.strip():
-                data = r.json()
-                if data.get("is_array") is True and isinstance(data.get("result"), list):
-                    candidatos = data["result"]
-                    logger.info(
-                        "[%s] Ver Mais lista: %d candidato(s) — %s",
-                        nome[:30], len(candidatos),
-                        [(c.get("Name", "?")[:25], c.get("Location", "")) for c in candidatos[:4]],
-                    )
-                    if log_cb:
-                        resumo = " | ".join(f"'{c.get('Name','?')[:20]}' {c.get('Location','')}" for c in candidatos[:4])
-                        log_cb(f"    ver_mais: {len(candidatos)} candidato(s) → {resumo}")
-                    escolhido = self._escolher_resultado_ver_mais(nome, uf, candidatos, cidade=cidade, log_cb=log_cb)
-                    if escolhido and escolhido.get("SequentialId") and not sequence_id:
-                        # Extrai cidade do candidato selecionado (formato "CIDADE - UF")
-                        # para replicar exatamente o que o site faz: usa a cidade do candidato,
-                        # não a cidade da obra — a API espera a cidade do registro.
-                        loc_raw = escolhido.get("Location") or ""
-                        loc_parts = loc_raw.split("-")
-                        cidade_candidato = loc_parts[0].strip() if loc_parts else cidade
-                        uf_candidato = loc_parts[1].strip() if len(loc_parts) > 1 else uf
-                        logger.info(
-                            "[%s] Ver Mais selecionado: '%s' loc='%s' cidade='%s' uf='%s' (seq=%s)",
-                            nome[:30], escolhido.get("Name", "?")[:30],
-                            loc_raw, cidade_candidato, uf_candidato, escolhido.get("SequentialId"),
-                        )
-                        return await self._buscar_ver_mais(
-                            nome=escolhido.get("Name") or nome,
-                            cpf_cnpj=cpf_cnpj,
-                            uf=uf_candidato or uf,
-                            cidade=cidade_candidato or cidade,
-                            sequence_id=str(escolhido.get("SequentialId")),
-                            log_cb=log_cb,
-                        )
-                return data
-        except Exception as e:
-            logger.warning("Erro em /api/pesquisa_contatos_api (%s): %s", nome[:25], e)
+        if log_cb and not data:
+            log_cb(f"    ver_mais: sem resposta (HTTP {_status})")
+
+        # Resposta de LISTA — escolhe candidato e faz chamada de detalhe
+        if data.get("is_array") is True and isinstance(data.get("result"), list):
+            candidatos = data["result"]
+            logger.info("[%s] Ver Mais lista: %d candidato(s) — %s",
+                nome[:30], len(candidatos),
+                [(c.get("Name", "?")[:25], c.get("Location", "")) for c in candidatos[:4]])
             if log_cb:
-                log_cb(f"    ver_mais ERRO: {e}")
-        return {}
+                resumo = " | ".join(
+                    f"'{c.get('Name','?')[:20]}' {c.get('Location','')}" for c in candidatos[:4]
+                )
+                log_cb(f"    ver_mais: {len(candidatos)} candidato(s) → {resumo}")
+
+            escolhido = self._escolher_resultado_ver_mais(nome, uf, candidatos, cidade=cidade, log_cb=log_cb)
+            if escolhido and escolhido.get("SequentialId") and not sequence_id:
+                loc_raw = escolhido.get("Location") or ""
+                loc_parts = loc_raw.split("-")
+                cidade_candidato = loc_parts[0].strip() if loc_parts else cidade
+                uf_candidato = loc_parts[1].strip() if len(loc_parts) > 1 else uf
+                logger.info("[%s] Ver Mais selecionado: '%s' loc='%s' (seq=%s)",
+                    nome[:30], escolhido.get("Name", "?")[:30], loc_raw, escolhido.get("SequentialId"))
+                # Chamada de detalhe (sem lock aninhado pois _chamar_api_ver_mais gerencia o lock)
+                return await self._buscar_ver_mais(
+                    nome=escolhido.get("Name") or nome,
+                    cpf_cnpj=cpf_cnpj,
+                    uf=uf_candidato or uf,
+                    cidade=cidade_candidato or cidade,
+                    sequence_id=str(escolhido.get("SequentialId")),
+                    log_cb=log_cb,
+                )
+
+        return data
 
     def _ia_localizar_candidato(
         self, nome: str, cidade: str, uf: str, candidatos: list[dict], log_cb=None
