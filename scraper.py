@@ -521,10 +521,6 @@ class MaisObrasScraper:
                         nome_log[:25], status, method, logged_in, page_url[:60],
                         payload.get("sequence_id", "(lista)"), body[:200]
                     )
-                    if log_cb:
-                        seq_tag = f"seq={payload['sequence_id']}" if payload.get("sequence_id") else "lista"
-                        auth_tag = "" if logged_in is None else (" loggedIn=SIM" if logged_in else " loggedIn=NAO!")
-                        log_cb(f"    [DBG] ver_mais {seq_tag} {method} HTTP {status}{auth_tag} → {body[:100] or '(vazio)'}")
                     if status == 200 and body.strip():
                         return status, json.loads(body), body
                     if not result.get("ok"):
@@ -532,8 +528,6 @@ class MaisObrasScraper:
                     return status, {}, body
                 except Exception as e:
                     logger.warning("[%s] Ver Mais PW exception: %s", nome_log[:25], e)
-                    if log_cb:
-                        log_cb(f"    [DBG] ver_mais PW exception: {e}")
                     return 0, {}, ""
 
         # ── Fallback: httpx ─────────────────────────────────────────────────
@@ -545,9 +539,6 @@ class MaisObrasScraper:
             body = r.text
             logger.info("[%s] Ver Mais httpx HTTP %d | seq=%s | body[:200]=%s",
                 nome_log[:25], r.status_code, payload.get("sequence_id", "(lista)"), body[:200])
-            if log_cb:
-                seq_tag = f"seq={payload['sequence_id']}" if payload.get("sequence_id") else "lista"
-                log_cb(f"    [DBG] ver_mais {seq_tag} httpx HTTP {r.status_code} → {body[:100] or '(vazio)'}")
             if r.status_code == 200 and body.strip():
                 return r.status_code, json.loads(body), body
         except Exception as e:
@@ -591,9 +582,6 @@ class MaisObrasScraper:
                 "sequence_id": sequence_id,
             }
 
-        if log_cb and not sequence_id:
-            log_cb(f"    [DBG] payload → nome='{nome[:30]}' uf='{uf}' ccp=1")
-
         _status, data, _body = await self._chamar_api_ver_mais(payload, nome, log_cb=log_cb)
 
         # A API pode retornar [] (lista vazia) quando não encontra nada —
@@ -602,9 +590,6 @@ class MaisObrasScraper:
         if not isinstance(data, dict):
             logger.info("[%s] Ver Mais retornou %s — tratando como vazio.", nome[:25], type(data).__name__)
             return {"_empty_result": True}
-
-        if log_cb and not data:
-            log_cb(f"    ver_mais: sem resposta (HTTP {_status})")
 
         # Resposta de LISTA — escolhe candidato e faz chamada de detalhe
         if data.get("is_array") is True and isinstance(data.get("result"), list):
@@ -880,16 +865,7 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
             if log_cb: log_cb(f"    ver_mais tel: {', '.join(telefones_vm[:2])}")
             return _unicos(telefones_vm), _unicos(emails_vm or emails_perfil)
 
-        # Inspeciona o tipo de retorno para log único e preciso
-        if resp_api.get("_empty_result"):
-            if log_cb: log_cb(f"    ver_mais: sem resultados — usando fallback perfil")
-        elif not resp_api or resp_api == {}:
-            if log_cb: log_cb(f"    ver_mais: sem resposta da API — usando fallback perfil")
-        elif resp_api.get("is_array") and not resp_api.get("result"):
-            if log_cb: log_cb(f"    ver_mais: API não retornou candidatos — usando fallback perfil")
-        else:
-            if log_cb: log_cb(f"    ver_mais: candidato encontrado mas sem telefone — usando fallback perfil")
-        logger.info("[%s] Ver Mais vazio — usando fallback pesquisa_perfil", nome[:30])
+        logger.info("[%s] Ver Mais vazio — usando pesquisa_perfil", nome[:30])
         return _unicos(telefones_perfil), _unicos(emails_perfil)
 
     # ------------------------------------------------------------------
