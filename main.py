@@ -518,14 +518,64 @@ async def debug_ver_mais_js(obra_url: str = ""):
         page.on("request", on_request)
 
         try:
-            # Navega para a URL fornecida ou para a pesquisa de obras
-            target = obra_url.strip() or (scraper._pw_page and f"{os.getenv('MAISOBRAS_BASE_URL', 'https://www.maisobras.online')}/pesquisa_obras")
-            logger.info("[debug/ver_mais_js] Navegando para: %s", target)
-            await page.goto(target, wait_until="domcontentloaded", timeout=20000)
-            await page.wait_for_timeout(2000)
+            base_url = os.getenv("MAISOBRAS_BASE_URL", "https://www.maisobras.online")
+
+            # Se URL específica foi fornecida, usa ela; senão, acha obra automaticamente
+            if obra_url.strip():
+                target = obra_url.strip()
+                logger.info("[debug/ver_mais_js] Navegando para URL fornecida: %s", target)
+                await page.goto(target, wait_until="domcontentloaded", timeout=20000)
+                await page.wait_for_timeout(2000)
+            else:
+                # Passo 1: vai para pesquisa de obras
+                logger.info("[debug/ver_mais_js] Navegando para pesquisa_obras...")
+                await page.goto(base_url + "/pesquisa_obras", wait_until="networkidle", timeout=25000)
+                await page.wait_for_timeout(2000)
+
+                # Passo 2: busca todos os links de obras na página atual
+                obra_links = await page.evaluate("""(base) => {
+                    const links = [...document.querySelectorAll('a[href]')];
+                    return links
+                        .map(a => a.href)
+                        .filter(href =>
+                            href.includes('/pesquisa_obras/') ||
+                            href.includes('/obras/') ||
+                            href.includes('/detalhe/') ||
+                            href.includes('/view/') ||
+                            href.includes('/ver/')
+                        )
+                        .filter((v, i, a) => a.indexOf(v) === i)
+                        .slice(0, 5);
+                }""", base_url)
+
+                logger.info("[debug/ver_mais_js] Links de obras encontrados: %s", obra_links)
+
+                if obra_links:
+                    # Navega para o primeiro link de obra encontrado
+                    target = obra_links[0]
+                    logger.info("[debug/ver_mais_js] Abrindo obra: %s", target)
+                    await page.goto(target, wait_until="domcontentloaded", timeout=20000)
+                    await page.wait_for_timeout(2000)
+                else:
+                    # Tenta clicar no primeiro item de resultado se houver
+                    try:
+                        await page.click("table tbody tr:first-child td a", timeout=3000)
+                        await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                        await page.wait_for_timeout(1500)
+                    except Exception:
+                        pass
 
             page_url_atual = page.url
             page_title = await page.title()
+            logger.info("[debug/ver_mais_js] Página atual: %s | %s", page_url_atual, page_title)
+
+            # Todos os links da página (para diagnóstico)
+            all_links = await page.evaluate("""() => {
+                return [...document.querySelectorAll('a[href]')]
+                    .map(a => a.href)
+                    .filter((v,i,a) => a.indexOf(v) === i)
+                    .slice(0, 30);
+            }""")
 
             # 1. Coleta scripts externos carregados pela página
             script_srcs = await page.evaluate("""() => {
@@ -610,6 +660,7 @@ async def debug_ver_mais_js(obra_url: str = ""):
                 "inline_scripts_relevantes": inline_relevantes,
                 "js_externos_relevantes": js_sources_relevantes,
                 "todos_script_srcs": script_srcs,
+                "links_na_pagina": all_links,
             }
 
         except Exception as e:
