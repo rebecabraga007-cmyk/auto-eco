@@ -551,20 +551,22 @@ async def debug_ver_mais_js(obra_url: str = ""):
                 const all = [...document.querySelectorAll('*')];
                 return all
                     .filter(el => {
-                        const txt = el.textContent || '';
-                        const onclick = el.getAttribute('onclick') || '';
-                        const cls = el.className || '';
-                        return (txt.trim().toLowerCase().includes('ver mais') && el.children.length === 0) ||
-                               onclick.includes('pesquisa_contatos') ||
-                               onclick.includes('verMais') ||
-                               cls.includes('ver-mais') || cls.includes('ver_mais');
+                        try {
+                            const txt = el.textContent || '';
+                            const onclick = el.getAttribute('onclick') || '';
+                            const cls = String(el.className || '');
+                            return (txt.trim().toLowerCase().includes('ver mais') && el.children.length === 0) ||
+                                   onclick.includes('pesquisa_contatos') ||
+                                   onclick.includes('verMais') ||
+                                   cls.includes('ver-mais') || cls.includes('ver_mais');
+                        } catch(e) { return false; }
                     })
                     .slice(0, 10)
                     .map(el => ({
                         tag: el.tagName,
                         text: el.textContent.trim().substring(0, 80),
                         onclick: el.getAttribute('onclick') || '',
-                        className: (el.className || '').toString().substring(0, 100),
+                        className: String(el.className || '').substring(0, 100),
                         dataAttrs: JSON.stringify(el.dataset || {}),
                         href: el.getAttribute('href') || '',
                     }));
