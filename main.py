@@ -478,3 +478,149 @@ async def reautenticar(_token: str = Security(verificar_token)):
     if ok:
         return {"status": "autenticado"}
     raise HTTPException(503, "Falha na autenticação. Verifique as credenciais.")
+
+
+@app.get("/debug/ver_mais_js", tags=["Debug"])
+async def debug_ver_mais_js(obra_url: str = ""):
+    """
+    Usa Playwright para inspecionar o JS do Mais Obras e encontrar o handler
+    exato do botão 'Ver Mais' / endpoint pesquisa_contatos_api.
+
+    Parâmetros:
+      - obra_url: URL completa de uma obra no Mais Obras (opcional).
+                  Se não fornecida, usa a página de pesquisa de obras.
+
+    Retorna o trecho de JS que faz a chamada ao Ver Mais, além de
+    todos os scripts externos carregados pela página.
+    """
+    if not scraper._pw_page:
+        return {"erro": "Playwright não disponível — reinicie o servidor."}
+
+    async with scraper._pw_lock:
+        page = scraper._pw_page
+
+        # Captura requisições ao pesquisa_contatos_api durante a navegação
+        captured_request: dict = {}
+
+        async def on_request(request):
+            if "pesquisa_contatos_api" in request.url:
+                try:
+                    body = request.post_data or ""
+                except Exception:
+                    body = ""
+                captured_request.update({
+                    "url": request.url,
+                    "method": request.method,
+                    "headers": dict(request.headers),
+                    "post_data": body,
+                })
+
+        page.on("request", on_request)
+
+        try:
+            # Navega para a URL fornecida ou para a pesquisa de obras
+            target = obra_url.strip() or (scraper._pw_page and f"{os.getenv('MAISOBRAS_BASE_URL', 'https://www.maisobras.online')}/pesquisa_obras")
+            logger.info("[debug/ver_mais_js] Navegando para: %s", target)
+            await page.goto(target, wait_until="domcontentloaded", timeout=20000)
+            await page.wait_for_timeout(2000)
+
+            page_url_atual = page.url
+            page_title = await page.title()
+
+            # 1. Coleta scripts externos carregados pela página
+            script_srcs = await page.evaluate("""() => {
+                return [...document.querySelectorAll('script[src]')].map(s => s.src);
+            }""")
+
+            # 2. Coleta scripts inline e filtra os relevantes
+            inline_relevantes = await page.evaluate("""() => {
+                const scripts = [...document.querySelectorAll('script:not([src])')];
+                return scripts
+                    .map(s => s.textContent)
+                    .filter(t =>
+                        t.includes('pesquisa_contatos') ||
+                        t.includes('verMais') ||
+                        t.includes('ver_mais') ||
+                        t.includes('SequentialId') ||
+                        t.includes('sequence_id')
+                    );
+            }""")
+
+            # 3. Coleta botões/links com "Ver Mais" na página
+            ver_mais_elements = await page.evaluate("""() => {
+                const all = [...document.querySelectorAll('*')];
+                return all
+                    .filter(el => {
+                        const txt = el.textContent || '';
+                        const onclick = el.getAttribute('onclick') || '';
+                        const cls = el.className || '';
+                        return (txt.trim().toLowerCase().includes('ver mais') && el.children.length === 0) ||
+                               onclick.includes('pesquisa_contatos') ||
+                               onclick.includes('verMais') ||
+                               cls.includes('ver-mais') || cls.includes('ver_mais');
+                    })
+                    .slice(0, 10)
+                    .map(el => ({
+                        tag: el.tagName,
+                        text: el.textContent.trim().substring(0, 80),
+                        onclick: el.getAttribute('onclick') || '',
+                        className: (el.className || '').toString().substring(0, 100),
+                        dataAttrs: JSON.stringify(el.dataset || {}),
+                        href: el.getAttribute('href') || '',
+                    }));
+            }""")
+
+            # 4. Tenta buscar o conteúdo de scripts externos relevantes
+            js_sources_relevantes = []
+            for src in script_srcs:
+                if not src or "jquery" in src.lower() or "bootstrap" in src.lower():
+                    continue
+                try:
+                    js_content = await page.evaluate(
+                        """async (url) => {
+                            try {
+                                const r = await fetch(url);
+                                return await r.text();
+                            } catch(e) { return ''; }
+                        }""",
+                        src,
+                    )
+                    if any(k in js_content for k in ("pesquisa_contatos", "verMais", "ver_mais", "SequentialId", "sequence_id")):
+                        # Extrai só o trecho relevante (±500 chars ao redor da keyword)
+                        for keyword in ("pesquisa_contatos_api", "verMais", "ver_mais", "SequentialId"):
+                            idx = js_content.find(keyword)
+                            if idx >= 0:
+                                trecho = js_content[max(0, idx - 300): idx + 700]
+                                js_sources_relevantes.append({
+                                    "src": src,
+                                    "keyword": keyword,
+                                    "trecho": trecho,
+                                })
+                                break
+                except Exception as e:
+                    logger.debug("Erro ao buscar script %s: %s", src[:60], e)
+
+            return {
+                "page_url": page_url_atual,
+                "page_title": page_title,
+                "capturado_durante_navegacao": captured_request,
+                "ver_mais_elements": ver_mais_elements,
+                "inline_scripts_relevantes": inline_relevantes,
+                "js_externos_relevantes": js_sources_relevantes,
+                "todos_script_srcs": script_srcs,
+            }
+
+        except Exception as e:
+            logger.exception("Erro em debug/ver_mais_js")
+            return {"erro": str(e), "captured": captured_request}
+        finally:
+            try:
+                page.remove_listener("request", on_request)
+            except Exception:
+                pass
+            # Restaura a página para pesquisa_obras
+            try:
+                base = os.getenv("MAISOBRAS_BASE_URL", "https://www.maisobras.online")
+                await page.goto(base + "/pesquisa_obras", wait_until="domcontentloaded", timeout=10000)
+            except Exception:
+                pass
