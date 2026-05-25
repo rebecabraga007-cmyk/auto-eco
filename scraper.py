@@ -401,11 +401,13 @@ class MaisObrasScraper:
             logger.debug(f"Erro em /pesquisa_perfil ({nome}): {e}")
         return {}
 
-    async def _chamar_api_ver_mais(self, payload: dict, nome_log: str) -> tuple[int, dict]:
+    async def _chamar_api_ver_mais(
+        self, payload: dict, nome_log: str, log_cb=None
+    ) -> tuple[int, dict, str]:
         """
         Faz UMA chamada HTTP ao /api/pesquisa_contatos_api.
         Usa Playwright (browser com sessão real) se disponível; httpx como fallback.
-        Retorna (status_http, dict_resposta).
+        Retorna (status_http, dict_resposta, body_raw).
         """
         contato_json = json.dumps(payload, ensure_ascii=False)
 
@@ -432,16 +434,19 @@ class MaisObrasScraper:
                     )
                     status = result.get("status", 0)
                     body = result.get("body", "")
-                    logger.info("[%s] Ver Mais PW HTTP %d | seq=%s | body[:120]=%s",
-                        nome_log[:25], status, payload.get("sequence_id", "(lista)"), body[:120])
+                    logger.info("[%s] Ver Mais PW HTTP %d | seq=%s | body[:200]=%s",
+                        nome_log[:25], status, payload.get("sequence_id", "(lista)"), body[:200])
+                    if log_cb:
+                        seq_tag = f"seq={payload['sequence_id']}" if payload.get("sequence_id") else "lista"
+                        log_cb(f"    [DBG] ver_mais {seq_tag} HTTP {status} → {body[:120] or '(vazio)'}")
                     if status == 200 and body.strip():
-                        return status, json.loads(body)
+                        return status, json.loads(body), body
                     if not result.get("ok"):
                         logger.warning("[%s] Ver Mais PW fetch error: %s", nome_log[:25], result.get("error"))
-                    return status, {}
+                    return status, {}, body
                 except Exception as e:
                     logger.warning("[%s] Ver Mais PW exception: %s", nome_log[:25], e)
-                    return 0, {}
+                    return 0, {}, ""
 
         # ── Fallback: httpx ─────────────────────────────────────────────────
         try:
@@ -449,13 +454,17 @@ class MaisObrasScraper:
                 BASE_URL + "/api/pesquisa_contatos_api",
                 data={"contato": contato_json},
             )
-            logger.info("[%s] Ver Mais httpx HTTP %d | seq=%s | body[:120]=%s",
-                nome_log[:25], r.status_code, payload.get("sequence_id", "(lista)"), r.text[:120])
-            if r.status_code == 200 and r.text.strip():
-                return r.status_code, json.loads(r.text)
+            body = r.text
+            logger.info("[%s] Ver Mais httpx HTTP %d | seq=%s | body[:200]=%s",
+                nome_log[:25], r.status_code, payload.get("sequence_id", "(lista)"), body[:200])
+            if log_cb:
+                seq_tag = f"seq={payload['sequence_id']}" if payload.get("sequence_id") else "lista"
+                log_cb(f"    [DBG] ver_mais {seq_tag} HTTP {r.status_code} → {body[:120] or '(vazio)'}")
+            if r.status_code == 200 and body.strip():
+                return r.status_code, json.loads(body), body
         except Exception as e:
             logger.warning("[%s] Ver Mais httpx exception: %s", nome_log[:25], e)
-        return 0, {}
+        return 0, {}, ""
 
     async def _buscar_ver_mais(
         self,
@@ -481,7 +490,10 @@ class MaisObrasScraper:
             payload["sequence_id"] = sequence_id
             payload["cidade"] = cidade or ""  # obrigatório na chamada de detalhe
 
-        _status, data = await self._chamar_api_ver_mais(payload, nome)
+        if log_cb and not sequence_id:
+            log_cb(f"    [DBG] payload → nome='{nome[:30]}' cpf={'sim' if cpf_cnpj else 'NÃO'} uf='{uf}'")
+
+        _status, data, _body = await self._chamar_api_ver_mais(payload, nome, log_cb=log_cb)
 
         # A API pode retornar [] (lista vazia) quando não encontra nada —
         # não é um dict, então não podemos chamar .get(). Retorna sentinel
