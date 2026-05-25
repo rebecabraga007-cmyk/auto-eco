@@ -165,16 +165,33 @@ class MaisObrasScraper:
         try:
             from playwright.async_api import async_playwright
             self._pw = await async_playwright().start()
-            self._pw_browser = await self._pw.chromium.launch(headless=True)
+            self._pw_browser = await self._pw.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                ],
+            )
+            # Simula Chrome real — sec-ch-ua sem "HeadlessChrome" é essencial
+            # para que o servidor não detecte automação e retorne []
             self._pw_context = await self._pw_browser.new_context(
                 user_agent=HEADERS["User-Agent"],
                 extra_http_headers={
                     "Accept-Language": "pt-BR,pt;q=0.9",
-                    "X-Requested-With": "XMLHttpRequest",
+                    "sec-ch-ua": '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="99"',
+                    "sec-ch-ua-mobile": "?0",
+                    "sec-ch-ua-platform": '"Windows"',
                 },
             )
             self._pw_page = await self._pw_context.new_page()
-            logger.info("Playwright iniciado (Ver Mais ativo).")
+            # Remove navigator.webdriver (fingerprint de automação)
+            await self._pw_page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
+                window.chrome = {runtime: {}};
+            """)
+            logger.info("Playwright iniciado (Ver Mais ativo, anti-bot ativado).")
         except ImportError:
             logger.warning("playwright não instalado — Ver Mais usará httpx (pode não funcionar).")
         except Exception as e:
@@ -418,6 +435,19 @@ class MaisObrasScraper:
         if self._pw_page:
             async with self._pw_lock:
                 try:
+                    # Garante que a página está em pesquisa_obras (não /home)
+                    # O Referer correto é crítico para o endpoint aceitar a chamada
+                    if "pesquisa_obras" not in self._pw_page.url:
+                        try:
+                            await self._pw_page.goto(
+                                BASE_URL + "/pesquisa_obras",
+                                wait_until="domcontentloaded",
+                                timeout=12000,
+                            )
+                        except Exception as _nav_err:
+                            logger.warning("[%s] Ver Mais: falha ao navegar para pesquisa_obras: %s",
+                                           nome_log[:25], _nav_err)
+
                     result = await self._pw_page.evaluate(
                         """async ([url, contato]) => {
                             const isLoggedIn = (
