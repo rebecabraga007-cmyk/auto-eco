@@ -540,10 +540,13 @@ class MaisObrasScraper:
           2. DETALHE → {nome, cidade, uf, nome_mae, cpfcnpj:"", sequence_id}
         """
         if not sequence_id:
-            # Chamada de LISTA — busca candidatos pelo nome
+            # Chamada de LISTA — busca candidatos pelo nome + UF.
+            # cpfcnpj sempre vazio: o botão Ver Mais do Mais Obras manda "" na fase
+            # de lista. Mandar um CPF errado (vindo de pesquisa_perfil que pode
+            # retornar outra pessoa homônima) fazia o Ver Mais retornar [] para todos.
             payload: dict = {
                 "nome": nome or "",
-                "cpfcnpj": cpf_cnpj or "",
+                "cpfcnpj": "",
                 "uf": uf or "",
                 "ccp": "1",           # obrigatório — ausência causava [] para todos
             }
@@ -559,7 +562,7 @@ class MaisObrasScraper:
             }
 
         if log_cb and not sequence_id:
-            log_cb(f"    [DBG] payload → nome='{nome[:30]}' cpf={'sim' if cpf_cnpj else 'NÃO'} uf='{uf}' ccp=1")
+            log_cb(f"    [DBG] payload → nome='{nome[:30]}' uf='{uf}' ccp=1")
 
         _status, data, _body = await self._chamar_api_ver_mais(payload, nome, log_cb=log_cb)
 
