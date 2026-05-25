@@ -781,7 +781,7 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
 
     def _extrair_contato_ver_mais(self, resposta: dict) -> tuple[list[str], list[str]]:
         retorno = resposta.get("result")
-        if not isinstance(retorno, dict) or retorno.get("Status") != "200":
+        if not isinstance(retorno, dict) or str(retorno.get("Status", "")) != "200":
             return [], []
 
         dados = retorno.get("Data") or {}
