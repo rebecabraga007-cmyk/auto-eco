@@ -743,3 +743,64 @@ async def debug_ver_mais_test(nome: str = "LIDIANA SOARES BREITSCHAFT", uf: str 
         resultado["playwright"] = {"erro": "Playwright nao disponivel"}
 
     return resultado
+
+
+@app.get("/debug/perfil_test", tags=["Debug"])
+async def debug_perfil_test(
+    nome: str = "LIDIANA SOARES BREITSCHAFT",
+    uf: str = "SP",
+    tipo: str = "Proprietário",
+    cidade: str = "",
+):
+    """
+    Chama /pesquisa_perfil e retorna a resposta RAW completa.
+    Mostra todos os perfis encontrados com cidade e telefones — útil para verificar
+    se estamos pegando o perfil certo para nomes comuns.
+    """
+    import json as _json
+
+    base_url = os.getenv("MAISOBRAS_BASE_URL", "https://www.maisobras.online")
+    payload = {"contato": nome, "tipo": tipo, "cpf_cnpj": "", "uf": uf}
+
+    try:
+        r = await scraper._client.post(base_url + "/pesquisa_perfil", data=payload)
+        raw = r.text
+        try:
+            data = r.json()
+        except Exception:
+            data = None
+
+        perfil = (data or {}).get("perfil") or []
+        resumo = [
+            {
+                "idx": i,
+                "cidade": p.get("cidade", "?"),
+                "uf": p.get("uf", "?"),
+                "cbo": p.get("cbo", "?"),
+                "telefones": p.get("telefones", ""),
+                "cpfcnpj_presente": bool(p.get("cpfcnpj")),
+            }
+            for i, p in enumerate(perfil)
+        ]
+
+        # Qual escolheríamos com a lógica atual (filtro por cidade)
+        escolhido_idx = 0
+        if cidade and len(perfil) > 1:
+            from scraper import _normalizar
+            cidade_norm = _normalizar(cidade)
+            for i, p in enumerate(perfil):
+                if _normalizar(p.get("cidade") or "") == cidade_norm:
+                    escolhido_idx = i
+                    break
+
+        return {
+            "nome": nome, "tipo": tipo, "uf": uf, "cidade_filtro": cidade,
+            "status_http": r.status_code,
+            "total_perfis": len(perfil),
+            "escolhido_idx": escolhido_idx,
+            "perfis": resumo,
+            "emails": [(data or {}).get("emails") or []],
+            "raw_body_truncado": raw[:800],
+        }
+    except Exception as e:
+        return {"erro": str(e)}

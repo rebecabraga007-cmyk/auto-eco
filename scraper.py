@@ -767,27 +767,42 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
             if log_cb: log_cb(f"    ver_mais: fallback — sem match de localização, usando '{melhor.get('Name','?')[:25]}'")
         return melhor
 
-    def _extrair_contato(self, resposta: dict) -> tuple[list[str], list[str]]:
+    def _extrair_contato(self, resposta: dict, cidade_esperada: str = "") -> tuple[list[str], list[str]]:
         """
         Extrai listas de telefones e e-mails da resposta de /pesquisa_perfil.
         Retorna (telefones, emails).
 
-        USA APENAS O PRIMEIRO item do perfil — evitar misturar telefones de pessoas
-        diferentes quando a API retorna múltiplos perfis para nomes ambíguos.
+        Quando há múltiplos perfis (nome comum), filtra pelo que bate com
+        cidade_esperada. Se não achar, usa o primeiro.
         """
         telefones: list[str] = []
         emails: list[str] = []
 
         perfil = resposta.get("perfil")
         if perfil and isinstance(perfil, list) and len(perfil) > 0:
+            item = perfil[0]   # default: primeiro resultado
+
             if len(perfil) > 1:
                 logger.debug(
-                    "pesquisa_perfil retornou %d perfis — usando apenas o primeiro "
-                    "para evitar mistura de telefones de pessoas diferentes",
-                    len(perfil),
+                    "pesquisa_perfil: %d perfis retornados — tentando filtrar por cidade '%s'",
+                    len(perfil), cidade_esperada,
                 )
-            # Apenas o primeiro perfil (o mais relevante retornado pela API)
-            item = perfil[0]
+                # Tenta achar o perfil cuja cidade bate com a cidade da obra
+                if cidade_esperada:
+                    cidade_norm = _normalizar(cidade_esperada)
+                    match = next(
+                        (p for p in perfil if _normalizar(p.get("cidade") or "") == cidade_norm),
+                        None,
+                    )
+                    if match:
+                        item = match
+                        logger.debug("Perfil filtrado por cidade '%s' ✓", cidade_esperada)
+                    else:
+                        logger.debug(
+                            "Cidade '%s' não encontrada nos %d perfis — usando o 1º",
+                            cidade_esperada, len(perfil),
+                        )
+
             tels_str = item.get("telefones") or ""
             telefones.extend(_parse_telefones(tels_str))
 
@@ -831,7 +846,7 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
     ) -> tuple[list[str], list[str]]:
         # --- Etapa 1: /pesquisa_perfil ---
         resp = await self._buscar_perfil(nome=nome, tipo=tipo, uf=uf)
-        telefones_perfil, emails_perfil = self._extrair_contato(resp)
+        telefones_perfil, emails_perfil = self._extrair_contato(resp, cidade_esperada=cidade)
         logger.info("[%s] pesquisa_perfil: %d tel, %d email — %s", nome[:30], len(telefones_perfil), len(emails_perfil), telefones_perfil[:2])
         if log_cb:
             if telefones_perfil:
