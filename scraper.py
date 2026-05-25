@@ -531,29 +531,35 @@ class MaisObrasScraper:
         uf: str = "",
         cidade: str = "",
         sequence_id: str = "",
-        tipo: str = "",
+        nome_mae: str = "",
         log_cb=None,
     ) -> dict:
         """
-        Fluxo Ver Mais em dois passos:
-          1. Chamada de LISTA (sem sequence_id) → retorna candidatos com Name/Location/SequentialId
-          2. Chamada de DETALHE (com sequence_id escolhido) → retorna Phones/Emails
-        Usa Playwright para autenticação real de browser.
+        Fluxo Ver Mais em dois passos — payload exato conforme funcoes_contatos.js:
+          1. LISTA  → {nome, cpfcnpj, uf, ccp:"1"}
+          2. DETALHE → {nome, cidade, uf, nome_mae, cpfcnpj:"", sequence_id}
         """
-        payload: dict = {
-            "nome": nome or "",
-            "cpfcnpj": cpf_cnpj or "",
-            "uf": uf or "",
-        }
-        if tipo:
-            payload["tipo"] = tipo
-        if sequence_id:
-            payload["sequence_id"] = sequence_id
-            payload["cidade"] = cidade or ""  # obrigatório na chamada de detalhe
+        if not sequence_id:
+            # Chamada de LISTA — busca candidatos pelo nome
+            payload: dict = {
+                "nome": nome or "",
+                "cpfcnpj": cpf_cnpj or "",
+                "uf": uf or "",
+                "ccp": "1",           # obrigatório — ausência causava [] para todos
+            }
+        else:
+            # Chamada de DETALHE — busca telefone pelo SequentialId
+            payload: dict = {
+                "nome": nome or "",
+                "cidade": cidade or "",
+                "uf": uf or "",
+                "nome_mae": nome_mae or "",   # MotherNameFmt da resposta de lista
+                "cpfcnpj": "",                # sempre vazio na chamada de detalhe
+                "sequence_id": sequence_id,
+            }
 
         if log_cb and not sequence_id:
-            tipo_tag = f" tipo='{tipo}'" if tipo else " tipo=(vazio)"
-            log_cb(f"    [DBG] payload → nome='{nome[:30]}' cpf={'sim' if cpf_cnpj else 'NÃO'} uf='{uf}'{tipo_tag}")
+            log_cb(f"    [DBG] payload → nome='{nome[:30]}' cpf={'sim' if cpf_cnpj else 'NÃO'} uf='{uf}' ccp=1")
 
         _status, data, _body = await self._chamar_api_ver_mais(payload, nome, log_cb=log_cb)
 
@@ -594,7 +600,7 @@ class MaisObrasScraper:
                     uf=uf_candidato or uf,
                     cidade=cidade_candidato or cidade,
                     sequence_id=str(escolhido.get("SequentialId")),
-                    tipo=tipo,
+                    nome_mae=escolhido.get("MotherNameFmt") or "",
                     log_cb=log_cb,
                 )
 
@@ -830,7 +836,6 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
             cpf_cnpj=cpf_cnpj,
             uf=uf_ver_mais,
             cidade=cidade,
-            tipo=tipo,
             log_cb=log_cb,
         )
         telefones_vm, emails_vm = self._extrair_contato_ver_mais(resp_api)
