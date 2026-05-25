@@ -653,3 +653,93 @@ async def debug_ver_mais_js(obra_id: str = ""):
                 await page.goto(base_url + "/pesquisa_obras", wait_until="domcontentloaded", timeout=10000)
             except Exception:
                 pass
+
+
+@app.get("/debug/ver_mais_test", tags=["Debug"])
+async def debug_ver_mais_test(nome: str = "LIDIANA SOARES BREITSCHAFT", uf: str = "SP"):
+    """
+    Testa a chamada Ver Mais via httpx E via Playwright para o mesmo contato.
+    Captura os headers reais enviados por cada método.
+    Útil para diagnosticar por que a API retorna [] para todos os contatos.
+    """
+    import json as _json
+
+    base_url = os.getenv("MAISOBRAS_BASE_URL", "https://www.maisobras.online")
+    endpoint = base_url + "/api/pesquisa_contatos_api"
+    payload = {"nome": nome, "cpfcnpj": "", "uf": uf, "ccp": "1"}
+    contato_json = _json.dumps(payload, ensure_ascii=False)
+
+    resultado = {
+        "nome_testado": nome,
+        "uf": uf,
+        "payload_enviado": payload,
+        "httpx": None,
+        "playwright": None,
+    }
+
+    # ── 1. Testa via httpx (mesma sessão do pesquisa_perfil) ───────────
+    try:
+        r = await scraper._client.post(endpoint, data={"contato": contato_json})
+        resultado["httpx"] = {
+            "status": r.status_code,
+            "body": r.text[:500],
+            "cookies_enviados": {k: v[:30] + "..." for k, v in dict(scraper._client.cookies).items()},
+            "headers_enviados": dict(r.request.headers),
+        }
+    except Exception as e:
+        resultado["httpx"] = {"erro": str(e)}
+
+    # ── 2. Testa via Playwright com interceptação dos headers reais ─────
+    if scraper._pw_page:
+        async with scraper._pw_lock:
+            page = scraper._pw_page
+            captured = {}
+
+            async def interceptar(route, request):
+                if "pesquisa_contatos_api" in request.url:
+                    captured["request_url"] = request.url
+                    captured["request_headers"] = dict(request.headers)
+                    captured["request_post_data"] = request.post_data or ""
+                    response = await route.fetch()
+                    captured["response_status"] = response.status
+                    captured["response_body"] = await response.text()
+                    captured["response_headers"] = dict(response.headers)
+                    await route.fulfill(response=response)
+                else:
+                    await route.continue_()
+
+            await page.route("**/*", interceptar)
+            try:
+                pw_result = await page.evaluate(
+                    """async ([url, contato]) => {
+                        const jq = (typeof jQuery !== 'undefined') ? jQuery : (typeof $ !== 'undefined' ? $ : null);
+                        if (jq) {
+                            return new Promise((resolve) => {
+                                jq.ajax({
+                                    url: url, type: 'POST',
+                                    data: {contato: contato},
+                                    dataType: 'json',
+                                    headers: {'X-Requested-With': 'XMLHttpRequest'},
+                                })
+                                .done(d => resolve({ok: true, body: JSON.stringify(d), method: 'jquery'}))
+                                .fail(x => resolve({ok: false, status: x.status, body: x.responseText, method: 'jquery-err'}));
+                            });
+                        }
+                        return {erro: 'jQuery nao disponivel'};
+                    }""",
+                    [endpoint, contato_json],
+                )
+                resultado["playwright"] = {
+                    "js_result": pw_result,
+                    "interceptado": captured,
+                    "page_url": page.url,
+                    "cookies": [{"name": c["name"], "value": c["value"][:20] + "..."} for c in await page.context.cookies()],
+                }
+            except Exception as e:
+                resultado["playwright"] = {"erro": str(e), "interceptado": captured}
+            finally:
+                await page.unroute("**/*")
+    else:
+        resultado["playwright"] = {"erro": "Playwright nao disponivel"}
+
+    return resultado
