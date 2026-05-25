@@ -293,8 +293,8 @@ class MaisObrasScraper:
                     if is_logado:
                         self._authenticated = True
                         logger.info(f"Login OK via {endpoint}. URL final: {r.url}")
-                        # Copia sessão httpx para o Playwright
-                        await self._sincronizar_sessao_playwright()
+                        # Login real no Playwright (browser completo, sessão legítima)
+                        await self._sincronizar_sessao_playwright(email, password)
                         return True
 
                 # Se status 200 mas sem redirecionamento, pode ser que
@@ -305,7 +305,7 @@ class MaisObrasScraper:
                             if data.get("success") or data.get("status") == "ok":
                                 self._authenticated = True
                                 logger.info(f"Login OK via {endpoint} (JSON).")
-                                await self._sincronizar_sessao_playwright()
+                                await self._sincronizar_sessao_playwright(email, password)
                                 return True
                         except Exception:
                             pass
@@ -317,37 +317,61 @@ class MaisObrasScraper:
             logger.error(f"Erro durante login: {e}")
             return False
 
-    async def _sincronizar_sessao_playwright(self):
+    async def _sincronizar_sessao_playwright(self, email: str = "", password: str = ""):
         """
-        Copia cookies do httpx para o Playwright e navega para a área logada.
-        Necessário para que page.evaluate() possa chamar /api/pesquisa_contatos_api
-        com a mesma sessão autenticada.
+        Faz login real via Playwright (preenche o formulário no browser).
+        Mais confiável que compartilhar cookies do httpx — garante sessão legítima
+        para o endpoint /api/pesquisa_contatos_api.
         """
         if not self._pw_page:
             return
         try:
-            # Converte cookies httpx → formato Playwright
-            pw_cookies = []
-            for name, value in self._client.cookies.items():
-                pw_cookies.append({
-                    "name": name,
-                    "value": value,
-                    "domain": "www.maisobras.online",
-                    "path": "/",
-                })
-            if pw_cookies:
-                await self._pw_context.add_cookies(pw_cookies)
-                logger.info("Playwright: %d cookie(s) sincronizados.", len(pw_cookies))
+            page = self._pw_page
 
-            # Navega para área logada para estabelecer contexto da página
-            await self._pw_page.goto(
-                BASE_URL + "/pesquisa_obras",
-                wait_until="domcontentloaded",
-                timeout=25000,
+            # Navega para o login
+            await page.goto(BASE_URL + "/login", wait_until="domcontentloaded", timeout=25000)
+            logger.info("Playwright: página de login carregada. URL=%s", page.url)
+
+            # Preenche email — tenta os campos mais comuns do CodeIgniter
+            for selector in ['input[name="identity"]', 'input[name="email"]', 'input[type="email"]']:
+                try:
+                    await page.fill(selector, email, timeout=3000)
+                    logger.info("Playwright: email preenchido em '%s'", selector)
+                    break
+                except Exception:
+                    continue
+
+            # Preenche senha
+            for selector in ['input[name="password"]', 'input[name="senha"]', 'input[type="password"]']:
+                try:
+                    await page.fill(selector, password, timeout=3000)
+                    logger.info("Playwright: senha preenchida em '%s'", selector)
+                    break
+                except Exception:
+                    continue
+
+            # Submete o formulário
+            await page.keyboard.press("Enter")
+            await page.wait_for_load_state("domcontentloaded", timeout=20000)
+            logger.info("Playwright: após submit. URL=%s", page.url)
+
+            # Verifica se está logado
+            is_logado = (
+                "pesquisa_obras" in page.url
+                or "Pesquisar Obras" in await page.content()
+                or "Meus Favoritos" in await page.content()
             )
-            logger.info("Playwright: página pesquisa_obras carregada. URL=%s", self._pw_page.url)
+
+            if is_logado:
+                logger.info("Playwright: login OK. URL=%s", page.url)
+                # Garante que está na página de obras para o fetch funcionar
+                if "pesquisa_obras" not in page.url:
+                    await page.goto(BASE_URL + "/pesquisa_obras", wait_until="domcontentloaded", timeout=15000)
+            else:
+                logger.warning("Playwright: login pode ter falhado. URL=%s", page.url)
+
         except Exception as e:
-            logger.warning("Playwright sincronização de sessão falhou: %s", e)
+            logger.warning("Playwright login falhou: %s", e)
 
     # ------------------------------------------------------------------
     # Coleta de contatos via /pesquisa_perfil
