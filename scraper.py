@@ -484,12 +484,11 @@ class MaisObrasScraper:
         _status, data = await self._chamar_api_ver_mais(payload, nome)
 
         # A API pode retornar [] (lista vazia) quando não encontra nada —
-        # não é um dict, então não podemos chamar .get(). Normaliza para {}.
+        # não é um dict, então não podemos chamar .get(). Retorna sentinel
+        # para que o caller possa logar a mensagem correta (sem duplicar).
         if not isinstance(data, dict):
-            if log_cb:
-                log_cb(f"    ver_mais: sem resultados (HTTP {_status})")
             logger.info("[%s] Ver Mais retornou %s — tratando como vazio.", nome[:25], type(data).__name__)
-            return {}
+            return {"_empty_result": True}
 
         if log_cb and not data:
             log_cb(f"    ver_mais: sem resposta (HTTP {_status})")
@@ -767,9 +766,10 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
             if log_cb: log_cb(f"    ver_mais tel: {', '.join(telefones_vm[:2])}")
             return _unicos(telefones_vm), _unicos(emails_vm or emails_perfil)
 
-        # Inspeciona o tipo de retorno para distinguir no log
-        _vm_result = resp_api.get("result")
-        if not resp_api or resp_api == {}:
+        # Inspeciona o tipo de retorno para log único e preciso
+        if resp_api.get("_empty_result"):
+            if log_cb: log_cb(f"    ver_mais: sem resultados — usando fallback perfil")
+        elif not resp_api or resp_api == {}:
             if log_cb: log_cb(f"    ver_mais: sem resposta da API — usando fallback perfil")
         elif resp_api.get("is_array") and not resp_api.get("result"):
             if log_cb: log_cb(f"    ver_mais: API não retornou candidatos — usando fallback perfil")
