@@ -483,6 +483,14 @@ class MaisObrasScraper:
 
         _status, data = await self._chamar_api_ver_mais(payload, nome)
 
+        # A API pode retornar [] (lista vazia) quando não encontra nada —
+        # não é um dict, então não podemos chamar .get(). Normaliza para {}.
+        if not isinstance(data, dict):
+            if log_cb:
+                log_cb(f"    ver_mais: sem resultados (HTTP {_status})")
+            logger.info("[%s] Ver Mais retornou %s — tratando como vazio.", nome[:25], type(data).__name__)
+            return {}
+
         if log_cb and not data:
             log_cb(f"    ver_mais: sem resposta (HTTP {_status})")
 
