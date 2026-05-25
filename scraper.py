@@ -408,6 +408,9 @@ class MaisObrasScraper:
         Faz UMA chamada HTTP ao /api/pesquisa_contatos_api.
         Usa Playwright (browser com sessão real) se disponível; httpx como fallback.
         Retorna (status_http, dict_resposta, body_raw).
+
+        Usa jQuery.ajax() se disponível na página (mesmo método que o site usa),
+        com fallback para URLSearchParams e depois FormData.
         """
         contato_json = json.dumps(payload, ensure_ascii=False)
 
@@ -417,35 +420,90 @@ class MaisObrasScraper:
                 try:
                     result = await self._pw_page.evaluate(
                         """async ([url, contato]) => {
-                            const fd = new FormData();
-                            fd.append('contato', contato);
+                            const isLoggedIn = (
+                                document.body.innerHTML.includes('pesquisa_obras') ||
+                                document.body.innerHTML.includes('Meus Favoritos') ||
+                                document.body.innerHTML.includes('logout') ||
+                                document.cookie.includes('ci_session')
+                            );
+
+                            // Tenta jQuery primeiro — mesmo método que o site usa (CodeIgniter)
+                            const jq = (typeof jQuery !== 'undefined') ? jQuery
+                                      : (typeof $ !== 'undefined' ? $ : null);
+                            if (jq) {
+                                return new Promise((resolve) => {
+                                    jq.ajax({
+                                        url: url,
+                                        type: 'POST',
+                                        data: {contato: contato},
+                                        dataType: 'json',
+                                        headers: {'X-Requested-With': 'XMLHttpRequest'},
+                                    })
+                                    .done(data => resolve({
+                                        ok: true, status: 200,
+                                        body: (typeof data === 'string') ? data : JSON.stringify(data),
+                                        method: 'jquery', pageUrl: location.href, loggedIn: isLoggedIn
+                                    }))
+                                    .fail(xhr => resolve({
+                                        ok: false, status: xhr.status,
+                                        body: xhr.responseText || '',
+                                        method: 'jquery-err', pageUrl: location.href, loggedIn: isLoggedIn
+                                    }));
+                                });
+                            }
+
+                            // Fallback 1: URLSearchParams (application/x-www-form-urlencoded)
                             try {
+                                const params = new URLSearchParams();
+                                params.append('contato', contato);
                                 const r = await fetch(url, {
-                                    method: 'POST',
-                                    body: fd,
+                                    method: 'POST', body: params,
                                     headers: {'X-Requested-With': 'XMLHttpRequest'}
                                 });
-                                return {ok: true, status: r.status, body: await r.text()};
-                            } catch(e) {
-                                return {ok: false, status: 0, body: '', error: String(e)};
+                                return {ok: true, status: r.status, body: await r.text(),
+                                        method: 'urlencoded', pageUrl: location.href, loggedIn: isLoggedIn};
+                            } catch(e1) {}
+
+                            // Fallback 2: FormData (multipart)
+                            try {
+                                const fd = new FormData();
+                                fd.append('contato', contato);
+                                const r = await fetch(url, {
+                                    method: 'POST', body: fd,
+                                    headers: {'X-Requested-With': 'XMLHttpRequest'}
+                                });
+                                return {ok: true, status: r.status, body: await r.text(),
+                                        method: 'formdata', pageUrl: location.href, loggedIn: isLoggedIn};
+                            } catch(e2) {
+                                return {ok: false, status: 0, body: '', error: String(e2),
+                                        method: 'err', pageUrl: location.href, loggedIn: isLoggedIn};
                             }
                         }""",
                         [BASE_URL + "/api/pesquisa_contatos_api", contato_json],
                     )
                     status = result.get("status", 0)
                     body = result.get("body", "")
-                    logger.info("[%s] Ver Mais PW HTTP %d | seq=%s | body[:200]=%s",
-                        nome_log[:25], status, payload.get("sequence_id", "(lista)"), body[:200])
+                    method = result.get("method", "?")
+                    page_url = result.get("pageUrl", "?")
+                    logged_in = result.get("loggedIn", None)
+                    logger.info(
+                        "[%s] Ver Mais PW HTTP %d | method=%s | loggedIn=%s | pageUrl=%s | seq=%s | body[:200]=%s",
+                        nome_log[:25], status, method, logged_in, page_url[:60],
+                        payload.get("sequence_id", "(lista)"), body[:200]
+                    )
                     if log_cb:
                         seq_tag = f"seq={payload['sequence_id']}" if payload.get("sequence_id") else "lista"
-                        log_cb(f"    [DBG] ver_mais {seq_tag} HTTP {status} → {body[:120] or '(vazio)'}")
+                        auth_tag = "" if logged_in is None else (" loggedIn=SIM" if logged_in else " loggedIn=NAO!")
+                        log_cb(f"    [DBG] ver_mais {seq_tag} {method} HTTP {status}{auth_tag} → {body[:100] or '(vazio)'}")
                     if status == 200 and body.strip():
                         return status, json.loads(body), body
                     if not result.get("ok"):
-                        logger.warning("[%s] Ver Mais PW fetch error: %s", nome_log[:25], result.get("error"))
+                        logger.warning("[%s] Ver Mais PW error: %s", nome_log[:25], result.get("error"))
                     return status, {}, body
                 except Exception as e:
                     logger.warning("[%s] Ver Mais PW exception: %s", nome_log[:25], e)
+                    if log_cb:
+                        log_cb(f"    [DBG] ver_mais PW exception: {e}")
                     return 0, {}, ""
 
         # ── Fallback: httpx ─────────────────────────────────────────────────
@@ -459,7 +517,7 @@ class MaisObrasScraper:
                 nome_log[:25], r.status_code, payload.get("sequence_id", "(lista)"), body[:200])
             if log_cb:
                 seq_tag = f"seq={payload['sequence_id']}" if payload.get("sequence_id") else "lista"
-                log_cb(f"    [DBG] ver_mais {seq_tag} HTTP {r.status_code} → {body[:120] or '(vazio)'}")
+                log_cb(f"    [DBG] ver_mais {seq_tag} httpx HTTP {r.status_code} → {body[:100] or '(vazio)'}")
             if r.status_code == 200 and body.strip():
                 return r.status_code, json.loads(body), body
         except Exception as e:
@@ -473,6 +531,7 @@ class MaisObrasScraper:
         uf: str = "",
         cidade: str = "",
         sequence_id: str = "",
+        tipo: str = "",
         log_cb=None,
     ) -> dict:
         """
@@ -486,12 +545,15 @@ class MaisObrasScraper:
             "cpfcnpj": cpf_cnpj or "",
             "uf": uf or "",
         }
+        if tipo:
+            payload["tipo"] = tipo
         if sequence_id:
             payload["sequence_id"] = sequence_id
             payload["cidade"] = cidade or ""  # obrigatório na chamada de detalhe
 
         if log_cb and not sequence_id:
-            log_cb(f"    [DBG] payload → nome='{nome[:30]}' cpf={'sim' if cpf_cnpj else 'NÃO'} uf='{uf}'")
+            tipo_tag = f" tipo='{tipo}'" if tipo else " tipo=(vazio)"
+            log_cb(f"    [DBG] payload → nome='{nome[:30]}' cpf={'sim' if cpf_cnpj else 'NÃO'} uf='{uf}'{tipo_tag}")
 
         _status, data, _body = await self._chamar_api_ver_mais(payload, nome, log_cb=log_cb)
 
@@ -532,6 +594,7 @@ class MaisObrasScraper:
                     uf=uf_candidato or uf,
                     cidade=cidade_candidato or cidade,
                     sequence_id=str(escolhido.get("SequentialId")),
+                    tipo=tipo,
                     log_cb=log_cb,
                 )
 
@@ -767,6 +830,7 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
             cpf_cnpj=cpf_cnpj,
             uf=uf_ver_mais,
             cidade=cidade,
+            tipo=tipo,
             log_cb=log_cb,
         )
         telefones_vm, emails_vm = self._extrair_contato_ver_mais(resp_api)
