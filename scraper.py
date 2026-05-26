@@ -89,6 +89,30 @@ def _unicos(valores: list[str]) -> list[str]:
     return saida
 
 
+_PARTICULAS = {"DA", "DE", "DO", "DAS", "DOS", "E", "VAN", "VON", "EL", "D"}
+
+def _palavras_significativas(nome: str) -> set[str]:
+    return {w for w in _normalizar(nome).split() if w not in _PARTICULAS and len(w) > 1}
+
+
+def _nomes_compativeis(nome_buscado: str, nome_retornado: str) -> bool:
+    """
+    Retorna False se o nome retornado pela API claramente não corresponde ao buscado.
+    Evita usar telefones de pessoas homônimas completamente diferentes.
+
+    Regra: ao menos min(2, N_palavras_buscado) palavras significativas devem
+    aparecer no nome retornado. Não é perfeito sem o CPF, mas descarta casos
+    óbvios (ex: buscar 'JOSE FERREIRA' e receber 'MARCOS ANTONIO SANTOS').
+    """
+    wb = _palavras_significativas(nome_buscado)
+    wr = _palavras_significativas(nome_retornado)
+    if not wb or not wr:
+        return True   # dados insuficientes — aceita por cautela
+    comuns = wb & wr
+    min_match = min(2, len(wb))
+    return len(comuns) >= min_match
+
+
 # Indicadores de pessoa jurídica — sufixos legais claros + termos inequívocos de empresa.
 # ATENÇÃO: evitar ambíguos como "me", "sc", "studio" que batem em nomes de pessoas.
 _EMPRESA_RE = re.compile(
@@ -767,13 +791,20 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
             if log_cb: log_cb(f"    ver_mais: fallback — sem match de localização, usando '{melhor.get('Name','?')[:25]}'")
         return melhor
 
-    def _extrair_contato(self, resposta: dict, cidade_esperada: str = "") -> tuple[list[str], list[str]]:
+    def _extrair_contato(
+        self,
+        resposta: dict,
+        nome_buscado: str = "",
+        cidade_esperada: str = "",
+        log_cb=None,
+    ) -> tuple[list[str], list[str]]:
         """
         Extrai listas de telefones e e-mails da resposta de /pesquisa_perfil.
         Retorna (telefones, emails).
 
-        Quando há múltiplos perfis (nome comum), filtra pelo que bate com
-        cidade_esperada. Se não achar, usa o primeiro.
+        - Filtra por cidade quando há múltiplos perfis
+        - Valida que o nome retornado é compatível com o buscado (evita homônimos)
+        - Loga o nome+CBO encontrado para rastreabilidade
         """
         telefones: list[str] = []
         emails: list[str] = []
@@ -783,10 +814,6 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
             item = perfil[0]   # default: primeiro resultado
 
             if len(perfil) > 1:
-                logger.debug(
-                    "pesquisa_perfil: %d perfis retornados — tentando filtrar por cidade '%s'",
-                    len(perfil), cidade_esperada,
-                )
                 # Tenta achar o perfil cuja cidade bate com a cidade da obra
                 if cidade_esperada:
                     cidade_norm = _normalizar(cidade_esperada)
@@ -796,12 +823,37 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
                     )
                     if match:
                         item = match
-                        logger.debug("Perfil filtrado por cidade '%s' ✓", cidade_esperada)
-                    else:
-                        logger.debug(
-                            "Cidade '%s' não encontrada nos %d perfis — usando o 1º",
-                            cidade_esperada, len(perfil),
-                        )
+                logger.debug(
+                    "pesquisa_perfil: %d perfis — usando '%s' (%s)",
+                    len(perfil), item.get("nome", "?"), item.get("cidade", "?"),
+                )
+
+            nome_api = item.get("nome") or ""
+            cbo_api = (item.get("cbo") or "").replace("\r", "").strip()
+            cidade_api = item.get("cidade", "?").strip()
+
+            # Log de rastreabilidade: mostra quem foi encontrado
+            if log_cb and nome_api:
+                detalhe = f"{nome_api}"
+                if cbo_api:
+                    detalhe += f" [{cbo_api}]"
+                if cidade_api and cidade_api != "?":
+                    detalhe += f" — {cidade_api}"
+                log_cb(f"    → encontrado: {detalhe}")
+
+            # Validação de compatibilidade de nome
+            if nome_buscado and nome_api and not _nomes_compativeis(nome_buscado, nome_api):
+                logger.warning(
+                    "Nome incompatível: buscado='%s' retornado='%s' — descartando",
+                    nome_buscado[:40], nome_api[:40],
+                )
+                if log_cb:
+                    log_cb(f"    ⚠ nome incompatível ('{nome_api[:35]}') — sem telefone")
+                # Retorna sem telefones: melhor vazio do que número errado
+                array_emails = resposta.get("emails")
+                if array_emails and isinstance(array_emails, list):
+                    emails = [e.get("email", "") for e in array_emails if e.get("email")]
+                return [], _unicos(emails)
 
             tels_str = item.get("telefones") or ""
             telefones.extend(_parse_telefones(tels_str))
@@ -846,7 +898,7 @@ Responda SOMENTE com o numero do indice entre colchetes (ex: 0) ou null. Sem exp
     ) -> tuple[list[str], list[str]]:
         # --- Etapa 1: /pesquisa_perfil ---
         resp = await self._buscar_perfil(nome=nome, tipo=tipo, uf=uf)
-        telefones_perfil, emails_perfil = self._extrair_contato(resp, cidade_esperada=cidade)
+        telefones_perfil, emails_perfil = self._extrair_contato(resp, nome_buscado=nome, cidade_esperada=cidade, log_cb=log_cb)
         logger.info("[%s] pesquisa_perfil: %d tel, %d email — %s", nome[:30], len(telefones_perfil), len(emails_perfil), telefones_perfil[:2])
         if log_cb:
             if telefones_perfil:
