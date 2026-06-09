@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>bludata — Plataforma B2B de Prospecção</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<div class="app-layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <h1>blu<span style="color:#64748b">data</span></h1>
+      <small>Plataforma B2B de Prospecção</small>
+    </div>
+    <nav class="sidebar-nav">
+      <a onclick="showPage('persons')" id="nav-persons" class="active">
+        <span class="icon">👤</span> Pessoas (PF)
+      </a>
+      <a onclick="showPage('companies')" id="nav-companies">
+        <span class="icon">🏢</span> Empresas (PJ)
+      </a>
+      <a onclick="showPage('cnpj-lookup')" id="nav-cnpj-lookup">
+        <span class="icon">🔍</span> Consulta CNPJ
+      </a>
+      <a onclick="showPage('enrich')" id="nav-enrich">
+        <span class="icon">⚡</span> Enriquecimento
+      </a>
+    </nav>
+  </aside>
+
+  <!-- Main -->
+  <main class="main-content">
+
+    <!-- ── PAGE: Persons ────────────────────────────────── -->
+    <div id="page-persons">
+      <div class="page-header">
+        <h2>Busca de Pessoas</h2>
+        <div class="btn-group">
+          <button class="btn btn-secondary btn-sm" onclick="clearPersonFilters()">Limpar Filtros</button>
+          <button class="btn btn-primary" onclick="searchPersons(1)">
+            <span>🔎</span> Buscar
+          </button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Filtros de Pessoa</h3>
+        </div>
+        <div class="card-body">
+          <div class="filters-grid">
+            <div class="filter-group">
+              <label>Nome</label>
+              <input type="text" id="pf-name" placeholder="Ex: Carlos" />
+            </div>
+            <div class="filter-group">
+              <label>Sobrenome</label>
+              <input type="text" id="pf-surname" placeholder="Ex: Silva" />
+            </div>
+            <div class="filter-group">
+              <label>Cargo</label>
+              <input type="text" id="pf-role" placeholder="Ex: CEO, Diretor..." />
+            </div>
+            <div class="filter-group">
+              <label>Departamento</label>
+              <select id="pf-department">
+                <option value="">Todos</option>
+                <option>TI</option><option>Tecnologia</option><option>Engenharia</option>
+                <option>Marketing</option><option>Vendas</option><option>Comercial</option>
+                <option>Financeiro</option><option>Recursos Humanos</option>
+                <option>Operações</option><option>Jurídico</option><option>Produto</option>
+                <option>Diretoria</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label>Nível de Senioridade</label>
+              <select id="pf-seniority">
+                <option value="">Todos</option>
+                <option>Decisores</option><option>C-Level</option>
+                <option>Diretor</option><option>Gerente</option>
+                <option>Coordenador</option><option>Especialista</option>
+                <option>Sênior</option><option>Pleno</option><option>Júnior</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label>Estado (UF)</label>
+              <select id="pf-state">
+                <option value="">Todos</option>
+                <option>SP</option><option>RJ</option><option>MG</option>
+                <option>RS</option><option>PR</option><option>SC</option>
+                <option>BA</option><option>CE</option><option>PE</option>
+                <option>GO</option><option>DF</option><option>AM</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label>Tem E-mail</label>
+              <select id="pf-has-email">
+                <option value="">Qualquer</option>
+                <option value="true">Sim</option>
+                <option value="false">Não</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label>Tem Telefone</label>
+              <select id="pf-has-phone">
+                <option value="">Qualquer</option>
+                <option value="true">Sim</option>
+                <option value="false">Não</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label>Tem LinkedIn</label>
+              <select id="pf-has-linkedin">
+                <option value="">Qualquer</option>
+                <option value="true">Sim</option>
+                <option value="false">Não</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Filtros de Empresa</h3>
+        </div>
+        <div class="card-body">
+          <div class="filters-grid">
+            <div class="filter-group">
+              <label>Nome da Empresa</label>
+              <input type="text" id="pf-company-name" placeholder="Ex: Petrobras, Itaú..." />
+            </div>
+            <div class="filter-group">
+              <label>Estado da Empresa</label>
+              <select id="pf-company-state">
+                <option value="">Todos</option>
+                <option>SP</option><option>RJ</option><option>MG</option>
+                <option>RS</option><option>PR</option><option>SC</option>
+                <option>BA</option><option>CE</option><option>GO</option><option>DF</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Results -->
+      <div class="card" id="persons-results-card" style="display:none">
+        <div class="card-header">
+          <h3>Resultados</h3>
+          <div class="btn-group">
+            <span id="persons-count" class="chip chip-blue"></span>
+            <button class="btn btn-success btn-sm" onclick="openEnrichModal()">⚡ Enriquecer Selecionados</button>
+          </div>
+        </div>
+        <div id="persons-table-wrap" class="table-wrap">
+          <div id="persons-loading" class="loading" style="display:none">
+            <div class="spinner"></div> Buscando...
+          </div>
+          <table id="persons-table">
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="select-all-persons" onchange="toggleSelectAll('persons')" /></th>
+                <th>Nome</th>
+                <th>Cargo</th>
+                <th>Empresa</th>
+                <th>Estado</th>
+                <th>Email</th>
+                <th>Telefone</th>
+                <th>LinkedIn</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="persons-tbody"></tbody>
+          </table>
+        </div>
+        <div class="pagination" id="persons-pagination"></div>
+      </div>
+
+      <div id="persons-empty" class="card" style="display:none">
+        <div class="empty-state">
+          <div class="icon">🔍</div>
+          <p>Nenhuma pessoa encontrada com os filtros aplicados.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── PAGE: Companies ────────────────────────────────── -->
+    <div id="page-companies" style="display:none">
+      <div class="page-header">
+        <h2>Busca de Empresas</h2>
+        <div class="btn-group">
+          <button class="btn btn-secondary btn-sm" onclick="clearCompanyFilters()">Limpar Filtros</button>
+          <button class="btn btn-primary" onclick="searchCompanies(1)">
+            <span>🔎</span> Buscar
+          </button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h3>Filtros</h3></div>
+        <div class="card-body">
+          <div class="filters-grid">
+            <div class="filter-group">
+              <label>Nome da Empresa</label>
+              <input type="text" id="cf-name" placeholder="Ex: Magazine Luiza..." />
+            </div>
+            <div class="filter-group">
+              <label>Setor</label>
+              <select id="cf-sector">
+                <option value="">Todos</option>
+                <option>Tecnologia da Informação</option>
+                <option>Bancos</option><option>Seguros</option>
+                <option>Varejo</option><option>Saúde</option>
+                <option>Educação</option><option>Construção Civil</option>
+                <option>Agronegócio</option><option>Manufatura</option>
+                <option>Logística e Transporte</option>
+                <option>Serviços Financeiros</option>
+                <option>Telecomunicações</option><option>Energia</option>
+                <option>Extração de Petróleo e Gás Natural</option>
+                <option>Comércio varejista</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label>Estado (UF)</label>
+              <select id="cf-state">
+                <option value="">Todos</option>
+                <option>SP</option><option>RJ</option><option>MG</option>
+                <option>RS</option><option>PR</option><option>SC</option>
+                <option>BA</option><option>CE</option><option>GO</option><option>DF</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label>Porte / Nº de Funcionários</label>
+              <select id="cf-size">
+                <option value="">Todos</option>
+                <option>MEI</option><option>1-10</option>
+                <option>11-50</option><option>51-200</option>
+                <option>201-500</option><option>501-1000</option>
+                <option>1001-5000</option><option>Mais de 1000</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label>Natureza Jurídica</label>
+              <input type="text" id="cf-legal-nature" placeholder="Ex: Sociedade Anônima..." />
+            </div>
+            <div class="filter-group">
+              <label>CNAE (código ou descrição)</label>
+              <input type="text" id="cf-cnae" placeholder="Ex: 6422, bancos..." />
+            </div>
+            <div class="filter-group">
+              <label>Incluir MEI</label>
+              <select id="cf-mei">
+                <option value="">Qualquer</option>
+                <option value="true">Apenas MEI</option>
+                <option value="false">Excluir MEI</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="companies-results-card" style="display:none">
+        <div class="card-header">
+          <h3>Resultados</h3>
+          <span id="companies-count" class="chip chip-blue"></span>
+        </div>
+        <div class="table-wrap">
+          <div id="companies-loading" class="loading" style="display:none">
+            <div class="spinner"></div> Buscando...
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Empresa</th>
+                <th>CNPJ</th>
+                <th>Setor</th>
+                <th>Estado</th>
+                <th>Porte</th>
+                <th>Fundação</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="companies-tbody"></tbody>
+          </table>
+        </div>
+        <div class="pagination" id="companies-pagination"></div>
+      </div>
+    </div>
+
+    <!-- ── PAGE: CNPJ Lookup ────────────────────────────── -->
+    <div id="page-cnpj-lookup" style="display:none">
+      <div class="page-header">
+        <h2>Consulta CNPJ / CPF</h2>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h3>Busca por CNPJ (Receita Federal)</h3></div>
+        <div class="card-body">
+          <div class="alert alert-info">
+            ℹ️ Consulta em tempo real via BrasilAPI e ReceitaWS — gratuito, sem chave de API.
+          </div>
+          <div class="inline-form">
+            <input type="text" id="cnpj-input" placeholder="00.000.000/0001-00" maxlength="18" oninput="maskCNPJ(this)" />
+            <button class="btn btn-primary" onclick="lookupCNPJ()">🔍 Consultar</button>
+          </div>
+          <div id="cnpj-result" style="margin-top:20px"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h3>Consulta CPF (Receita Federal)</h3></div>
+        <div class="card-body">
+          <div class="alert alert-warning">
+            ⚠️ A consulta CPF na Receita Federal requer resolução de CAPTCHA. Integração com serviço anti-CAPTCHA necessária para uso em produção.
+          </div>
+          <div class="inline-form">
+            <input type="text" id="cpf-input" placeholder="000.000.000-00" maxlength="14" oninput="maskCPF(this)" />
+            <button class="btn btn-primary" onclick="lookupCPF()">🔍 Consultar Situação</button>
+          </div>
+          <div id="cpf-result" style="margin-top:20px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── PAGE: Enrich ───────────────────────────────────── -->
+    <div id="page-enrich" style="display:none">
+      <div class="page-header">
+        <h2>Enriquecimento de Dados</h2>
+      </div>
+
+      <div class="alert alert-info" style="margin-bottom:20px">
+        ℹ️ O enriquecimento é processado assincronamente em background. Você pode acompanhar o status do job abaixo.
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h3>Enrich Bulk</h3></div>
+        <div class="card-body">
+          <div class="filter-group" style="margin-bottom:14px">
+            <label>Payload JSON (lista de pessoas)</label>
+            <textarea id="enrich-payload" rows="8" style="padding:10px;border:1px solid var(--border);border-radius:var(--radius);font-family:monospace;font-size:12px;width:100%;resize:vertical" placeholder='[
+  {"id_pessoa": "uuid-aqui", "cpf": "00000000000", "linkedin_url": "https://linkedin.com/in/slug"},
+  {"id_pessoa": "outro-uuid", "linkedin_url": "https://linkedin.com/in/outro-slug"}
+]'></textarea>
+          </div>
+          <div class="filter-group" style="margin-bottom:14px">
+            <label>URL do Webhook (opcional)</label>
+            <input type="text" id="enrich-webhook" placeholder="https://seu-servidor.com/webhook/enrich" />
+          </div>
+          <button class="btn btn-primary" onclick="startEnrich()">⚡ Iniciar Enriquecimento</button>
+        </div>
+      </div>
+
+      <div class="card" id="enrich-job-card" style="display:none">
+        <div class="card-header">
+          <h3>Status do Job</h3>
+          <button class="btn btn-secondary btn-sm" onclick="pollJobStatus()">🔄 Atualizar</button>
+        </div>
+        <div class="card-body" id="enrich-job-body"></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ── Modal: Person Detail ─────────────────────────────── -->
+<div class="modal-overlay" id="person-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modal-person-name">Detalhe da Pessoa</h3>
+      <button class="modal-close" onclick="closeModal('person-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-tabs">
+        <button class="modal-tab-btn active" onclick="switchModalTab(this, 'tab-person-info')">Dados Pessoais</button>
+        <button class="modal-tab-btn" onclick="switchModalTab(this, 'tab-person-contacts')">Contatos</button>
+      </div>
+      <div id="tab-person-info">
+        <div class="detail-grid" id="person-detail-grid"></div>
+      </div>
+      <div id="tab-person-contacts" style="display:none">
+        <div id="person-contacts-section">
+          <div class="loading"><div class="spinner"></div> Carregando contatos...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal: Company Detail ────────────────────────────── -->
+<div class="modal-overlay" id="company-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modal-company-name">Detalhe da Empresa</h3>
+      <button class="modal-close" onclick="closeModal('company-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="detail-grid" id="company-detail-grid"></div>
+      <div style="margin-top:20px" id="company-partners-section"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal: Enrich Selection ──────────────────────────── -->
+<div class="modal-overlay" id="enrich-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Enriquecer Pessoas Selecionadas</h3>
+      <button class="modal-close" onclick="closeModal('enrich-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="filter-group" style="margin-bottom:14px">
+        <label>URL do Webhook (opcional)</label>
+        <input type="text" id="enrich-modal-webhook" placeholder="https://..." />
+      </div>
+      <p style="color:var(--text-muted);font-size:13px;margin-bottom:16px" id="enrich-modal-count"></p>
+      <button class="btn btn-primary" onclick="submitEnrichFromModal()">⚡ Iniciar Enriquecimento</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
