@@ -207,7 +207,13 @@ def _converter_csv_para_xlsx(conteudo_csv: bytes) -> bytes:
     if texto is None:
         raise ValueError("Nao foi possivel decodificar o CSV.")
 
-    leitor = csv.reader(io.StringIO(texto))
+    amostra = texto[:4096]
+    try:
+        delimitador = csv.Sniffer().sniff(amostra, delimiters=";,\t").delimiter
+    except csv.Error:
+        delimitador = ";" if amostra.count(";") > amostra.count(",") else ","
+
+    leitor = csv.reader(io.StringIO(texto), delimiter=delimitador)
     linhas = list(leitor)
     if not linhas:
         raise ValueError("CSV vazio.")
