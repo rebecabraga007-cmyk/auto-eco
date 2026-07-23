@@ -3,6 +3,7 @@ main.py — Mais Obras Enricher v1.2
 Sem Playwright. Tudo via httpx direto na API interna do Mais Obras.
 """
 
+import io
 import logging
 import os
 import subprocess
@@ -194,6 +195,8 @@ def _converter_csv_para_xlsx(conteudo_csv: bytes) -> bytes:
     """Converte CSV exportado do Mais Obras para .xlsx, detectando encoding automaticamente."""
     import csv
 
+    from openpyxl import Workbook
+
     texto: str | None = None
     for enc in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
         try:
@@ -209,7 +212,7 @@ def _converter_csv_para_xlsx(conteudo_csv: bytes) -> bytes:
     if not linhas:
         raise ValueError("CSV vazio.")
 
-    wb_csv = openpyxl.Workbook()
+    wb_csv = Workbook()
     ws_csv = wb_csv.active
     ws_csv.title = "Planilha"
 
