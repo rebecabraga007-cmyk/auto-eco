@@ -42,8 +42,9 @@ import auth as _auth  # noqa: E402
 DATA_SERVICE_URL = os.environ.get("DATA_SERVICE_URL", "http://127.0.0.1:8011").strip().rstrip("/")
 PROXY_SECRET = os.environ.get("PROXY_SECRET", "").strip()
 _TIMEOUT = httpx.Timeout(120.0)
-# hop-by-hop / que não devem ser repassados
-_SKIP_REQ_HEADERS = {"host", "content-length", "connection", "authorization"}
+# hop-by-hop / que não devem ser repassados. accept-encoding é forçado a identity
+# (a Cloudflare comprimiria a resposta e o body chegaria ilegível ao cliente).
+_SKIP_REQ_HEADERS = {"host", "content-length", "connection", "authorization", "accept-encoding"}
 _SKIP_RESP_HEADERS = {"content-length", "transfer-encoding", "connection", "content-encoding"}
 
 app = FastAPI(title="CapiBLU — App Online", version="1.0.0")
@@ -80,6 +81,7 @@ async def proxy(path: str, request: Request):
         return JSONResponse({"detail": "Rota não encontrada."}, status_code=404)
     url = f"{DATA_SERVICE_URL}{full}"
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _SKIP_REQ_HEADERS}
+    headers["Accept-Encoding"] = "identity"  # evita resposta comprimida pela Cloudflare
     if PROXY_SECRET:
         headers["X-Proxy-Secret"] = PROXY_SECRET
     user = getattr(request.state, "user", None)
