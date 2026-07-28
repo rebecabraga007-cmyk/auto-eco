@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CapiBLU — Plataforma de Prospecção B2B</title>
+  <link rel="stylesheet" href="capiblu.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="/">
+    <span class="logo-icon">🦫</span>
+    <span class="brand-name">Capi<strong>BLU</strong></span>
+    <span class="brand-tag">BETA</span>
+  </a>
+  <nav class="top-nav">
+    <button class="nav-btn active" data-tab="empresa">🏢 Empresa</button>
+    <button class="nav-btn" data-tab="pessoa">👤 Pessoa / CPF</button>
+    <button class="nav-btn" data-tab="nome">🔎 Busca por Nome</button>
+    <button class="nav-btn" data-tab="prospec">📋 Prospecção</button>
+    <button class="nav-btn" data-tab="assertiva">🎯 Busca Assertiva</button>
+    <button class="nav-btn" data-tab="enrich">🔼 Enriquecer Lista</button>
+    <button class="nav-btn" data-tab="telefone">📞 Telefone</button>
+  </nav>
+  <div class="topbar-user" id="user-menu">
+    <span class="topbar-user-name" id="user-name">—</span>
+    <span class="topbar-user-caret">▾</span>
+    <div class="user-dropdown" id="user-dropdown" hidden>
+      <button id="menu-users" hidden>👥 Usuários</button>
+      <button id="menu-password">🔑 Trocar senha</button>
+      <button id="menu-logout">🚪 Sair</button>
+    </div>
+  </div>
+</header>
+
+<main class="main-wrap">
+
+  <!-- ══ MÓDULO EMPRESA ══ -->
+  <section id="tab-empresa" class="tab-section active">
+    <div class="module-header">
+      <h2 class="module-title">🏢 Busca de Empresa</h2>
+      <p class="module-sub">CNPJ exato ou nome — Receita Federal · sócios com CPF resolvido</p>
+    </div>
+    <div class="search-panel">
+      <div class="search-row">
+        <div class="input-wrap">
+          <span class="input-icon">🔍</span>
+          <input id="emp-q" type="text" placeholder="CNPJ (00.000.000/0001-00) ou nome da empresa…" autocomplete="off" />
+        </div>
+        <button id="emp-btn" class="btn-primary">Buscar</button>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Exemplos:</span>
+        <button class="chip-ex" data-val="33000167000101">Petrobras</button>
+        <button class="chip-ex" data-val="47960950000121">Magazine Luiza</button>
+        <button class="chip-ex" data-val="60701190000104">Itaú</button>
+        <button class="chip-ex" data-val="padaria">Padaria</button>
+      </div>
+    </div>
+    <div id="emp-results" class="results-area"></div>
+  </section>
+
+  <!-- ══ MÓDULO PESSOA CPF ══ -->
+  <section id="tab-pessoa" class="tab-section">
+    <div class="module-header">
+      <h2 class="module-title">👤 Pessoa por CPF</h2>
+      <p class="module-sub">JBR (223M CPFs) + Mk Buscas — dados completos, telefones, endereços, vínculos</p>
+    </div>
+    <div class="search-panel">
+      <div class="search-row">
+        <div class="input-wrap input-sm">
+          <span class="input-icon">🪪</span>
+          <input id="cpf-q" type="text" placeholder="000.000.000-00" maxlength="14" autocomplete="off" />
+        </div>
+        <button id="cpf-btn" class="btn-primary">Consultar</button>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Fontes:</span>
+        <span class="source-pill" style="background:#dbeafe;color:#1d4ed8">JBR 223M</span>
+        <span class="source-pill" style="background:#d1fae5;color:#065f46">Mk Buscas</span>
+      </div>
+    </div>
+    <div id="cpf-results" class="results-area"></div>
+  </section>
+
+  <!-- ══ MÓDULO NOME ══ -->
+  <section id="tab-nome" class="tab-section">
+    <div class="module-header">
+      <h2 class="module-title">🔎 Busca por Nome</h2>
+      <p class="module-sub">Candidatos no JBR — clique em qualquer pessoa para enriquecer com Mk Buscas</p>
+    </div>
+    <div class="search-panel">
+      <div class="search-row">
+        <div class="input-wrap">
+          <span class="input-icon">🔎</span>
+          <input id="nome-q" type="text" placeholder="Nome completo da pessoa…" autocomplete="off" />
+        </div>
+        <button id="nome-btn" class="btn-primary">Buscar</button>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Filtros:</span>
+        <select id="nome-sexo" class="filter-select">
+          <option value="">Sexo (todos)</option>
+          <option value="M">Masculino</option>
+          <option value="F">Feminino</option>
+        </select>
+        <input id="nome-ano-min" type="number" class="filter-num" placeholder="Nasc. de" min="1900" max="2015" />
+        <input id="nome-ano-max" type="number" class="filter-num" placeholder="até" min="1900" max="2015" />
+        <label class="toggle-wrap">
+          <input id="nome-broad" type="checkbox" />
+          <span>Busca ampla</span>
+        </label>
+        <select id="nome-limit" class="filter-select">
+          <option value="20">Máx 20</option>
+          <option value="40" selected>Máx 40</option>
+          <option value="100">Máx 100</option>
+        </select>
+      </div>
+    </div>
+    <div id="nome-results" class="results-area"></div>
+  </section>
+
+  <!-- ══ MÓDULO PROSPECÇÃO ══ -->
+  <section id="tab-prospec" class="tab-section">
+    <div class="prosp-layout">
+      <!-- Sidebar de filtros (retrátil, estilo Datastone) -->
+      <aside class="prosp-sidebar" id="prosp-sidebar">
+        <div class="prosp-sidebar-head">
+          <span>🔍 Filtros de pesquisa</span>
+          <button type="button" class="prosp-collapse-btn" id="prosp-collapse-btn" title="Recolher/expandir">◄</button>
+        </div>
+        <div class="prosp-sidebar-body">
+          <!-- Perfil: Clientes potenciais (pessoas/sócios) | Empresas -->
+          <div class="pf-perfil-toggle">
+            <button type="button" class="pf-perfil-btn active" data-perfil="empresa" id="pf-perfil-empresa">🏢 Empresas</button>
+            <button type="button" class="pf-perfil-btn" data-perfil="pessoa" id="pf-perfil-pessoa">👤 Clientes potenciais</button>
+          </div>
+          <p class="pf-perfil-note" id="pf-perfil-note-pessoa" hidden>
+            ℹ️ Baseado em <strong>sócios reais</strong> da Receita (cargo = qualificação societária). Campos marcados <span class="pf-soon">🔜</span> dependem de um dataset de perfis profissionais ainda não conectado.
+          </p>
+
+          <!-- ═══ Campos exclusivos do perfil PESSOA ═══ -->
+          <div id="pf-group-pessoa" hidden>
+            <div class="pf-field">
+              <label>👤 Cargo</label>
+              <input id="pf-cargo" type="text" placeholder="Pesquise um cargo (ex.: administrador, diretor)…" autocomplete="off" />
+            </div>
+            <div class="pf-field">
+              <label>🎖️ Senioridade <span class="pf-soon" title="Requer dataset de perfis profissionais">🔜</span></label>
+              <select id="pf-senioridade"><option value="">Selecione um nível de senioridade</option>
+                <option>Estagiário</option><option>Júnior</option><option>Pleno</option>
+                <option>Sênior</option><option>Coordenador</option><option>Gerente</option>
+                <option>Diretor</option><option>C-Level</option></select>
+            </div>
+            <div class="pf-field pf-row2">
+              <div><label>📆 Anos na empresa (mín.)</label><input id="pf-anos-min" type="number" placeholder="0" min="0" /></div>
+              <div><label>📆 Anos na empresa (máx.)</label><input id="pf-anos-max" type="number" placeholder="0" min="0" /></div>
+            </div>
+            <div class="pf-field">
+              <label>📍 Localização pessoa <span class="pf-soon" title="Sem endereço de sócio na Receita; use Localização empresa">🔜</span></label>
+              <select id="pf-loc-pessoa" disabled><option value="">Selecione uma ou mais UF</option></select>
+            </div>
+            <div class="pf-field">
+              <label>🧑 Nome</label>
+              <input id="pf-nome" type="text" placeholder="Digite um nome…" autocomplete="off" />
+            </div>
+            <div class="pf-field">
+              <label>🧑 Sobrenome</label>
+              <input id="pf-sobrenome" type="text" placeholder="Digite um sobrenome…" autocomplete="off" />
+            </div>
+            <div class="pf-field">
+              <label>🔗 Perfil LinkedIn <span class="pf-soon" title="Requer dataset de perfis profissionais">🔜</span></label>
+              <input id="pf-linkedin-pessoa" type="text" placeholder="Insira a URL do perfil LinkedIn" disabled />
+            </div>
+            <div class="pf-field">
+              <label>✉️ E-mail <span class="pf-soon" title="Receita não fornece e-mail de pessoa física">🔜</span></label>
+              <input id="pf-email-pessoa" type="text" placeholder="Insira um e-mail" disabled />
+            </div>
+            <div class="pf-toggles">
+              <label class="toggle-row"><span>Contatos com e-mail <span class="pf-soon">🔜</span></span><input id="pf-pessoa-com-email" type="checkbox" disabled /></label>
+              <label class="toggle-row"><span title="Telefone é resolvido ao montar a lista (Mk Buscas)">Contatos com telefone</span><input id="pf-pessoa-com-tel" type="checkbox" /></label>
+              <label class="toggle-row"><span>Contatos com perfil LinkedIn <span class="pf-soon">🔜</span></span><input id="pf-pessoa-com-linkedin" type="checkbox" disabled /></label>
+            </div>
+            <div class="pf-divider"></div>
+          </div>
+
+          <!-- ═══ Lupa geral (texto) ═══ -->
+          <div class="pf-field">
+            <label>🔎 Nome / Fantasia / Atividade</label>
+            <input id="pf-texto" type="text" placeholder="Pesquise um nome ou termo…" autocomplete="off" />
+          </div>
+          <div class="pf-escopo">
+            <label class="toggle-wrap"><input type="checkbox" class="pf-esc" value="razao" checked /><span>Razão social</span></label>
+            <label class="toggle-wrap"><input type="checkbox" class="pf-esc" value="fantasia" checked /><span>Fantasia</span></label>
+            <label class="toggle-wrap"><input type="checkbox" class="pf-esc" value="cnae" /><span>Atividade</span></label>
+            <label class="toggle-wrap"><input type="checkbox" class="pf-esc" value="natureza" /><span>Natureza</span></label>
+          </div>
+          <div class="pf-field">
+            <label>Modo do texto</label>
+            <select id="pf-tipo">
+              <option value="radical">Radical (abrangente)</option>
+              <option value="exata">Exata</option>
+            </select>
+          </div>
+
+          <div class="pf-divider"></div>
+
+          <!-- ═══ Campos de EMPRESA (comuns aos dois perfis) ═══ -->
+          <div class="pf-field">
+            <label>📄 Documento (CNPJ)</label>
+            <input id="pf-cnpj" type="text" placeholder="Busca direta por CNPJ…" autocomplete="off" maxlength="18" />
+          </div>
+          <div class="pf-field">
+            <label>📍 Localização empresa — Estado (UF)</label>
+            <select id="pf-uf">
+              <option value="">Selecione uma ou mais UF</option>
+              <option>AC</option><option>AL</option><option>AP</option><option>AM</option>
+              <option>BA</option><option>CE</option><option>DF</option><option>ES</option>
+              <option>GO</option><option>MA</option><option>MT</option><option>MS</option>
+              <option>MG</option><option>PA</option><option>PB</option><option>PR</option>
+              <option>PE</option><option>PI</option><option>RJ</option><option>RN</option>
+              <option>RS</option><option>RO</option><option>RR</option><option>SC</option>
+              <option>SP</option><option>SE</option><option>TO</option>
+            </select>
+          </div>
+          <div class="pf-field">
+            <label>📍 Cidade (município)</label>
+            <div class="combo" id="combo-municipio" data-tipo="municipio" data-code="">
+              <input class="combo-input" type="text" placeholder="Selecione uma ou mais cidades…" autocomplete="off" />
+              <div class="combo-list" hidden></div>
+            </div>
+          </div>
+          <div class="pf-field">
+            <label>🏭 Setor</label>
+            <input id="pf-setor" type="text" placeholder="Pesquise setores (ex.: construção, varejo)…" autocomplete="off" />
+          </div>
+          <div class="pf-field">
+            <label>🔧 Atividade (CNAE)</label>
+            <div class="combo" id="combo-cnae" data-tipo="cnae" data-code="">
+              <input class="combo-input" type="text" placeholder="Pesquise uma atividade CNAE…" autocomplete="off" />
+              <div class="combo-list" hidden></div>
+            </div>
+          </div>
+          <div class="pf-field">
+            <label>👥 Tamanho (funcionários) <span class="pf-soon" title="Requer dataset de perfis/empresas com contagem de funcionários">🔜</span></label>
+            <select id="pf-tamanho" disabled>
+              <option value="">Escolha o número de funcionários</option>
+              <option>0-1</option><option>2-10</option><option>11-50</option><option>51-200</option>
+              <option>201-500</option><option>501-1000</option><option>1001-5000</option>
+              <option>5001-10000</option><option>10001+</option>
+            </select>
+          </div>
+          <div class="pf-field">
+            <label>💵 Receita anual <span class="pf-soon" title="Receita Federal não expõe faturamento; usamos Capital Social abaixo">🔜</span></label>
+            <select id="pf-receita" disabled>
+              <option value="">Selecione a faixa de receita</option>
+              <option>Até R$360mil</option><option>R$360mil–4,8M</option><option>R$4,8M–50M</option>
+              <option>R$50M–500M</option><option>R$500M+</option>
+            </select>
+          </div>
+          <div class="pf-field">
+            <label>⭐ Especialidades <span class="pf-soon" title="Requer dataset de perfis profissionais">🔜</span></label>
+            <input id="pf-especialidades" type="text" placeholder="Pesquise especialidades…" disabled />
+          </div>
+          <div class="pf-field pf-row2">
+            <div><label>🚩 Fundada — de</label><input id="pf-fundada-de" type="date" /></div>
+            <div><label>🚩 Fundada — até</label><input id="pf-fundada-ate" type="date" /></div>
+          </div>
+          <div class="pf-field">
+            <label>🏢 Nome da empresa</label>
+            <input id="pf-nome-empresa" type="text" placeholder="Digite um nome de empresa…" autocomplete="off" />
+          </div>
+          <div class="pf-field">
+            <label>🏷️ Tipo empresa</label>
+            <select id="pf-tipo-empresa">
+              <option value="">Selecione o tipo da empresa</option>
+              <option value="privada">Empresa Privada</option>
+              <option value="publica">Órgão Público</option>
+            </select>
+          </div>
+          <div class="pf-field">
+            <label>🏛️ Natureza jurídica</label>
+            <div class="combo" id="combo-natureza" data-tipo="natureza" data-code="">
+              <input class="combo-input" type="text" placeholder="Selecione uma natureza jurídica…" autocomplete="off" />
+              <div class="combo-list" hidden></div>
+            </div>
+          </div>
+          <div class="pf-field">
+            <label>🔗 Perfil LinkedIn <span class="pf-soon" title="Requer dataset de perfis/empresas do LinkedIn">🔜</span></label>
+            <input id="pf-linkedin-empresa" type="text" placeholder="Insira a URL do perfil LinkedIn" disabled />
+          </div>
+          <div class="pf-field">
+            <label>📋 Omitir Listas <span class="pf-soon" title="CapiBLU ainda não tem listas salvas/CRM">🔜</span></label>
+            <select id="pf-omitir-listas" disabled><option value="">Selecione as listas de contato</option></select>
+          </div>
+          <div class="pf-field">
+            <label>📊 Porte / Tamanho (Receita)</label>
+            <select id="pf-porte">
+              <option value="">Todos os portes</option>
+              <option value="01">Micro Empresa (ME)</option>
+              <option value="03">Pequeno Porte (EPP)</option>
+              <option value="05">Demais</option>
+            </select>
+          </div>
+          <div class="pf-field">
+            <label>🚩 Situação cadastral</label>
+            <select id="pf-situacao">
+              <option value="ATIVA" selected>Ativa</option>
+              <option value="">Todas</option>
+              <option value="BAIXADA">Baixada</option>
+              <option value="INAPTA">Inapta</option>
+              <option value="SUSPENSA">Suspensa</option>
+            </select>
+          </div>
+          <div class="pf-field pf-row2">
+            <div>
+              <label>💰 Capital social mín. (R$)</label>
+              <input id="pf-cap-min" type="number" placeholder="0" min="0" />
+            </div>
+            <div>
+              <label>💰 Capital social máx. (R$)</label>
+              <input id="pf-cap-max" type="number" placeholder="0" min="0" />
+            </div>
+          </div>
+
+          <div class="pf-divider"></div>
+
+          <div class="pf-toggles">
+            <label class="toggle-row"><span>Filtro de Exclusão de Listas <span class="pf-soon">🔜</span></span><input id="pf-exclusao-listas" type="checkbox" disabled /></label>
+            <label class="toggle-row"><span>Optante MEI</span><input id="pf-mei-optante" type="checkbox" /></label>
+            <label class="toggle-row"><span>Excluir optantes MEI</span><input id="pf-mei-excluir" type="checkbox" /></label>
+            <label class="toggle-row"><span title="Base é 100% de empresas com CNPJ">Possui CNPJ</span><input id="pf-possui-cnpj" type="checkbox" checked disabled /></label>
+            <label class="toggle-row"><span>Somente com telefone</span><input id="pf-com-tel" type="checkbox" /></label>
+            <label class="toggle-row"><span>Somente matriz</span><input id="pf-matriz" type="checkbox" /></label>
+          </div>
+        </div>
+        <div class="prosp-sidebar-foot">
+          <button id="pf-buscar" class="btn-primary prosp-filtrar-btn">🔍 Filtrar</button>
+        </div>
+      </aside>
+
+      <!-- Conteúdo: contagem + tabela de resultados -->
+      <div class="prosp-content">
+        <div class="prosp-content-head">
+          <button type="button" class="prosp-expand-btn" id="prosp-expand-btn" title="Mostrar filtros" hidden>🔍</button>
+          <span id="pf-count" class="prosp-count"></span>
+        </div>
+        <div id="prosp-results" class="results-area"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ MÓDULO TELEFONE REVERSO ══ -->
+  <section id="tab-assertiva" class="tab-section">
+    <div class="module-header">
+      <h2 class="module-title">🎯 Busca Assertiva</h2>
+      <p class="module-sub">Consulta cadastral rica (Assertiva Localize): CPF, Nome/Endereço, Telefone, E-mail e CNPJ.</p>
+    </div>
+    <div class="search-panel">
+      <div class="filter-row">
+        <span class="filter-label">Buscar por:</span>
+        <div class="as-modo-btns">
+          <button type="button" class="as-modo active" data-modo="cpf">CPF</button>
+          <button type="button" class="as-modo" data-modo="nome">Nome / Endereço</button>
+          <button type="button" class="as-modo" data-modo="telefone">Telefone</button>
+          <button type="button" class="as-modo" data-modo="email">E-mail</button>
+          <button type="button" class="as-modo" data-modo="cnpj">CNPJ</button>
+        </div>
+      </div>
+
+      <!-- CPF -->
+      <div class="as-campo" data-campo="cpf">
+        <div class="search-row">
+          <div class="input-wrap"><span class="input-icon">👤</span>
+            <input id="as-cpf" type="text" placeholder="CPF (000.000.000-00)" maxlength="14" autocomplete="off" />
+          </div>
+        </div>
+      </div>
+
+      <!-- CNPJ -->
+      <div class="as-campo" data-campo="cnpj" hidden>
+        <div class="search-row">
+          <div class="input-wrap"><span class="input-icon">🏢</span>
+            <input id="as-cnpj" type="text" placeholder="CNPJ (00.000.000/0001-00)" maxlength="18" autocomplete="off" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Telefone -->
+      <div class="as-campo" data-campo="telefone" hidden>
+        <div class="search-row">
+          <div class="input-wrap"><span class="input-icon">📞</span>
+            <input id="as-telefone" type="text" placeholder="(11) 99999-9999" maxlength="16" autocomplete="off" />
+          </div>
+        </div>
+      </div>
+
+      <!-- E-mail -->
+      <div class="as-campo" data-campo="email" hidden>
+        <div class="search-row">
+          <div class="input-wrap"><span class="input-icon">✉️</span>
+            <input id="as-email" type="text" placeholder="nome@empresa.com.br" autocomplete="off" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Nome / Endereço -->
+      <div class="as-campo" data-campo="nome" hidden>
+        <div class="as-grid">
+          <label class="as-field as-col2"><span>Nome ou Razão Social</span>
+            <input id="as-nome" type="text" placeholder="João Mário de Andradas" autocomplete="off" /></label>
+          <label class="as-field"><span>Buscar</span>
+            <select id="as-buscarpor">
+              <option value="ambas">Pessoas e Empresas</option>
+              <option value="pessoas">Somente Pessoas</option>
+              <option value="empresas">Somente Empresas</option>
+            </select></label>
+          <label class="as-field as-check"><input id="as-exata" type="checkbox" /><span>Expressão exata</span></label>
+          <label class="as-field"><span>Sexo</span>
+            <select id="as-sexo">
+              <option value="">Indiferente</option>
+              <option value="masculino">Masculino</option>
+              <option value="feminino">Feminino</option>
+            </select></label>
+          <label class="as-field"><span>Nasc./Abertura (dd/mm/aaaa)</span>
+            <input id="as-data" type="text" placeholder="25/09/2007" maxlength="10" /></label>
+          <label class="as-field"><span>UF</span>
+            <select id="as-uf"><option value="">—</option></select></label>
+          <label class="as-field"><span>Cidade</span>
+            <input id="as-cidade" type="text" placeholder="Campinas" /></label>
+          <label class="as-field"><span>Bairro</span>
+            <input id="as-bairro" type="text" placeholder="Jardim Chapadão" /></label>
+          <label class="as-field as-col2"><span>CEP ou Rua</span>
+            <input id="as-cepourua" type="text" placeholder="13070-070 ou Donato Radomile" /></label>
+        </div>
+      </div>
+
+      <div class="filter-row">
+        <label class="as-field as-fin"><span>Finalidade (LGPD)</span>
+          <select id="as-finalidade">
+            <option value="1">1 · Confirmação de identidade</option>
+            <option value="2">2 · Ciclo de crédito</option>
+            <option value="4">4 · Execução de contrato</option>
+            <option value="5" selected>5 · Legítimo interesse</option>
+          </select></label>
+        <button id="as-btn" class="btn-primary">🔎 Consultar Assertiva</button>
+        <span class="source-pill" style="background:#ede9fe;color:#5b21b6">Assertiva · Localize V3</span>
+      </div>
+      <div id="as-config-note"></div>
+    </div>
+    <div id="as-results" class="results-area"></div>
+  </section>
+
+  <section id="tab-enrich" class="tab-section">
+    <div class="module-header">
+      <h2 class="module-title">🔼 Enriquecer Lista</h2>
+      <p class="module-sub">Suba uma planilha (por CNPJ), qualifique os dados pela Receita + Assertiva e verifique telefones (integralX). Escolha quais campos adicionar.</p>
+    </div>
+    <div class="search-panel">
+      <div class="en-step">
+        <span class="en-num">1</span>
+        <label class="en-upload">
+          <input id="en-file" type="file" accept=".xlsx,.xlsm,.xls,.csv,.tsv,.txt" hidden />
+          <span class="btn-secondary">📁 Escolher planilha (.xlsx, .csv, .tsv)</span>
+        </label>
+        <span id="en-file-name" class="en-fname"></span>
+      </div>
+      <div id="en-config" hidden>
+        <div class="en-step">
+          <span class="en-num">2</span>
+          <label class="as-field"><span>Aba</span><select id="en-sheet"></select></label>
+          <label class="as-field"><span>Coluna do CNPJ</span><select id="en-cnpjcol"></select></label>
+          <label class="as-field"><span>Qtd. de linhas</span><input id="en-limite" type="number" min="1" max="2000" value="50" class="filter-num" /></label>
+        </div>
+        <div class="en-step en-step-fields">
+          <span class="en-num">3</span>
+          <div class="en-fields-wrap">
+            <div class="en-fields-head">
+              <strong>Campos a adicionar após o enriquecimento</strong>
+              <span id="en-src-note" class="en-src-note"></span>
+            </div>
+            <div id="en-catalog"></div>
+          </div>
+        </div>
+        <div class="en-step">
+          <span class="en-num">4</span>
+          <button id="en-run" class="btn-primary">⚡ Enriquecer lista</button>
+          <button id="en-export" class="btn-secondary" hidden>⬇️ Exportar XLSX</button>
+        </div>
+      </div>
+    </div>
+    <div id="en-results" class="results-area"></div>
+  </section>
+
+  <section id="tab-telefone" class="tab-section">
+    <div class="module-header">
+      <h2 class="module-title">📞 Telefone Reverso</h2>
+      <p class="module-sub">Descubra quais CPFs/CNPJs estão atrelados a um telefone (WorkAPI intelgrax-tel).</p>
+    </div>
+    <div class="search-panel">
+      <div class="search-row">
+        <div class="input-wrap input-sm">
+          <span class="input-icon">📞</span>
+          <input id="tel-q" type="text" placeholder="(11) 99999-9999" maxlength="16" autocomplete="off" />
+        </div>
+        <button id="tel-btn" class="btn-primary">Consultar</button>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Fonte:</span>
+        <span class="source-pill" style="background:#fef3c7;color:#92400e">WorkAPI · telefone reverso</span>
+      </div>
+    </div>
+    <div id="tel-results" class="results-area"></div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  CapiBLU · BLU Sales Group · Receita Federal via BrasilAPI · JBR 223M · Mk Buscas
+</footer>
+
+<!-- Tela de login (cobre tudo até autenticar) -->
+<div id="login-overlay" class="login-overlay" hidden>
+  <form id="login-form" class="login-card">
+    <div class="login-brand"><span class="logo-icon">🦫</span> Capi<strong>BLU</strong></div>
+    <p class="login-sub">Acesso restrito · BLU Sales Group</p>
+    <label>E-mail<input id="login-email" type="email" autocomplete="username" required /></label>
+    <label>Senha<input id="login-senha" type="password" autocomplete="current-password" required /></label>
+    <div id="login-err" class="login-err"></div>
+    <button type="submit" class="btn-primary" id="login-btn">Entrar</button>
+  </form>
+</div>
+
+<!-- Modal: gestão de usuários (admin) -->
+<div id="users-modal" class="modal-overlay" hidden>
+  <div class="modal-card modal-lg">
+    <div class="modal-head"><h3>👥 Usuários</h3><button class="modal-x" id="users-close">✕</button></div>
+    <form id="user-create" class="user-create-row">
+      <input id="uc-nome" placeholder="Nome" />
+      <input id="uc-email" type="email" placeholder="E-mail" required />
+      <input id="uc-senha" type="text" placeholder="Senha inicial (mín. 8)" required />
+      <select id="uc-role"><option value="user">Usuário</option><option value="admin">Admin</option></select>
+      <button class="btn-primary" type="submit">+ Criar</button>
+    </form>
+    <div id="uc-err" class="login-err"></div>
+    <div class="prosp-table-scroll"><table class="prosp-table" id="users-table">
+      <thead><tr><th>Nome</th><th>E-mail</th><th>Role</th><th>Status</th><th>Ações</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </div>
+</div>
+
+<!-- Modal: trocar senha -->
+<div id="pass-modal" class="modal-overlay" hidden>
+  <form id="pass-form" class="modal-card">
+    <div class="modal-head"><h3>🔑 Trocar senha</h3><button class="modal-x" id="pass-close" type="button">✕</button></div>
+    <label>Senha atual<input id="pf-atual" type="password" required /></label>
+    <label>Nova senha (mín. 8)<input id="pf-nova" type="password" required /></label>
+    <div id="pass-err" class="login-err"></div>
+    <button type="submit" class="btn-primary">Salvar</button>
+  </form>
+</div>
+
+<script src="auth.js?v=1"></script>
+<script src="capiblu.js?v=28"></script>
+</body>
+</html>

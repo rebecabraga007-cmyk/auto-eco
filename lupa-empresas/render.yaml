@@ -1,0 +1,27 @@
+# Blueprint do CapiBLU App Online (Render). Deploy: New > Blueprint > aponte pro repo.
+# As envs marcadas sync:false você preenche no painel (segredos).
+services:
+  - type: web
+    name: capiblu-app
+    runtime: docker
+    dockerfilePath: ./lupa-empresas/Dockerfile
+    dockerContext: ./lupa-empresas
+    plan: starter
+    healthCheckPath: /
+    envVars:
+      - key: DATA_SERVICE_URL      # URL do túnel Cloudflare -> serviço de dados local
+        sync: false
+      - key: PROXY_SECRET          # mesmo valor no serviço de dados local
+        sync: false
+      - key: JWT_SECRET            # segredo estável do JWT
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: AUTH_DB_PATH          # users DB no disco persistente
+        value: /data/capiblu_auth.db
+    disk:
+      name: capiblu-auth
+      mountPath: /data
+      sizeGB: 1

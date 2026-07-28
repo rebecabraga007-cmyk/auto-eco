@@ -1,0 +1,1102 @@
+"""Lupa de Empresas - FastAPI backend.
+
+Serve a API (busca, dados da empresa, funcionarios do LinkedIn) e tambem os
+arquivos estaticos do frontend, tudo em http://localhost:8010.
+"""
+
+import os
+
+# Carrega .env (se existir) ANTES de importar modulos que leem env no import.
+try:
+    from dotenv import load_dotenv
+
+    _ENV_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"
+    )
+    load_dotenv(_ENV_PATH)
+except Exception:
+    pass
+
+import asyncio
+import io
+import sys
+import uuid
+
+from fastapi import Body, FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+
+import assertiva
+import brasilapi
+import casadosdados
+import donodozap
+import sheet_reader
+import linkedin_scraper
+import mkbuscas
+import serasa
+
+# Base local de CPF (JBR_PF) — modulo compartilhado em ../../jbr_base.
+_JBR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "jbr_base",
+)
+if _JBR not in sys.path:
+    sys.path.insert(0, _JBR)
+try:
+    import cpf_lookup
+except Exception:
+    cpf_lookup = None
+
+# Base local de CNPJ (Dados Abertos RFB) — modulo em ../../cnpj_base.
+_CNPJ = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "cnpj_base",
+)
+if _CNPJ not in sys.path:
+    sys.path.insert(0, _CNPJ)
+try:
+    import cnpj_lookup
+except Exception:
+    cnpj_lookup = None
+
+
+def _cnpj_local() -> bool:
+    return bool(cnpj_lookup and cnpj_lookup.ready())
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
+
+app = FastAPI(title="Lupa de Empresas", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── SERVIÇO DE DADOS (local) ──────────────────────────────────────────────
+# A autenticação (login/usuários) vive no app-online (Render). Aqui só validamos
+# o SEGREDO DE PROXY: só o app-online (que conhece o segredo) pode chamar as rotas
+# de dados através do túnel. Sem PROXY_SECRET definido → modo dev aberto (localhost).
+_PROXY_SECRET = os.environ.get("PROXY_SECRET", "").strip()
+
+
+@app.get("/api/health")
+async def health():
+    return {"ok": True, "service": "capiblu-data", "protegido": bool(_PROXY_SECRET)}
+
+
+@app.middleware("http")
+async def _proxy_guard(request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS" or not path.startswith("/api/") or path == "/api/health":
+        return await call_next(request)
+    if _PROXY_SECRET and request.headers.get("x-proxy-secret", "") != _PROXY_SECRET:
+        return JSONResponse({"detail": "Acesso negado (segredo de proxy)."}, status_code=401)
+    return await call_next(request)
+
+
+def _cpf_ready() -> bool:
+    return bool(cpf_lookup and cpf_lookup.ready())
+
+
+def _enrich_qsa_cpf(company: dict) -> None:
+    """Enriquece cada socio do QSA com o CPF completo, quando resolvivel.
+
+    Cruza nome + 6 digitos do meio da mascara (ex.: '***912137**') na base JBR.
+    """
+    if not _cpf_ready():
+        return
+    qsa = company.get("qsa") or []
+    for socio in qsa:
+        if not isinstance(socio, dict):
+            continue
+        nome = socio.get("nome_socio") or ""
+        mask = socio.get("cnpj_cpf_do_socio") or ""
+        # So PF: mascara de CPF tem 6 digitos (CNPJ de socio PJ tem outro formato).
+        try:
+            res = cpf_lookup.resolve_socio(nome, mask)
+        except Exception:
+            continue
+        socio["cpf_status"] = res.get("status")
+        if res.get("status") == "resolved":
+            socio["cpf_completo"] = res.get("cpf")
+            p = res.get("pessoa") or {}
+            socio["nascimento"] = p.get("nascimento")
+            socio["sexo"] = p.get("sexo")
+
+
+@app.get("/api/person/name-search")
+def person_name_search(
+    q: str = "", broad: bool = False, limit: int = 40, offset: int = 0
+):
+    """Busca pessoas por nome na base JBR. broad=true usa LIKE (nomes compostos).
+
+    Retorna 'total' = total de matches disponíveis (para 'Ver mais'/'Buscar todos').
+    """
+    if not _cpf_ready():
+        return {"status": "unavailable", "message": "Base JBR ainda carregando."}
+    if not q.strip():
+        return {"status": "error", "message": "Parâmetro q obrigatório."}
+    try:
+        q = q.strip()
+        if broad:
+            pessoas = cpf_lookup.by_name_broad(q, limit=limit, offset=offset)
+            total = cpf_lookup.count_name_broad(q)
+        else:
+            pessoas = cpf_lookup.by_name(q, limit=limit)
+            total = len(pessoas)
+        return {
+            "status": "ok",
+            "total": total,
+            "returned": len(pessoas),
+            "offset": offset,
+            "broad": broad,
+            "pessoas": pessoas,
+        }
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:120]}
+
+
+@app.get("/api/person/{cpf}/mk")
+async def person_mk(cpf: str):
+    """Dados completos da Mk Buscas (intelgrax-cpfv2) para um CPF."""
+    if not mkbuscas.enabled():
+        return {"status": "unavailable", "message": "Mk não configurada."}
+    return await mkbuscas.consulta_cpf(cpf)
+
+
+@app.get("/api/cnpj/lookup")
+def cnpj_lookup_list(tipo: str = "cnae"):
+    """Lista de códigos de apoio (cnae|natureza|municipio) para os selects do front."""
+    if not cnpj_lookup:
+        return {"status": "unavailable", "itens": []}
+    if tipo not in ("cnae", "natureza", "municipio", "pais", "qualificacao", "motivo"):
+        return {"status": "error", "message": "tipo inválido", "itens": []}
+    return {"status": "ok", "tipo": tipo, "itens": cnpj_lookup.list_lookup(tipo)}
+
+
+@app.get("/api/phone/{phone}/reverse")
+async def phone_reverse(phone: str):
+    """Telefone reverso (WorkAPI intelgrax-tel): CPFs/CNPJs atrelados ao número."""
+    return await mkbuscas.consulta_telefone(phone)
+
+
+@app.get("/api/phone/{phone}/pertence/{doc}")
+async def phone_pertence(phone: str, doc: str):
+    """Valida se um CPF/CNPJ está atrelado a um telefone (validação de contato)."""
+    return await mkbuscas.telefone_pertence(phone, doc)
+
+
+@app.get("/api/phone/{phone}/donodozap")
+async def phone_donodozap(phone: str, nome: str = ""):
+    """Valida se um telefone pertence a determinada pessoa via DonoDoZap."""
+    return await donodozap.consultar(phone, nome)
+
+
+# ---- Busca Assertiva (API Localize V3) ----
+
+@app.get("/api/assertiva/status")
+async def assertiva_status():
+    """Diz se a integração Assertiva está configurada (sem expor credenciais)."""
+    return {"enabled": assertiva.enabled(), "finalidade_padrao": assertiva.DEFAULT_FINALIDADE}
+
+
+@app.get("/api/assertiva/cpf")
+async def assertiva_cpf(cpf: str, finalidade: int | None = None):
+    return await assertiva.consulta_cpf(cpf, finalidade)
+
+
+@app.get("/api/assertiva/cnpj")
+async def assertiva_cnpj(cnpj: str, finalidade: int | None = None):
+    return await assertiva.consulta_cnpj(cnpj, finalidade)
+
+
+@app.get("/api/assertiva/telefone")
+async def assertiva_telefone(telefone: str, finalidade: int | None = None):
+    return await assertiva.consulta_telefone(telefone, finalidade)
+
+
+@app.get("/api/assertiva/email")
+async def assertiva_email(email: str, finalidade: int | None = None):
+    return await assertiva.consulta_email(email, finalidade)
+
+
+@app.post("/api/assertiva/nome")
+async def assertiva_nome(payload: dict = Body(default={})):
+    """Busca por nome/razão social e/ou endereço (Localize nome-endereco)."""
+    filtros = payload.get("filtros") or payload or {}
+    finalidade = payload.get("finalidade")
+    return await assertiva.busca_nome_endereco(filtros, finalidade)
+
+
+@app.get("/api/search")
+async def search(q: str = ""):
+    """Busca empresas por CNPJ (exato) ou nome. NAO faz scraping de LinkedIn."""
+    return await brasilapi.search_companies(q)
+
+
+@app.get("/api/person/{cpf}")
+async def person_by_cpf(cpf: str):
+    """Consulta identidade por CPF exato na base JBR."""
+    if not _cpf_ready():
+        return {"status": "unavailable", "message": "Base de CPF ainda carregando ou indisponivel."}
+    p = cpf_lookup.by_cpf(cpf)
+    return {"status": "ok" if p else "not_found", "pessoa": p}
+
+
+@app.get("/api/person/resolve/")
+async def person_resolve(name: str = "", mask: str = ""):
+    """Resolve CPF por nome (+ mascara opcional). Usado para socios/funcionarios."""
+    if not _cpf_ready():
+        return {"status": "unavailable", "message": "Base de CPF ainda carregando ou indisponivel."}
+    return cpf_lookup.resolve_socio(name, mask)
+
+
+@app.get("/api/person/{cpf}/contacts")
+async def person_contacts(cpf: str):
+    """Telefones/emails de uma PF por CPF, via Serasa Infomais (on-demand)."""
+    if not serasa.enabled():
+        return {"status": "unavailable", "message": "Serasa nao configurada (defina SERASA_CLIENT_ID/SECRET)."}
+    return await serasa.enrich_person(cpf)
+
+
+@app.get("/api/company/{cnpj}/contacts")
+async def company_contacts(cnpj: str):
+    """Telefones/emails de uma PJ por CNPJ, via Serasa Infomais (on-demand)."""
+    if not serasa.enabled():
+        return {"status": "unavailable", "message": "Serasa nao configurada (defina SERASA_CLIENT_ID/SECRET)."}
+    return await serasa.enrich_company(cnpj)
+
+
+@app.get("/api/company/{cnpj}")
+async def company(cnpj: str):
+    """Dados completos da empresa via BrasilAPI. NAO faz scraping."""
+    try:
+        data = await brasilapi.fetch_company(cnpj)
+        _enrich_qsa_cpf(data)
+        return {"status": "ok", "company": data}
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"status": "error", "message": str(exc)})
+    except LookupError as exc:
+        return JSONResponse(status_code=404, content={"status": "error", "message": str(exc)})
+    except Exception:
+        return JSONResponse(
+            status_code=502,
+            content={"status": "error", "message": "Falha ao consultar a BrasilAPI."},
+        )
+
+
+@app.get("/api/company/{cnpj}/employees")
+async def employees(cnpj: str):
+    """Dispara o scraping do LinkedIn para os funcionarios da empresa."""
+    company_name = ""
+    company_legal = ""
+    try:
+        data = await brasilapi.fetch_company(cnpj)
+        company_name = data.get("nome_fantasia") or data.get("razao_social") or ""
+        company_legal = data.get("razao_social") or ""
+    except Exception:
+        # Se a BrasilAPI falhar, o scraper trata nomes vazios graciosamente.
+        pass
+
+    result = await linkedin_scraper.scrape_employees(
+        brasilapi.only_digits(cnpj), company_name, company_legal
+    )
+
+    # Enriquece cada funcionario com o CPF, estilo Datastone:
+    #   JBR (nome -> candidatos) + desambiguacao por empresa + cargo + CIDADE DA PESSOA.
+    # A cidade e o cargo vem do proprio Bright (perfil do LinkedIn).
+    if _cpf_ready() and isinstance(result.get("employees"), list):
+        for emp in result["employees"]:
+            nome = emp.get("name", "")
+            try:
+                cands = cpf_lookup.by_name(nome, limit=50)
+            except Exception:
+                continue
+
+            if len(cands) == 1:
+                emp["cpf_status"] = "resolved"
+                emp["cpf"] = cands[0]["cpf"]
+                continue
+
+            # Varios homonimos: desambigua com sinais do Bright, se a Mk estiver ligada.
+            if mkbuscas.enabled() and cands:
+                res = await mkbuscas.disambiguate_multi(
+                    cands,
+                    company=company_name,
+                    role=emp.get("title", ""),
+                    city=emp.get("city", ""),
+                )
+                emp["cpf_status"] = res.get("status")
+                if res.get("status") == "resolved":
+                    emp["cpf"] = res.get("cpf")
+                    tels = (res.get("pessoa") or {}).get("phones_mk", [])
+                    if tels:
+                        emp["phones_mk"] = tels
+            else:
+                emp["cpf_status"] = "ambiguous" if cands else "not_found"
+                emp["cpf_candidates"] = len(cands)
+    return result
+
+
+async def _phones_for_cpf(cpf: str, modo: str = "celular", max_tel: int = 3,
+                          fonte: str = "mk") -> list[dict]:
+    """Telefones para um CPF, filtrados/priorizados (celular atual primeiro).
+
+    fonte: 'mk' (WorkAPI) | 'assertiva' (Localize). Ambos passam pelo mesmo
+    refine_phones, garantindo o mesmo filtro (celular atual, dedupe, etc.).
+    """
+    if not cpf:
+        return []
+    try:
+        if fonte == "assertiva":
+            if not assertiva.enabled():
+                return []
+            r = await assertiva.telefones_documento(cpf, tipo="CPF")
+            if r.get("status") == "ok":
+                return mkbuscas.refine_phones(r.get("telefones") or [], modo=modo, max_n=max_tel)
+            return []
+        if not mkbuscas.enabled():
+            return []
+        mk = await mkbuscas.consulta_cpf(cpf)
+        if mk.get("status") == "ok":
+            raw = mkbuscas._extract_phones(mk.get("data") or {})
+            return mkbuscas.refine_phones(raw, modo=modo, max_n=max_tel)
+    except Exception:
+        pass
+    return []
+
+
+def _fmt_phone_digits(p: dict) -> str:
+    ddd = str(p.get("ddd") or "").strip()
+    num = str(p.get("number") or p.get("telefone") or "").strip()
+    num = brasilapi.only_digits(num)
+    if ddd and not num.startswith(ddd):
+        return ddd + num
+    return num or brasilapi.only_digits(str(p.get("telefone") or ""))
+
+
+@app.post("/api/companies/search")
+async def companies_search(payload: dict = Body(default={})):
+    """Busca avancada de empresas (estilo Datastone) via Casa dos Dados.
+
+    Body: {filtros: {...}, limite: int}. Retorna {status, total, empresas}.
+    """
+    filtros = payload.get("filtros") or {}
+    limite = payload.get("limite") or 20
+    offset = payload.get("offset") or 0
+    # Base local (RFB) primeiro: sem cap de 20 e instantanea. Fallback: Casa dos Dados.
+    if _cnpj_local():
+        res = cnpj_lookup.search(filtros, limite=limite, offset=offset)
+        res["fonte"] = "local"
+        return res
+    if not casadosdados.enabled():
+        return {"status": "unavailable", "message": "Busca avancada indisponivel.", "empresas": []}
+    res = await casadosdados.pesquisa_avancada(filtros, limite)
+    res["fonte"] = "casadosdados"
+    return res
+
+
+@app.post("/api/prospeccao/pessoas")
+async def prospeccao_pessoas(payload: dict = Body(default={})):
+    """Busca de pessoas (perfil 'Clientes potenciais' estilo Datastone).
+
+    PROXY com dados reais de HOJE: usa sócios da Receita (cargo = qualificação
+    societária). Quando o dataset de perfis profissionais for ligado, este
+    endpoint passa a incluir decisores não-sócios também.
+    """
+    if not _cnpj_local():
+        return {"status": "unavailable", "message": "Base local indisponível.", "pessoas": []}
+    filtros = payload.get("filtros") or {}
+    limite = payload.get("limite") or 20
+    offset = payload.get("offset") or 0
+    return cnpj_lookup.search_pessoas(filtros, limite=limite, offset=offset)
+
+
+@app.get("/api/company/{cnpj}/leads")
+async def company_leads(cnpj: str, decisores: bool = False,
+                        modo_tel: str = "celular", max_tel: int = 3,
+                        fonte_tel: str = "mk"):
+    """Enriquece UMA empresa com contatos (socios do QSA + telefones).
+
+    Retorna {status, empresa:{...}, contatos:[{tipo, nome, cargo, cpf, telefones[]}]}.
+    modo_tel: 'celular' (padrao) | 'celular_fixo' | 'todos'.
+    fonte_tel: 'mk' (WorkAPI) | 'assertiva' (Localize).
+    max_tel: max de telefones por contato.
+    Se decisores=true, tenta anexar decisores do LinkedIn (lento, best-effort).
+    """
+    # Base local (RFB) primeiro — instantânea e traz o QSA. Fallback: BrasilAPI.
+    data = None
+    if _cnpj_local():
+        loc = cnpj_lookup.by_cnpj(cnpj)
+        if loc.get("status") == "ok":
+            data = loc["company"]
+    if data is None:
+        try:
+            data = await brasilapi.fetch_company(cnpj)
+        except LookupError:
+            return {"status": "not_found", "cnpj": cnpj, "contatos": []}
+        except Exception:
+            return {"status": "error", "cnpj": cnpj, "message": "Falha BrasilAPI", "contatos": []}
+
+    _enrich_qsa_cpf(data)
+    qsa_all = [s for s in (data.get("qsa") or []) if isinstance(s, dict)]
+    empresa = {
+        "cnpj": brasilapi.format_cnpj(str(data.get("cnpj", "")) or cnpj),
+        "razao_social": data.get("razao_social") or "",
+        "nome_fantasia": data.get("nome_fantasia") or "",
+        "municipio": data.get("municipio") or "",
+        "uf": data.get("uf") or "",
+        "porte": data.get("porte") or "",
+        "capital_social": data.get("capital_social") or "",
+        "cnae": data.get("cnae_fiscal_descricao") or "",
+        "cnae_codigo": data.get("cnae_fiscal") or "",
+        "situacao": data.get("descricao_situacao_cadastral") or "",
+        "email": data.get("email") or "",
+        "telefone_empresa": data.get("ddd_telefone_1") or "",
+        # Campos extras p/ o export enriquecido (padrão da planilha modelo)
+        "natureza_juridica": data.get("natureza_juridica") or "",
+        "matriz_filial": data.get("matriz_filial") or "",
+        "data_abertura": data.get("data_inicio_atividade") or "",
+        "bairro": data.get("bairro") or "",
+        "logradouro": data.get("logradouro") or "",
+        "numero": data.get("numero") or "",
+        "complemento": data.get("complemento") or "",
+        "cep": data.get("cep") or "",
+        "telefone_empresa_2": data.get("ddd_telefone_2") or "",
+        "simples": data.get("opcao_simples") or "",
+        "mei": data.get("opcao_mei") or "",
+        "qtd_socios": len(qsa_all),
+    }
+
+    def _tel_payload(tels):
+        return [{"raw": t.get("digits") or _fmt_phone_digits(t),
+                 "display": t.get("telefone") or "", "categoria": t.get("categoria"),
+                 "whatsapp": t.get("whatsapp")} for t in tels]
+
+    socios = [s for s in (data.get("qsa") or []) if isinstance(s, dict)]
+    # Telefones de todos os socios em paralelo (era 1 a 1 => lento).
+    tels_por_socio = await asyncio.gather(*[
+        _phones_for_cpf(s.get("cpf_completo") or "", modo_tel, max_tel, fonte_tel) for s in socios
+    ])
+    contatos = []
+    for socio, tels in zip(socios, tels_por_socio):
+        cpf = socio.get("cpf_completo") or ""
+        contatos.append({
+            "tipo": "socio",
+            "nome": socio.get("nome_socio") or socio.get("nome") or "",
+            "cargo": socio.get("qualificacao_socio") or socio.get("qual") or "",
+            "cpf": cpf,
+            "cpf_status": socio.get("cpf_status") or ("resolved" if cpf else "not_found"),
+            "telefones": _tel_payload(tels),
+        })
+
+    if decisores and _cpf_ready():
+        try:
+            emp_res = await linkedin_scraper.scrape_employees(
+                brasilapi.only_digits(cnpj), empresa["nome_fantasia"] or empresa["razao_social"],
+                empresa["razao_social"],
+            )
+            for emp in (emp_res.get("employees") or [])[:10]:
+                nome = emp.get("name", "")
+                cpf = ""
+                try:
+                    cands = cpf_lookup.by_name(nome, limit=50)
+                    if len(cands) == 1:
+                        cpf = cands[0]["cpf"]
+                except Exception:
+                    pass
+                tels = await _phones_for_cpf(cpf, modo_tel, max_tel, fonte_tel) if cpf else []
+                contatos.append({
+                    "tipo": "decisor",
+                    "nome": nome,
+                    "cargo": emp.get("title") or "",
+                    "cpf": cpf,
+                    "cpf_status": "resolved" if cpf else "ambiguous",
+                    "telefones": [{"raw": t.get("digits") or _fmt_phone_digits(t),
+                                   "display": t.get("telefone") or "", "categoria": t.get("categoria"),
+                                   "whatsapp": t.get("whatsapp")} for t in tels],
+                })
+        except Exception:
+            pass
+
+    return {"status": "ok", "empresa": empresa, "contatos": contatos}
+
+
+# Colunas de EMPRESA no export enriquecido (padrão da planilha modelo Datastone).
+# (chave_no_payload | rótulo). Campos que ainda não temos dataset ficam em branco.
+_EXP_EMPRESA_COLS = [
+    ("cnpj", "CNPJ"),
+    ("razao_social", "Razao Social"),
+    ("nome_fantasia", "Nome Fantasia"),
+    ("site", "Site (provavel)"),
+    ("segmento", "Segmento"),
+    ("setor_icp", "Setor ICP"),
+    ("cnae_codigo", "CNAE Codigo"),
+    ("cnae", "CNAE Descricao"),
+    ("porte", "Porte"),
+    ("funcionarios", "Funcionarios"),
+    ("faturamento", "Faturamento"),
+    ("matriz_filial", "Matriz/Filial"),
+    ("natureza_juridica", "Natureza Juridica"),
+    ("situacao", "Situacao Cadastral"),
+    ("simples", "Simples Nacional"),
+    ("data_abertura", "Data Abertura"),
+    ("capital_social", "Capital Social"),
+    ("uf", "UF"),
+    ("municipio", "Municipio"),
+    ("bairro", "Bairro"),
+    ("logradouro", "Logradouro"),
+    ("numero", "Numero"),
+    ("cep", "CEP"),
+    ("tel_empresa_1", "Tel Empresa 1"),
+    ("tel_empresa_2", "Tel Empresa 2"),
+    ("tel_empresa_3", "Tel Empresa 3"),
+    ("email_empresa_1", "Email Empresa 1"),
+    ("email_empresa_2", "Email Empresa 2"),
+    ("email_empresa_3", "Email Empresa 3"),
+    ("qtd_socios", "Qtd Socios"),
+    ("qtd_membros", "Qtd Membros"),
+    ("regional", "Regional"),
+]
+
+# Sufixos de cada bloco de contato (padrão "Contato N ...").
+_EXP_CONTATO_FIELDS = [
+    ("nome", "Nome"),
+    ("cargo", "Cargo"),
+    ("cpf", "CPF"),
+    ("celular1", "Celular 1"),
+    ("celular2", "Celular 2"),
+    ("fixo", "Fixo"),
+    ("whatsapp", "WhatsApp"),
+    ("email1", "Email 1"),
+    ("email2", "Email 2"),
+]
+
+
+def _split_contato(c: dict) -> dict:
+    """Quebra um contato (com lista de telefones) nos campos do modelo:
+    Celular 1/2, Fixo, WhatsApp, e-mails."""
+    celulares, fixo, whats = [], "", False
+    for t in (c.get("telefones") or []):
+        disp = t.get("display") or t.get("raw") or ""
+        cat = t.get("categoria") or ""
+        if t.get("whatsapp"):
+            whats = True
+        if cat == "fixo":
+            if not fixo:
+                fixo = disp
+        else:  # celular / celular_antigo
+            celulares.append(disp)
+    emails = c.get("emails") or []
+    return {
+        "nome": c.get("nome") or "",
+        "cargo": c.get("cargo") or "",
+        "cpf": c.get("cpf") or "",
+        "celular1": celulares[0] if celulares else "",
+        "celular2": celulares[1] if len(celulares) > 1 else "",
+        "fixo": fixo,
+        "whatsapp": "SIM" if whats else "",
+        "email1": emails[0] if emails else "",
+        "email2": emails[1] if len(emails) > 1 else "",
+    }
+
+
+def _site_from_email(email: str) -> str:
+    email = (email or "").strip()
+    if "@" in email:
+        dom = email.split("@")[-1].strip().lower()
+        generic = {"gmail.com", "hotmail.com", "outlook.com", "yahoo.com",
+                   "yahoo.com.br", "uol.com.br", "bol.com.br", "terra.com.br",
+                   "live.com", "icloud.com"}
+        if dom and dom not in generic:
+            return dom
+    return ""
+
+
+@app.post("/api/export/xlsx")
+async def export_xlsx(payload: dict = Body(default={})):
+    """Gera a planilha XLSX enriquecida (padrão Datastone), 1 linha por empresa.
+
+    Body: {empresas: [{empresa:{...}, contatos:[{nome,cargo,cpf,telefones:[...],emails:[]}]}]}
+    Compat: se vier {rows:[...]} (formato antigo por telefone), exporta assim mesmo.
+    AutoFilter fica ligado em todas as colunas → dá pra adicionar mais filtros no Excel.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    empresas = payload.get("empresas")
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="FF6A00")  # laranja do modelo
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Prospeccao"
+
+    if empresas is not None:
+        # layout: 'empresa' = 1 CNPJ por linha (blocos Contato 1..N lado a lado);
+        #         'contato' = 1 contato por linha (empresa repetida a cada contato).
+        layout = (payload.get("layout") or "empresa").strip().lower()
+
+        def _emp_vals(emp: dict) -> list:
+            vals = []
+            for key, _ in _EXP_EMPRESA_COLS:
+                if key == "site":
+                    vals.append(_site_from_email(emp.get("email") or emp.get("email_empresa_1") or ""))
+                elif key == "tel_empresa_1":
+                    vals.append(emp.get("telefone_empresa") or "")
+                elif key == "tel_empresa_2":
+                    vals.append(emp.get("telefone_empresa_2") or "")
+                elif key == "email_empresa_1":
+                    vals.append(emp.get("email") or "")
+                elif key == "simples":
+                    v = emp.get("simples") or ""
+                    vals.append("SIM" if str(v).upper() in ("S", "SIM", "1") else ("NAO" if v else ""))
+                else:
+                    vals.append(emp.get(key, ""))
+            return vals
+
+        norm = []
+        max_contatos = 4  # como no modelo
+        for item in empresas:
+            emp = item.get("empresa") or {}
+            contatos = [_split_contato(c) for c in (item.get("contatos") or [])]
+            max_contatos = max(max_contatos, len(contatos))
+            norm.append((emp, contatos))
+
+        r_idx = 2
+        if layout == "contato":
+            # Cabeçalho: colunas de empresa + UM bloco de contato (sem prefixo "Contato N").
+            headers = [lbl for _, lbl in _EXP_EMPRESA_COLS] + \
+                      [f"Contato {lbl}" for _, lbl in _EXP_CONTATO_FIELDS]
+            for emp, contatos in norm:
+                base = _emp_vals(emp)
+                # Empresa sem contato ainda gera 1 linha (só dados da empresa).
+                for c in (contatos or [None]):
+                    vals = list(base)
+                    for fkey, _ in _EXP_CONTATO_FIELDS:
+                        vals.append((c or {}).get(fkey, ""))
+                    for col_idx, v in enumerate(vals, start=1):
+                        ws.cell(row=r_idx, column=col_idx, value=v)
+                    r_idx += 1
+        else:
+            # layout 'empresa': blocos Contato 1..N lado a lado.
+            headers = [lbl for _, lbl in _EXP_EMPRESA_COLS]
+            for n in range(1, max_contatos + 1):
+                headers += [f"Contato {n} {lbl}" for _, lbl in _EXP_CONTATO_FIELDS]
+            for emp, contatos in norm:
+                vals = _emp_vals(emp)
+                for c in contatos:
+                    for fkey, _ in _EXP_CONTATO_FIELDS:
+                        vals.append(c.get(fkey, ""))
+                for col_idx, v in enumerate(vals, start=1):
+                    ws.cell(row=r_idx, column=col_idx, value=v)
+                r_idx += 1
+
+        for col_idx, label in enumerate(headers, start=1):
+            c = ws.cell(row=1, column=col_idx, value=label)
+            c.font = header_font
+            c.fill = header_fill
+            c.alignment = header_align
+        for i in range(1, len(headers) + 1):
+            ws.column_dimensions[get_column_letter(i)].width = 20
+        ws.freeze_panes = "C2"  # trava cabeçalho + CNPJ/Razão (como no modelo)
+        last_col = get_column_letter(len(headers))
+        ws.auto_filter.ref = f"A1:{last_col}{max(r_idx - 1, 1)}"
+    else:
+        # Fallback: formato antigo (uma linha por telefone).
+        rows = payload.get("rows") or []
+        legacy = [
+            ("razao_social", "Razao Social"), ("nome_fantasia", "Nome Fantasia"),
+            ("cnpj", "CNPJ"), ("municipio", "Municipio"), ("uf", "UF"),
+            ("porte", "Porte"), ("cnae", "Atividade (CNAE)"), ("situacao", "Situacao"),
+            ("contato_tipo", "Tipo Contato"), ("contato_nome", "Nome Contato"),
+            ("contato_cargo", "Cargo"), ("contato_cpf", "CPF"), ("telefone", "Telefone"),
+            ("tel_categoria", "Tipo Telefone"), ("validado", "Validado (telefone reverso)"),
+            ("nome_donodozap", "Nome / Vinculo"),
+        ]
+        for col_idx, (_key, label) in enumerate(legacy, start=1):
+            c = ws.cell(row=1, column=col_idx, value=label)
+            c.font = header_font
+            c.fill = header_fill
+        for r_idx, row in enumerate(rows, start=2):
+            for col_idx, (key, _label) in enumerate(legacy, start=1):
+                ws.cell(row=r_idx, column=col_idx, value=row.get(key, ""))
+        for i in range(1, len(legacy) + 1):
+            ws.column_dimensions[get_column_letter(i)].width = 20
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = f"A1:{get_column_letter(len(legacy))}{max(len(rows) + 1, 1)}"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="capiblu-prospeccao.xlsx"'},
+    )
+
+
+# ============================================================
+#  ENRIQUECER LISTA (upload XLSX -> qualifica + telefone + verifica)
+# ============================================================
+
+# Catálogo de campos que o usuário pode optar por adicionar.
+# grupo | [(key, rótulo)]. Prefixo da key indica a fonte:
+#   rfb_ = Receita local (grátis) · as_ = Assertiva · vf_ = verificação integralX
+_ENRICH_CATALOG = [
+    {"grupo": "Empresa (Receita Federal)", "fonte": "RFB local (instantâneo)", "campos": [
+        ("rfb_razao", "Razão Social (RFB)"), ("rfb_fantasia", "Nome Fantasia"),
+        ("rfb_situacao", "Situação Cadastral"), ("rfb_cnae_cod", "CNAE Código"),
+        ("rfb_cnae", "CNAE Descrição"), ("rfb_porte", "Porte"),
+        ("rfb_capital", "Capital Social"), ("rfb_natureza", "Natureza Jurídica"),
+        ("rfb_abertura", "Data Abertura"), ("rfb_matriz", "Matriz/Filial"),
+        ("rfb_endereco", "Endereço"), ("rfb_municipio", "Município (RFB)"),
+        ("rfb_uf", "UF (RFB)"), ("rfb_cep", "CEP"),
+        ("rfb_tel1", "Telefone Empresa 1"), ("rfb_tel2", "Telefone Empresa 2"),
+        ("rfb_email", "E-mail Empresa (RFB)"), ("rfb_qtd_socios", "Qtd Sócios"),
+        ("rfb_socio1", "Sócio Principal"), ("rfb_simples", "Simples"), ("rfb_mei", "MEI"),
+    ]},
+    {"grupo": "Empresa – Telefone (Assertiva)", "fonte": "Assertiva Localize (consumo)", "campos": [
+        ("as_empresa_tel", "Telefone Empresa (Assertiva)"),
+        ("as_empresa_tel2", "Telefone Empresa 2 (Assertiva)"),
+        ("as_empresa_email", "E-mail Empresa (Assertiva)"),
+        ("as_empresa_whatsapp", "WhatsApp Empresa"),
+    ]},
+    {"grupo": "Sócios – contato pessoal (Assertiva)", "fonte": "JBR (CPF) + Assertiva (consumo)", "campos": [
+        ("so_socio1_nome", "Sócio 1 Nome"),
+        ("so_socio1_cpf", "Sócio 1 CPF"),
+        ("so_socio1_celular", "Sócio 1 Celular"),
+        ("so_socio1_whatsapp", "Sócio 1 WhatsApp"),
+        ("so_socio1_email", "Sócio 1 E-mail"),
+        ("so_socio2_nome", "Sócio 2 Nome"),
+        ("so_socio2_cpf", "Sócio 2 CPF"),
+        ("so_socio2_celular", "Sócio 2 Celular"),
+        ("so_todos_tel", "Todos os sócios (nome — celular)"),
+    ]},
+    {"grupo": "Verificação de telefone (integralX)", "fonte": "WorkAPI intelgrax-tel (consumo)", "campos": [
+        ("vf_telefone", "Telefone Verificado"),
+        ("vf_status", "Status Verificação"),
+        ("vf_vinculos", "Nº de Vínculos"),
+    ]},
+]
+_ENRICH_KEYS = {k for g in _ENRICH_CATALOG for (k, _) in g["campos"]}
+
+# Store em memória das planilhas enviadas (ferramenta local, 1 usuário).
+_UPLOADS: dict[str, dict] = {}
+
+
+def _guess_cnpj_col(columns: list[str]) -> str:
+    for c in columns:
+        if "cnpj" in (c or "").strip().lower():
+            return c
+    return columns[0] if columns else ""
+
+
+@app.get("/api/enrich/catalog")
+async def enrich_catalog():
+    return {"grupos": [
+        {"grupo": g["grupo"], "fonte": g["fonte"],
+         "campos": [{"key": k, "label": lbl} for k, lbl in g["campos"]]}
+        for g in _ENRICH_CATALOG
+    ], "assertiva_ok": assertiva.enabled(), "integralx_ok": bool(mkbuscas.TEL_AUTH_VALUE)}
+
+
+@app.post("/api/enrich/upload")
+async def enrich_upload(file: UploadFile = File(...)):
+    """Recebe XLSX/XLS/CSV/TSV e devolve as abas, colunas e um preview (sem enriquecer).
+
+    Parsing robusto (sheet_reader): encoding/delimitador auto, cabeçalho bagunçado,
+    células com erro, floats de CNPJ, abas quebradas.
+    """
+    try:
+        content = await file.read()
+    except Exception as exc:
+        return {"status": "error", "message": f"Falha ao receber arquivo: {str(exc)[:150]}"}
+    if not content:
+        return {"status": "error", "message": "Arquivo vazio."}
+    try:
+        parsed, aviso = sheet_reader.read_table(file.filename or "", content)
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    except Exception as exc:
+        return {"status": "error", "message": f"Não consegui ler a planilha: {str(exc)[:150]}"}
+
+    up_id = uuid.uuid4().hex[:12]
+    store, sheets = {}, []
+    for sh in parsed:
+        title = sh["title"]
+        # evita colisão de nomes de aba
+        base, n = title, 2
+        while title in store:
+            title = f"{base} ({n})"; n += 1
+        store[title] = {"columns": sh["columns"], "rows": sh["rows"]}
+        sheets.append({"name": title, "columns": sh["columns"], "linhas": len(sh["rows"]),
+                       "preview": sh["rows"][:3], "cnpj_col": _guess_cnpj_col(sh["columns"])})
+    _UPLOADS[up_id] = store
+    return {"status": "ok", "upload_id": up_id, "sheets": sheets, "aviso": aviso}
+
+
+async def _enrich_cnpj(cnpj: str, want: set) -> dict:
+    """Enriquece um CNPJ com os campos pedidos. Só chama Assertiva/integralX se
+    houver campos daquela fonte selecionados (controla consumo)."""
+    out = {k: "" for k in want}
+    # normaliza a célula (float/sci-notation) antes de extrair dígitos
+    digits = brasilapi.only_digits(str(sheet_reader.normalize_cell(cnpj) or ""))
+    need_rfb = any(k.startswith("rfb_") for k in want)
+    need_as = any(k.startswith("as_") for k in want)
+    need_so = any(k.startswith("so_") for k in want)
+    need_vf = any(k.startswith("vf_") for k in want)
+    # Excel costuma comer o zero à esquerda do CNPJ (guarda como número) — completa 14.
+    if 8 <= len(digits) < 14:
+        digits = digits.zfill(14)
+
+    company = None
+    if (need_rfb or need_as or need_vf or need_so) and _cnpj_local():
+        loc = cnpj_lookup.by_cnpj(digits)
+        if loc.get("status") == "ok":
+            company = loc["company"]
+    if company:
+        qsa = company.get("qsa") or []
+        s1 = qsa[0] if qsa else {}
+        mp = {
+            "rfb_razao": company.get("razao_social", ""),
+            "rfb_fantasia": company.get("nome_fantasia", ""),
+            "rfb_situacao": company.get("descricao_situacao_cadastral", ""),
+            "rfb_cnae_cod": company.get("cnae_fiscal", ""),
+            "rfb_cnae": company.get("cnae_fiscal_descricao", ""),
+            "rfb_porte": company.get("porte", ""),
+            "rfb_capital": company.get("capital_social", ""),
+            "rfb_natureza": company.get("natureza_juridica", ""),
+            "rfb_abertura": company.get("data_inicio_atividade", ""),
+            "rfb_matriz": company.get("matriz_filial", ""),
+            "rfb_endereco": " ".join(str(x) for x in [company.get("logradouro", ""),
+                            company.get("numero", ""), company.get("bairro", "")] if x).strip(),
+            "rfb_municipio": company.get("municipio", ""),
+            "rfb_uf": company.get("uf", ""),
+            "rfb_cep": company.get("cep", ""),
+            "rfb_tel1": company.get("ddd_telefone_1", ""),
+            "rfb_tel2": company.get("ddd_telefone_2", ""),
+            "rfb_email": company.get("email", ""),
+            "rfb_qtd_socios": len(qsa),
+            "rfb_socio1": s1.get("nome_socio", ""),
+            "rfb_simples": company.get("opcao_simples", ""),
+            "rfb_mei": company.get("opcao_mei", ""),
+        }
+        for k in want:
+            if k in mp:
+                out[k] = mp[k]
+
+    # Assertiva: telefone/email da empresa por CNPJ
+    best_mobile = ""
+    if (need_as or need_vf) and assertiva.enabled():
+        try:
+            r = await assertiva.telefones_documento(digits, tipo="CNPJ")
+            if r.get("status") == "ok":
+                tels = mkbuscas.refine_phones(r.get("telefones") or [], modo="todos", max_n=5)
+                celus = [t for t in tels if t.get("categoria") == "celular"]
+                fixos = [t for t in tels if t.get("categoria") == "fixo"]
+                best_mobile = (celus[0]["digits"] if celus else (tels[0]["digits"] if tels else ""))
+                if "as_empresa_tel" in want:
+                    out["as_empresa_tel"] = celus[0]["digits"] if celus else (tels[0]["digits"] if tels else "")
+                if "as_empresa_tel2" in want:
+                    out["as_empresa_tel2"] = celus[1]["digits"] if len(celus) > 1 else (fixos[0]["digits"] if fixos else "")
+                if "as_empresa_whatsapp" in want:
+                    out["as_empresa_whatsapp"] = "SIM" if any(t.get("whatsapp") for t in tels) else ""
+            if "as_empresa_email" in want:
+                a = await assertiva.consulta_cnpj(digits)
+                if a.get("status") == "ok":
+                    emails = ((a.get("data") or {}).get("resposta") or {}).get("emails") or []
+                    if emails:
+                        e0 = emails[0]
+                        out["as_empresa_email"] = e0.get("email") if isinstance(e0, dict) else str(e0)
+        except Exception:
+            pass
+
+    # telefone/CPF do sócio p/ a verificação (preenchidos no bloco de sócios abaixo)
+    socio_vphone, socio_vcpf = "", ""
+    # Sócios — contato PESSOAL: resolve CPF do sócio (JBR) + celular/e-mail (Assertiva)
+    if (need_so or need_vf) and company:
+        _enrich_qsa_cpf(company)  # resolve cpf_completo de cada sócio via JBR
+        socios = [s for s in (company.get("qsa") or []) if isinstance(s, dict)]
+        resumo = []
+        # processa no máx. 3 sócios (controla consumo)
+        for idx, s in enumerate(socios[:3], start=1):
+            nome = s.get("nome_socio") or ""
+            cpf = s.get("cpf_completo") or ""
+            cel, cel2, wa, email = "", "", "", ""
+            if cpf and assertiva.enabled():
+                try:
+                    c = await assertiva.contato_cpf(cpf)
+                    if c.get("status") == "ok":
+                        tels = mkbuscas.refine_phones(c.get("telefones") or [], modo="celular_fixo", max_n=5)
+                        celus = [t["digits"] for t in tels if t.get("categoria") == "celular"]
+                        cel = celus[0] if celus else ""
+                        cel2 = celus[1] if len(celus) > 1 else ""
+                        wa = "SIM" if any(t.get("whatsapp") for t in tels) else ""
+                        email = (c.get("emails") or [""])[0]
+                except Exception:
+                    pass
+            # guarda o 1º sócio com celular como alvo da verificação
+            if cel and not socio_vphone:
+                socio_vphone, socio_vcpf = cel, cpf
+                if not need_so:   # só precisávamos do telefone p/ verificar
+                    break
+            if idx == 1:
+                for k, v in (("so_socio1_nome", nome), ("so_socio1_cpf", cpf),
+                             ("so_socio1_celular", cel), ("so_socio1_whatsapp", wa),
+                             ("so_socio1_email", email)):
+                    if k in want:
+                        out[k] = v
+            elif idx == 2:
+                for k, v in (("so_socio2_nome", nome), ("so_socio2_cpf", cpf),
+                             ("so_socio2_celular", cel)):
+                    if k in want:
+                        out[k] = v
+            if nome and cel:
+                resumo.append(f"{nome}: {cel}")
+        if "so_todos_tel" in want:
+            out["so_todos_tel"] = " | ".join(resumo)
+
+    # Verificação integralX: prioriza o telefone do SÓCIO e checa se PERTENCE ao
+    # CPF dele (verificação real). Sem CPF/sócio, cai no telefone da empresa (contagem).
+    if need_vf:
+        phone = socio_vphone or best_mobile or brasilapi.only_digits(str(out.get("rfb_tel1") or ""))
+        cpf_alvo = socio_vcpf if socio_vphone else ""
+        if "vf_telefone" in want:
+            out["vf_telefone"] = phone
+        if phone and len(phone) >= 10 and mkbuscas.TEL_AUTH_VALUE:
+            try:
+                if cpf_alvo:
+                    r = await mkbuscas.telefone_pertence(phone, cpf_alvo)
+                    if r.get("status") == "no_access":
+                        if "vf_status" in want:
+                            out["vf_status"] = "sem acesso (chave integralX)"
+                    elif r.get("status") == "ok":
+                        if "vf_vinculos" in want:
+                            out["vf_vinculos"] = r.get("total", 0)
+                        if "vf_status" in want:
+                            out["vf_status"] = ("pertence ao sócio" if r.get("atrelado")
+                                                else ("compartilhado" if r.get("alerta_compartilhado")
+                                                      else "não pertence"))
+                    else:
+                        if "vf_status" in want:
+                            out["vf_status"] = "n/d"
+                else:
+                    rev = await mkbuscas.consulta_telefone(phone)
+                    if rev.get("status") == "ok":
+                        total = rev.get("total", 0)
+                        if "vf_vinculos" in want:
+                            out["vf_vinculos"] = total
+                        if "vf_status" in want:
+                            out["vf_status"] = ("compartilhado/lixo" if total >= 50
+                                                else ("válido" if total >= 1 else "sem vínculo"))
+                    elif rev.get("status") == "no_access":
+                        if "vf_status" in want:
+                            out["vf_status"] = "sem acesso (chave integralX)"
+                    else:
+                        if "vf_status" in want:
+                            out["vf_status"] = "n/d"
+            except Exception:
+                if "vf_status" in want:
+                    out["vf_status"] = "erro"
+    return out
+
+
+@app.post("/api/enrich/run")
+async def enrich_run(payload: dict = Body(default={})):
+    """Enriquece as linhas de uma aba. Body: {upload_id, sheet, cnpj_col, fields:[], limite}."""
+    up_id = payload.get("upload_id")
+    store = _UPLOADS.get(up_id)
+    if not store:
+        return {"status": "error", "message": "Upload expirado — reenvie a planilha."}
+    sheet = payload.get("sheet") or next(iter(store))
+    if sheet not in store:
+        return {"status": "error", "message": "Aba não encontrada."}
+    cnpj_col = payload.get("cnpj_col") or _guess_cnpj_col(store[sheet]["columns"])
+    fields = [f for f in (payload.get("fields") or []) if f in _ENRICH_KEYS]
+    if not fields:
+        return {"status": "error", "message": "Selecione ao menos um campo para enriquecer."}
+    limite = int(payload.get("limite") or 100)
+    rows = store[sheet]["rows"][:limite]
+    want = set(fields)
+
+    # Concorrência controlada (Assertiva/integralX têm limite diário).
+    sem = asyncio.Semaphore(6)
+
+    async def _one(row):
+        async with sem:
+            enr = await _enrich_cnpj(row.get(cnpj_col, ""), want)
+        merged = dict(row)
+        merged.update(enr)
+        return merged
+
+    enriched = await asyncio.gather(*[_one(r) for r in rows])
+    label_of = {k: lbl for g in _ENRICH_CATALOG for (k, lbl) in g["campos"]}
+    added_cols = [{"key": f, "label": label_of.get(f, f)} for f in fields]
+    return {"status": "ok", "sheet": sheet, "cnpj_col": cnpj_col,
+            "base_cols": store[sheet]["columns"], "added_cols": added_cols,
+            "rows": enriched, "enriquecidas": len(enriched),
+            "total_aba": len(store[sheet]["rows"])}
+
+
+@app.post("/api/enrich/export")
+async def enrich_export(payload: dict = Body(default={})):
+    """Gera XLSX com as colunas originais + as escolhidas. Body: {columns:[{key,label}], rows:[...]}."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    columns = payload.get("columns") or []
+    rows = payload.get("rows") or []
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Lista enriquecida"
+    hf = Font(bold=True, color="FFFFFF")
+    fill = PatternFill("solid", fgColor="1D4ED8")
+    for i, col in enumerate(columns, start=1):
+        c = ws.cell(row=1, column=i, value=col.get("label", col.get("key")))
+        c.font = hf
+        c.fill = fill
+    for r_idx, row in enumerate(rows, start=2):
+        for i, col in enumerate(columns, start=1):
+            v = row.get(col.get("key"), "")
+            if hasattr(v, "isoformat"):
+                v = v.isoformat(sep=" ")[:19]
+            ws.cell(row=r_idx, column=i, value=v)
+    for i in range(1, len(columns) + 1):
+        ws.column_dimensions[get_column_letter(i)].width = 20
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(max(len(columns),1))}{max(len(rows)+1,1)}"
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="lista-enriquecida.xlsx"'})
+
+
+# ---- Frontend estatico ----
+
+@app.get("/")
+async def index():
+    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+
+
+@app.get("/company.html")
+async def company_page():
+    return FileResponse(os.path.join(FRONTEND_DIR, "company.html"))
+
+
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("main:app", host="0.0.0.0", port=8010, reload=True)

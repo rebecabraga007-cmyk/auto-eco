@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+httpx
+beautifulsoup4
+lxml
+python-dotenv
+cloudscraper
+openpyxl
+bcrypt
+PyJWT
