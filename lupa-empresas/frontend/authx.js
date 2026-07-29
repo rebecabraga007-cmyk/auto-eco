@@ -38,36 +38,20 @@
 
   document.addEventListener('DOMContentLoaded', init);
 
-  // Diagnóstico visível na tela de login (auditoria no navegador do usuário).
-  function showDiag(meStatus) {
-    let ls = 'ok';
-    try { localStorage.setItem('_t', '1'); localStorage.removeItem('_t'); } catch (e) { ls = 'BLOQUEADO'; }
-    let ck = 'ok';
-    try { document.cookie = '_ct=1;path=/;SameSite=Lax'; if (!document.cookie.includes('_ct=1')) ck = 'BLOQUEADO'; document.cookie = '_ct=;path=/;Max-Age=0'; } catch (e) { ck = 'BLOQUEADO'; }
-    const m = (location.hash.match(/l=(\d+)/) || [])[1];
-    const el = document.getElementById('login-diag');
-    if (el) el.innerHTML = `🔧 diag — armazenamento: <b>LS ${ls}</b> · <b>cookie ${ck}</b>` +
-      (m ? ` · login: <b>${m}</b>` : '') + ` · sessão(/me): <b>${meStatus}</b>`;
-  }
-
   async function init() {
     wireLogin();
     wireMenu();
     wireUsersModal();
     wirePassModal();
     // A sessão vem do cookie — basta perguntar quem sou eu (sem depender de token local).
-    let meStatus = '—';
     try {
       const r = await _fetch('/api/auth/me', { credentials: 'same-origin' });
-      meStatus = r.status;
       if (!r.ok) throw new Error();
       currentUser = (await r.json()).user;
       showApp();
-      return;
     } catch (e) {
       showLogin();
     }
-    showDiag(meStatus);
   }
 
   function showLogin() {
@@ -99,7 +83,6 @@
         const j = await r.json();
         if (!r.ok) { err.textContent = j.detail || 'Falha no login.'; return; }
         setToken(j.token);
-        location.hash = 'l=' + r.status;   // carrega o status p/ o diag pós-reload (sem storage)
         location.reload();
       } catch (e2) { err.textContent = 'Erro de conexão.'; }
       finally { btn.disabled = false; }
