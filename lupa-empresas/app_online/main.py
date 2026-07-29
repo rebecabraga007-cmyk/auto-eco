@@ -57,6 +57,18 @@ _PUBLIC_API = {"/api/auth/login", "/api/auth/logout"}
 
 
 @app.middleware("http")
+async def _cache_control(request: Request, call_next):
+    """Impede cache do shell/JS/CSS (Cloudflare estava servindo auth.js/capiblu.js
+    antigos, ignorando o ?v=). Assets estáticos sempre revalidam → todos pegam a
+    versão nova. As rotas /api já são dinâmicas."""
+    resp = await call_next(request)
+    p = request.url.path
+    if p == "/" or p.endswith((".html", ".js", ".css")):
+        resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    return resp
+
+
+@app.middleware("http")
 async def _auth_guard(request: Request, call_next):
     """Exige sessão válida (cookie httpOnly OU header Bearer) em /api/* exceto login/logout."""
     path = request.url.path
