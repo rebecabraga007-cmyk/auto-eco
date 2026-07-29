@@ -21,6 +21,7 @@
     <button class="nav-btn" data-tab="prospec">📋 Prospecção</button>
     <button class="nav-btn" data-tab="assertiva">🎯 Busca Assertiva</button>
     <button class="nav-btn" data-tab="enrich">🔼 Enriquecer Lista</button>
+    <button class="nav-btn" data-tab="modelos">🧩 Meus Modelos</button>
     <button class="nav-btn" data-tab="telefone">📞 Telefone</button>
   </nav>
   <div class="topbar-user" id="user-menu">
@@ -493,6 +494,25 @@
     <div id="en-results" class="results-area"></div>
   </section>
 
+  <section id="tab-modelos" class="tab-section">
+    <div class="module-header">
+      <h2 class="module-title">🧩 Meus Modelos</h2>
+      <p class="module-sub">Crie modelos de planilha (escolha os cabeçalhos e qual campo/API preenche cada um) e reuse na Prospecção B2B. Ou suba uma planilha-modelo para detectar os cabeçalhos automaticamente.</p>
+    </div>
+    <div class="search-panel">
+      <div class="en-step">
+        <button id="mod-novo" class="btn-primary">+ Novo modelo</button>
+        <label class="en-upload">
+          <input id="mod-upload" type="file" accept=".xlsx,.xlsm,.xls,.csv,.tsv" hidden />
+          <span class="btn-secondary">📁 Detectar de uma planilha</span>
+        </label>
+        <span id="mod-upload-name" class="en-fname"></span>
+      </div>
+      <div id="mod-lista"></div>
+    </div>
+    <div id="mod-builder" class="results-area" hidden></div>
+  </section>
+
   <section id="tab-telefone" class="tab-section">
     <div class="module-header">
       <h2 class="module-title">📞 Telefone Reverso</h2>
@@ -562,7 +582,25 @@
   </form>
 </div>
 
+<!-- Modal: usar modelo na lista montada -->
+<div id="usemodelo-modal" class="modal-overlay" hidden>
+  <div class="modal-card modal-lg">
+    <div class="modal-head"><h3>📄 Exportar no seu modelo</h3><button class="modal-x" id="usemodelo-close">✕</button></div>
+    <div class="en-step">
+      <label class="as-field"><span>Modelo salvo</span><select id="usemodelo-sel"><option value="">— escolher —</option></select></label>
+      <span style="color:var(--gray-400)">ou</span>
+      <label class="en-upload"><input id="usemodelo-file" type="file" accept=".xlsx,.xlsm,.xls,.csv,.tsv" hidden /><span class="btn-secondary">📁 Subir planilha-modelo</span></label>
+      <span id="usemodelo-fname" class="en-fname"></span>
+    </div>
+    <div id="usemodelo-map"></div>
+    <div class="modal-head" style="justify-content:flex-end;gap:8px">
+      <button id="usemodelo-save" class="btn-secondary" hidden>💾 Salvar como modelo</button>
+      <button id="usemodelo-gerar" class="btn-primary" hidden>⬇️ Gerar planilha no modelo</button>
+    </div>
+  </div>
+</div>
+
 <script src="auth.js?v=2"></script>
-<script src="capiblu.js?v=29"></script>
+<script src="capiblu.js?v=30"></script>
 </body>
 </html>

@@ -992,6 +992,7 @@ function renderProspTable() {
           <option value="empresa" selected>1 empresa por linha</option>
           <option value="contato">1 contato por linha</option>
         </select>
+        <button id="pf-modelo" class="btn-secondary" title="Exportar seguindo os cabeçalhos de uma planilha-modelo sua">📄 Usar meu modelo</button>
         <button id="pf-export" class="btn-primary">⬇️ Exportar planilha (XLSX)</button>
       </div>
     </div>
@@ -1007,6 +1008,7 @@ function renderProspTable() {
     </div>`;
   document.getElementById('pf-validar').addEventListener('click', prospValidar);
   document.getElementById('pf-export').addEventListener('click', prospExportar);
+  document.getElementById('pf-modelo').addEventListener('click', abrirUseModelo);
 }
 
 function valBadge(v) {
@@ -1639,3 +1641,147 @@ function renderEnrich(j) {
     </table></div>
     ${j.rows.length > 50 ? `<p class="msg">…mostrando 50 de ${j.rows.length}. O export traz todas.</p>` : ''}`;
 }
+
+// ══════════════════════════════════════════════════════
+//  MÓDULO MEUS MODELOS (criar/salvar/usar modelos de planilha)
+// ══════════════════════════════════════════════════════
+const modelosState = { campos: [], editId: null };
+
+function modCampoOptions(sel) {
+  return ['<option value="">— não preencher —</option>'].concat(
+    modelosState.campos.map(c => `<option value="${c.campo}" ${c.campo === sel ? 'selected' : ''}>${esc(c.label)} · ${esc(c.fonte)}</option>`)
+  ).join('');
+}
+function modRowHtml(c) {
+  return `<tr><td><input class="mc-header" value="${esc(c.header || '')}" style="width:100%"></td>
+    <td><select class="mc-campo">${modCampoOptions(c.campo)}</select></td>
+    <td><input class="mc-idx" type="number" min="1" max="4" value="${c.idx || 1}" style="width:56px"></td>
+    <td><button class="danger" data-act="rm" type="button">✕</button></td></tr>`;
+}
+function modColetar(container) {
+  return [...container.querySelectorAll('tr')].map(tr => {
+    const h = tr.querySelector('.mc-header'), cp = tr.querySelector('.mc-campo'), ix = tr.querySelector('.mc-idx');
+    if (!h || !cp) return null;
+    return { header: h.value.trim(), campo: cp.value, idx: parseInt(ix && ix.value) || 1 };
+  }).filter(c => c && c.header);
+}
+
+(function initModelos() {
+  fetch(`${API}/api/prospeccao/modelo/campos`).then(r => r.json()).then(j => { modelosState.campos = j.campos || []; }).catch(() => {});
+  const novo = document.getElementById('mod-novo');
+  if (!novo) return;
+  novo.addEventListener('click', () => modAbrirBuilder([{ header: 'CNPJ', campo: 'cnpj', idx: 1 }], null, ''));
+  document.getElementById('mod-upload').addEventListener('change', modOnUpload);
+  document.querySelector('[data-tab="modelos"]').addEventListener('click', modCarregarLista);
+  const lista = document.getElementById('mod-lista');
+  lista.addEventListener('click', e => {
+    const btn = e.target.closest('button'); if (!btn) return;
+    const tr = btn.closest('tr'); const id = tr.dataset.id;
+    const m = (lista._modelos || []).find(x => x.id === id);
+    if (btn.dataset.act === 'edit') modAbrirBuilder(m.colunas, m.id, m.nome);
+    else if (btn.dataset.act === 'del') { if (confirm('Excluir este modelo?')) fetch(`${API}/api/prospeccao/modelos/${id}`, { method: 'DELETE' }).then(() => modCarregarLista()); }
+  });
+})();
+
+function modCarregarLista() {
+  const box = document.getElementById('mod-lista'); if (!box) return;
+  fetch(`${API}/api/prospeccao/modelos`).then(r => r.json()).then(j => {
+    const ms = j.modelos || []; box._modelos = ms;
+    box.innerHTML = ms.length
+      ? `<table class="prosp-table"><thead><tr><th>Modelo</th><th>Colunas</th><th>Ações</th></tr></thead><tbody>${
+        ms.map(m => `<tr data-id="${m.id}"><td><strong>${esc(m.nome)}</strong></td><td>${m.colunas.length}</td>
+          <td class="user-actions"><button data-act="edit">Editar</button><button data-act="del" class="danger">Excluir</button></td></tr>`).join('')}</tbody></table>`
+      : `<p class="msg">Nenhum modelo salvo. Clique "Novo modelo" ou "Detectar de uma planilha".</p>`;
+  });
+}
+function modOnUpload(e) {
+  const f = e.target.files[0]; if (!f) return;
+  document.getElementById('mod-upload-name').textContent = f.name + ' — analisando…';
+  const fd = new FormData(); fd.append('file', f);
+  fetch(`${API}/api/prospeccao/modelo/analisar`, { method: 'POST', body: fd }).then(r => r.json()).then(j => {
+    if (j.status !== 'ok') { document.getElementById('mod-upload-name').textContent = j.message || 'Falha.'; return; }
+    document.getElementById('mod-upload-name').textContent = `${f.name} — ${j.colunas.filter(c => c.campo).length}/${j.colunas.length} detectados`;
+    modAbrirBuilder(j.colunas.map(c => ({ header: c.header, campo: c.campo || '', idx: c.idx || 1 })), null, f.name.replace(/\.[^.]+$/, ''));
+  });
+}
+function modAbrirBuilder(colunas, id, nome) {
+  modelosState.editId = id || null;
+  const box = document.getElementById('mod-builder'); box.hidden = false;
+  box.innerHTML = `<div class="as-card">
+    <label class="as-field as-col2"><span>Nome do modelo</span><input id="mod-nome" value="${esc(nome || '')}" placeholder="Ex.: Modelo CRM SP"></label>
+    <div class="prosp-table-scroll"><table class="prosp-table"><thead><tr><th>Cabeçalho (como sai na planilha)</th><th>Campo / Fonte que preenche</th><th>Contato #</th><th></th></tr></thead>
+      <tbody id="mod-cols-body">${colunas.map(modRowHtml).join('')}</tbody></table></div>
+    <div class="en-step"><button id="mod-addcol" class="btn-secondary" type="button">+ coluna</button>
+      <button id="mod-salvar" class="btn-primary" type="button">💾 Salvar modelo</button>
+      <button id="mod-cancelar" class="btn-secondary" type="button">Cancelar</button></div></div>`;
+  box.querySelector('#mod-addcol').addEventListener('click', () => box.querySelector('#mod-cols-body').insertAdjacentHTML('beforeend', modRowHtml({ header: '', campo: '', idx: 1 })));
+  box.querySelector('#mod-cols-body').addEventListener('click', e => { if (e.target.closest('[data-act="rm"]')) e.target.closest('tr').remove(); });
+  box.querySelector('#mod-cancelar').addEventListener('click', () => { box.hidden = true; });
+  box.querySelector('#mod-salvar').addEventListener('click', () => {
+    const nomeV = box.querySelector('#mod-nome').value.trim();
+    if (!nomeV) { alert('Dê um nome ao modelo.'); return; }
+    const colunasV = modColetar(box.querySelector('#mod-cols-body'));
+    if (!colunasV.length) { alert('Adicione ao menos uma coluna com cabeçalho.'); return; }
+    fetch(`${API}/api/prospeccao/modelos`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: modelosState.editId, nome: nomeV, colunas: colunasV }) })
+      .then(r => r.json()).then(j => { if (j.status === 'error') { alert(j.message); return; } box.hidden = true; modCarregarLista(); alert('Modelo salvo!'); });
+  });
+  box.scrollIntoView();
+}
+
+// ── Usar modelo na lista montada (modal) ──
+function abrirUseModelo() {
+  if (!(prospState.leads || []).length) { alert('Monte a lista de contatos primeiro.'); return; }
+  const modal = document.getElementById('usemodelo-modal'); modal.hidden = false;
+  document.getElementById('usemodelo-map').innerHTML = '';
+  document.getElementById('usemodelo-gerar').hidden = true;
+  document.getElementById('usemodelo-save').hidden = true;
+  document.getElementById('usemodelo-fname').textContent = '';
+  const sel = document.getElementById('usemodelo-sel');
+  fetch(`${API}/api/prospeccao/modelos`).then(r => r.json()).then(j => {
+    sel.innerHTML = '<option value="">— escolher —</option>' + (j.modelos || []).map(m => `<option value="${m.id}">${esc(m.nome)}</option>`).join('');
+    sel._modelos = j.modelos || [];
+  });
+}
+function useRenderMap(colunas) {
+  document.getElementById('usemodelo-map').innerHTML = `<div class="prosp-table-scroll"><table class="prosp-table">
+    <thead><tr><th>Cabeçalho</th><th>Campo / Fonte</th><th>Contato #</th></tr></thead>
+    <tbody>${colunas.map(c => `<tr><td><input class="mc-header" value="${esc(c.header || '')}" style="width:100%"></td>
+      <td><select class="mc-campo">${modCampoOptions(c.campo)}</select></td>
+      <td><input class="mc-idx" type="number" min="1" max="4" value="${c.idx || 1}" style="width:56px"></td></tr>`).join('')}</tbody></table></div>`;
+  document.getElementById('usemodelo-gerar').hidden = false;
+  document.getElementById('usemodelo-save').hidden = false;
+}
+(function wireUseModelo() {
+  const modal = document.getElementById('usemodelo-modal'); if (!modal) return;
+  document.getElementById('usemodelo-close').addEventListener('click', () => modal.hidden = true);
+  document.getElementById('usemodelo-sel').addEventListener('change', e => {
+    const m = (e.target._modelos || []).find(x => x.id === e.target.value);
+    if (m) useRenderMap(m.colunas);
+  });
+  document.getElementById('usemodelo-file').addEventListener('change', e => {
+    const f = e.target.files[0]; if (!f) return;
+    document.getElementById('usemodelo-fname').textContent = f.name + ' — analisando…';
+    const fd = new FormData(); fd.append('file', f);
+    fetch(`${API}/api/prospeccao/modelo/analisar`, { method: 'POST', body: fd }).then(r => r.json()).then(j => {
+      if (j.status !== 'ok') { document.getElementById('usemodelo-fname').textContent = j.message || 'Falha.'; return; }
+      document.getElementById('usemodelo-fname').textContent = f.name;
+      useRenderMap(j.colunas.map(c => ({ header: c.header, campo: c.campo || '', idx: c.idx || 1 })));
+    });
+  });
+  document.getElementById('usemodelo-save').addEventListener('click', () => {
+    const nome = prompt('Nome do modelo:'); if (!nome) return;
+    const colunas = modColetar(document.getElementById('usemodelo-map'));
+    fetch(`${API}/api/prospeccao/modelos`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome, colunas }) })
+      .then(r => r.json()).then(j => alert(j.status === 'ok' ? 'Modelo salvo!' : (j.message || 'Falha.')));
+  });
+  document.getElementById('usemodelo-gerar').addEventListener('click', async () => {
+    const colunas = modColetar(document.getElementById('usemodelo-map'));
+    if (!colunas.length) { alert('Nenhuma coluna.'); return; }
+    const empresas = (prospState.leads || []).map(l => ({ empresa: l.empresa, contatos: l.contatos }));
+    const resp = await fetch(`${API}/api/prospeccao/modelo/exportar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ colunas, empresas }) });
+    const blob = await resp.blob(); const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'capiblu-modelo.xlsx';
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    modal.hidden = true;
+  });
+})();

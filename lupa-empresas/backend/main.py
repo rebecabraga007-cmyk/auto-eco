@@ -19,6 +19,7 @@ except Exception:
 
 import asyncio
 import io
+import re
 import sys
 import uuid
 
@@ -764,6 +765,269 @@ async def export_xlsx(payload: dict = Body(default={})):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="capiblu-prospeccao.xlsx"'},
     )
+
+
+# ============================================================
+#  PROSPECÇÃO B2B — "UPLOAD MODELO"
+#  Sobe uma planilha-modelo → detecta cabeçalhos e qual fonte/API preenche cada um
+#  → gera a lista seguindo EXATAMENTE os cabeçalhos do modelo.
+# ============================================================
+import unicodedata as _ud
+
+
+def _norm_hdr(h) -> str:
+    s = _ud.normalize("NFKD", str(h or "")).encode("ascii", "ignore").decode("ascii").lower()
+    s = re.sub(r"[^a-z0-9 ]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+# campo | label | fonte | aliases (normalizados). Ordem importa p/ desempate.
+_MODELO_CAMPOS = [
+    ("cnpj", "CNPJ", "Receita Federal", ["cnpj"]),
+    ("razao_social", "Razão Social", "Receita Federal",
+     ["razao social", "razao", "empresa", "nome empresa", "razaosocial", "company", "nome"]),
+    ("nome_fantasia", "Nome Fantasia", "Receita Federal", ["nome fantasia", "fantasia"]),
+    ("cnae", "CNAE (descrição)", "Receita Federal",
+     ["cnae", "atividade", "ramo", "segmento", "industria", "descricao cnae"]),
+    ("cnae_codigo", "CNAE (código)", "Receita Federal", ["cnae codigo", "codigo cnae"]),
+    ("porte", "Porte", "Receita Federal", ["porte", "tamanho", "funcionarios", "qtd funcionarios"]),
+    ("situacao", "Situação Cadastral", "Receita Federal", ["situacao", "situacao cadastral", "status"]),
+    ("natureza_juridica", "Natureza Jurídica", "Receita Federal",
+     ["natureza", "natureza juridica", "tipo empresa"]),
+    ("capital_social", "Capital Social", "Receita Federal", ["capital", "capital social", "faturamento"]),
+    ("data_abertura", "Data de Abertura", "Receita Federal",
+     ["data abertura", "abertura", "fundacao", "fundada", "data fundacao", "dt abertura", "dt inclusao"]),
+    ("matriz_filial", "Matriz/Filial", "Receita Federal", ["matriz", "filial", "matriz filial"]),
+    ("uf", "UF", "Receita Federal", ["uf", "estado"]),
+    ("municipio", "Município", "Receita Federal", ["municipio", "cidade", "municipio2"]),
+    ("bairro", "Bairro", "Receita Federal", ["bairro"]),
+    ("logradouro", "Logradouro", "Receita Federal", ["logradouro", "rua", "endereco"]),
+    ("numero", "Número", "Receita Federal", ["numero"]),
+    ("cep", "CEP", "Receita Federal", ["cep"]),
+    ("tel_empresa", "Telefone da Empresa", "Receita/Assertiva",
+     ["telefone empresa", "tel empresa", "telefone da empresa", "fone empresa"]),
+    ("email_empresa", "E-mail da Empresa", "Receita/Assertiva",
+     ["email empresa", "e mail empresa", "email da empresa"]),
+    ("qtd_socios", "Qtd Sócios", "Receita Federal", ["qtd socios", "numero de socios", "socios"]),
+    ("contato_nome", "Nome do Contato", "Receita (QSA)",
+     ["contato", "nome contato", "socio", "decisor", "responsavel", "representante", "nome socio"]),
+    ("contato_cargo", "Cargo do Contato", "Receita (QSA)", ["cargo", "funcao", "qualificacao"]),
+    ("contato_cpf", "CPF do Contato", "Base JBR", ["cpf", "cpf contato", "cpf socio"]),
+    ("contato_celular2", "Celular 2 do Contato", "Assertiva/Mk",
+     ["celular 2", "telefone 2", "celular2", "tel 2", "segundo telefone"]),
+    ("contato_celular", "Celular do Contato", "Assertiva/Mk",
+     ["celular", "celular 1", "telefone", "telefone 1", "movel", "tel", "fone", "telefone celular", "whatsapp"]),
+    ("contato_fixo", "Fixo do Contato", "Assertiva/Mk", ["fixo", "telefone fixo"]),
+    ("contato_whatsapp", "Tem WhatsApp?", "Assertiva/Mk",
+     ["whatsapp", "possui whatsapp", "tem whatsapp", "zap", "wpp"]),
+    ("contato_email", "E-mail do Contato", "Assertiva",
+     ["email", "e mail", "email 1", "email contato", "e-mail"]),
+]
+_MODELO_LABEL = {k: lbl for k, lbl, _, _ in _MODELO_CAMPOS}
+_MODELO_FONTE = {k: f for k, _, f, _ in _MODELO_CAMPOS}
+
+
+def _match_header(header: str) -> Optional[str]:
+    """Mapeia um cabeçalho do modelo para um campo conhecido (melhor correspondência)."""
+    h = _norm_hdr(header)
+    if not h:
+        return None
+    words = set(h.split())
+    best, best_score = None, 0
+    for campo, _lbl, _f, aliases in _MODELO_CAMPOS:
+        for a in aliases:
+            aw = a.split()
+            score = 0
+            if h == a:
+                score = 100 + len(a)                      # match exato — melhor
+            elif h.startswith(a + " "):
+                score = 75 + len(a)                       # começa com o alias (palavra)
+            elif all(w in words for w in aw):
+                score = 55 + len(a)                       # todas as palavras do alias presentes
+            elif h.endswith(" " + a):
+                score = 40 + len(a)                       # termina com o alias
+            elif a in h or h in a:
+                score = 20 + len(a)                       # substring solta (fraco)
+            if score > best_score:
+                best, best_score = campo, score
+    return best
+
+
+def _extrai_modelo(lead: dict, campo: str, idx: int = 1):
+    """Extrai o valor de um campo a partir de um lead {empresa, contatos}."""
+    emp = lead.get("empresa") or {}
+    emp_map = {
+        "cnpj": emp.get("cnpj"), "razao_social": emp.get("razao_social"),
+        "nome_fantasia": emp.get("nome_fantasia"), "cnae": emp.get("cnae"),
+        "cnae_codigo": emp.get("cnae_codigo"), "porte": emp.get("porte"),
+        "situacao": emp.get("situacao"), "natureza_juridica": emp.get("natureza_juridica"),
+        "capital_social": emp.get("capital_social"), "data_abertura": emp.get("data_abertura"),
+        "matriz_filial": emp.get("matriz_filial"), "uf": emp.get("uf"),
+        "municipio": emp.get("municipio"), "bairro": emp.get("bairro"),
+        "logradouro": emp.get("logradouro"), "numero": emp.get("numero"),
+        "cep": emp.get("cep"), "tel_empresa": emp.get("telefone_empresa"),
+        "email_empresa": emp.get("email"), "qtd_socios": emp.get("qtd_socios"),
+    }
+    if campo in emp_map:
+        return emp_map[campo] if emp_map[campo] is not None else ""
+    contatos = lead.get("contatos") or []
+    if not contatos:
+        return ""
+    c = contatos[min(idx, len(contatos)) - 1] if idx >= 1 else contatos[0]
+    split = _split_contato(c)
+    cmap = {
+        "contato_nome": split["nome"], "contato_cargo": split["cargo"],
+        "contato_cpf": split["cpf"], "contato_celular": split["celular1"],
+        "contato_celular2": split["celular2"], "contato_fixo": split["fixo"],
+        "contato_whatsapp": split["whatsapp"], "contato_email": split["email1"],
+    }
+    return cmap.get(campo, "")
+
+
+@app.post("/api/prospeccao/modelo/analisar")
+async def modelo_analisar(file: UploadFile = File(...)):
+    """Lê os cabeçalhos da planilha-modelo e diz qual campo/fonte preenche cada um."""
+    try:
+        content = await file.read()
+        parsed, _aviso = sheet_reader.read_table(file.filename or "", content)
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    except Exception as exc:
+        return {"status": "error", "message": f"Falha ao ler modelo: {str(exc)[:150]}"}
+    cols = parsed[0]["columns"] if parsed else []
+    colunas = []
+    for h in cols:
+        # detecta índice de contato no cabeçalho (ex.: "Contato 2 Celular")
+        m = re.search(r"contato\s*(\d+)", _norm_hdr(h))
+        idx = int(m.group(1)) if m else 1
+        campo = _match_header(h)
+        colunas.append({
+            "header": h, "campo": campo, "idx": idx,
+            "campo_label": _MODELO_LABEL.get(campo) if campo else None,
+            "fonte": _MODELO_FONTE.get(campo) if campo else None,
+            "fillable": bool(campo),
+        })
+    campos_disp = [{"campo": k, "label": lbl, "fonte": f} for k, lbl, f, _ in _MODELO_CAMPOS]
+    return {"status": "ok", "aba": parsed[0]["title"] if parsed else "",
+            "colunas": colunas, "campos_disponiveis": campos_disp}
+
+
+@app.post("/api/prospeccao/modelo/exportar")
+async def modelo_exportar(payload: dict = Body(default={})):
+    """Gera o XLSX seguindo os cabeçalhos do modelo.
+
+    Body: {colunas:[{header, campo, idx}], empresas:[{empresa, contatos}]}
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    colunas = payload.get("colunas") or []
+    empresas = payload.get("empresas") or []
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Modelo preenchido"
+    hf = Font(bold=True, color="FFFFFF")
+    fill = PatternFill("solid", fgColor="1D4ED8")
+    for i, col in enumerate(colunas, start=1):
+        c = ws.cell(row=1, column=i, value=col.get("header"))
+        c.font = hf
+        c.fill = fill
+    for r_idx, lead in enumerate(empresas, start=2):
+        for i, col in enumerate(colunas, start=1):
+            campo = col.get("campo")
+            val = _extrai_modelo(lead, campo, int(col.get("idx") or 1)) if campo else ""
+            if hasattr(val, "isoformat"):
+                val = val.isoformat(sep=" ")[:19]
+            ws.cell(row=r_idx, column=i, value=val)
+    for i in range(1, len(colunas) + 1):
+        ws.column_dimensions[get_column_letter(i)].width = 20
+    ws.freeze_panes = "A2"
+    if colunas:
+        ws.auto_filter.ref = f"A1:{get_column_letter(len(colunas))}{max(len(empresas) + 1, 1)}"
+    # aba Fontes (só das colunas mapeadas)
+    wf = wb.create_sheet("Fontes")
+    wf.cell(row=1, column=1, value="Coluna do modelo").font = hf
+    wf.cell(row=1, column=2, value="Campo").font = hf
+    wf.cell(row=1, column=3, value="Origem").font = hf
+    for j in (1, 2, 3):
+        wf.cell(row=1, column=j).fill = fill
+    for i, col in enumerate(colunas, start=2):
+        campo = col.get("campo")
+        wf.cell(row=i, column=1, value=col.get("header"))
+        wf.cell(row=i, column=2, value=_MODELO_LABEL.get(campo, "— não preenchido") if campo else "— não preenchido")
+        wf.cell(row=i, column=3, value=_MODELO_FONTE.get(campo, "") if campo else "")
+    for col, w in (("A", 34), ("B", 26), ("C", 24)):
+        wf.column_dimensions[col].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="capiblu-modelo.xlsx"'})
+
+
+# ---- Modelos SALVOS (persistidos em JSON no diretório de dados) ----
+def _modelos_path() -> str:
+    base = r"C:\capiblu_data" if os.path.isdir(r"C:\capiblu_data") else os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, "capiblu_modelos.json")
+
+
+def _modelos_load() -> list:
+    import json as _json
+    try:
+        with open(_modelos_path(), encoding="utf-8") as fh:
+            return _json.load(fh)
+    except Exception:
+        return []
+
+
+def _modelos_save(lst: list) -> None:
+    import json as _json
+    with open(_modelos_path(), "w", encoding="utf-8") as fh:
+        _json.dump(lst, fh, ensure_ascii=False, indent=1)
+
+
+@app.get("/api/prospeccao/modelo/campos")
+async def modelo_campos():
+    """Catálogo de campos disponíveis (para o construtor de modelos)."""
+    return {"campos": [{"campo": k, "label": lbl, "fonte": f} for k, lbl, f, _ in _MODELO_CAMPOS]}
+
+
+@app.get("/api/prospeccao/modelos")
+async def modelos_listar():
+    return {"modelos": _modelos_load()}
+
+
+@app.post("/api/prospeccao/modelos")
+async def modelos_salvar(payload: dict = Body(default={})):
+    """Cria/atualiza um modelo salvo. Body: {id?, nome, colunas:[{header,campo,idx}]}."""
+    nome = (payload.get("nome") or "").strip()
+    colunas = payload.get("colunas") or []
+    if not nome:
+        return {"status": "error", "message": "Informe um nome para o modelo."}
+    if not colunas:
+        return {"status": "error", "message": "O modelo precisa de ao menos uma coluna."}
+    lst = _modelos_load()
+    mid = payload.get("id")
+    if mid:  # atualização
+        for m in lst:
+            if m.get("id") == mid:
+                m["nome"], m["colunas"] = nome, colunas
+                _modelos_save(lst)
+                return {"status": "ok", "modelo": m}
+    novo = {"id": uuid.uuid4().hex[:10], "nome": nome, "colunas": colunas}
+    lst.append(novo)
+    _modelos_save(lst)
+    return {"status": "ok", "modelo": novo}
+
+
+@app.delete("/api/prospeccao/modelos/{mid}")
+async def modelos_excluir(mid: str):
+    lst = [m for m in _modelos_load() if m.get("id") != mid]
+    _modelos_save(lst)
+    return {"status": "ok"}
 
 
 # ============================================================
