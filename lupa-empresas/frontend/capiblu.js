@@ -679,7 +679,6 @@ const prospState = {
 
 function prospFiltros() {
   const list = v => (v || '').split(',').map(s => s.trim()).filter(Boolean);
-  const comboCode = id => (document.getElementById(id)?.dataset.code || '').trim();
   const escopo = [...document.querySelectorAll('.pf-esc:checked')].map(c => c.value);
   // Fallback: campo específico "Nome da empresa" (estilo Datastone) alimenta a
   // lupa geral quando ela está vazia, reaproveitando o mesmo mecanismo de busca.
@@ -692,11 +691,11 @@ function prospFiltros() {
     texto: textoFinal,
     texto_escopo: escopoFinal,
     tipo_busca: document.getElementById('pf-tipo').value,
-    cnae: list(comboCode('combo-cnae')),
-    natureza: list(comboCode('combo-natureza')),
+    cnae: comboCodes('combo-cnae'),
+    natureza: comboCodes('combo-natureza'),
     porte: list(document.getElementById('pf-porte').value),
-    uf: list(document.getElementById('pf-uf').value),
-    municipio: list(comboCode('combo-municipio')),
+    uf: getSelectedUFs(),
+    municipio: comboCodes('combo-municipio'),
     situacao: list(document.getElementById('pf-situacao').value),
     capital_min: parseInt(document.getElementById('pf-cap-min').value) || 0,
     capital_max: parseInt(document.getElementById('pf-cap-max').value) || 0,
@@ -779,8 +778,10 @@ function renderProspList() {
           </select>
         </label>
         <label class="toggle-wrap"><input id="pf-decisores" type="checkbox" /><span>Incluir decisores (LinkedIn)</span></label>
+        <button id="pf-dedup" class="btn-secondary" title="Remove das ${emp.length} empresas as que já estão na Meetime (CNPJ + nome)">🔁 Remover já-na-Meetime</button>
         <button id="pf-montar" class="btn-primary">📇 Montar lista de contatos</button>
       </div>
+      <div id="pf-dedup-note" class="prosp-dedup-note"></div>
       <p class="prosp-warn">${prospState.fonte === 'local'
         ? '✅ Busca na <strong>base local da Receita</strong> — sem limite de 20 e instantânea. A montagem consulta CPF (JBR) + telefones (fonte selecionável: Assertiva/Mk) por empresa.'
         : '⚠️ A busca pública da Casa dos Dados retorna no máx. <strong>20 empresas por consulta</strong> — refine CNAE/UF/município/capital. Cada empresa consulta Receita + CPF + telefones (Assertiva/Mk).'}
@@ -801,6 +802,39 @@ function renderProspList() {
   prospState.page = 0;
   renderEmpPage();
   document.getElementById('pf-montar').addEventListener('click', prospMontar);
+  document.getElementById('pf-dedup').addEventListener('click', prospDedupMeetime);
+}
+
+// Remove das empresas carregadas as que já estão na Meetime (CNPJ + nome ~ LIKE %).
+async function prospDedupMeetime() {
+  const btn = document.getElementById('pf-dedup');
+  const note = document.getElementById('pf-dedup-note');
+  btn.disabled = true; note.textContent = '🔁 Consultando a Meetime…';
+  try {
+    const empresas = prospState.empresas.map(e => ({ cnpj: onlyDigits(e.cnpj), razao_social: e.razao_social }));
+    const j = await fetch(`${API}/api/meetime/dedup`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ empresas }),
+    }).then(r => r.json());
+    if (j.status === 'unavailable') { note.innerHTML = '⚠️ Meetime não configurada — peça ao admin para colocar o token em <strong>Configurações</strong>.'; return; }
+    if (j.status && j.status !== 'ok') { note.textContent = '⚠️ ' + (j.message || 'Falha na dedup Meetime.'); return; }
+    // mantém só os "novos" (não estão na Meetime), preservando os objetos originais por CNPJ
+    const removidosCnpj = new Set((j.removidos || []).map(r => onlyDigits(r.cnpj)));
+    const antes = prospState.empresas.length;
+    prospState.empresas = prospState.empresas.filter(e => !removidosCnpj.has(onlyDigits(e.cnpj)));
+    prospState.total = prospState.empresas.length;
+    const porCnpj = (j.removidos || []).filter(r => r._dedup === 'cnpj').length;
+    const porNome = (j.removidos || []).filter(r => r._dedup === 'nome').length;
+    document.getElementById('pf-count').textContent =
+      `${prospState.empresas.length} resultado(s) após dedup · base local RFB`;
+    renderProspList();
+    const noteEl = document.getElementById('pf-dedup-note');
+    if (noteEl) noteEl.innerHTML = `✅ Removidas <strong>${antes - prospState.empresas.length}</strong> já na Meetime ` +
+      `(${porCnpj} por CNPJ, ${porNome} por nome). Restam <strong>${prospState.empresas.length}</strong> para prospectar.`;
+  } catch (e) {
+    note.textContent = 'Erro: ' + e.message;
+  } finally {
+    const b = document.getElementById('pf-dedup'); if (b) b.disabled = false;
+  }
 }
 
 const PROSP_PER_PAGE = 20;
@@ -1120,18 +1154,17 @@ document.getElementById('pf-nome').addEventListener('keydown', e => e.key === 'E
 // ── Busca de PESSOAS (sócios como proxy — ver nota no painel) ───────────
 function prospFiltrosPessoa() {
   const list = v => (v || '').split(',').map(s => s.trim()).filter(Boolean);
-  const comboCode = id => (document.getElementById(id)?.dataset.code || '').trim();
   return {
     nome: document.getElementById('pf-nome').value.trim(),
     sobrenome: document.getElementById('pf-sobrenome').value.trim(),
     cargo: document.getElementById('pf-cargo').value.trim(),
     anos_min: parseInt(document.getElementById('pf-anos-min').value) || 0,
     anos_max: parseInt(document.getElementById('pf-anos-max').value) || 0,
-    uf: list(document.getElementById('pf-uf').value),
-    municipio: list(comboCode('combo-municipio')),
+    uf: getSelectedUFs(),
+    municipio: comboCodes('combo-municipio'),
     setor: document.getElementById('pf-setor').value.trim(),
-    cnae: list(comboCode('combo-cnae')),
-    natureza: list(comboCode('combo-natureza')),
+    cnae: comboCodes('combo-cnae'),
+    natureza: comboCodes('combo-natureza'),
     porte: list(document.getElementById('pf-porte').value),
     tipo_empresa: document.getElementById('pf-tipo-empresa').value,
     nome_empresa: document.getElementById('pf-nome-empresa').value.trim(),
@@ -1201,62 +1234,78 @@ document.getElementById('prosp-expand-btn').addEventListener('click', () => {
 });
 
 // Combobox pesquisável (CNAE / Natureza) — funciona como um "select" filtrável.
+// ── UF em chips (múltipla seleção) ──
+const _UFS_LIST = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG',
+  'PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SE','SP','TO'];
+(function buildUFChips() {
+  const box = document.getElementById('pf-uf');
+  if (!box || box.dataset.built) return;
+  box.dataset.built = '1';
+  box.innerHTML = _UFS_LIST.map(u => `<button type="button" class="uf-chip" data-uf="${u}">${u}</button>`).join('');
+  box.addEventListener('click', e => { const b = e.target.closest('.uf-chip'); if (b) b.classList.toggle('active'); });
+})();
+function getSelectedUFs() {
+  return [...document.querySelectorAll('#pf-uf .uf-chip.active')].map(b => b.dataset.uf);
+}
+// códigos selecionados de um combo multi (cnae/natureza/municipio)
+function comboCodes(id) {
+  const c = document.getElementById(id);
+  return (c && c._codes ? c._codes : []).map(x => x.code);
+}
+
+// Combobox com MÚLTIPLA seleção (chips). CNAE/Natureza/Município.
 function setupCombo(comboId) {
   const combo = document.getElementById(comboId);
   if (!combo) return;
   const input = combo.querySelector('.combo-input');
   const listEl = combo.querySelector('.combo-list');
-  const tipo = combo.dataset.tipo;
-  const isMunicipio = tipo === 'municipio';
-  const ufSelect = document.getElementById('pf-uf');
+  const isMunicipio = combo.dataset.tipo === 'municipio';
+  combo._codes = [];
+  let chips = combo.querySelector('.combo-chips');
+  if (!chips) { chips = document.createElement('div'); chips.className = 'combo-chips'; combo.appendChild(chips); }
   let itens = [];
+  fetch(`${API}/api/cnpj/lookup?tipo=${combo.dataset.tipo}`).then(r => r.json())
+    .then(j => { itens = j.itens || []; }).catch(() => { itens = []; });
 
-  fetch(`${API}/api/cnpj/lookup?tipo=${tipo}`)
-    .then(r => r.json())
-    .then(j => { itens = j.itens || []; })
-    .catch(() => { itens = []; });
-
-  // Rótulo mostrado: município leva a UF junto (evita ambiguidade entre
-  // homônimos, ex.: "BOM JESUS" existe em vários estados).
   const label = it => isMunicipio && it.uf ? `${it.descricao} — ${it.uf}` : it.descricao;
-
   const norm = s => (s || '').toLowerCase();
+  function renderChips() {
+    chips.innerHTML = combo._codes.map(c =>
+      `<span class="combo-chip" data-code="${esc(c.code)}"><b title="${esc(c.label)}">${esc(c.label)}</b><span class="x">✕</span></span>`).join('');
+  }
+  function add(code, lbl) {
+    code = String(code || '').trim();
+    if (!code || combo._codes.some(c => c.code === code)) return;
+    combo._codes.push({ code, label: lbl || code }); renderChips();
+  }
+  chips.addEventListener('mousedown', e => {
+    const x = e.target.closest('.x'); if (!x) return;
+    const code = x.closest('.combo-chip').dataset.code;
+    combo._codes = combo._codes.filter(c => c.code !== code); renderChips();
+  });
   function render(q) {
     q = norm(q);
-    // Se um estado já foi escolhido, restringe as cidades a ele — sem isso a
-    // lista mistura município de qualquer UF, incompatível com o filtro ativo.
-    const ufAtual = isMunicipio ? (ufSelect?.value || '') : '';
-    let pool = ufAtual ? itens.filter(it => it.uf === ufAtual) : itens;
-    let matches;
-    if (!q) matches = pool.slice(0, 30);
-    else matches = pool.filter(it => norm(it.descricao).includes(q)).slice(0, 30);
+    const ufSel = getSelectedUFs();
+    let pool = (isMunicipio && ufSel.length) ? itens.filter(it => ufSel.includes(it.uf)) : itens;
+    const matches = (!q ? pool.slice(0, 30) : pool.filter(it => norm(it.descricao).includes(q)).slice(0, 30));
     if (!matches.length) { listEl.hidden = true; return; }
     listEl.innerHTML = matches.map(it =>
-      `<div class="combo-opt" data-code="${it.codigo}">${esc(label(it))}</div>`
-    ).join('');
+      `<div class="combo-opt" data-code="${it.codigo}" data-label="${esc(label(it))}">${esc(label(it))}</div>`).join('');
     listEl.hidden = false;
   }
-
-  input.addEventListener('input', () => {
-    // CNAE/natureza aceitam código cru digitado (degrada bem sem lookup carregado).
-    combo.dataset.code = isMunicipio ? '' : input.value.replace(/\D/g, '');
-    render(input.value);
-  });
+  input.addEventListener('input', () => render(input.value));
   input.addEventListener('focus', () => render(input.value));
   input.addEventListener('blur', () => setTimeout(() => { listEl.hidden = true; }, 180));
-  listEl.addEventListener('mousedown', e => {
-    const opt = e.target.closest('.combo-opt');
-    if (!opt) return;
-    combo.dataset.code = opt.dataset.code;
-    input.value = opt.textContent;
-    listEl.hidden = true;
+  input.addEventListener('keydown', e => {   // CNAE/natureza: Enter adiciona o código cru digitado
+    if (e.key === 'Enter' && !isMunicipio) {
+      const raw = input.value.replace(/\D/g, '');
+      if (raw) { add(raw, raw); input.value = ''; listEl.hidden = true; e.preventDefault(); }
+    }
   });
-  if (isMunicipio && ufSelect) {
-    ufSelect.addEventListener('change', () => {
-      // Trocar de estado invalida a cidade escolhida (poderia ser de outra UF).
-      input.value = ''; combo.dataset.code = ''; listEl.hidden = true;
-    });
-  }
+  listEl.addEventListener('mousedown', e => {
+    const opt = e.target.closest('.combo-opt'); if (!opt) return;
+    add(opt.dataset.code, opt.dataset.label); input.value = ''; listEl.hidden = true;
+  });
 }
 setupCombo('combo-cnae');
 setupCombo('combo-natureza');

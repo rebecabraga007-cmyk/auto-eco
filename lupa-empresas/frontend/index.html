@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CapiBLU — Plataforma de Prospecção B2B</title>
-  <link rel="stylesheet" href="capiblu.css" />
+  <link rel="stylesheet" href="capiblux.css" />
   <!-- FIX crítico: o atributo hidden precisa vencer o display:flex das overlays.
        Sem isto, o overlay de login NÃO some ao logar (app carrega atrás mas fica invisível). -->
   <style>[hidden]{display:none !important}</style>
@@ -217,17 +217,8 @@
             <input id="pf-cnpj" type="text" placeholder="Busca direta por CNPJ…" autocomplete="off" maxlength="18" />
           </div>
           <div class="pf-field">
-            <label>📍 Localização empresa — Estado (UF)</label>
-            <select id="pf-uf">
-              <option value="">Selecione uma ou mais UF</option>
-              <option>AC</option><option>AL</option><option>AP</option><option>AM</option>
-              <option>BA</option><option>CE</option><option>DF</option><option>ES</option>
-              <option>GO</option><option>MA</option><option>MT</option><option>MS</option>
-              <option>MG</option><option>PA</option><option>PB</option><option>PR</option>
-              <option>PE</option><option>PI</option><option>RJ</option><option>RN</option>
-              <option>RS</option><option>RO</option><option>RR</option><option>SC</option>
-              <option>SP</option><option>SE</option><option>TO</option>
-            </select>
+            <label>📍 Localização empresa — Estado (UF) <span class="pf-hint">clique p/ selecionar vários</span></label>
+            <div id="pf-uf" class="uf-chips"></div>
           </div>
           <div class="pf-field">
             <label>📍 Cidade (município)</label>
