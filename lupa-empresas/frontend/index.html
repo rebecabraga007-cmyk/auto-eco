@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CapiBLU — Plataforma de Prospecção B2B</title>
   <link rel="stylesheet" href="capiblu.css" />
+  <!-- FIX crítico: o atributo hidden precisa vencer o display:flex das overlays.
+       Sem isto, o overlay de login NÃO some ao logar (app carrega atrás mas fica invisível). -->
+  <style>[hidden]{display:none !important}</style>
 </head>
 <body>
 
