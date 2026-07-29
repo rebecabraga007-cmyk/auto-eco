@@ -1081,19 +1081,19 @@ async def enrich_export(payload: dict = Body(default={})):
         headers={"Content-Disposition": 'attachment; filename="lista-enriquecida.xlsx"'})
 
 
-# ---- Frontend estatico ----
+# ---- Serviço de dados: NÃO serve o frontend ----
+# A tela de login e o app ficam no app-online (Render). Aqui é só endpoint de dados,
+# acessível apenas pelo proxy com o segredo. Servir a UI aqui confundia (login dava
+# "segredo de proxy"). O root só explica o que é.
 
 @app.get("/")
 async def index():
-    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
-
-
-@app.get("/company.html")
-async def company_page():
-    return FileResponse(os.path.join(FRONTEND_DIR, "company.html"))
-
-
-app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
+    return JSONResponse({
+        "service": "capiblu-data",
+        "mensagem": "Este é o serviço de DADOS interno do CapiBLU (uso via proxy). "
+                    "Para acessar a plataforma, use o app online.",
+        "app": "https://capiblu-app.onrender.com",
+    })
 
 
 if __name__ == "__main__":

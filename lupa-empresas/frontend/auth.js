@@ -25,8 +25,13 @@
     return _fetch(input, init).then(resp => {
       if (resp.status === 401 && isApi && getToken()) {
         // token expirou/ inválido → volta pro login
+        // Token expirado/inválido numa chamada autenticada → desloga.
+        // Só recarrega se o app estava VISÍVEL (overlay escondido); assim evita
+        // loop de reload na própria tela de login.
+        const ov = document.getElementById('login-overlay');
+        const appEstavaVisivel = ov && ov.hidden;
         clearToken();
-        if (!document.getElementById('login-overlay').hidden === false) location.reload();
+        if (appEstavaVisivel) location.reload();
       }
       return resp;
     });
