@@ -23,7 +23,7 @@ import re
 import sys
 import uuid
 
-from fastapi import Body, FastAPI, File, UploadFile
+from fastapi import Body, FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -31,7 +31,9 @@ from fastapi.staticfiles import StaticFiles
 import assertiva
 import brasilapi
 import casadosdados
+import config_store
 import donodozap
+import meetime
 import sheet_reader
 import linkedin_scraper
 import mkbuscas
@@ -479,6 +481,19 @@ async def company_leads(cnpj: str, decisores: bool = False,
                  "whatsapp": t.get("whatsapp")} for t in tels]
 
     socios = [s for s in (data.get("qsa") or []) if isinstance(s, dict)]
+    # Preferir SÓCIO-ADMINISTRADOR como contato principal (Contato 1). A qualificação
+    # societária (QSA) traz "Administrador"/"Sócio-Administrador"/"Diretor" — ordena
+    # esses primeiro; mantém a ordem original como desempate.
+    def _rank_socio(s):
+        q = (s.get("qualificacao_socio") or s.get("qual") or "").lower()
+        if "administrador" in q:
+            return 0
+        if "diretor" in q or "presidente" in q:
+            return 1
+        if "sócio" in q or "socio" in q:
+            return 2
+        return 3
+    socios = sorted(socios, key=_rank_socio)
     # Telefones de todos os socios em paralelo (era 1 a 1 => lento).
     tels_por_socio = await asyncio.gather(*[
         _phones_for_cpf(s.get("cpf_completo") or "", modo_tel, max_tel, fonte_tel) for s in socios
@@ -1367,6 +1382,70 @@ async def enrich_export(payload: dict = Body(default={})):
     return StreamingResponse(
         buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="lista-enriquecida.xlsx"'})
+
+
+# ---- Configurações de integração (admin) ----
+# Admin é verificado pelo header X-User-Role, que SÓ o app-online (Render) envia
+# após validar a sessão. O serviço de dados confia nele (só chega via proxy c/ segredo).
+
+def _is_admin(request: Request) -> bool:
+    return (request.headers.get("x-user-role") or "").lower() == "admin"
+
+
+@app.get("/api/config")
+async def config_get(request: Request):
+    if not _is_admin(request):
+        return JSONResponse({"detail": "Requer admin."}, status_code=403)
+    tok = config_store.get("meetime_token") or os.environ.get("MEETIME_TOKEN", "")
+    return {"meetime": {
+        "configurado": bool(tok),
+        "token_mascarado": (tok[:4] + "…" + tok[-4:]) if tok and len(tok) > 8 else ("definido" if tok else ""),
+        "base_url": meetime._base_url(), "leads_path": meetime._leads_path(),
+        "auth_header": meetime._auth_header(),
+    }}
+
+
+@app.post("/api/config/meetime")
+async def config_meetime(request: Request, payload: dict = Body(default={})):
+    if not _is_admin(request):
+        return JSONResponse({"detail": "Requer admin."}, status_code=403)
+    updates = {}
+    for k_in, k_cfg in (("token", "meetime_token"), ("base_url", "meetime_base_url"),
+                        ("leads_path", "meetime_leads_path"), ("auth_header", "meetime_auth_header")):
+        if payload.get(k_in) is not None:
+            updates[k_cfg] = str(payload[k_in]).strip()
+    config_store.set_many(updates)
+    meetime._cache["ts"] = 0  # invalida cache (força rebaixar com o token novo)
+    return {"status": "ok", "configurado": bool(meetime._token())}
+
+
+# ---- Meetime: dedup (não prospectar quem já está no CRM) ----
+
+@app.get("/api/meetime/status")
+async def meetime_status(refresh: bool = False):
+    if not meetime.enabled():
+        return {"enabled": False}
+    ex = await meetime.fetch_existing(force=refresh)
+    return {"enabled": True, "status": ex.get("status"), "message": ex.get("message"),
+            "total_cnpjs": len(ex.get("cnpjs") or []),
+            "total_nomes": len(ex.get("nomes") or []), "cache": ex.get("cache")}
+
+
+@app.post("/api/meetime/dedup")
+async def meetime_dedup(payload: dict = Body(default={})):
+    """Body: {empresas:[{cnpj, razao_social}]}. Remove quem já está na Meetime
+    (CNPJ exato OU nome por similaridade LIKE %). Retorna {novos, removidos}."""
+    empresas = payload.get("empresas") or payload.get("candidatos") or []
+    if not meetime.enabled():
+        return {"status": "unavailable", "message": "Meetime não configurada (MEETIME_TOKEN).",
+                "novos": empresas, "removidos": []}
+    ex = await meetime.fetch_existing(force=bool(payload.get("refresh")))
+    if ex.get("status") and ex["status"] != "ok":
+        return {"status": ex["status"], "message": ex.get("message"),
+                "novos": empresas, "removidos": []}
+    res = meetime.dedup(empresas, ex)
+    res["status"] = "ok"
+    return res
 
 
 # ---- Serviço de dados: NÃO serve o frontend ----

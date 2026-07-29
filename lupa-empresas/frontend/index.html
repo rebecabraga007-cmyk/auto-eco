@@ -32,6 +32,7 @@
     <span class="topbar-user-caret">▾</span>
     <div class="user-dropdown" id="user-dropdown" hidden>
       <button id="menu-users" hidden>👥 Usuários</button>
+      <button id="menu-config" hidden>⚙️ Configurações</button>
       <button id="menu-password">🔑 Trocar senha</button>
       <button id="menu-logout">🚪 Sair</button>
     </div>
@@ -582,6 +583,24 @@
     <label>Nova senha (mín. 8)<input id="pf-nova" type="password" required /></label>
     <div id="pass-err" class="login-err"></div>
     <button type="submit" class="btn-primary">Salvar</button>
+  </form>
+</div>
+
+<!-- Modal: Configurações de integração (admin) -->
+<div id="config-modal" class="modal-overlay" hidden>
+  <form id="config-form" class="modal-card">
+    <div class="modal-head"><h3>⚙️ Configurações — Integrações</h3><button class="modal-x" id="config-close" type="button">✕</button></div>
+    <p class="msg"><strong>Meetime</strong> — token da API usado para deduplicar leads (não prospectar quem já está no CRM). Fica guardado no serviço de dados local, nunca no navegador.</p>
+    <label>Token da Meetime<input id="cfg-meetime-token" type="text" placeholder="cole o token aqui" autocomplete="off" /></label>
+    <div id="cfg-meetime-status" class="en-fname"></div>
+    <details style="font-size:.8rem;color:#64748b">
+      <summary>Avançado (host/endpoint)</summary>
+      <label>Base URL<input id="cfg-meetime-base" type="text" placeholder="https://api.meetime.com.br" /></label>
+      <label>Endpoint de leads<input id="cfg-meetime-path" type="text" placeholder="/v2/leads" /></label>
+      <label>Header de auth<input id="cfg-meetime-hdr" type="text" placeholder="api-token" /></label>
+    </details>
+    <div id="config-err" class="login-err"></div>
+    <button type="submit" class="btn-primary">💾 Salvar</button>
   </form>
 </div>
 
