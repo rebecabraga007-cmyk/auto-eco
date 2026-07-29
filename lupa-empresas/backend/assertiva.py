@@ -189,12 +189,22 @@ def _norm_tel(t: Any) -> dict[str, Any] | None:
     whats = t.get("whatsApp")
     if whats is None and isinstance(t.get("aplicativos"), dict):
         whats = t["aplicativos"].get("whatsApp")
+    # No schema real do Localize (reverso de CPF), ter data de WhatsApp = tem WhatsApp.
+    if whats is None and t.get("whatsapp_datetime"):
+        whats = True
+    # priority (1 = mais provável de estar correto na Assertiva); classification (1 melhor).
+    try:
+        prio = int(t.get("priority")) if t.get("priority") is not None else None
+    except (TypeError, ValueError):
+        prio = None
     return {
         "ddd": ddd,
         "number": full,
         "telefone": full,
         "tipo": str(t.get("tipoTelefone") or t.get("tipo") or ""),
         "whatsapp": bool(whats) if whats is not None else None,
+        "priority": prio,
+        "classification": t.get("classification"),
         "ranking": t.get("ranking") or t.get("classificacao") or "",
     }
 

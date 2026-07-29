@@ -1071,9 +1071,10 @@ async function prospExportar() {
   // Formato enriquecido (padrão Datastone): 1 linha por empresa, blocos de contato.
   const empresas = (prospState.leads || []).map(l => ({ empresa: l.empresa, contatos: l.contatos }));
   const layout = document.getElementById('pf-layout')?.value || 'empresa';
+  const fonteTel = document.getElementById('pf-fontetel')?.value || 'assertiva';
   const body = empresas.length
-    ? { empresas, layout }
-    : { rows: prospState.rows };  // fallback antigo se não houver leads crus
+    ? { empresas, layout, fonte_tel: fonteTel }
+    : { rows: prospState.rows, fonte_tel: fonteTel };  // fallback antigo se não houver leads crus
   try {
     const resp = await fetch(`${API}/api/export/xlsx`, {
       method: 'POST',

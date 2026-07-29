@@ -732,6 +732,30 @@ async def export_xlsx(payload: dict = Body(default={})):
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = f"A1:{get_column_letter(len(legacy))}{max(len(rows) + 1, 1)}"
 
+    # Aba "Fontes": de onde saem os dados (nome da API/base) — transparência.
+    fonte_tel = (payload.get("fonte_tel") or "assertiva").lower()
+    tel_fonte = "Assertiva Localize (API)" if fonte_tel == "assertiva" else "Mk Buscas / WorkAPI (API)"
+    fontes = [
+        ("Dados da empresa (razão, fantasia, CNAE, porte, situação, capital, endereço, matriz/filial, Simples/MEI)",
+         "Receita Federal — Cadastro Nacional de CNPJ (base local RFB dos Dados Abertos)"),
+        ("Telefone e e-mail da empresa", "Receita Federal (RFB) — quando disponível no cadastro"),
+        ("Nome e cargo do contato/sócio", "Receita Federal — Quadro de Sócios (QSA)"),
+        ("CPF do contato", "Base JBR (resolução nome + máscara do CPF)"),
+        ("Telefones do contato (Celular/Fixo/WhatsApp)", tel_fonte),
+        ("E-mail do contato", "Assertiva Localize (API)"),
+        ("Verificação de telefone (pertence ao CPF)", "integralX / intelgrax-tel (WorkAPI) — telefone reverso"),
+    ]
+    wf = wb.create_sheet("Fontes")
+    wf.cell(row=1, column=1, value="Campo").font = header_font
+    wf.cell(row=1, column=2, value="Origem dos dados").font = header_font
+    wf.cell(row=1, column=1).fill = header_fill
+    wf.cell(row=1, column=2).fill = header_fill
+    for i, (campo, origem) in enumerate(fontes, start=2):
+        wf.cell(row=i, column=1, value=campo)
+        wf.cell(row=i, column=2, value=origem)
+    wf.column_dimensions["A"].width = 62
+    wf.column_dimensions["B"].width = 66
+
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)

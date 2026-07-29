@@ -223,9 +223,26 @@ def refine_phones(phones: list[dict[str, Any]], modo: str = "celular",
         classified = [c for c in classified if c["categoria"] in ("celular", "fixo")]
     # 'todos' mantém celular/fixo/celular_antigo
 
-    # dedupe por dígitos, mantendo o de melhor rank
+    # Ordenação "maior chance de estar correto primeiro":
+    #  1) categoria (celular atual < fixo < celular antigo) — nosso rank de formato
+    #  2) WhatsApp presente (sinal forte de número ativo)
+    #  3) priority do provedor (Assertiva: 1 = melhor)
+    #  4) classification do provedor (1 = melhor)
+    def _sort_key(c):
+        wa = 0 if c.get("whatsapp") else 1
+        try:
+            prio = int(c.get("priority")) if c.get("priority") is not None else 98
+        except (TypeError, ValueError):
+            prio = 98
+        try:
+            clf = int(c.get("classification")) if c.get("classification") is not None else 98
+        except (TypeError, ValueError):
+            clf = 98
+        return (c["rank"], wa, prio, clf)
+
+    # dedupe por dígitos, mantendo o de melhor ordenação
     seen, dedup = set(), []
-    for c in sorted(classified, key=lambda x: x["rank"]):
+    for c in sorted(classified, key=_sort_key):
         if c["digits"] in seen:
             continue
         seen.add(c["digits"])
