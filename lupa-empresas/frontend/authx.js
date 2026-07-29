@@ -29,15 +29,9 @@
         init.headers = h;
       }
     }
-    return _fetch(input, init).then(resp => {
-      if (resp.status === 401 && isApi && !url.includes('/api/auth/')) {
-        // Sessão perdida numa chamada autenticada → só volta pro login se o app
-        // estava VISÍVEL (evita loop na própria tela de login).
-        const ov = document.getElementById('login-overlay');
-        if (ov && ov.hidden) { clearToken(); location.reload(); }
-      }
-      return resp;
-    });
+    // NÃO recarregar em 401 de chamadas de dados: causava piscada/loop na tela de
+    // login (401 corria contra o /me). A sessão é decidida só pelo /me no init().
+    return _fetch(input, init);
   };
 
   let currentUser = null;
