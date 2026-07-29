@@ -15,13 +15,14 @@ from typing import Any, Optional
 
 import bcrypt
 import jwt
-from fastapi import APIRouter, Body, Depends, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, Response
 
 _DB_PATH = os.environ.get(
     "AUTH_DB_PATH",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "capiblu_auth.db"),
 )
 _JWT_ALG = "HS256"
+COOKIE_NAME = "capiblu_session"  # sessão via cookie httpOnly (robusto, não depende de localStorage)
 _TOKEN_TTL = int(os.environ.get("JWT_TTL_SECONDS", str(60 * 60 * 12)))  # 12h
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -191,30 +192,19 @@ def delete_user(uid: int) -> None:
 
 # ---- Dependências FastAPI ----
 
-def current_user(authorization: str = Header(default="")) -> dict:
-    if not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Não autenticado.")
-    token = authorization.split(" ", 1)[1].strip()
+def _token_from_request(request: Request, authorization: str = "") -> str:
+    """Extrai o JWT do header Authorization OU do cookie de sessão."""
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization.split(" ", 1)[1].strip()
     try:
-        payload = _decode(token)
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Sessão expirada.")
+        return request.cookies.get(COOKIE_NAME, "") or ""
     except Exception:
-        raise HTTPException(status_code=401, detail="Token inválido.")
-    con = _conn()
-    r = con.execute("SELECT * FROM users WHERE id=?", (int(payload["sub"]),)).fetchone()
-    con.close()
-    if not r or not r["ativo"]:
-        raise HTTPException(status_code=401, detail="Usuário inativo.")
-    return _row_to_user(r)
+        return ""
 
 
-def user_from_bearer(authorization: str) -> Optional[dict]:
-    """Valida o header Authorization e retorna o usuário, ou None (sem exceção).
-    Usado pelo middleware de proteção global das rotas /api."""
-    if not authorization or not authorization.lower().startswith("bearer "):
+def _user_from_token(token: str) -> Optional[dict]:
+    if not token:
         return None
-    token = authorization.split(" ", 1)[1].strip()
     try:
         payload = _decode(token)
     except Exception:
@@ -225,6 +215,25 @@ def user_from_bearer(authorization: str) -> Optional[dict]:
     if not r or not r["ativo"]:
         return None
     return _row_to_user(r)
+
+
+def current_user(request: Request, authorization: str = Header(default="")) -> dict:
+    u = _user_from_token(_token_from_request(request, authorization))
+    if not u:
+        raise HTTPException(status_code=401, detail="Não autenticado.")
+    return u
+
+
+def user_from_request(request: Request) -> Optional[dict]:
+    """Header Authorization OU cookie → usuário (sem exceção). Usado no middleware."""
+    return _user_from_token(_token_from_request(request, request.headers.get("authorization", "")))
+
+
+# compat: mantém a assinatura antiga usada em algum lugar
+def user_from_bearer(authorization: str) -> Optional[dict]:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    return _user_from_token(authorization.split(" ", 1)[1].strip())
 
 
 def require_admin(user: dict = Depends(current_user)) -> dict:
@@ -239,11 +248,21 @@ router = APIRouter()
 
 
 @router.post("/api/auth/login")
-async def login(payload: dict = Body(default={})):
+async def login(response: Response, payload: dict = Body(default={})):
     u = authenticate(payload.get("email", ""), payload.get("senha", "") or payload.get("password", ""))
     if not u:
         raise HTTPException(status_code=401, detail="E-mail ou senha incorretos.")
-    return {"token": make_token(u), "user": _row_to_user(u)}
+    token = make_token(u)
+    # Cookie de sessão httpOnly — robusto (não depende de localStorage do navegador).
+    response.set_cookie(COOKIE_NAME, token, max_age=_TOKEN_TTL, httponly=True,
+                        secure=True, samesite="lax", path="/")
+    return {"token": token, "user": _row_to_user(u)}
+
+
+@router.post("/api/auth/logout")
+async def logout(response: Response):
+    response.delete_cookie(COOKIE_NAME, path="/")
+    return {"ok": True}
 
 
 @router.get("/api/auth/me")

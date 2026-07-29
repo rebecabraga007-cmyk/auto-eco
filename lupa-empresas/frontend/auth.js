@@ -4,34 +4,37 @@
 //  que injeta o JWT em toda chamada /api.
 // ══════════════════════════════════════════════════════
 (function () {
+  // Sessão via COOKIE httpOnly (servidor). localStorage é só best-effort/fallback —
+  // o app NÃO depende dele (navegadores com storage bloqueado funcionam mesmo assim).
   const TOKEN_KEY = 'capiblu_token';
-  const getToken = () => localStorage.getItem(TOKEN_KEY);
-  const setToken = t => localStorage.setItem(TOKEN_KEY, t);
-  const clearToken = () => localStorage.removeItem(TOKEN_KEY);
-  window.capibluLogout = () => { clearToken(); location.reload(); };
+  const getToken = () => { try { return localStorage.getItem(TOKEN_KEY); } catch (e) { return null; } };
+  const setToken = t => { try { localStorage.setItem(TOKEN_KEY, t); } catch (e) {} };
+  const clearToken = () => { try { localStorage.removeItem(TOKEN_KEY); } catch (e) {} };
+  window.capibluLogout = () => {
+    fetch('/api/auth/logout', { method: 'POST' }).catch(() => {}).finally(() => { clearToken(); location.reload(); });
+  };
 
-  // Wrapper de fetch: injeta Authorization nas chamadas à nossa API.
+  // Wrapper de fetch: garante cookies (same-origin já manda) e injeta Bearer se houver.
   const _fetch = window.fetch.bind(window);
   window.fetch = function (input, init = {}) {
     const url = typeof input === 'string' ? input : (input && input.url) || '';
-    const isApi = url.includes('/api/') && !url.includes('/api/auth/login');
-    const tok = getToken();
-    if (isApi && tok) {
-      init = { ...init };
-      const h = new Headers(init.headers || (typeof input !== 'string' ? input.headers : undefined) || {});
-      if (!h.has('Authorization')) h.set('Authorization', 'Bearer ' + tok);
-      init.headers = h;
+    const isApi = url.includes('/api/');
+    init = { ...init };
+    if (isApi) {
+      init.credentials = init.credentials || 'same-origin';
+      const tok = getToken();
+      if (tok && !url.includes('/api/auth/login')) {
+        const h = new Headers(init.headers || (typeof input !== 'string' ? input.headers : undefined) || {});
+        if (!h.has('Authorization')) h.set('Authorization', 'Bearer ' + tok);
+        init.headers = h;
+      }
     }
     return _fetch(input, init).then(resp => {
-      if (resp.status === 401 && isApi && getToken()) {
-        // token expirou/ inválido → volta pro login
-        // Token expirado/inválido numa chamada autenticada → desloga.
-        // Só recarrega se o app estava VISÍVEL (overlay escondido); assim evita
-        // loop de reload na própria tela de login.
+      if (resp.status === 401 && isApi && !url.includes('/api/auth/')) {
+        // Sessão perdida numa chamada autenticada → só volta pro login se o app
+        // estava VISÍVEL (evita loop na própria tela de login).
         const ov = document.getElementById('login-overlay');
-        const appEstavaVisivel = ov && ov.hidden;
-        clearToken();
-        if (appEstavaVisivel) location.reload();
+        if (ov && ov.hidden) { clearToken(); location.reload(); }
       }
       return resp;
     });
@@ -46,15 +49,14 @@
     wireMenu();
     wireUsersModal();
     wirePassModal();
-    const tok = getToken();
-    if (!tok) return showLogin();
+    // A sessão vem do cookie — basta perguntar quem sou eu (sem depender de token local).
     try {
-      const r = await _fetch('/api/auth/me', { headers: { Authorization: 'Bearer ' + tok } });
+      const r = await _fetch('/api/auth/me', { credentials: 'same-origin' });
       if (!r.ok) throw new Error();
       currentUser = (await r.json()).user;
       showApp();
     } catch (e) {
-      clearToken(); showLogin();
+      showLogin();
     }
   }
 

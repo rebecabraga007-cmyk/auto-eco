@@ -53,16 +53,16 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 _auth.init()
 app.include_router(_auth.router)
 
-_PUBLIC_API = {"/api/auth/login"}
+_PUBLIC_API = {"/api/auth/login", "/api/auth/logout"}
 
 
 @app.middleware("http")
 async def _auth_guard(request: Request, call_next):
-    """Exige JWT válido em /api/* (exceto login). Estáticos ficam livres."""
+    """Exige sessão válida (cookie httpOnly OU header Bearer) em /api/* exceto login/logout."""
     path = request.url.path
     if request.method == "OPTIONS" or not path.startswith("/api/") or path in _PUBLIC_API:
         return await call_next(request)
-    user = _auth.user_from_bearer(request.headers.get("authorization", ""))
+    user = _auth.user_from_request(request)
     if not user:
         return JSONResponse({"detail": "Não autenticado."}, status_code=401)
     request.state.user = user
