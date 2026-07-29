@@ -1,0 +1,1787 @@
+// ══════════════════════════════════════════════════════
+//  CapiBLU — frontend logic
+// ══════════════════════════════════════════════════════
+
+const API = '';  // same origin
+
+// ── Tab navigation ──────────────────────────────────
+let _prospAutoLoaded = false;
+document.querySelectorAll('.nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tab = btn.dataset.tab;
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-section').forEach(s => s.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + tab).classList.add('active');
+    // Ao abrir Prospecção pela 1ª vez, já mostra uma lista (empresas ativas) —
+    // igual à Datastone, que carrega resultados sem precisar pesquisar nada.
+    if (tab === 'prospec' && !_prospAutoLoaded && typeof prospBuscar === 'function') {
+      _prospAutoLoaded = true;
+      prospBuscar();
+    }
+  });
+});
+
+// ── Utils ────────────────────────────────────────────
+function fmtCpf(v) {
+  const d = v.replace(/\D/g, '').slice(0, 11);
+  return d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')
+          .replace(/(\d{3})(\d{3})(\d{3})$/, '$1.$2.$3')
+          .replace(/(\d{3})(\d{3})$/, '$1.$2')
+          .replace(/(\d{3})$/, '$1');
+}
+function fmtCnpj(v) {
+  const d = v.replace(/\D/g, '').slice(0, 14);
+  return d.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+}
+function onlyDigits(s) { return (s || '').replace(/\D/g, ''); }
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function spinner() {
+  return `<div class="spinner-wrap"><div class="spinner"></div><span>Consultando…</span></div>`;
+}
+function fmtPhone(raw) {
+  const d = onlyDigits(raw);
+  if (d.length === 11) return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;
+  return raw;
+}
+function badgeSit(sit) {
+  const s = (sit || '').toLowerCase();
+  if (s.includes('ativa') || s.includes('regular')) return `<span class="badge badge-ativa">${esc(sit)}</span>`;
+  if (s.includes('baixa') || s.includes('inapt') || s.includes('suspens')) return `<span class="badge badge-inativa">${esc(sit)}</span>`;
+  return `<span class="badge badge-neutra">${esc(sit)}</span>`;
+}
+function scoreColor(n) {
+  if (n >= 700) return '#10b981';
+  if (n >= 400) return '#f59e0b';
+  return '#ef4444';
+}
+
+// ── CPF input mask ───────────────────────────────────
+document.getElementById('cpf-q').addEventListener('input', e => {
+  const cur = e.target.selectionStart;
+  e.target.value = fmtCpf(e.target.value);
+});
+
+// ── Accordion helper ─────────────────────────────────
+function makeAccordion(icon, title, count, bodyHtml) {
+  const id = 'acc-' + Math.random().toString(36).slice(2);
+  return `
+  <div class="accordion">
+    <div class="accordion-head" onclick="toggleAcc('${id}')">
+      <span class="accordion-title">${icon} ${esc(title)} ${count > 0 ? `<span class="acc-count">${count}</span>` : ''}</span>
+      <span class="accordion-chevron" id="chev-${id}">▼</span>
+    </div>
+    <div class="accordion-body" id="${id}">
+      ${count === 0 ? '<p class="empty-section">Nenhum dado encontrado.</p>' : bodyHtml}
+    </div>
+  </div>`;
+}
+window.toggleAcc = function(id) {
+  const body = document.getElementById(id);
+  const head = body.previousElementSibling;
+  const chev = document.getElementById('chev-' + id);
+  body.classList.toggle('open');
+  head.classList.toggle('open');
+};
+
+// ══════════════════════════════════════════════════════
+//  MÓDULO EMPRESA
+// ══════════════════════════════════════════════════════
+const empQ   = document.getElementById('emp-q');
+const empBtn = document.getElementById('emp-btn');
+const empRes = document.getElementById('emp-results');
+
+async function searchEmpresa() {
+  const q = empQ.value.trim();
+  if (!q) return;
+  empBtn.disabled = true;
+  empRes.innerHTML = spinner();
+  try {
+    const r = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}`);
+    const data = await r.json();
+    renderEmpresas(data);
+  } catch(e) {
+    empRes.innerHTML = `<p class="msg error">Erro ao consultar: ${esc(e.message)}</p>`;
+  } finally {
+    empBtn.disabled = false;
+  }
+}
+
+function renderEmpresas(data) {
+  if (!data || data.error) {
+    empRes.innerHTML = `<p class="msg error">${esc(data?.message || data?.error || 'Erro desconhecido')}</p>`;
+    return;
+  }
+  const list = Array.isArray(data) ? data : (data.companies || data.results || []);
+  if (!list.length) {
+    empRes.innerHTML = `<p class="msg">Nenhuma empresa encontrada.</p>`;
+    return;
+  }
+  empRes.innerHTML = list.map(emp => {
+    const cnpj = fmtCnpj(emp.cnpj || emp.tax_id || '');
+    const razao = emp.razao_social || emp.company_name || '';
+    const fantasia = emp.nome_fantasia || '';
+    const cidade = emp.municipio || emp.city || '';
+    const uf = emp.uf || emp.state || '';
+    const porte = emp.porte || emp.size || '';
+    const sit = emp.descricao_situacao_cadastral || emp.status || emp.situacao_cadastral || '';
+    return `
+    <a class="card-company" href="company.html?cnpj=${onlyDigits(cnpj)}" target="_blank">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+        <div>
+          <h3>${esc(razao)}</h3>
+          ${fantasia ? `<div class="fantasy">${esc(fantasia)}</div>` : ''}
+        </div>
+        ${badgeSit(sit)}
+      </div>
+      <div class="meta-row">
+        <span class="meta-item">📄 ${esc(cnpj)}</span>
+        ${cidade ? `<span class="meta-item">📍 ${esc(cidade)}/${esc(uf)}</span>` : ''}
+        ${porte ? `<span class="meta-item">🏭 ${esc(porte)}</span>` : ''}
+      </div>
+    </a>`;
+  }).join('');
+}
+
+empBtn.addEventListener('click', searchEmpresa);
+empQ.addEventListener('keydown', e => e.key === 'Enter' && searchEmpresa());
+document.querySelectorAll('.chip-ex').forEach(c => {
+  c.addEventListener('click', () => { empQ.value = c.dataset.val; searchEmpresa(); });
+});
+
+// ══════════════════════════════════════════════════════
+//  MÓDULO PESSOA / CPF
+// ══════════════════════════════════════════════════════
+const cpfQ   = document.getElementById('cpf-q');
+const cpfBtn = document.getElementById('cpf-btn');
+const cpfRes = document.getElementById('cpf-results');
+
+async function searchCpf() {
+  const raw = onlyDigits(cpfQ.value);
+  if (raw.length < 11) { cpfRes.innerHTML = `<p class="msg error">CPF inválido.</p>`; return; }
+  cpfBtn.disabled = true;
+  cpfRes.innerHTML = spinner();
+  try {
+    const [jbrRes, mkRes] = await Promise.all([
+      fetch(`${API}/api/person/${raw}`).then(r => r.json()),
+      fetch(`${API}/api/person/${raw}/mk`).then(r => r.json()),
+    ]);
+    renderPessoa(raw, jbrRes, mkRes);
+  } catch(e) {
+    cpfRes.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
+  } finally {
+    cpfBtn.disabled = false;
+  }
+}
+
+function renderPessoa(cpf, jbr, mk) {
+  const jbrP = jbr?.pessoa || {};
+  const mkD  = mk?.data || {};
+  const db   = mkD.DadosBasicos || {};
+  const de   = mkD.DadosEconomicos || {};
+  const prof = mkD.profissao || {};
+
+  const nome     = db.nome || jbrP.nome || '—';
+  const nasc     = db.dataNascimento || jbrP.nascimento || '—';
+  const sexo     = (db.sexo || jbrP.sexo || '').replace(' - ', '/');
+  const mae      = db.nomeMae || '—';
+  const sit      = (db.situacaoCadastral || {}).descricaoSituacaoCadastral || jbr?.status || '—';
+  const ec       = db.estadoCivil || '';
+  const obito    = (db.obito || {}).obito || '';
+  const esc_     = db.escolaridade || '';
+  const renda    = de.renda ? `R$ ${de.renda}` : '—';
+  const faixaRenda = (de.poderAquisitivo || {}).faixaPoderAquisitivo || '';
+  const scoreVal = parseInt((de.score || {}).scoreCSBA) || 0;
+  const scoreLabel = (de.score || {}).scoreCSBAFaixaRisco || '';
+  const mosaic   = (de.serasaMosaic || {}).descricaoMosaicNovo || (de.serasaMosaic || {}).descricaoMosaic || '';
+  const cbo      = prof.cboDescricao && !prof.cboDescricao.toLowerCase().includes('sem') ? prof.cboDescricao : '';
+
+  const sitGood = sit.toLowerCase().includes('regular') || sit.toLowerCase().includes('ativa');
+  const sitBad  = sit.toLowerCase().includes('suspens') || sit.toLowerCase().includes('cancelad');
+  const obitoMort = obito && obito !== 'NÃO' && obito !== 'NÃO' && obito !== 'NAO';
+
+  // Banner
+  let banner = `
+  <div class="person-banner">
+    <h2>${esc(nome)}</h2>
+    <div class="cpf-num">CPF ${fmtCpf(cpf)}</div>
+    <div class="banner-pills">
+      ${nasc !== '—' ? `<span class="banner-pill">🎂 ${esc(nasc)}</span>` : ''}
+      ${sexo ? `<span class="banner-pill">${sexo.includes('M') ? '♂' : '♀'} ${esc(sexo)}</span>` : ''}
+      ${ec ? `<span class="banner-pill">💍 ${esc(ec)}</span>` : ''}
+      <span class="banner-pill ${sitGood ? 'good' : sitBad ? 'bad' : ''}">📋 ${esc(sit)}</span>
+      ${obitoMort ? `<span class="banner-pill bad">💀 Óbito</span>` : ''}
+    </div>
+  </div>`;
+
+  // Info cards
+  let infoCards = `<div class="info-grid">`;
+  infoCards += infoCard('👩 Mãe', mae, '');
+  if (renda !== '—') infoCards += infoCard('💰 Renda estimada', renda, faixaRenda);
+  if (scoreVal) {
+    const pct = Math.min(scoreVal, 1000) / 10;
+    infoCards += `
+    <div class="info-card">
+      <div class="ic-label">📊 Score Serasa</div>
+      <div class="ic-value" style="color:${scoreColor(scoreVal)}">${scoreVal}</div>
+      <div class="ic-sub">${esc(scoreLabel)}</div>
+      <div class="score-wrap">
+        <div class="score-bar"><div class="score-fill" style="width:${pct}%;background:${scoreColor(scoreVal)}"></div></div>
+      </div>
+    </div>`;
+  }
+  if (mosaic) infoCards += infoCard('🎯 Perfil Mosaic', mosaic, '');
+  if (cbo)    infoCards += infoCard('💼 CBO', cbo, '');
+  if (esc_)   infoCards += infoCard('🎓 Escolaridade', esc_, '');
+  infoCards += `</div>`;
+
+  // Endereços
+  const enderecos = mkD.enderecos || [];
+  const endHtml = enderecos.length ? `
+  <table class="data-table">
+    <thead><tr><th>Logradouro</th><th>Bairro</th><th>Cidade/UF</th><th>CEP</th></tr></thead>
+    <tbody>${enderecos.map(e => `
+      <tr>
+        <td>${esc((e.tipoLogradouro||'')+' '+(e.logradouro||'')+' '+(e.logradouroNumero||'')+' '+(e.complemento||''))}</td>
+        <td>${esc(e.bairro||'')}</td>
+        <td>${esc((e.cidade||'')+'/'+(e.uf||''))}</td>
+        <td>${esc(e.cep||'')}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>` : '';
+
+  // Telefones
+  const telefones = mkD.telefones || [];
+  const telHtml = telefones.length ? `
+  <div style="margin-bottom:10px">
+    <button class="btn-secondary" onclick="verificarTelefonesCpf('${cpf}')">🔎 Verificar atrelamento (WorkAPI telefone reverso)</button>
+    <span class="tel-verify-hint">confere, na base de telefone reverso, se cada número realmente aponta pra este CPF</span>
+  </div>
+  <table class="data-table" id="tel-verify-table">
+    <thead><tr><th>Número</th><th>Tipo</th><th>Operadora</th><th>WhatsApp</th><th>Atrelado ao CPF?</th></tr></thead>
+    <tbody>${telefones.map(t => {
+      const raw = onlyDigits(t.telefone||t.numero||'');
+      return `
+      <tr>
+        <td class="td-phone">${esc(fmtPhone(t.telefone||t.numero||''))}</td>
+        <td>${esc(t.tipo||'')}</td>
+        <td>${esc(t.operadora||'')}</td>
+        <td>${t.whatsapp ? '✅' : '—'}</td>
+        <td class="tel-verify-cell" data-raw="${raw}">—</td>
+      </tr>`;}).join('')}
+    </tbody>
+  </table>` : '';
+
+  // Emails
+  const emails = mkD.emails || [];
+  const emailHtml = emails.length ? `
+  <table class="data-table">
+    <thead><tr><th>Email</th><th>Qualidade</th><th>Pessoal</th></tr></thead>
+    <tbody>${emails.map(e => `
+      <tr>
+        <td>${esc(e.email||'')}</td>
+        <td>${esc(e.qualidade||'')}</td>
+        <td>${e.emailPessoal === 'SIM' ? '✅' : '—'}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>` : '';
+
+  // Empresas
+  const empresas = mkD.empresas || [];
+  const empHtml = empresas.length ? `
+  <table class="data-table">
+    <thead><tr><th>CNPJ</th><th>Relação</th><th>Admissão</th><th>Saída</th></tr></thead>
+    <tbody>${empresas.map(e => `
+      <tr>
+        <td><a href="company.html?cnpj=${onlyDigits(e.cnpj||'')}" target="_blank" style="color:var(--blue-mid)">${esc(fmtCnpj(e.cnpj||''))}</a></td>
+        <td>${esc(e.relacao||e.tipoRelacao||'')}</td>
+        <td>${esc(e.admissao||'')}</td>
+        <td>${esc(e.demissao === '31/12/9999' ? 'Atual' : (e.demissao||''))}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>` : '';
+
+  // Parentes
+  const parentes = mkD.parentes || [];
+  const parHtml = parentes.length ? `
+  <table class="data-table">
+    <thead><tr><th>Nome</th><th>CPF</th><th>Grau</th></tr></thead>
+    <tbody>${parentes.map(p => `
+      <tr>
+        <td>${esc(p.nomeParente||'')}</td>
+        <td class="td-phone">${esc(fmtCpf(p.cpfParente||''))}</td>
+        <td>${esc(p.grauParentesco||'')}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>` : '';
+
+  // Vizinhos
+  const vizinhos = mkD.vizinhos || [];
+  const vizHtml = vizinhos.length ? `
+  <table class="data-table">
+    <thead><tr><th>Nome</th><th>Nascimento</th><th>CPF</th><th>Sexo</th></tr></thead>
+    <tbody>${vizinhos.map(v => `
+      <tr>
+        <td>${esc(v.nome||'')}</td>
+        <td>${esc(v.dataNascimento||'')}</td>
+        <td class="td-phone">${esc(fmtCpf(v.cpf||''))}</td>
+        <td>${(v.sexo||'').includes('F') ? '♀' : (v.sexo||'').includes('M') ? '♂' : '—'}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>` : '';
+
+  // Perfil de consumo (flags true)
+  const pc = mkD.perfilConsumo || {};
+  const pcTrue = Object.entries(pc).filter(([,v]) => v === true).map(([k]) =>
+    k.replace(/_/g,' ').replace('possui ','✅ ').replace('credito','crédito')
+  );
+  const pcProb = Object.entries(pc).filter(([,v]) => typeof v === 'string' && v.includes('%')).map(([k,v]) =>
+    `<span style="font-size:.8rem;background:var(--gray-100);padding:3px 10px;border-radius:6px;display:inline-block;margin:2px">${k.replace(/_/g,' ')}: ${v.replace(' de probabilidade positiva.','')}</span>`
+  );
+  const pcHtml = (pcTrue.length || pcProb.length) ? `
+  <div style="padding:14px 16px">
+    ${pcTrue.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">${pcTrue.map(x=>`<span style="background:var(--green-soft);color:#065f46;padding:3px 12px;border-radius:999px;font-size:.8rem">${esc(x)}</span>`).join('')}</div>` : ''}
+    ${pcProb.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px">${pcProb.join('')}</div>` : ''}
+  </div>` : '';
+
+  // Benefícios
+  const benef = mkD.beneficios || [];
+  const benefComRecebimento = benef.filter(b => parseInt(b.totalParcelasRecebidas) > 0);
+  const benefHtml = benefComRecebimento.length ? `
+  <table class="data-table">
+    <thead><tr><th>Benefício</th><th>Parcelas</th><th>Total</th></tr></thead>
+    <tbody>${benefComRecebimento.map(b => `
+      <tr><td>${esc(b.beneficio)}</td><td>${esc(b.totalParcelasRecebidas)}</td><td>${esc(b.totalRecebido)}</td></tr>`).join('')}
+    </tbody>
+  </table>` : '';
+
+  const unavailable = mk?.status === 'unavailable';
+
+  cpfRes.innerHTML = banner + infoCards +
+    makeAccordion('📍', 'Endereços', enderecos.length, endHtml) +
+    makeAccordion('📞', 'Telefones', telefones.length, telHtml) +
+    makeAccordion('✉️', 'Emails', emails.length, emailHtml) +
+    makeAccordion('🏢', 'Empresas / QSA', empresas.length, empHtml) +
+    makeAccordion('👨‍👩‍👧', 'Parentes', parentes.length, parHtml) +
+    makeAccordion('🏘️', 'Vizinhos', vizinhos.length, vizHtml) +
+    (pcHtml ? makeAccordion('🛍️', 'Perfil de Consumo', pcTrue.length + pcProb.length, pcHtml) : '') +
+    (benefComRecebimento.length ? makeAccordion('🏛️', 'Benefícios', benefComRecebimento.length, benefHtml) : '') +
+    (unavailable ? `<p class="msg" style="font-size:.85rem">ℹ️ Mk Buscas não configurada — dados enriquecidos indisponíveis.</p>` : '');
+
+  // Auto-open telefones e endereços
+  document.querySelectorAll('.accordion-head')[0]?.click(); // endereços
+  document.querySelectorAll('.accordion-head')[1]?.click(); // telefones
+}
+
+function infoCard(label, value, sub) {
+  return `<div class="info-card">
+    <div class="ic-label">${label}</div>
+    <div class="ic-value">${esc(value)}</div>
+    ${sub ? `<div class="ic-sub">${esc(sub)}</div>` : ''}
+  </div>`;
+}
+
+cpfBtn.addEventListener('click', searchCpf);
+cpfQ.addEventListener('keydown', e => e.key === 'Enter' && searchCpf());
+
+// ══════════════════════════════════════════════════════
+//  MÓDULO NOME
+// ══════════════════════════════════════════════════════
+const nomeQ   = document.getElementById('nome-q');
+const nomeBtn = document.getElementById('nome-btn');
+const nomeRes = document.getElementById('nome-results');
+
+// Quantos "outros" carregar de início; "Ver mais" busca mais sob demanda.
+const OUTROS_PAGE = 10;
+
+// Estado da busca por nome (para paginação do "Ver mais" / "Buscar todos")
+const nomeState = {
+  q: '', sexo: '', anoMin: 0, anoMax: 0,
+  exactCpfs: new Set(),
+  outros: [],        // acumulado (todos os broad já buscados, incl. exatos)
+  totalBroad: 0,     // total de matches broad no servidor
+  fetched: 0,        // quantas linhas broad já buscamos (offset)
+};
+
+function nomeFilters(lista) {
+  let p = lista || [];
+  const { sexo, anoMin, anoMax } = nomeState;
+  if (sexo) p = p.filter(x => (x.sexo || '').toUpperCase().startsWith(sexo));
+  if (anoMin) p = p.filter(x => parseInt((x.nascimento || '').slice(-4)) >= anoMin);
+  if (anoMax) p = p.filter(x => parseInt((x.nascimento || '').slice(-4)) <= anoMax);
+  return p;
+}
+
+async function searchNome() {
+  const q = nomeQ.value.trim();
+  if (!q) return;
+  const limit = document.getElementById('nome-limit').value;
+
+  nomeState.q = q;
+  nomeState.sexo = document.getElementById('nome-sexo').value;
+  nomeState.anoMin = parseInt(document.getElementById('nome-ano-min').value) || 0;
+  nomeState.anoMax = parseInt(document.getElementById('nome-ano-max').value) || 0;
+  nomeState.outros = [];
+  nomeState.fetched = 0;
+  nomeState.totalBroad = 0;
+
+  nomeBtn.disabled = true;
+  nomeRes.innerHTML = spinner();
+  try {
+    // Exato (nome_norm=) + primeira página broad (JANINE% AND %SAMPAIO%)
+    const exactUrl = `${API}/api/person/name-search?q=${encodeURIComponent(q)}&broad=false&limit=${limit}`;
+    const outrosUrl = `${API}/api/person/name-search?q=${encodeURIComponent(q)}&broad=true&limit=${OUTROS_PAGE}&offset=0`;
+
+    const [exactRes, outrosRes] = await Promise.all([
+      fetch(exactUrl).then(r => r.json()),
+      fetch(outrosUrl).then(r => r.json()),
+    ]);
+
+    if (exactRes.status !== 'ok' && outrosRes.status !== 'ok') {
+      nomeRes.innerHTML = `<p class="msg error">${esc(exactRes.message || outrosRes.message || 'Erro')}</p>`;
+      return;
+    }
+
+    nomeState.exactCpfs = new Set((exactRes.pessoas || []).map(p => p.cpf));
+    nomeState.outros = outrosRes.pessoas || [];
+    nomeState.fetched = nomeState.outros.length;
+    nomeState.totalBroad = outrosRes.total || nomeState.outros.length;
+
+    const exatos = nomeFilters(exactRes.pessoas || []);
+    renderNome(exatos, q);
+  } catch(e) {
+    nomeRes.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
+  } finally {
+    nomeBtn.disabled = false;
+  }
+}
+
+// "Outros" = broad que não são match exato, com filtros aplicados
+function outrosFiltrados() {
+  return nomeFilters(nomeState.outros.filter(p => !nomeState.exactCpfs.has(p.cpf)));
+}
+
+function renderNome(exatos, q) {
+  const outros = outrosFiltrados();
+  if (!exatos.length && !outros.length) {
+    nomeRes.innerHTML = `<p class="msg">Nenhum resultado encontrado.</p>`;
+    return;
+  }
+
+  const tabsHtml = `
+  <div class="res-tabs">
+    <button class="res-tab active" onclick="switchResTab('exatos')" id="rtab-exatos">
+      Nome exato <span class="res-tab-count">${exatos.length}</span>
+    </button>
+    <button class="res-tab" onclick="switchResTab('outros')" id="rtab-outros">
+      Outros sobrenomes <span class="res-tab-count">${nomeState.totalBroad}</span>
+    </button>
+  </div>`;
+
+  nomeRes.innerHTML = tabsHtml +
+    `<div id="rpanel-exatos">${renderPessoaCards(exatos, 'ex')}</div>` +
+    `<div id="rpanel-outros" style="display:none">${renderOutrosPanel()}</div>`;
+}
+
+// Painel "outros" com cards + controle de "Ver mais" / "Buscar todos"
+function renderOutrosPanel() {
+  const outros = outrosFiltrados();
+  const cards = renderPessoaCards(outros, 'ou');
+  // Ainda há mais linhas broad no servidor?
+  const restante = nomeState.totalBroad - nomeState.fetched;
+  let controls = '';
+  if (restante > 0) {
+    const opts = [10, 25, 50, 100].filter(n => n <= restante);
+    if (!opts.length || opts[opts.length - 1] < restante) opts.push(restante); // garante opção exata p/ o resto
+    const btns = opts.map(n =>
+      `<button class="btn-ver-mais" onclick="loadMoreOutros(${n})">+${n}</button>`
+    ).join('');
+    controls = `
+      <div class="outros-more">
+        <span class="outros-more-info">Mostrando ${nomeState.fetched} de ${nomeState.totalBroad}.</span>
+        <div class="outros-more-btns">
+          ${btns}
+          <button class="btn-ver-mais btn-todos" onclick="loadMoreOutros('all')">Buscar todos (${nomeState.totalBroad})</button>
+        </div>
+      </div>`;
+  } else {
+    controls = `<div class="outros-more"><span class="outros-more-info">Todos os ${nomeState.totalBroad} resultados carregados.</span></div>`;
+  }
+  return cards + controls;
+}
+
+window.loadMoreOutros = async function(qtd) {
+  const panel = document.getElementById('rpanel-outros');
+  if (!panel) return;
+  const restante = nomeState.totalBroad - nomeState.fetched;
+  const n = qtd === 'all' ? restante : Math.min(qtd, restante);
+  if (n <= 0) return;
+
+  // Feedback no botão clicado
+  const info = panel.querySelector('.outros-more-info');
+  if (info) info.textContent = 'Carregando…';
+
+  try {
+    const url = `${API}/api/person/name-search?q=${encodeURIComponent(nomeState.q)}&broad=true&limit=${n}&offset=${nomeState.fetched}`;
+    const res = await fetch(url).then(r => r.json());
+    const novos = res.pessoas || [];
+    nomeState.outros = nomeState.outros.concat(novos);
+    nomeState.fetched += novos.length;
+    if (res.total) nomeState.totalBroad = res.total;
+    panel.innerHTML = renderOutrosPanel();
+    document.getElementById('rtab-outros').querySelector('.res-tab-count').textContent = nomeState.totalBroad;
+  } catch(e) {
+    if (info) info.textContent = 'Erro ao carregar mais.';
+  }
+};
+
+window.switchResTab = function(tab) {
+  ['exatos', 'outros'].forEach(t => {
+    document.getElementById('rtab-' + t)?.classList.toggle('active', t === tab);
+    const panel = document.getElementById('rpanel-' + t);
+    if (panel) panel.style.display = t === tab ? '' : 'none';
+  });
+};
+
+function renderPessoaCards(pessoas, prefix) {
+  if (!pessoas.length) return `<p class="msg" style="padding:32px 0">Nenhum resultado.</p>`;
+  return pessoas.map((p, i) => {
+    const id = prefix + '-' + i;
+    const cpfFmt = fmtCpf(p.cpf || '');
+    const sexoIcon = (p.sexo || '').toUpperCase().startsWith('M') ? '♂' : (p.sexo || '').toUpperCase().startsWith('F') ? '♀' : '';
+    return `
+    <div class="card-person" id="card-${id}">
+      <div class="card-person-header" onclick="togglePerson('${id}', '${p.cpf}')">
+        <div>
+          <div class="person-name">${esc(p.nome)}</div>
+          <div class="person-meta">${sexoIcon} ${esc(p.sexo || '')} · 🎂 ${esc(p.nascimento || '—')}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="person-cpf">${esc(cpfFmt)}</span>
+          <span class="person-chevron" id="chev-np-${id}">▼</span>
+        </div>
+      </div>
+      <div class="card-person-body" id="body-${id}">
+        <div id="mk-${id}" style="padding-top:12px"><p class="msg" style="padding:12px">Carregando dados Mk Buscas…</p></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+window.togglePerson = async function(id, cpf) {
+  const body = document.getElementById('body-' + id);
+  const head = body.previousElementSibling;
+  const chev = document.getElementById('chev-np-' + id);
+  const mkDiv = document.getElementById('mk-' + id);
+  const isOpen = body.classList.contains('open');
+
+  body.classList.toggle('open');
+  head.classList.toggle('open');
+
+  if (!isOpen && mkDiv.dataset.loaded !== '1') {
+    mkDiv.dataset.loaded = '1';
+    try {
+      const [jbrRes, mkRes] = await Promise.all([
+        fetch(`${API}/api/person/${cpf}`).then(r => r.json()),
+        fetch(`${API}/api/person/${cpf}/mk`).then(r => r.json()),
+      ]);
+      renderPessoaInline(mkDiv, cpf, jbrRes, mkRes);
+    } catch(e) {
+      mkDiv.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
+    }
+  }
+};
+
+function renderPessoaInline(container, cpf, jbr, mk) {
+  const mkD = mk?.data || {};
+  const db  = mkD.DadosBasicos || {};
+  const de  = mkD.DadosEconomicos || {};
+
+  const sit = (db.situacaoCadastral || {}).descricaoSituacaoCadastral || '';
+  const mae = db.nomeMae || '—';
+  const ec  = db.estadoCivil || '';
+  const renda = de.renda ? `R$ ${de.renda}` : '';
+  const scoreVal = parseInt((de.score || {}).scoreCSBA) || 0;
+  const scoreLabel = (de.score || {}).scoreCSBAFaixaRisco || '';
+  const telefones = mkD.telefones || [];
+  const emails = mkD.emails || [];
+  const enderecos = mkD.enderecos || [];
+  const empresas = mkD.empresas || [];
+  const parentes = mkD.parentes || [];
+
+  let html = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px">`;
+  html += `<div class="info-card"><div class="ic-label">👩 Mãe</div><div class="ic-value" style="font-size:.9rem">${esc(mae)}</div></div>`;
+  if (sit) html += `<div class="info-card"><div class="ic-label">📋 Situação CPF</div><div class="ic-value" style="font-size:.9rem">${badgeSit(sit)}</div></div>`;
+  if (ec)  html += `<div class="info-card"><div class="ic-label">💍 Estado Civil</div><div class="ic-value" style="font-size:.9rem">${esc(ec)}</div></div>`;
+  if (renda) html += `<div class="info-card"><div class="ic-label">💰 Renda</div><div class="ic-value" style="font-size:.9rem">${esc(renda)}</div></div>`;
+  if (scoreVal) html += `<div class="info-card"><div class="ic-label">📊 Score</div><div class="ic-value" style="font-size:.9rem;color:${scoreColor(scoreVal)}">${scoreVal} — ${esc(scoreLabel)}</div></div>`;
+  html += `</div>`;
+
+  if (telefones.length) {
+    html += `<div style="margin-bottom:10px"><strong style="font-size:.82rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em">📞 Telefones</strong>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+    ${telefones.map(t => `<span style="background:var(--blue-soft);color:var(--blue-dark);padding:4px 12px;border-radius:6px;font-size:.85rem;font-weight:600">${esc(fmtPhone(t.telefone||t.numero||''))}</span>`).join('')}
+    </div></div>`;
+  }
+
+  if (emails.length) {
+    html += `<div style="margin-bottom:10px"><strong style="font-size:.82rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em">✉️ Emails</strong>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+    ${emails.map(e => `<span style="background:var(--gray-100);color:var(--gray-700);padding:4px 12px;border-radius:6px;font-size:.83rem">${esc(e.email||'')}</span>`).join('')}
+    </div></div>`;
+  }
+
+  if (enderecos.length) {
+    html += `<div style="margin-bottom:10px"><strong style="font-size:.82rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em">📍 Endereços</strong>
+    <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">
+    ${enderecos.map(e => `<span style="font-size:.83rem;color:var(--gray-700)">📍 ${esc([e.logradouro,e.logradouroNumero,e.bairro,e.cidade,e.uf].filter(Boolean).join(', '))}</span>`).join('')}
+    </div></div>`;
+  }
+
+  if (empresas.length) {
+    html += `<div style="margin-bottom:10px"><strong style="font-size:.82rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em">🏢 Vínculos</strong>
+    <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">
+    ${empresas.map(e => `<span style="font-size:.83rem;color:var(--gray-700)">🏢 ${esc(fmtCnpj(e.cnpj||''))} — ${esc(e.relacao||'')} (${esc(e.admissao||'')})</span>`).join('')}
+    </div></div>`;
+  }
+
+  if (parentes.length) {
+    html += `<div><strong style="font-size:.82rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em">👨‍👩‍👧 Parentes</strong>
+    <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">
+    ${parentes.map(p => `<span style="font-size:.83rem;color:var(--gray-700)">👤 ${esc(p.nomeParente||'')} (${esc(p.grauParentesco||'')}) — ${esc(fmtCpf(p.cpfParente||''))}</span>`).join('')}
+    </div></div>`;
+  }
+
+  if (mk?.status === 'unavailable') {
+    html = `<p class="msg" style="padding:8px;font-size:.85rem">ℹ️ Mk Buscas não configurada.</p>` + html;
+  }
+
+  container.innerHTML = html;
+}
+
+nomeBtn.addEventListener('click', searchNome);
+nomeQ.addEventListener('keydown', e => e.key === 'Enter' && searchNome());
+
+// ══════════════════════════════════════════════════════
+//  MÓDULO PROSPECÇÃO (filtros → lista → validar → exportar)
+// ══════════════════════════════════════════════════════
+const prospState = {
+  empresas: [],   // resultado da busca (básico)
+  total: 0,
+  fonte: '',      // 'local' (RFB) | 'casadosdados'
+  rows: [],       // linhas montadas (1 por contato/telefone)
+  building: false,
+  validating: false,
+};
+
+function prospFiltros() {
+  const list = v => (v || '').split(',').map(s => s.trim()).filter(Boolean);
+  const comboCode = id => (document.getElementById(id)?.dataset.code || '').trim();
+  const escopo = [...document.querySelectorAll('.pf-esc:checked')].map(c => c.value);
+  // Fallback: campo específico "Nome da empresa" (estilo Datastone) alimenta a
+  // lupa geral quando ela está vazia, reaproveitando o mesmo mecanismo de busca.
+  const textoGeral = document.getElementById('pf-texto').value.trim();
+  const nomeEmpresaVal = document.getElementById('pf-nome-empresa').value.trim();
+  const textoFinal = textoGeral || nomeEmpresaVal;
+  const escopoFinal = textoGeral ? escopo : (escopo.length ? escopo : ['razao', 'fantasia']);
+  return {
+    cnpj: onlyDigits(document.getElementById('pf-cnpj').value),
+    texto: textoFinal,
+    texto_escopo: escopoFinal,
+    tipo_busca: document.getElementById('pf-tipo').value,
+    cnae: list(comboCode('combo-cnae')),
+    natureza: list(comboCode('combo-natureza')),
+    porte: list(document.getElementById('pf-porte').value),
+    uf: list(document.getElementById('pf-uf').value),
+    municipio: list(comboCode('combo-municipio')),
+    situacao: list(document.getElementById('pf-situacao').value),
+    capital_min: parseInt(document.getElementById('pf-cap-min').value) || 0,
+    capital_max: parseInt(document.getElementById('pf-cap-max').value) || 0,
+    mei_excluir: document.getElementById('pf-mei-excluir').checked,
+    mei_optante: document.getElementById('pf-mei-optante').checked,
+    com_telefone: document.getElementById('pf-com-tel').checked,
+    somente_matriz: document.getElementById('pf-matriz').checked,
+    setor: document.getElementById('pf-setor').value.trim(),
+    fundada_de: document.getElementById('pf-fundada-de').value,
+    fundada_ate: document.getElementById('pf-fundada-ate').value,
+    nome_empresa: document.getElementById('pf-nome-empresa').value.trim(),
+    tipo_empresa: document.getElementById('pf-tipo-empresa').value,
+  };
+}
+
+async function prospBuscar() {
+  const btn = document.getElementById('pf-buscar');
+  const out = document.getElementById('prosp-results');
+  const cnt = document.getElementById('pf-count');
+  btn.disabled = true;
+  cnt.textContent = '';
+  out.innerHTML = spinner();
+  try {
+    const res = await fetch(`${API}/api/companies/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filtros: prospFiltros(), limite: 500 }),
+    }).then(r => r.json());
+
+    if (res.status !== 'ok') {
+      out.innerHTML = `<p class="msg error">${esc(res.message || 'Falha na busca.')}</p>`;
+      return;
+    }
+    prospState.empresas = res.empresas || [];
+    prospState.total = res.total || prospState.empresas.length;
+    prospState.fonte = res.fonte || '';
+    prospState.rows = [];
+    const capMsg = prospState.total > prospState.empresas.length
+      ? ` (carregadas ${prospState.empresas.length}${prospState.fonte === 'local' ? '' : ' — refine os filtros para focar'})` : '';
+    const fonteTag = prospState.fonte === 'local' ? ' · base local RFB' : (prospState.fonte === 'casadosdados' ? ' · Casa dos Dados' : '');
+    const totalStr = res.total_aprox ? `${prospState.total.toLocaleString('pt-BR')}+` : prospState.total.toLocaleString('pt-BR');
+    cnt.textContent = `${totalStr} resultado(s) encontrado(s).${capMsg}${fonteTag}`;
+    renderProspList();
+  } catch (e) {
+    out.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderProspList() {
+  const out = document.getElementById('prosp-results');
+  const emp = prospState.empresas;
+  if (!emp.length) {
+    out.innerHTML = `<p class="msg">Nenhuma empresa encontrada com esses filtros.</p>`;
+    return;
+  }
+  const max = emp.length;
+  out.innerHTML = `
+    <div class="prosp-build">
+      <div class="prosp-build-row">
+        <label>Montar lista das primeiras
+          <input id="pf-qtd" type="number" min="1" max="${max}" value="${Math.min(25, max)}" class="filter-num" />
+          empresas (de ${emp.length} carregadas${prospState.total > emp.length ? `, ${prospState.total.toLocaleString('pt-BR')} no total` : ''})
+        </label>
+        <label>Telefones
+          <select id="pf-modotel" class="filter-select">
+            <option value="celular" selected>Só celular (11 díg. — recomendado)</option>
+            <option value="celular_fixo">Celular + fixo</option>
+            <option value="todos">Todos (inclui antigos)</option>
+          </select>
+        </label>
+        <label>máx/pessoa
+          <input id="pf-maxtel" type="number" min="1" max="10" value="3" class="filter-num" />
+        </label>
+        <label>Fonte dos telefones
+          <select id="pf-fontetel" class="filter-select">
+            <option value="assertiva" selected>Assertiva (Localize)</option>
+            <option value="mk">Mk (WorkAPI)</option>
+          </select>
+        </label>
+        <label class="toggle-wrap"><input id="pf-decisores" type="checkbox" /><span>Incluir decisores (LinkedIn)</span></label>
+        <button id="pf-montar" class="btn-primary">📇 Montar lista de contatos</button>
+      </div>
+      <p class="prosp-warn">${prospState.fonte === 'local'
+        ? '✅ Busca na <strong>base local da Receita</strong> — sem limite de 20 e instantânea. A montagem consulta CPF (JBR) + telefones (fonte selecionável: Assertiva/Mk) por empresa.'
+        : '⚠️ A busca pública da Casa dos Dados retorna no máx. <strong>20 empresas por consulta</strong> — refine CNAE/UF/município/capital. Cada empresa consulta Receita + CPF + telefones (Assertiva/Mk).'}
+        <strong>Decisores (LinkedIn)</strong> deixa cada empresa muito mais lenta (~minutos) e pode ser bloqueado. A <strong>validação por telefone reverso</strong> é um passo separado, sobre a lista pronta (confere se o telefone está mesmo atrelado ao CPF do contato).</p>
+    </div>
+    <div class="prosp-table-scroll">
+      <table class="prosp-table prosp-empresas-table prosp-ds-table">
+        <thead><tr>
+          <th></th><th>NOME</th><th>📍 LOCALIZAÇÃO</th><th>🏭 INDÚSTRIA</th>
+          <th>👥 FUNCIONÁRIOS</th><th>💰 FATURAMENTO</th><th>SITUAÇÃO</th>
+        </tr></thead>
+        <tbody id="prosp-emp-body"></tbody>
+      </table>
+    </div>
+    <div id="prosp-pager" class="prosp-pager"></div>
+    <div id="prosp-table-wrap"></div>
+  `;
+  prospState.page = 0;
+  renderEmpPage();
+  document.getElementById('pf-montar').addEventListener('click', prospMontar);
+}
+
+const PROSP_PER_PAGE = 20;
+function renderEmpPage() {
+  const emp = prospState.empresas;
+  const perPage = prospState.perPage || PROSP_PER_PAGE;
+  const pages = Math.max(1, Math.ceil(emp.length / perPage));
+  const page = Math.min(prospState.page || 0, pages - 1);
+  prospState.page = page;
+  const body = document.getElementById('prosp-emp-body');
+  if (!body) return;
+  body.innerHTML = emp.slice(page * perPage, page * perPage + perPage).map((e, k) => {
+    const i = page * perPage + k;
+    const nome = e.razao_social || e.nome_fantasia || '—';
+    return `
+      <tr>
+        <td><input type="checkbox" class="prosp-co-check" data-i="${i}" /></td>
+        <td>
+          <div class="prosp-ds-name-cell">
+            <span class="prosp-avatar" style="background:${avatarColor(nome)}">${esc(avatarInitial(nome))}</span>
+            <div>
+              <div class="prosp-co-name prosp-ds-link" title="${esc(fmtCnpj(e.cnpj))}">${esc(nome)}</div>
+              ${e.nome_fantasia && e.nome_fantasia !== e.razao_social ? `<div class="prosp-co-fantasia">${esc(e.nome_fantasia)}</div>` : ''}
+            </div>
+          </div>
+        </td>
+        <td>${[e.municipio, e.uf].filter(Boolean).length ? '📍 ' + esc([e.municipio, e.uf].filter(Boolean).join(', ')) : '—'}</td>
+        <td class="prosp-co-cnae" title="${esc(e.cnae || '')}">${e.cnae ? '🏭 ' + esc(e.cnae) : '—'}</td>
+        <td>${e.porte ? '👥 ' + esc(e.porte) : '—'}<span class="pf-soon" title="Nº exato de funcionários requer dataset de perfis profissionais"> 🔜</span></td>
+        <td>${e.capital_social ? '💰 ' + fmtMoneyShort(e.capital_social) : '—'}<span class="pf-soon" title="Faturamento real requer dataset comercial; mostramos Capital Social (Receita) como referência"> 🔜</span></td>
+        <td>${badgeSit(e.situacao)}</td>
+      </tr>`;
+  }).join('');
+  renderEmpPager(page, pages);
+}
+
+function renderEmpPager(page, pages) {
+  const el = document.getElementById('prosp-pager');
+  if (!el) return;
+  // Janela de páginas em torno da atual (1 … 4 5 [6] 7 8 … N), estilo Datastone.
+  const nums = [];
+  const push = n => nums.push(n);
+  const win = 2;
+  for (let p = 0; p < pages; p++) {
+    if (p === 0 || p === pages - 1 || (p >= page - win && p <= page + win)) push(p);
+    else if (nums[nums.length - 1] !== '…') push('…');
+  }
+  const btn = (label, p, opts = {}) =>
+    `<button class="prosp-page-btn${opts.active ? ' active' : ''}" ${opts.disabled ? 'disabled' : ''} data-p="${p}">${label}</button>`;
+  el.innerHTML = `
+    <select id="prosp-perpage" class="prosp-perpage">
+      <option value="20"${(prospState.perPage||20)==20?' selected':''}>20</option>
+      <option value="50"${(prospState.perPage||20)==50?' selected':''}>50</option>
+      <option value="100"${(prospState.perPage||20)==100?' selected':''}>100</option>
+    </select>
+    <div class="prosp-pages">
+      ${btn('«', 0, { disabled: page === 0 })}
+      ${btn('‹', page - 1, { disabled: page === 0 })}
+      ${nums.map(n => n === '…' ? '<span class="prosp-page-dots">…</span>' : btn(n + 1, n, { active: n === page })).join('')}
+      ${btn('›', page + 1, { disabled: page >= pages - 1 })}
+      ${btn('»', pages - 1, { disabled: page >= pages - 1 })}
+    </div>`;
+  el.querySelectorAll('.prosp-page-btn').forEach(b => b.addEventListener('click', () => {
+    prospState.page = parseInt(b.dataset.p);
+    renderEmpPage();
+    document.getElementById('prosp-results').scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }));
+  el.querySelector('#prosp-perpage').addEventListener('change', e => {
+    prospState.perPage = parseInt(e.target.value); prospState.page = 0; renderEmpPage();
+  });
+}
+
+// Avatar circular com inicial da empresa (estilo Datastone) — cor estável por nome.
+function avatarInitial(nome) {
+  const clean = (nome || '').trim();
+  return clean ? clean[0].toUpperCase() : '?';
+}
+function avatarColor(nome) {
+  const palette = ['#2563eb', '#7c3aed', '#0891b2', '#059669', '#d97706', '#dc2626', '#4f46e5', '#0d9488'];
+  let hash = 0;
+  for (let i = 0; i < (nome || '').length; i++) hash = (hash * 31 + nome.charCodeAt(i)) >>> 0;
+  return palette[hash % palette.length];
+}
+function fmtMoneyShort(v) {
+  const n = Number(v) || 0;
+  if (n >= 1e9) return (n / 1e9).toFixed(1).replace('.0', '') + 'B+';
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace('.0', '') + 'M+';
+  if (n >= 1e3) return (n / 1e3).toFixed(0) + 'K+';
+  return n.toLocaleString('pt-BR');
+}
+
+async function prospMontar() {
+  if (prospState.building) return;
+  const qtd = parseInt(document.getElementById('pf-qtd').value) || 25;
+  const decisores = document.getElementById('pf-decisores').checked;
+  const modoTel = document.getElementById('pf-modotel').value;
+  const maxTel = parseInt(document.getElementById('pf-maxtel').value) || 3;
+  const fonteTel = document.getElementById('pf-fontetel')?.value || 'assertiva';
+  const alvo = prospState.empresas.slice(0, qtd);
+  const wrap = document.getElementById('prosp-table-wrap');
+  prospState.building = true;
+  prospState.rows = [];
+
+  const btn = document.getElementById('pf-montar');
+  btn.disabled = true;
+
+  // Monta em paralelo com pool de concorrência (era 1 a 1 => lento).
+  // Decisores (LinkedIn) é pesado → menos concorrência para não sobrecarregar/bloquear.
+  const CONC = decisores ? 2 : 6;
+  const results = new Array(alvo.length);
+  const leadsRaw = new Array(alvo.length);
+  let completed = 0, next = 0;
+  const tick = () => {
+    wrap.innerHTML = `<div class="prosp-progress"><span class="spinner"></span> Montando ${completed} de ${alvo.length} empresas…</div>`;
+  };
+  tick();
+
+  async function worker() {
+    while (next < alvo.length) {
+      const i = next++;
+      try {
+        const r = await fetch(`${API}/api/company/${onlyDigits(alvo[i].cnpj)}/leads?decisores=${decisores}&modo_tel=${modoTel}&max_tel=${maxTel}&fonte_tel=${fonteTel}`).then(x => x.json());
+        if (r.status === 'ok') {
+          results[i] = leadsToRows(r.empresa, r.contatos);
+          leadsRaw[i] = { empresa: r.empresa, contatos: r.contatos };
+        } else { results[i] = []; }
+      } catch (e) { results[i] = []; }
+      completed++;
+      tick();
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONC, alvo.length) }, worker));
+
+  prospState.rows = results.flat();
+  prospState.leads = leadsRaw.filter(Boolean);
+  prospState.building = false;
+  btn.disabled = false;
+  renderProspTable();
+}
+
+function catLabel(cat) {
+  return { celular: 'Celular', fixo: 'Fixo', celular_antigo: 'Celular antigo' }[cat] || '';
+}
+
+// Uma linha por telefone de cada contato (contatos sem telefone geram 1 linha em branco)
+function leadsToRows(empresa, contatos) {
+  const base = {
+    razao_social: empresa.razao_social, nome_fantasia: empresa.nome_fantasia,
+    cnpj: fmtCnpj(empresa.cnpj), municipio: empresa.municipio, uf: empresa.uf,
+    porte: empresa.porte, cnae: empresa.cnae, situacao: empresa.situacao,
+  };
+  const rows = [];
+  (contatos || []).forEach(c => {
+    const common = {
+      ...base,
+      contato_tipo: c.tipo === 'decisor' ? 'Decisor' : 'Sócio',
+      contato_nome: c.nome, contato_cargo: c.cargo, contato_cpf: fmtCpf(c.cpf || ''),
+      contato_cpf_raw: onlyDigits(c.cpf || ''),
+    };
+    const tels = (c.telefones || []).filter(t => t.raw);
+    if (!tels.length) {
+      rows.push({ ...common, telefone: '', telefone_raw: '', tel_categoria: '', validado: '', nome_donodozap: '' });
+    } else {
+      tels.forEach(t => rows.push({
+        ...common,
+        telefone: fmtPhone(t.raw), telefone_raw: t.raw,
+        tel_categoria: catLabel(t.categoria),
+        validado: '', nome_donodozap: '',
+      }));
+    }
+  });
+  return rows;
+}
+
+function renderProspTable() {
+  const wrap = document.getElementById('prosp-table-wrap');
+  const rows = prospState.rows;
+  if (!rows.length) {
+    wrap.innerHTML = `<p class="msg" style="padding:16px">Nenhum contato encontrado nas empresas selecionadas.</p>`;
+    return;
+  }
+  const comTel = rows.filter(r => r.telefone_raw).length;
+  wrap.innerHTML = `
+    <div class="prosp-toolbar">
+      <span class="prosp-count">${rows.length} contatos · ${comTel} com telefone</span>
+      <div class="prosp-toolbar-btns">
+        <button id="pf-validar" class="btn-secondary" ${comTel ? '' : 'disabled'}>✅ Validar telefones (telefone reverso)</button>
+        <select id="pf-layout" class="filter-select" title="Layout da planilha">
+          <option value="empresa" selected>1 empresa por linha</option>
+          <option value="contato">1 contato por linha</option>
+        </select>
+        <button id="pf-modelo" class="btn-secondary" title="Exportar seguindo os cabeçalhos de uma planilha-modelo sua">📄 Usar meu modelo</button>
+        <button id="pf-export" class="btn-primary">⬇️ Exportar planilha (XLSX)</button>
+      </div>
+    </div>
+    <div id="pf-valprog"></div>
+    <div class="prosp-table-scroll">
+      <table class="prosp-table" id="pf-table">
+        <thead><tr>
+          <th>Razão Social</th><th>CNPJ</th><th>UF</th><th>Tipo</th><th>Contato</th>
+          <th>Cargo</th><th>CPF</th><th>Telefone</th><th>Validado</th><th>Nome / Vínculo</th>
+        </tr></thead>
+        <tbody>${rows.map((r, i) => prospRowHtml(r, i)).join('')}</tbody>
+      </table>
+    </div>`;
+  document.getElementById('pf-validar').addEventListener('click', prospValidar);
+  document.getElementById('pf-export').addEventListener('click', prospExportar);
+  document.getElementById('pf-modelo').addEventListener('click', abrirUseModelo);
+}
+
+function valBadge(v) {
+  if (v === 'sim') return `<span class="val-badge val-ok">✅ sim</span>`;
+  if (v === 'não') return `<span class="val-badge val-no">⚠️ não</span>`;
+  if (v === 'bloq') return `<span class="val-badge val-nd" title="Chave sem acesso ao módulo de telefone reverso (intelgrax-tel)">🔒 sem acesso</span>`;
+  if (v === 'sem_cpf') return `<span class="val-badge val-nd" title="Sócio sem CPF resolvido — não dá pra validar o vínculo">❓ sem CPF</span>`;
+  if (v === 'n/d') return `<span class="val-badge val-nd">❓ n/d</span>`;
+  return '<span class="val-badge val-pend">—</span>';
+}
+
+function prospRowHtml(r, i) {
+  return `<tr id="pf-row-${i}">
+    <td>${esc(r.razao_social)}</td><td class="mono">${esc(r.cnpj)}</td><td>${esc(r.uf)}</td>
+    <td>${esc(r.contato_tipo)}</td><td>${esc(r.contato_nome)}</td><td>${esc(r.contato_cargo)}</td>
+    <td class="mono">${esc(r.contato_cpf)}</td>
+    <td class="mono">${esc(r.telefone)}${r.tel_categoria ? ` <span class="tel-cat">${esc(r.tel_categoria)}</span>` : ''}</td>
+    <td id="pf-val-${i}">${valBadge(r.validado)}</td>
+    <td id="pf-dz-${i}">${esc(r.nome_donodozap)}</td>
+  </tr>`;
+}
+
+async function prospValidar() {
+  if (prospState.validating) return;
+  prospState.validating = true;
+  const btn = document.getElementById('pf-validar');
+  const exp = document.getElementById('pf-export');
+  const prog = document.getElementById('pf-valprog');
+  btn.disabled = true; exp.disabled = true;
+
+  const idxs = prospState.rows.map((r, i) => i).filter(i => prospState.rows[i].telefone_raw);
+  let done = 0, semAcesso = false;
+  for (const i of idxs) {
+    const r = prospState.rows[i];
+    prog.innerHTML = `<div class="prosp-progress"><span class="spinner"></span> Validando ${++done} de ${idxs.length} (telefone reverso)…</div>`;
+    if (!r.contato_cpf_raw) {
+      r.validado = 'sem_cpf'; r.nome_donodozap = '';
+    } else {
+      try {
+        const v = await fetch(`${API}/api/phone/${r.telefone_raw}/pertence/${r.contato_cpf_raw}`).then(x => x.json());
+        if (v.status === 'no_access') { r.validado = 'bloq'; r.nome_donodozap = ''; semAcesso = true; }
+        else if (v.status !== 'ok') { r.validado = 'n/d'; r.nome_donodozap = ''; }
+        else if (v.atrelado) { r.validado = 'sim'; r.nome_donodozap = v.nome || ''; }
+        else { r.validado = 'não'; r.nome_donodozap = v.alerta_compartilhado ? `número compartilhado (${v.total} vínculos)` : ''; }
+      } catch (e) { r.validado = 'n/d'; r.nome_donodozap = ''; }
+    }
+    const vc = document.getElementById(`pf-val-${i}`); if (vc) vc.innerHTML = valBadge(r.validado);
+    const dc = document.getElementById(`pf-dz-${i}`); if (dc) dc.textContent = r.nome_donodozap;
+  }
+  if (semAcesso) {
+    prog.innerHTML = `<div class="prosp-progress" style="color:#b45309">🔒 A chave da WorkAPI não tem acesso ao módulo de telefone reverso (intelgrax-tel) — peça pra habilitar. Os telefones vieram da Mk Buscas (já associados ao CPF); a coluna "Validado" ficou como 🔒 sem acesso.</div>`;
+  } else {
+    prog.innerHTML = `<div class="prosp-progress prosp-done">✅ Validação concluída: ${prospState.rows.filter(r => r.validado === 'sim').length} telefone(s) confirmado(s).</div>`;
+  }
+  prospState.validating = false;
+  btn.disabled = false; exp.disabled = false;
+}
+
+async function prospExportar() {
+  const exp = document.getElementById('pf-export');
+  exp.disabled = true;
+  // Formato enriquecido (padrão Datastone): 1 linha por empresa, blocos de contato.
+  const empresas = (prospState.leads || []).map(l => ({ empresa: l.empresa, contatos: l.contatos }));
+  const layout = document.getElementById('pf-layout')?.value || 'empresa';
+  const fonteTel = document.getElementById('pf-fontetel')?.value || 'assertiva';
+  const body = empresas.length
+    ? { empresas, layout, fonte_tel: fonteTel }
+    : { rows: prospState.rows, fonte_tel: fonteTel };  // fallback antigo se não houver leads crus
+  try {
+    const resp = await fetch(`${API}/api/export/xlsx`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'capiblu-prospeccao.xlsx';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert('Falha ao exportar: ' + e.message);
+  } finally {
+    exp.disabled = false;
+  }
+}
+
+// ── Toggle de Perfil: Empresas | Clientes potenciais (sócios) ──────────
+prospState.perfil = 'empresa';
+function prospTrocarPerfil(perfil) {
+  prospState.perfil = perfil;
+  document.getElementById('pf-perfil-empresa').classList.toggle('active', perfil === 'empresa');
+  document.getElementById('pf-perfil-pessoa').classList.toggle('active', perfil === 'pessoa');
+  document.getElementById('pf-group-pessoa').hidden = perfil !== 'pessoa';
+  document.getElementById('pf-perfil-note-pessoa').hidden = perfil !== 'pessoa';
+}
+document.getElementById('pf-perfil-empresa').addEventListener('click', () => prospTrocarPerfil('empresa'));
+document.getElementById('pf-perfil-pessoa').addEventListener('click', () => prospTrocarPerfil('pessoa'));
+
+function prospFiltrar() {
+  return prospState.perfil === 'pessoa' ? prospBuscarPessoas() : prospBuscar();
+}
+document.getElementById('pf-buscar').addEventListener('click', prospFiltrar);
+document.getElementById('pf-texto').addEventListener('keydown', e => e.key === 'Enter' && prospFiltrar());
+document.getElementById('pf-cnpj').addEventListener('keydown', e => e.key === 'Enter' && prospFiltrar());
+document.getElementById('pf-nome').addEventListener('keydown', e => e.key === 'Enter' && prospFiltrar());
+
+// ── Busca de PESSOAS (sócios como proxy — ver nota no painel) ───────────
+function prospFiltrosPessoa() {
+  const list = v => (v || '').split(',').map(s => s.trim()).filter(Boolean);
+  const comboCode = id => (document.getElementById(id)?.dataset.code || '').trim();
+  return {
+    nome: document.getElementById('pf-nome').value.trim(),
+    sobrenome: document.getElementById('pf-sobrenome').value.trim(),
+    cargo: document.getElementById('pf-cargo').value.trim(),
+    anos_min: parseInt(document.getElementById('pf-anos-min').value) || 0,
+    anos_max: parseInt(document.getElementById('pf-anos-max').value) || 0,
+    uf: list(document.getElementById('pf-uf').value),
+    municipio: list(comboCode('combo-municipio')),
+    setor: document.getElementById('pf-setor').value.trim(),
+    cnae: list(comboCode('combo-cnae')),
+    natureza: list(comboCode('combo-natureza')),
+    porte: list(document.getElementById('pf-porte').value),
+    tipo_empresa: document.getElementById('pf-tipo-empresa').value,
+    nome_empresa: document.getElementById('pf-nome-empresa').value.trim(),
+    fundada_de: document.getElementById('pf-fundada-de').value,
+    fundada_ate: document.getElementById('pf-fundada-ate').value,
+    mei_optante: document.getElementById('pf-mei-optante').checked,
+    mei_excluir: document.getElementById('pf-mei-excluir').checked,
+    cnpj: onlyDigits(document.getElementById('pf-cnpj').value),
+  };
+}
+
+async function prospBuscarPessoas() {
+  const btn = document.getElementById('pf-buscar');
+  const out = document.getElementById('prosp-results');
+  const cnt = document.getElementById('pf-count');
+  btn.disabled = true;
+  cnt.textContent = '';
+  out.innerHTML = spinner();
+  try {
+    const res = await fetch(`${API}/api/prospeccao/pessoas`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filtros: prospFiltrosPessoa(), limite: 200 }),
+    }).then(r => r.json());
+
+    if (res.status !== 'ok') {
+      out.innerHTML = `<p class="msg error">${esc(res.message || 'Falha na busca.')}</p>`;
+      return;
+    }
+    const pessoas = res.pessoas || [];
+    const totalStr = res.total_aprox ? `${(res.total || pessoas.length).toLocaleString('pt-BR')}+` : (res.total || pessoas.length).toLocaleString('pt-BR');
+    cnt.textContent = `${totalStr} pessoas (sócios) · proxy — LinkedIn ainda não conectado`;
+    if (!pessoas.length) {
+      out.innerHTML = `<p class="msg">Nenhuma pessoa encontrada com esses filtros.</p>`;
+      return;
+    }
+    out.innerHTML = `
+      <div class="prosp-table-scroll">
+        <table class="prosp-table">
+          <thead><tr><th>NOME</th><th>CARGO</th><th>EMPRESA</th><th>LOCALIZAÇÃO</th><th>CNPJ</th></tr></thead>
+          <tbody>${pessoas.map(p => `
+            <tr>
+              <td>${esc(p.nome)}</td>
+              <td>${esc(p.cargo || '—')}</td>
+              <td>${esc(p.empresa)}</td>
+              <td>${esc([p.municipio, p.uf].filter(Boolean).join(', ')) || '—'}</td>
+              <td class="mono">${esc(p.cnpj)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } catch (e) {
+    out.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Sidebar de filtros retrátil (estilo Datastone)
+document.getElementById('prosp-collapse-btn').addEventListener('click', () => {
+  document.getElementById('prosp-sidebar').classList.add('collapsed');
+  document.getElementById('prosp-expand-btn').hidden = false;
+});
+document.getElementById('prosp-expand-btn').addEventListener('click', () => {
+  document.getElementById('prosp-sidebar').classList.remove('collapsed');
+  document.getElementById('prosp-expand-btn').hidden = true;
+});
+
+// Combobox pesquisável (CNAE / Natureza) — funciona como um "select" filtrável.
+function setupCombo(comboId) {
+  const combo = document.getElementById(comboId);
+  if (!combo) return;
+  const input = combo.querySelector('.combo-input');
+  const listEl = combo.querySelector('.combo-list');
+  const tipo = combo.dataset.tipo;
+  const isMunicipio = tipo === 'municipio';
+  const ufSelect = document.getElementById('pf-uf');
+  let itens = [];
+
+  fetch(`${API}/api/cnpj/lookup?tipo=${tipo}`)
+    .then(r => r.json())
+    .then(j => { itens = j.itens || []; })
+    .catch(() => { itens = []; });
+
+  // Rótulo mostrado: município leva a UF junto (evita ambiguidade entre
+  // homônimos, ex.: "BOM JESUS" existe em vários estados).
+  const label = it => isMunicipio && it.uf ? `${it.descricao} — ${it.uf}` : it.descricao;
+
+  const norm = s => (s || '').toLowerCase();
+  function render(q) {
+    q = norm(q);
+    // Se um estado já foi escolhido, restringe as cidades a ele — sem isso a
+    // lista mistura município de qualquer UF, incompatível com o filtro ativo.
+    const ufAtual = isMunicipio ? (ufSelect?.value || '') : '';
+    let pool = ufAtual ? itens.filter(it => it.uf === ufAtual) : itens;
+    let matches;
+    if (!q) matches = pool.slice(0, 30);
+    else matches = pool.filter(it => norm(it.descricao).includes(q)).slice(0, 30);
+    if (!matches.length) { listEl.hidden = true; return; }
+    listEl.innerHTML = matches.map(it =>
+      `<div class="combo-opt" data-code="${it.codigo}">${esc(label(it))}</div>`
+    ).join('');
+    listEl.hidden = false;
+  }
+
+  input.addEventListener('input', () => {
+    // CNAE/natureza aceitam código cru digitado (degrada bem sem lookup carregado).
+    combo.dataset.code = isMunicipio ? '' : input.value.replace(/\D/g, '');
+    render(input.value);
+  });
+  input.addEventListener('focus', () => render(input.value));
+  input.addEventListener('blur', () => setTimeout(() => { listEl.hidden = true; }, 180));
+  listEl.addEventListener('mousedown', e => {
+    const opt = e.target.closest('.combo-opt');
+    if (!opt) return;
+    combo.dataset.code = opt.dataset.code;
+    input.value = opt.textContent;
+    listEl.hidden = true;
+  });
+  if (isMunicipio && ufSelect) {
+    ufSelect.addEventListener('change', () => {
+      // Trocar de estado invalida a cidade escolhida (poderia ser de outra UF).
+      input.value = ''; combo.dataset.code = ''; listEl.hidden = true;
+    });
+  }
+}
+setupCombo('combo-cnae');
+setupCombo('combo-natureza');
+setupCombo('combo-municipio');
+
+// ══════════════════════════════════════════════════════
+//  MÓDULO TELEFONE REVERSO (WorkAPI intelgrax-tel)
+// ══════════════════════════════════════════════════════
+const telQ = document.getElementById('tel-q');
+const telBtn = document.getElementById('tel-btn');
+const telRes = document.getElementById('tel-results');
+
+async function buscarTelefone() {
+  const raw = onlyDigits(telQ.value);
+  if (raw.length < 10) { telRes.innerHTML = `<p class="msg">Digite um telefone com DDD.</p>`; return; }
+  telBtn.disabled = true;
+  telRes.innerHTML = spinner();
+  try {
+    const j = await fetch(`${API}/api/phone/${raw}/reverse`).then(r => r.json());
+    if (j.status === 'no_access') {
+      telRes.innerHTML = `<p class="msg error">🔒 ${esc(j.message || 'Módulo intelgrax-tel não habilitado nesta chave.')}</p>`;
+      return;
+    }
+    if (j.status !== 'ok') {
+      telRes.innerHTML = `<p class="msg error">${esc(j.message || 'Falha na consulta.')}</p>`;
+      return;
+    }
+    const regs = j.registros || [];
+    const shared = (j.total || 0) >= 50;
+    telRes.innerHTML = `
+      <div class="tel-head">
+        <strong>${(j.total || 0).toLocaleString('pt-BR')}</strong> CPF/CNPJ atrelado(s) a ${esc(fmtPhone(raw))}
+        ${shared ? `<span class="tel-warn">⚠️ número compartilhado/lixo (muitos vínculos) — vínculo fraco</span>` : ''}
+        ${j.remaining_daily != null ? `<span class="tel-remaining">saldo diário: ${j.remaining_daily}</span>` : ''}
+      </div>
+      <div class="prosp-table-scroll">
+        <table class="prosp-table">
+          <thead><tr><th>CPF/CNPJ</th><th>Nome</th><th>Cidade/UF</th><th>Endereço</th></tr></thead>
+          <tbody>${regs.map(r => {
+            const e = r.endereco || {};
+            const loc = [e.cidade, e.uf].filter(Boolean).join('/');
+            const end = [e.tipoLogradouro, e.logradouro, e.logradouroNumero, e.bairro].filter(Boolean).join(' ');
+            return `<tr><td class="mono">${esc(r.cpf_cnpj)}</td><td>${esc(r.nome)}</td><td>${esc(loc)}</td><td>${esc(end)}</td></tr>`;
+          }).join('')}</tbody>
+        </table>
+      </div>`;
+  } catch (e) {
+    telRes.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
+  } finally {
+    telBtn.disabled = false;
+  }
+}
+telBtn.addEventListener('click', buscarTelefone);
+telQ.addEventListener('input', e => { e.target.value = fmtPhone(e.target.value); });
+telQ.addEventListener('keydown', e => e.key === 'Enter' && buscarTelefone());
+
+// Verifica, via telefone reverso (WorkAPI), se cada telefone aponta pro CPF.
+window.verificarTelefonesCpf = async function(cpf) {
+  const cells = [...document.querySelectorAll('#tel-verify-table .tel-verify-cell')];
+  for (const cell of cells) {
+    const raw = cell.dataset.raw;
+    if (!raw || raw.length < 10) { cell.textContent = '—'; continue; }
+    cell.innerHTML = '<span class="spinner" style="width:12px;height:12px"></span>';
+    try {
+      const v = await fetch(`${API}/api/phone/${raw}/pertence/${cpf}`).then(r => r.json());
+      if (v.status === 'no_access') { cell.innerHTML = `<span class="val-badge val-nd" title="${esc(v.message||'')}">🔒 sem acesso</span>`; }
+      else if (v.status !== 'ok') { cell.innerHTML = `<span class="val-badge val-nd">❓ erro</span>`; }
+      else if (v.atrelado) { cell.innerHTML = `<span class="val-badge val-ok">✅ sim</span>${v.alerta_compartilhado ? ' <span class="val-badge val-no" title="número com muitos vínculos">🔶 compart.</span>' : ''}`; }
+      else { cell.innerHTML = `<span class="val-badge val-no">⚠️ não${v.alerta_compartilhado ? ' (compart.)' : ''}</span>`; }
+    } catch (e) { cell.innerHTML = `<span class="val-badge val-nd">❓</span>`; }
+  }
+};
+
+// ══════════════════════════════════════════════════════
+//  MÓDULO BUSCA ASSERTIVA (API Localize V3)
+// ══════════════════════════════════════════════════════
+const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MT','MS','MG',
+  'PA','PB','PR','PE','PI','RJ','RN','RO','RS','RR','SC','SE','SP','TO'];
+(function initAssertiva() {
+  const uf = document.getElementById('as-uf');
+  if (uf) UFS.forEach(u => { const o = document.createElement('option'); o.value = u; o.textContent = u; uf.appendChild(o); });
+
+  let modo = 'cpf';
+  const btnsModo = [...document.querySelectorAll('.as-modo')];
+  btnsModo.forEach(b => b.addEventListener('click', () => {
+    modo = b.dataset.modo;
+    btnsModo.forEach(x => x.classList.toggle('active', x === b));
+    document.querySelectorAll('.as-campo').forEach(c => { c.hidden = c.dataset.campo !== modo; });
+  }));
+
+  // Avisa se as credenciais não estão no .env (não expõe nada).
+  fetch(`${API}/api/assertiva/status`).then(r => r.json()).then(j => {
+    const note = document.getElementById('as-config-note');
+    if (note && !j.enabled) {
+      note.innerHTML = `<p class="msg" style="margin-top:10px">⚙️ Integração ainda não configurada. Adicione <code>ASSERTIVA_CLIENT_ID</code> e <code>ASSERTIVA_CLIENT_SECRET</code> no <code>.env</code> e reinicie o servidor.</p>`;
+    }
+  }).catch(() => {});
+
+  const val = id => (document.getElementById(id)?.value || '').trim();
+  const btn = document.getElementById('as-btn');
+  const out = document.getElementById('as-results');
+
+  async function consultar() {
+    const fin = val('as-finalidade');
+    let req;
+    if (modo === 'cpf') {
+      const d = onlyDigits(val('as-cpf'));
+      if (d.length < 3) return toast('Informe um CPF.');
+      req = fetch(`${API}/api/assertiva/cpf?cpf=${d}&finalidade=${fin}`);
+    } else if (modo === 'cnpj') {
+      const d = onlyDigits(val('as-cnpj'));
+      if (d.length < 8) return toast('Informe um CNPJ.');
+      req = fetch(`${API}/api/assertiva/cnpj?cnpj=${d}&finalidade=${fin}`);
+    } else if (modo === 'telefone') {
+      const d = onlyDigits(val('as-telefone'));
+      if (d.length < 10) return toast('Informe um telefone com DDD.');
+      req = fetch(`${API}/api/assertiva/telefone?telefone=${d}&finalidade=${fin}`);
+    } else if (modo === 'email') {
+      const e = val('as-email');
+      if (!e.includes('@')) return toast('Informe um e-mail válido.');
+      req = fetch(`${API}/api/assertiva/email?email=${encodeURIComponent(e)}&finalidade=${fin}`);
+    } else { // nome
+      const filtros = {
+        buscarPor: val('as-buscarpor') || 'ambas',
+        nomeOuRazaoSocial: val('as-nome'),
+        nomeOuRazaoSocialExata: document.getElementById('as-exata').checked,
+        sexo: val('as-sexo'), dataNascimentoOuAbertura: val('as-data'),
+        uf: val('as-uf'), cidade: val('as-cidade'), bairro: val('as-bairro'),
+        cepOuNomeRua: val('as-cepourua'),
+      };
+      if (!filtros.nomeOuRazaoSocial && !filtros.cepOuNomeRua) return toast('Informe o nome ou o CEP/rua.');
+      req = fetch(`${API}/api/assertiva/nome`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filtros, finalidade: parseInt(fin) }),
+      });
+    }
+    btn.disabled = true; out.innerHTML = spinner();
+    try {
+      const j = await req.then(r => r.json());
+      renderAssertiva(j, modo);
+    } catch (e) {
+      out.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
+    } finally { btn.disabled = false; }
+  }
+
+  function toast(m) { out.innerHTML = `<p class="msg">${esc(m)}</p>`; }
+  btn.addEventListener('click', consultar);
+  ['as-cpf','as-cnpj','as-telefone','as-email','as-nome','as-cepourua'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('keydown', e => e.key === 'Enter' && consultar());
+  });
+  const cpfEl = document.getElementById('as-cpf');
+  if (cpfEl) cpfEl.addEventListener('input', e => e.target.value = fmtCpf(e.target.value));
+  const cnpjEl = document.getElementById('as-cnpj');
+  if (cnpjEl) cnpjEl.addEventListener('input', e => e.target.value = fmtCnpj(e.target.value));
+  const telEl = document.getElementById('as-telefone');
+  if (telEl) telEl.addEventListener('input', e => e.target.value = fmtPhone(e.target.value));
+})();
+
+function renderAssertiva(j, modo) {
+  const out = document.getElementById('as-results');
+  const msgs = {
+    unavailable: '⚙️ Integração não configurada (defina ASSERTIVA_CLIENT_ID/SECRET no .env).',
+    auth_error: '🔒 Falha ao autenticar na Assertiva. Confira as credenciais.',
+    no_access: '🚫 Sem permissão para este recurso na Assertiva (403).',
+    invalid: '⚠️ Dados inválidos para a consulta.',
+    error: '❌ Erro na consulta.',
+  };
+  if (j.status !== 'ok') {
+    out.innerHTML = `<p class="msg error">${esc(msgs[j.status] || j.message || 'Falha.')}${j.message && msgs[j.status] ? ' — ' + esc(j.message) : ''}</p>`;
+    return;
+  }
+  const data = j.data || {};
+  const cab = data.cabecalho || {};
+  const resp = data.resposta || {};
+  let html = `<div class="as-cab">
+    <span class="as-cab-prod">${esc(cab.produto || 'Localize')} · ${esc(cab.funcionalidade || modo)}</span>
+    ${cab.protocolo ? `<span class="as-cab-proto">protocolo: ${esc(cab.protocolo)}</span>` : ''}
+    ${data.alerta ? `<span class="tel-warn">⚠️ ${esc(data.alerta)}</span>` : ''}
+  </div>`;
+
+  // CPF / CNPJ → ficha cadastral + contatos
+  if (modo === 'cpf' || modo === 'cnpj') {
+    html += asCadastralCard(resp.dadosCadastrais || {});
+    html += asContatoBlock('📞 Telefones', flattenTelefones(resp.telefones, resp.telefonesAdicionados));
+    html += asListBlock('✉️ E-mails', mergeArr(resp.emails, resp.emailsAdicionados).map(e => e.email || e.enderecoEmail || e.valor || asStr(e)));
+    html += asEnderecoBlock(mergeArr(resp.enderecos, resp.enderecosAdicionados));
+    if (resp.socios?.length) html += asPeopleTable('👥 Sócios', resp.socios);
+    if (resp.possiveisDecisores?.length) html += asPeopleTable('🎯 Possíveis decisores', resp.possiveisDecisores);
+  } else {
+    // telefone / email / nome → listas de pessoas físicas e jurídicas
+    const pf = resp.pessoaFisica || [], pj = resp.pessoaJuridica || [];
+    if (pf.length) html += asPeopleTable('👤 Pessoas físicas', pf);
+    if (pj.length) html += asPeopleTable('🏢 Pessoas jurídicas', pj);
+    if (!pf.length && !pj.length) html += `<p class="msg">Nenhum registro vinculado encontrado.</p>`;
+  }
+
+  html += `<details class="as-raw"><summary>Ver JSON completo</summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details>`;
+  out.innerHTML = html;
+}
+
+// ── helpers de render Assertiva ──
+function asStr(v) { return (v == null) ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v)); }
+function mergeArr(a, b) { return [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])]; }
+function humanKey(k) {
+  return k.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, c => c.toUpperCase());
+}
+function asCadastralCard(dc) {
+  const keys = Object.keys(dc || {}).filter(k => dc[k] != null && typeof dc[k] !== 'object' && dc[k] !== '');
+  if (!keys.length) return '';
+  return `<div class="as-card"><h4>📋 Dados cadastrais</h4><div class="as-kv">${
+    keys.map(k => `<div><span>${esc(humanKey(k))}</span><strong>${esc(asStr(dc[k]))}</strong></div>`).join('')
+  }</div></div>`;
+}
+function flattenTelefones(principais, adicionados) {
+  const arr = [];
+  const push = (t) => { if (t) arr.push(t); };
+  const norm = (t) => {
+    if (typeof t === 'string') return { numero: t };
+    return {
+      numero: t.numero || t.telefone || [t.ddd, t.numero].filter(Boolean).join(' ') || asStr(t),
+      tipo: t.tipoTelefone || t.tipo || '', whatsApp: t.whatsApp ?? t.aplicativos?.whatsApp,
+      ranking: t.ranking || t.classificacao || '',
+    };
+  };
+  const collect = (src) => {
+    if (!src) return;
+    if (Array.isArray(src)) src.forEach(x => push(norm(x)));
+    else if (typeof src === 'object') Object.values(src).forEach(v => Array.isArray(v) ? v.forEach(x => push(norm(x))) : (v && typeof v === 'object' && push(norm(v))));
+  };
+  collect(principais); collect(adicionados);
+  return arr;
+}
+function asContatoBlock(titulo, tels) {
+  if (!tels || !tels.length) return '';
+  return `<div class="as-card"><h4>${esc(titulo)}</h4>
+    <table class="prosp-table"><thead><tr><th>Número</th><th>Tipo</th><th>WhatsApp</th><th>Ranking</th></tr></thead>
+    <tbody>${tels.map(t => `<tr>
+      <td class="mono">${esc(t.numero || '')}</td><td>${esc(t.tipo || '')}</td>
+      <td>${t.whatsApp === true ? '✅' : (t.whatsApp === false ? '—' : '')}</td>
+      <td>${esc(t.ranking || '')}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function asListBlock(titulo, items) {
+  const list = (items || []).filter(Boolean);
+  if (!list.length) return '';
+  return `<div class="as-card"><h4>${esc(titulo)}</h4><ul class="as-ul">${
+    list.map(i => `<li>${esc(asStr(i))}</li>`).join('')}</ul></div>`;
+}
+function asEnderecoBlock(ends) {
+  if (!ends || !ends.length) return '';
+  const fmt = e => [e.tipoLogradouro, e.logradouro, e.numero, e.complemento, e.bairro,
+    [e.cidade, e.uf].filter(Boolean).join('/'), e.cep].filter(Boolean).join(', ');
+  return `<div class="as-card"><h4>📍 Endereços</h4><ul class="as-ul">${
+    ends.map(e => `<li>${esc(fmt(e))}</li>`).join('')}</ul></div>`;
+}
+function asPeopleTable(titulo, people) {
+  const rows = (people || []).map(p => {
+    const nome = p.nome || p.razaoSocial || p.nomeCompleto || '';
+    const doc = p.cpf || p.cnpj || p.documento || '';
+    const extra = p.dataNascimento || p.dataAbertura || p.idade || p.tipo || p.parentesco || p.cargo || '';
+    const loc = p.uf ? [p.cidade, p.uf].filter(Boolean).join('/') : (p.endereco ? asStr(p.endereco) : '');
+    return `<tr><td>${esc(nome)}</td><td class="mono">${esc(doc)}</td><td>${esc(asStr(extra))}</td><td>${esc(loc)}</td></tr>`;
+  }).join('');
+  return `<div class="as-card"><h4>${esc(titulo)} <span class="as-count">${people.length}</span></h4>
+    <div class="prosp-table-scroll"><table class="prosp-table">
+    <thead><tr><th>Nome / Razão</th><th>Documento</th><th>Info</th><th>Local</th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>`;
+}
+
+// ══════════════════════════════════════════════════════
+//  MÓDULO ENRIQUECER LISTA (upload XLSX → RFB + Assertiva + integralX)
+// ══════════════════════════════════════════════════════
+const enrichState = { upload_id: null, sheets: [], result: null };
+
+(function initEnrich() {
+  const fileEl = document.getElementById('en-file');
+  const nameEl = document.getElementById('en-file-name');
+  const cfg = document.getElementById('en-config');
+  const sheetSel = document.getElementById('en-sheet');
+  const colSel = document.getElementById('en-cnpjcol');
+  const out = document.getElementById('en-results');
+  if (!fileEl) return;
+
+  // Carrega o catálogo de campos (checkboxes agrupados).
+  fetch(`${API}/api/enrich/catalog`).then(r => r.json()).then(cat => {
+    const box = document.getElementById('en-catalog');
+    box.innerHTML = cat.grupos.map(g => `
+      <div class="en-group">
+        <div class="en-group-head">
+          <label><input type="checkbox" class="en-group-all" data-grupo="${esc(g.grupo)}" /> <strong>${esc(g.grupo)}</strong></label>
+          <span class="en-group-src">${esc(g.fonte)}</span>
+        </div>
+        <div class="en-group-fields">
+          ${g.campos.map(c => `<label class="en-chk"><input type="checkbox" class="en-field" value="${c.key}" ${c.key.startsWith('rfb_') ? 'checked' : ''}/> ${esc(c.label)}</label>`).join('')}
+        </div>
+      </div>`).join('');
+    const note = document.getElementById('en-src-note');
+    const parts = [];
+    if (!cat.assertiva_ok) parts.push('⚠️ Assertiva não configurada');
+    if (!cat.integralx_ok) parts.push('⚠️ integralX sem chave');
+    note.textContent = parts.join(' · ');
+    box.querySelectorAll('.en-group-all').forEach(g => g.addEventListener('change', e => {
+      const grp = e.target.closest('.en-group');
+      grp.querySelectorAll('.en-field').forEach(f => { f.checked = e.target.checked; });
+    }));
+  }).catch(() => {});
+
+  fileEl.addEventListener('change', async () => {
+    const f = fileEl.files[0];
+    if (!f) return;
+    nameEl.textContent = f.name + ' — enviando…';
+    const fd = new FormData(); fd.append('file', f);
+    try {
+      const j = await fetch(`${API}/api/enrich/upload`, { method: 'POST', body: fd }).then(r => r.json());
+      if (j.status !== 'ok') { nameEl.textContent = j.message || 'Falha no upload.'; return; }
+      enrichState.upload_id = j.upload_id;
+      enrichState.sheets = j.sheets;
+      sheetSel.innerHTML = j.sheets.map(s => `<option value="${esc(s.name)}">${esc(s.name)} (${s.linhas})</option>`).join('');
+      syncCols();
+      cfg.hidden = false;
+      const tot = j.sheets.reduce((a, s) => a + s.linhas, 0);
+      nameEl.textContent = `${f.name} — ${j.sheets.length} aba(s), ${tot} linhas` + (j.aviso ? ` · ⚠️ ${j.aviso}` : '');
+    } catch (e) { nameEl.textContent = 'Erro: ' + e.message; }
+  });
+
+  function syncCols() {
+    const s = enrichState.sheets.find(x => x.name === sheetSel.value) || enrichState.sheets[0];
+    if (!s) return;
+    colSel.innerHTML = s.columns.map(c => `<option value="${esc(c)}" ${c === s.cnpj_col ? 'selected' : ''}>${esc(c)}</option>`).join('');
+  }
+  sheetSel.addEventListener('change', syncCols);
+
+  document.getElementById('en-run').addEventListener('click', async () => {
+    const fields = [...document.querySelectorAll('.en-field:checked')].map(c => c.value);
+    if (!fields.length) { out.innerHTML = `<p class="msg">Selecione ao menos um campo.</p>`; return; }
+    const body = {
+      upload_id: enrichState.upload_id, sheet: sheetSel.value,
+      cnpj_col: colSel.value, fields,
+      limite: parseInt(document.getElementById('en-limite').value) || 50,
+    };
+    document.getElementById('en-run').disabled = true;
+    out.innerHTML = `<div class="prosp-progress"><span class="spinner"></span> Enriquecendo ${body.limite} linhas (RFB + Assertiva + integralX)…</div>`;
+    try {
+      const j = await fetch(`${API}/api/enrich/run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      }).then(r => r.json());
+      if (j.status !== 'ok') { out.innerHTML = `<p class="msg error">${esc(j.message)}</p>`; return; }
+      enrichState.result = j;
+      renderEnrich(j);
+    } catch (e) { out.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`; }
+    finally { document.getElementById('en-run').disabled = false; }
+  });
+
+  document.getElementById('en-export').addEventListener('click', async () => {
+    const j = enrichState.result;
+    if (!j) return;
+    const columns = [...j.base_cols.map(c => ({ key: c, label: c })), ...j.added_cols];
+    const resp = await fetch(`${API}/api/enrich/export`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ columns, rows: j.rows }),
+    });
+    const blob = await resp.blob(); const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'lista-enriquecida.xlsx';
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  });
+})();
+
+function renderEnrich(j) {
+  const out = document.getElementById('en-results');
+  document.getElementById('en-export').hidden = false;
+  // Mostra as colunas novas (foco no enriquecimento) + CNPJ/Nome como âncora.
+  const anchor = j.base_cols.filter(c => /cnpj|nome/i.test(c)).slice(0, 2);
+  const cols = [...anchor, ...j.added_cols.map(c => c.key)];
+  const labelOf = k => (j.added_cols.find(a => a.key === k) || {}).label || k;
+  out.innerHTML = `
+    <p class="msg">✅ ${j.enriquecidas} de ${j.total_aba} linhas enriquecidas. Confira abaixo e exporte (a planilha final mantém TODAS as colunas originais + as novas).</p>
+    <div class="prosp-table-scroll"><table class="prosp-table">
+      <thead><tr>${cols.map(c => `<th>${esc(anchor.includes(c) ? c : labelOf(c))}</th>`).join('')}</tr></thead>
+      <tbody>${j.rows.slice(0, 50).map(r => `<tr>${cols.map(c => {
+        const v = r[c]; return `<td>${esc(v == null ? '' : String(v))}</td>`;
+      }).join('')}</tr>`).join('')}</tbody>
+    </table></div>
+    ${j.rows.length > 50 ? `<p class="msg">…mostrando 50 de ${j.rows.length}. O export traz todas.</p>` : ''}`;
+}
+
+// ══════════════════════════════════════════════════════
+//  MÓDULO MEUS MODELOS (criar/salvar/usar modelos de planilha)
+// ══════════════════════════════════════════════════════
+const modelosState = { campos: [], editId: null };
+
+function modCampoOptions(sel) {
+  return ['<option value="">— não preencher —</option>'].concat(
+    modelosState.campos.map(c => `<option value="${c.campo}" ${c.campo === sel ? 'selected' : ''}>${esc(c.label)} · ${esc(c.fonte)}</option>`)
+  ).join('');
+}
+function modRowHtml(c) {
+  return `<tr><td><input class="mc-header" value="${esc(c.header || '')}" style="width:100%"></td>
+    <td><select class="mc-campo">${modCampoOptions(c.campo)}</select></td>
+    <td><input class="mc-idx" type="number" min="1" max="4" value="${c.idx || 1}" style="width:56px"></td>
+    <td><button class="danger" data-act="rm" type="button">✕</button></td></tr>`;
+}
+function modColetar(container) {
+  return [...container.querySelectorAll('tr')].map(tr => {
+    const h = tr.querySelector('.mc-header'), cp = tr.querySelector('.mc-campo'), ix = tr.querySelector('.mc-idx');
+    if (!h || !cp) return null;
+    return { header: h.value.trim(), campo: cp.value, idx: parseInt(ix && ix.value) || 1 };
+  }).filter(c => c && c.header);
+}
+
+(function initModelos() {
+  fetch(`${API}/api/prospeccao/modelo/campos`).then(r => r.json()).then(j => { modelosState.campos = j.campos || []; }).catch(() => {});
+  const novo = document.getElementById('mod-novo');
+  if (!novo) return;
+  novo.addEventListener('click', () => modAbrirBuilder([{ header: 'CNPJ', campo: 'cnpj', idx: 1 }], null, ''));
+  document.getElementById('mod-upload').addEventListener('change', modOnUpload);
+  document.querySelector('[data-tab="modelos"]').addEventListener('click', modCarregarLista);
+  const lista = document.getElementById('mod-lista');
+  lista.addEventListener('click', e => {
+    const btn = e.target.closest('button'); if (!btn) return;
+    const tr = btn.closest('tr'); const id = tr.dataset.id;
+    const m = (lista._modelos || []).find(x => x.id === id);
+    if (btn.dataset.act === 'edit') modAbrirBuilder(m.colunas, m.id, m.nome);
+    else if (btn.dataset.act === 'del') { if (confirm('Excluir este modelo?')) fetch(`${API}/api/prospeccao/modelos/${id}`, { method: 'DELETE' }).then(() => modCarregarLista()); }
+  });
+})();
+
+function modCarregarLista() {
+  const box = document.getElementById('mod-lista'); if (!box) return;
+  fetch(`${API}/api/prospeccao/modelos`).then(r => r.json()).then(j => {
+    const ms = j.modelos || []; box._modelos = ms;
+    box.innerHTML = ms.length
+      ? `<table class="prosp-table"><thead><tr><th>Modelo</th><th>Colunas</th><th>Ações</th></tr></thead><tbody>${
+        ms.map(m => `<tr data-id="${m.id}"><td><strong>${esc(m.nome)}</strong></td><td>${m.colunas.length}</td>
+          <td class="user-actions"><button data-act="edit">Editar</button><button data-act="del" class="danger">Excluir</button></td></tr>`).join('')}</tbody></table>`
+      : `<p class="msg">Nenhum modelo salvo. Clique "Novo modelo" ou "Detectar de uma planilha".</p>`;
+  });
+}
+function modOnUpload(e) {
+  const f = e.target.files[0]; if (!f) return;
+  document.getElementById('mod-upload-name').textContent = f.name + ' — analisando…';
+  const fd = new FormData(); fd.append('file', f);
+  fetch(`${API}/api/prospeccao/modelo/analisar`, { method: 'POST', body: fd }).then(r => r.json()).then(j => {
+    if (j.status !== 'ok') { document.getElementById('mod-upload-name').textContent = j.message || 'Falha.'; return; }
+    document.getElementById('mod-upload-name').textContent = `${f.name} — ${j.colunas.filter(c => c.campo).length}/${j.colunas.length} detectados`;
+    modAbrirBuilder(j.colunas.map(c => ({ header: c.header, campo: c.campo || '', idx: c.idx || 1 })), null, f.name.replace(/\.[^.]+$/, ''));
+  });
+}
+function modAbrirBuilder(colunas, id, nome) {
+  modelosState.editId = id || null;
+  const box = document.getElementById('mod-builder'); box.hidden = false;
+  box.innerHTML = `<div class="as-card">
+    <label class="as-field as-col2"><span>Nome do modelo</span><input id="mod-nome" value="${esc(nome || '')}" placeholder="Ex.: Modelo CRM SP"></label>
+    <div class="prosp-table-scroll"><table class="prosp-table"><thead><tr><th>Cabeçalho (como sai na planilha)</th><th>Campo / Fonte que preenche</th><th>Contato #</th><th></th></tr></thead>
+      <tbody id="mod-cols-body">${colunas.map(modRowHtml).join('')}</tbody></table></div>
+    <div class="en-step"><button id="mod-addcol" class="btn-secondary" type="button">+ coluna</button>
+      <button id="mod-salvar" class="btn-primary" type="button">💾 Salvar modelo</button>
+      <button id="mod-cancelar" class="btn-secondary" type="button">Cancelar</button></div></div>`;
+  box.querySelector('#mod-addcol').addEventListener('click', () => box.querySelector('#mod-cols-body').insertAdjacentHTML('beforeend', modRowHtml({ header: '', campo: '', idx: 1 })));
+  box.querySelector('#mod-cols-body').addEventListener('click', e => { if (e.target.closest('[data-act="rm"]')) e.target.closest('tr').remove(); });
+  box.querySelector('#mod-cancelar').addEventListener('click', () => { box.hidden = true; });
+  box.querySelector('#mod-salvar').addEventListener('click', () => {
+    const nomeV = box.querySelector('#mod-nome').value.trim();
+    if (!nomeV) { alert('Dê um nome ao modelo.'); return; }
+    const colunasV = modColetar(box.querySelector('#mod-cols-body'));
+    if (!colunasV.length) { alert('Adicione ao menos uma coluna com cabeçalho.'); return; }
+    fetch(`${API}/api/prospeccao/modelos`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: modelosState.editId, nome: nomeV, colunas: colunasV }) })
+      .then(r => r.json()).then(j => { if (j.status === 'error') { alert(j.message); return; } box.hidden = true; modCarregarLista(); alert('Modelo salvo!'); });
+  });
+  box.scrollIntoView();
+}
+
+// ── Usar modelo na lista montada (modal) ──
+function abrirUseModelo() {
+  if (!(prospState.leads || []).length) { alert('Monte a lista de contatos primeiro.'); return; }
+  const modal = document.getElementById('usemodelo-modal'); modal.hidden = false;
+  document.getElementById('usemodelo-map').innerHTML = '';
+  document.getElementById('usemodelo-gerar').hidden = true;
+  document.getElementById('usemodelo-save').hidden = true;
+  document.getElementById('usemodelo-fname').textContent = '';
+  const sel = document.getElementById('usemodelo-sel');
+  fetch(`${API}/api/prospeccao/modelos`).then(r => r.json()).then(j => {
+    sel.innerHTML = '<option value="">— escolher —</option>' + (j.modelos || []).map(m => `<option value="${m.id}">${esc(m.nome)}</option>`).join('');
+    sel._modelos = j.modelos || [];
+  });
+}
+function useRenderMap(colunas) {
+  document.getElementById('usemodelo-map').innerHTML = `<div class="prosp-table-scroll"><table class="prosp-table">
+    <thead><tr><th>Cabeçalho</th><th>Campo / Fonte</th><th>Contato #</th></tr></thead>
+    <tbody>${colunas.map(c => `<tr><td><input class="mc-header" value="${esc(c.header || '')}" style="width:100%"></td>
+      <td><select class="mc-campo">${modCampoOptions(c.campo)}</select></td>
+      <td><input class="mc-idx" type="number" min="1" max="4" value="${c.idx || 1}" style="width:56px"></td></tr>`).join('')}</tbody></table></div>`;
+  document.getElementById('usemodelo-gerar').hidden = false;
+  document.getElementById('usemodelo-save').hidden = false;
+}
+(function wireUseModelo() {
+  const modal = document.getElementById('usemodelo-modal'); if (!modal) return;
+  document.getElementById('usemodelo-close').addEventListener('click', () => modal.hidden = true);
+  document.getElementById('usemodelo-sel').addEventListener('change', e => {
+    const m = (e.target._modelos || []).find(x => x.id === e.target.value);
+    if (m) useRenderMap(m.colunas);
+  });
+  document.getElementById('usemodelo-file').addEventListener('change', e => {
+    const f = e.target.files[0]; if (!f) return;
+    document.getElementById('usemodelo-fname').textContent = f.name + ' — analisando…';
+    const fd = new FormData(); fd.append('file', f);
+    fetch(`${API}/api/prospeccao/modelo/analisar`, { method: 'POST', body: fd }).then(r => r.json()).then(j => {
+      if (j.status !== 'ok') { document.getElementById('usemodelo-fname').textContent = j.message || 'Falha.'; return; }
+      document.getElementById('usemodelo-fname').textContent = f.name;
+      useRenderMap(j.colunas.map(c => ({ header: c.header, campo: c.campo || '', idx: c.idx || 1 })));
+    });
+  });
+  document.getElementById('usemodelo-save').addEventListener('click', () => {
+    const nome = prompt('Nome do modelo:'); if (!nome) return;
+    const colunas = modColetar(document.getElementById('usemodelo-map'));
+    fetch(`${API}/api/prospeccao/modelos`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome, colunas }) })
+      .then(r => r.json()).then(j => alert(j.status === 'ok' ? 'Modelo salvo!' : (j.message || 'Falha.')));
+  });
+  document.getElementById('usemodelo-gerar').addEventListener('click', async () => {
+    const colunas = modColetar(document.getElementById('usemodelo-map'));
+    if (!colunas.length) { alert('Nenhuma coluna.'); return; }
+    const empresas = (prospState.leads || []).map(l => ({ empresa: l.empresa, contatos: l.contatos }));
+    const resp = await fetch(`${API}/api/prospeccao/modelo/exportar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ colunas, empresas }) });
+    const blob = await resp.blob(); const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'capiblu-modelo.xlsx';
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    modal.hidden = true;
+  });
+})();
