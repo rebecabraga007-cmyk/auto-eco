@@ -32,6 +32,7 @@ import assertiva
 import brasilapi
 import casadosdados
 import config_store
+import custos
 import donodozap
 import meetime
 import sheet_reader
@@ -346,11 +347,14 @@ async def employees(cnpj: str):
 
 
 async def _phones_for_cpf(cpf: str, modo: str = "celular", max_tel: int = 3,
-                          fonte: str = "mk") -> list[dict]:
+                          fonte: str = "mk", modelo_id: str = "", modelo_nome: str = "",
+                          cnpj: str = "") -> list[dict]:
     """Telefones para um CPF, filtrados/priorizados (celular atual primeiro).
 
     fonte: 'mk' (WorkAPI) | 'assertiva' (Localize). Ambos passam pelo mesmo
     refine_phones, garantindo o mesmo filtro (celular atual, dedupe, etc.).
+    modelo_id/modelo_nome: se a fonte for assertiva, cada chamada é logada
+    (custos.py) atribuída a esse modelo, pra rastrear gasto por planilha.
     """
     if not cpf:
         return []
@@ -359,6 +363,7 @@ async def _phones_for_cpf(cpf: str, modo: str = "celular", max_tel: int = 3,
             if not assertiva.enabled():
                 return []
             r = await assertiva.telefones_documento(cpf, tipo="CPF")
+            custos.log_assertiva(modelo_id=modelo_id, modelo_nome=modelo_nome, cnpj=cnpj, cpf=cpf)
             if r.get("status") == "ok":
                 return mkbuscas.refine_phones(r.get("telefones") or [], modo=modo, max_n=max_tel)
             return []
@@ -419,11 +424,24 @@ async def prospeccao_pessoas(payload: dict = Body(default={})):
     return cnpj_lookup.search_pessoas(filtros, limite=limite, offset=offset)
 
 
+def _resolve_modelo(modelo_id: str) -> str:
+    """Nome de exibição do modelo, pra atribuir custo (custos.py)."""
+    if not modelo_id:
+        return ""
+    if modelo_id == custos.CLIENTE_ID:
+        return custos.CLIENTE_NOME
+    for m in _modelos_load():
+        if m.get("id") == modelo_id:
+            return m.get("nome") or modelo_id
+    return modelo_id
+
+
 @app.get("/api/company/{cnpj}/leads")
 async def company_leads(cnpj: str, decisores: bool = False,
                         modo_tel: str = "celular", max_tel: int = 3,
                         fonte_tel: str = "mk",
-                        socios_modo: str = "todos", max_socios: int = 0):
+                        socios_modo: str = "todos", max_socios: int = 0,
+                        modelo_id: str = ""):
     """Enriquece UMA empresa com contatos (socios do QSA + telefones).
 
     Retorna {status, empresa:{...}, contatos:[{tipo, nome, cargo, cpf, telefones[]}]}.
@@ -432,6 +450,8 @@ async def company_leads(cnpj: str, decisores: bool = False,
     max_tel: max de telefones por contato.
     socios_modo: 'todos' (padrao) | 'admin' (so socio-administrador/diretor/presidente).
     max_socios: 0 = sem limite; N = no maximo N socios (apos ordenar por qualificacao).
+    modelo_id: modelo salvo (ou custos.CLIENTE_ID p/ planilha externa) — usado
+    só pra atribuir o custo das consultas Assertiva desta montagem.
     Se decisores=true, tenta anexar decisores do LinkedIn (lento, best-effort).
     """
     # Base local (RFB) primeiro — instantânea e traz o QSA. Fallback: BrasilAPI.
@@ -502,8 +522,10 @@ async def company_leads(cnpj: str, decisores: bool = False,
     if max_socios and max_socios > 0:
         socios = socios[:max_socios]
     # Telefones de todos os socios em paralelo (era 1 a 1 => lento).
+    modelo_nome = _resolve_modelo(modelo_id)
     tels_por_socio = await asyncio.gather(*[
-        _phones_for_cpf(s.get("cpf_completo") or "", modo_tel, max_tel, fonte_tel) for s in socios
+        _phones_for_cpf(s.get("cpf_completo") or "", modo_tel, max_tel, fonte_tel,
+                        modelo_id=modelo_id, modelo_nome=modelo_nome, cnpj=cnpj) for s in socios
     ])
     contatos = []
     for socio, tels in zip(socios, tels_por_socio):
@@ -532,7 +554,9 @@ async def company_leads(cnpj: str, decisores: bool = False,
                         cpf = cands[0]["cpf"]
                 except Exception:
                     pass
-                tels = await _phones_for_cpf(cpf, modo_tel, max_tel, fonte_tel) if cpf else []
+                tels = await _phones_for_cpf(cpf, modo_tel, max_tel, fonte_tel,
+                                             modelo_id=modelo_id, modelo_nome=modelo_nome,
+                                             cnpj=cnpj) if cpf else []
                 contatos.append({
                     "tipo": "decisor",
                     "nome": nome,
@@ -1003,6 +1027,30 @@ def _modelos_load() -> list:
             return _json.load(fh)
     except Exception:
         return []
+
+
+@app.get("/api/custos/assertiva")
+async def custos_assertiva(desde: str = "", ate: str = ""):
+    """Resumo de custo Assertiva por modelo, no intervalo [desde, ate] (YYYY-MM-DD).
+
+    Sem desde/ate: sem filtro de início/fim (mas o frontend manda os últimos 7 dias
+    por padrão). 'ate' é inclusivo até o fim daquele dia.
+    """
+    import datetime as _dt
+    desde_ts = None
+    ate_ts = None
+    try:
+        if desde:
+            desde_ts = _dt.datetime.strptime(desde, "%Y-%m-%d").timestamp()
+        if ate:
+            ate_ts = _dt.datetime.strptime(ate, "%Y-%m-%d").timestamp() + 86400 - 1
+    except ValueError:
+        return {"status": "error", "message": "Datas inválidas (use YYYY-MM-DD)."}
+    res = custos.resumo(desde_ts, ate_ts)
+    res["status"] = "ok"
+    res["cliente_id"] = custos.CLIENTE_ID
+    res["cliente_nome"] = custos.CLIENTE_NOME
+    return res
 
 
 def _modelos_save(lst: list) -> None:

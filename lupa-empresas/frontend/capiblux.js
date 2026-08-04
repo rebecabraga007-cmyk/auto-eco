@@ -786,6 +786,12 @@ function renderProspList() {
         <label>máx sócios/empresa
           <input id="pf-maxsocios" type="number" min="0" max="20" value="0" class="filter-num" title="0 = sem limite" />
         </label>
+        <label>Modelo (custo Assertiva vai pra ele)
+          <select id="pf-modelo" class="filter-select" title="Atribui o custo das consultas Assertiva a este modelo, visível na aba Meus Modelos">
+            <option value="">— nenhum (sem rastrear) —</option>
+            <option value="__cliente__">🧑‍💼 Cliente (planilha externa)</option>
+          </select>
+        </label>
         <label class="toggle-wrap"><input id="pf-decisores" type="checkbox" /><span>Incluir decisores (LinkedIn)</span></label>
         <button id="pf-dedup" class="btn-secondary" title="Remove das ${emp.length} empresas as que já estão na Meetime (CNPJ + nome)">🔁 Remover já-na-Meetime</button>
         <button id="pf-montar" class="btn-primary">📇 Montar lista de contatos</button>
@@ -812,6 +818,18 @@ function renderProspList() {
   renderEmpPage();
   document.getElementById('pf-montar').addEventListener('click', prospMontar);
   document.getElementById('pf-dedup').addEventListener('click', prospDedupMeetime);
+  popularSelectModelo(document.getElementById('pf-modelo'));
+}
+
+// Preenche um <select> com "— nenhum —", "🧑‍💼 Cliente" + modelos salvos (usado
+// na Prospecção pra atribuir custo Assertiva a um modelo).
+function popularSelectModelo(sel) {
+  if (!sel) return;
+  fetch(`${API}/api/prospeccao/modelos`).then(r => r.json()).then(j => {
+    const ms = j.modelos || [];
+    const extras = ms.map(m => `<option value="${m.id}">${esc(m.nome)}</option>`).join('');
+    sel.insertAdjacentHTML('beforeend', extras);
+  }).catch(() => {});
 }
 
 // Remove das empresas carregadas as que já estão na Meetime (CNPJ + nome ~ LIKE %).
@@ -944,6 +962,7 @@ async function prospMontar() {
   const fonteTel = document.getElementById('pf-fontetel')?.value || 'assertiva';
   const sociosModo = document.getElementById('pf-sociosmodo')?.value || 'todos';
   const maxSocios = parseInt(document.getElementById('pf-maxsocios')?.value) || 0;
+  const modeloId = document.getElementById('pf-modelo')?.value || '';
   const alvo = prospState.empresas.slice(0, qtd);
   const wrap = document.getElementById('prosp-table-wrap');
   prospState.building = true;
@@ -967,7 +986,7 @@ async function prospMontar() {
     while (next < alvo.length) {
       const i = next++;
       try {
-        const r = await fetch(`${API}/api/company/${onlyDigits(alvo[i].cnpj)}/leads?decisores=${decisores}&modo_tel=${modoTel}&max_tel=${maxTel}&fonte_tel=${fonteTel}&socios_modo=${sociosModo}&max_socios=${maxSocios}`).then(x => x.json());
+        const r = await fetch(`${API}/api/company/${onlyDigits(alvo[i].cnpj)}/leads?decisores=${decisores}&modo_tel=${modoTel}&max_tel=${maxTel}&fonte_tel=${fonteTel}&socios_modo=${sociosModo}&max_socios=${maxSocios}&modelo_id=${encodeURIComponent(modeloId)}`).then(x => x.json());
         if (r.status === 'ok') {
           results[i] = leadsToRows(r.empresa, r.contatos);
           leadsRaw[i] = { empresa: r.empresa, contatos: r.contatos };
@@ -1732,7 +1751,7 @@ function modColetar(container) {
   if (!novo) return;
   novo.addEventListener('click', () => modAbrirBuilder([{ header: 'CNPJ', campo: 'cnpj', idx: 1 }], null, ''));
   document.getElementById('mod-upload').addEventListener('change', modOnUpload);
-  document.querySelector('[data-tab="modelos"]').addEventListener('click', modCarregarLista);
+  document.querySelector('[data-tab="modelos"]').addEventListener('click', () => { modCarregarLista(); modCustosCarregar(); });
   const lista = document.getElementById('mod-lista');
   lista.addEventListener('click', e => {
     const btn = e.target.closest('button'); if (!btn) return;
@@ -1741,7 +1760,42 @@ function modColetar(container) {
     if (btn.dataset.act === 'edit') modAbrirBuilder(m.colunas, m.id, m.nome);
     else if (btn.dataset.act === 'del') { if (confirm('Excluir este modelo?')) fetch(`${API}/api/prospeccao/modelos/${id}`, { method: 'DELETE' }).then(() => modCarregarLista()); }
   });
+  // Datas default: últimos 7 dias.
+  const hoje = new Date();
+  const seteDiasAtras = new Date(hoje.getTime() - 6 * 24 * 60 * 60 * 1000);
+  const fmtISO = d => d.toISOString().slice(0, 10);
+  document.getElementById('mc-desde').value = fmtISO(seteDiasAtras);
+  document.getElementById('mc-ate').value = fmtISO(hoje);
+  document.getElementById('mc-atualizar').addEventListener('click', modCustosCarregar);
 })();
+
+function modCustosCarregar() {
+  const box = document.getElementById('mc-resultado'); if (!box) return;
+  const desde = document.getElementById('mc-desde').value;
+  const ate = document.getElementById('mc-ate').value;
+  box.innerHTML = '<p class="msg">Carregando…</p>';
+  fetch(`${API}/api/custos/assertiva?desde=${desde}&ate=${ate}`).then(r => r.json()).then(j => {
+    if (j.status !== 'ok') { box.innerHTML = `<p class="msg error">${esc(j.message || 'Falha ao carregar custos.')}</p>`; return; }
+    const fmtR$ = v => 'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 });
+    const linhas = (j.modelos || []).map(m => `
+      <tr>
+        <td>${m.tipo === 'externo' ? '🧑‍💼 Externo' : (m.tipo === 'interno' ? '🧩 Interno' : '— Sem modelo')}</td>
+        <td>${esc(m.modelo_nome)}</td>
+        <td>${m.n_consultas}</td>
+        <td>${fmtR$(m.custo_total)}</td>
+      </tr>`).join('');
+    box.innerHTML = `
+      <div class="prosp-build-row" style="margin-bottom:10px">
+        <span><strong>Total interno:</strong> ${fmtR$(j.custo_interno)}</span>
+        <span><strong>Total externo (clientes):</strong> ${fmtR$(j.custo_externo)}</span>
+        ${j.custo_sem_modelo ? `<span><strong>Sem modelo:</strong> ${fmtR$(j.custo_sem_modelo)}</span>` : ''}
+        <span><strong>Total geral:</strong> ${fmtR$(j.total_geral)} (${j.total_consultas} consulta(s) · R$${j.custo_por_consulta.toFixed(3)}/consulta)</span>
+      </div>
+      ${j.modelos && j.modelos.length
+        ? `<table class="prosp-table"><thead><tr><th>Tipo</th><th>Modelo</th><th>Consultas</th><th>Custo</th></tr></thead><tbody>${linhas}</tbody></table>`
+        : '<p class="msg">Nenhuma consulta Assertiva no período selecionado.</p>'}`;
+  }).catch(e => { box.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`; });
+}
 
 function modCarregarLista() {
   const box = document.getElementById('mod-lista'); if (!box) return;
