@@ -206,23 +206,11 @@
             <div class="pf-divider"></div>
           </div>
 
-          <!-- ═══ Lupa geral (texto) ═══ -->
+          <!-- ═══ Lupa geral (texto) — "Ramo ou palavra no nome" do mockup ═══ -->
           <div class="pf-field">
-            <label>🔎 Nome / Fantasia / Atividade</label>
-            <input id="pf-texto" type="text" placeholder="Pesquise um nome ou termo…" autocomplete="off" />
-          </div>
-          <div class="pf-escopo">
-            <label class="toggle-wrap"><input type="checkbox" class="pf-esc" value="razao" checked /><span>Razão social</span></label>
-            <label class="toggle-wrap"><input type="checkbox" class="pf-esc" value="fantasia" checked /><span>Fantasia</span></label>
-            <label class="toggle-wrap"><input type="checkbox" class="pf-esc" value="cnae" /><span>Atividade</span></label>
-            <label class="toggle-wrap"><input type="checkbox" class="pf-esc" value="natureza" /><span>Natureza</span></label>
-          </div>
-          <div class="pf-field">
-            <label>Modo do texto</label>
-            <select id="pf-tipo">
-              <option value="radical">Radical (abrangente)</option>
-              <option value="exata">Exata</option>
-            </select>
+            <label>Ramo ou palavra no nome</label>
+            <div class="pf-advanced-hint" style="margin:-2px 0 6px">Ex.: "confecção", "padaria", "transporte".</div>
+            <input id="pf-texto" type="text" placeholder="Pesquise um ramo ou termo…" autocomplete="off" />
           </div>
 
           <div class="pf-divider"></div>
@@ -239,10 +227,6 @@
               <input class="combo-input" type="text" placeholder="Selecione uma ou mais cidades…" autocomplete="off" />
               <div class="combo-list" hidden></div>
             </div>
-          </div>
-          <div class="pf-field">
-            <label>Ramo ou setor</label>
-            <input id="pf-setor" type="text" placeholder="Ex.: confecção, padaria, transporte…" autocomplete="off" />
           </div>
           <div class="pf-field">
             <label>Atividade (CNAE)</label>
@@ -295,6 +279,26 @@
             <summary>Filtros avançados (CNAE de código, natureza jurídica, capital social, datas)</summary>
             <div class="pf-advanced-body">
               <p class="pf-advanced-hint">Para quem já conhece os códigos da Receita. Você não precisa disso para montar uma boa lista.</p>
+              <div class="pf-field">
+                <label>Ramo ou setor (busca alternativa por descrição de CNAE)</label>
+                <input id="pf-setor" type="text" placeholder="Ex.: construção, varejo…" autocomplete="off" />
+              </div>
+              <div class="pf-field">
+                <label>Onde a palavra digitada é procurada</label>
+                <div class="pf-escopo">
+                  <label class="toggle-wrap"><input type="checkbox" class="pf-esc" value="razao" checked /><span>Razão social</span></label>
+                  <label class="toggle-wrap"><input type="checkbox" class="pf-esc" value="fantasia" checked /><span>Fantasia</span></label>
+                  <label class="toggle-wrap"><input type="checkbox" class="pf-esc" value="cnae" /><span>Atividade</span></label>
+                  <label class="toggle-wrap"><input type="checkbox" class="pf-esc" value="natureza" /><span>Natureza</span></label>
+                </div>
+              </div>
+              <div class="pf-field">
+                <label>Modo do texto</label>
+                <select id="pf-tipo">
+                  <option value="radical">Radical (abrangente)</option>
+                  <option value="exata">Exata</option>
+                </select>
+              </div>
               <div class="pf-field">
                 <label>📄 Documento (CNPJ)</label>
                 <input id="pf-cnpj" type="text" placeholder="Busca direta por CNPJ…" autocomplete="off" maxlength="18" />
