@@ -247,6 +247,24 @@ def require_admin(user: dict = Depends(current_user)) -> dict:
 router = APIRouter()
 
 
+@router.post("/api/auth/emergency-reset")
+async def emergency_reset(payload: dict = Body(default={})):
+    """Reset de senha sem sessão — só funciona se EMERGENCY_RESET_SECRET estiver
+    setado no ambiente. Uso único: remover esta rota e a env var depois de usar.
+    """
+    secret_env = os.environ.get("EMERGENCY_RESET_SECRET")
+    if not secret_env or payload.get("secret") != secret_env:
+        raise HTTPException(status_code=404)
+    u = get_by_email(payload.get("email", ""))
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+    try:
+        set_password(u["id"], payload.get("nova_senha", ""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True}
+
+
 @router.post("/api/auth/login")
 async def login(response: Response, payload: dict = Body(default={})):
     u = authenticate(payload.get("email", ""), payload.get("senha", "") or payload.get("password", ""))

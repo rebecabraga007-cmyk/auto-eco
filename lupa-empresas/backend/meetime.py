@@ -16,6 +16,7 @@ Config (.env):
 Pegadinha da API v2 (ver memória): paginação SÓ com limit+start, ordem crescente;
 rejeita sort/date. Por isso paginamos incrementando `start`.
 """
+import asyncio
 import os
 import re
 import time
@@ -50,7 +51,7 @@ def _auth_header() -> str:
     return _cfg("meetime_auth_header", "MEETIME_AUTH_HEADER", "api-token")
 
 
-PAGE_SIZE = int(os.environ.get("MEETIME_PAGE_SIZE", "200") or "200")
+PAGE_SIZE = int(os.environ.get("MEETIME_PAGE_SIZE", "50") or "50")
 _TIMEOUT = httpx.Timeout(40.0)
 
 # Sufixos societários irrelevantes para comparar nomes.
@@ -123,12 +124,17 @@ async def fetch_existing(max_pages: int = 200, force: bool = False) -> dict:
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             for _ in range(max_pages):
-                resp = await client.get(url, params={"limit": PAGE_SIZE, "start": start}, headers=headers)
+                resp = None
+                for tentativa in range(4):
+                    resp = await client.get(url, params={"limit": PAGE_SIZE, "start": start}, headers=headers)
+                    if resp.status_code != 429:
+                        break
+                    await asyncio.sleep(2.5 * (tentativa + 1))
                 if resp.status_code == 401:
                     return {"status": "no_access", "message": "Token Meetime inválido (401).",
                             "cnpjs": set(), "nomes": []}
                 if resp.status_code >= 400:
-                    return {"status": "error", "message": f"Meetime {resp.status_code}: {resp.text[:160]}",
+                    return {"status": "error", "message": f"Meetime {resp.status_code}: {resp.text[:200]}",
                             "cnpjs": cnpjs, "nomes": nomes}
                 j = resp.json()
                 # a lista pode vir na raiz ou em data/results/leads
@@ -147,6 +153,7 @@ async def fetch_existing(max_pages: int = 200, force: bool = False) -> dict:
                 if len(lote) < PAGE_SIZE:
                     break
                 start += PAGE_SIZE
+                await asyncio.sleep(1.2)
     except Exception as exc:
         return {"status": "error", "message": f"Erro de conexão Meetime: {str(exc)[:150]}",
                 "cnpjs": cnpjs, "nomes": nomes}

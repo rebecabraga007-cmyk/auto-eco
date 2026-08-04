@@ -422,13 +422,16 @@ async def prospeccao_pessoas(payload: dict = Body(default={})):
 @app.get("/api/company/{cnpj}/leads")
 async def company_leads(cnpj: str, decisores: bool = False,
                         modo_tel: str = "celular", max_tel: int = 3,
-                        fonte_tel: str = "mk"):
+                        fonte_tel: str = "mk",
+                        socios_modo: str = "todos", max_socios: int = 0):
     """Enriquece UMA empresa com contatos (socios do QSA + telefones).
 
     Retorna {status, empresa:{...}, contatos:[{tipo, nome, cargo, cpf, telefones[]}]}.
     modo_tel: 'celular' (padrao) | 'celular_fixo' | 'todos'.
     fonte_tel: 'mk' (WorkAPI) | 'assertiva' (Localize).
     max_tel: max de telefones por contato.
+    socios_modo: 'todos' (padrao) | 'admin' (so socio-administrador/diretor/presidente).
+    max_socios: 0 = sem limite; N = no maximo N socios (apos ordenar por qualificacao).
     Se decisores=true, tenta anexar decisores do LinkedIn (lento, best-effort).
     """
     # Base local (RFB) primeiro — instantânea e traz o QSA. Fallback: BrasilAPI.
@@ -494,6 +497,10 @@ async def company_leads(cnpj: str, decisores: bool = False,
             return 2
         return 3
     socios = sorted(socios, key=_rank_socio)
+    if socios_modo == "admin":
+        socios = [s for s in socios if _rank_socio(s) <= 1] or socios[:1]
+    if max_socios and max_socios > 0:
+        socios = socios[:max_socios]
     # Telefones de todos os socios em paralelo (era 1 a 1 => lento).
     tels_por_socio = await asyncio.gather(*[
         _phones_for_cpf(s.get("cpf_completo") or "", modo_tel, max_tel, fonte_tel) for s in socios

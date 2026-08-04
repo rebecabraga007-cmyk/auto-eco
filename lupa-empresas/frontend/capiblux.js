@@ -777,6 +777,15 @@ function renderProspList() {
             <option value="mk">Mk (WorkAPI)</option>
           </select>
         </label>
+        <label>Sócios
+          <select id="pf-sociosmodo" class="filter-select" title="Todos os sócios do QSA, ou só sócio-administrador/diretor/presidente">
+            <option value="todos" selected>Todos disponíveis</option>
+            <option value="admin">Só sócio-administrador</option>
+          </select>
+        </label>
+        <label>máx sócios/empresa
+          <input id="pf-maxsocios" type="number" min="0" max="20" value="0" class="filter-num" title="0 = sem limite" />
+        </label>
         <label class="toggle-wrap"><input id="pf-decisores" type="checkbox" /><span>Incluir decisores (LinkedIn)</span></label>
         <button id="pf-dedup" class="btn-secondary" title="Remove das ${emp.length} empresas as que já estão na Meetime (CNPJ + nome)">🔁 Remover já-na-Meetime</button>
         <button id="pf-montar" class="btn-primary">📇 Montar lista de contatos</button>
@@ -933,6 +942,8 @@ async function prospMontar() {
   const modoTel = document.getElementById('pf-modotel').value;
   const maxTel = parseInt(document.getElementById('pf-maxtel').value) || 3;
   const fonteTel = document.getElementById('pf-fontetel')?.value || 'assertiva';
+  const sociosModo = document.getElementById('pf-sociosmodo')?.value || 'todos';
+  const maxSocios = parseInt(document.getElementById('pf-maxsocios')?.value) || 0;
   const alvo = prospState.empresas.slice(0, qtd);
   const wrap = document.getElementById('prosp-table-wrap');
   prospState.building = true;
@@ -956,7 +967,7 @@ async function prospMontar() {
     while (next < alvo.length) {
       const i = next++;
       try {
-        const r = await fetch(`${API}/api/company/${onlyDigits(alvo[i].cnpj)}/leads?decisores=${decisores}&modo_tel=${modoTel}&max_tel=${maxTel}&fonte_tel=${fonteTel}`).then(x => x.json());
+        const r = await fetch(`${API}/api/company/${onlyDigits(alvo[i].cnpj)}/leads?decisores=${decisores}&modo_tel=${modoTel}&max_tel=${maxTel}&fonte_tel=${fonteTel}&socios_modo=${sociosModo}&max_socios=${maxSocios}`).then(x => x.json());
         if (r.status === 'ok') {
           results[i] = leadsToRows(r.empresa, r.contatos);
           leadsRaw[i] = { empresa: r.empresa, contatos: r.contatos };
