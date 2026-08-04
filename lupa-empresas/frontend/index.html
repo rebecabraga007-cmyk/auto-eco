@@ -229,7 +229,8 @@
 
           <!-- ═══ Campos de EMPRESA (comuns aos dois perfis) — essenciais primeiro ═══ -->
           <div class="pf-field">
-            <label>Onde ficam <span class="pf-hint">clique nos estados que interessam</span></label>
+            <label>Onde ficam</label>
+            <div class="pf-advanced-hint" style="margin:-2px 0 6px">Clique nos estados que interessam.</div>
             <div id="pf-uf" class="uf-chips"></div>
           </div>
           <div class="pf-field">
@@ -274,17 +275,18 @@
           <div class="pf-field">
             <label>Tamanho da empresa</label>
             <select id="pf-porte">
-              <option value="">Todas</option>
-              <option value="01">Pequenas (micro)</option>
-              <option value="03">Pequenas (porte pequeno)</option>
-              <option value="05">Médias e grandes</option>
+              <option value="01,03">Pequenas (micro e MEI)</option>
+              <option value="05">Médias</option>
+              <option value="" selected>Todas</option>
             </select>
           </div>
 
           <div class="pf-divider"></div>
 
+          <div class="pf-advanced-hint" style="margin-top:-4px">Deixar de fora</div>
           <div class="pf-toggles">
-            <label class="toggle-row"><span>Deixar de fora empresas fechadas ou suspensas</span><input id="pf-somente-ativas" type="checkbox" checked /></label>
+            <label class="toggle-row"><span>Empresas fechadas ou suspensas</span><input id="pf-somente-ativas" type="checkbox" checked /></label>
+            <label class="toggle-row"><span>Quem já está no nosso CRM <span style="color:var(--gray-500)">(Meetime)</span></span><input id="pf-excluir-meetime" type="checkbox" /></label>
             <label class="toggle-row"><span>Filiais — quero só a sede</span><input id="pf-matriz" type="checkbox" /></label>
             <label class="toggle-row"><span>Somente com telefone</span><input id="pf-com-tel" type="checkbox" /></label>
           </div>
@@ -358,7 +360,7 @@
           </details>
         </div>
         <div class="prosp-sidebar-foot">
-          <button id="pf-buscar" class="btn-primary prosp-filtrar-btn">🔍 Filtrar</button>
+          <button id="pf-buscar" class="btn-primary prosp-filtrar-btn">Ver quem encontramos</button>
         </div>
       </aside>
 

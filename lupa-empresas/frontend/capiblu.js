@@ -783,6 +783,8 @@ async function prospBuscar() {
     cnt.textContent = `${totalStr} empresa${prospState.total === 1 ? '' : 's'} bate${prospState.total === 1 ? '' : 'm'} com seus filtros`;
     if (cntSub) cntSub.textContent = `${capMsg.trim() || ('Mostrando ' + prospState.empresas.length)}${fonteTag ? ' · ' + fonteTag : ''}`.replace(/^\(|\)$/g, '');
     renderProspList();
+    const excluirMeetime = document.getElementById('pf-excluir-meetime');
+    if (excluirMeetime && excluirMeetime.checked) prospDedupMeetime();
   } catch (e) {
     out.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
   } finally {
@@ -802,19 +804,19 @@ function renderProspList() {
     <div class="prosp-build">
       <div class="prosp-build-overline">Passo 2 — montar a lista para ligar</div>
       <div class="prosp-build-row">
-        <label>Montar lista das primeiras
+        <label>Quantas empresas
           <input id="pf-qtd" type="number" min="1" max="${max}" value="${Math.min(25, max)}" class="filter-num" />
-          empresas (de ${emp.length} carregadas${prospState.total > emp.length ? `, ${prospState.total.toLocaleString('pt-BR')} no total` : ''})
+          <span class="pf-advanced-hint" style="display:inline">de ${emp.length} carregadas${prospState.total > emp.length ? `, ${prospState.total.toLocaleString('pt-BR')} no total` : ''}</span>
         </label>
-        <label>Telefones
+        <label>Telefones por empresa
+          <input id="pf-maxtel" type="number" min="1" max="10" value="3" class="filter-num" />
+        </label>
+        <label>Tipo de telefone
           <select id="pf-modotel" class="filter-select">
-            <option value="celular" selected>Só celular (11 díg. — recomendado)</option>
-            <option value="celular_fixo">Celular + fixo</option>
+            <option value="celular" selected>Só celular (recomendado)</option>
+            <option value="celular_fixo">Celular e fixo</option>
             <option value="todos">Todos (inclui antigos)</option>
           </select>
-        </label>
-        <label>máx/pessoa
-          <input id="pf-maxtel" type="number" min="1" max="10" value="3" class="filter-num" />
         </label>
         <label>Fonte dos telefones
           <select id="pf-fontetel" class="filter-select">
@@ -837,15 +839,12 @@ function renderProspList() {
             <option value="__cliente__">🧑‍💼 Cliente (planilha externa)</option>
           </select>
         </label>
-        <label class="toggle-wrap"><input id="pf-decisores" type="checkbox" /><span>Incluir decisores (LinkedIn)</span></label>
-        <button id="pf-dedup" class="btn-secondary" title="Remove das ${emp.length} empresas as que já estão na Meetime (CNPJ + nome)">🔁 Remover já-na-Meetime</button>
-        <button id="pf-montar" class="btn-primary">📇 Montar lista de contatos</button>
+        <label class="toggle-wrap"><input id="pf-decisores" type="checkbox" /><span>Incluir decisores (LinkedIn) <span class="pf-advanced-hint" style="display:inline">— mais lento, pode ser bloqueado</span></span></label>
+        <button id="pf-dedup" class="btn-secondary" title="Remove das ${emp.length} empresas as que já estão na Meetime (CNPJ + nome)">Remover quem já está na Meetime</button>
+        <button id="pf-montar" class="btn-primary">Montar lista de contatos</button>
       </div>
       <div id="pf-dedup-note" class="prosp-dedup-note"></div>
-      <p class="prosp-warn">${prospState.fonte === 'local'
-        ? '✅ Busca na <strong>base local da Receita</strong> — sem limite de 20 e instantânea. A montagem consulta CPF (JBR) + telefones (fonte selecionável: Assertiva/Mk) por empresa.'
-        : '⚠️ A busca pública da Casa dos Dados retorna no máx. <strong>20 empresas por consulta</strong> — refine CNAE/UF/município/capital. Cada empresa consulta Receita + CPF + telefones (Assertiva/Mk).'}
-        <strong>Decisores (LinkedIn)</strong> deixa cada empresa muito mais lenta (~minutos) e pode ser bloqueado. A <strong>validação por telefone reverso</strong> é um passo separado, sobre a lista pronta (confere se o telefone está mesmo atrelado ao CPF do contato).</p>
+      <p class="prosp-warn">Buscar os telefones leva alguns minutos e consome consulta (${prospState.fonte === 'local' ? 'base local da Receita' : 'Casa dos Dados'}). A lista pronta pode ser exportada em planilha, no seu modelo de colunas. A validação por telefone reverso é um passo separado, sobre a lista pronta.</p>
     </div>
     <div class="prosp-table-scroll">
       <table class="prosp-table prosp-empresas-table prosp-ds-table">
