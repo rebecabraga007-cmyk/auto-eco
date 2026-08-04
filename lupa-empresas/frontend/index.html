@@ -35,6 +35,9 @@
     <div class="nav-group-label">Completar o que já tenho</div>
     <button class="nav-btn" data-tab="enrich">Minha planilha<span class="nav-btn-sub">subir e receber preenchida</span></button>
     <button class="nav-btn" data-tab="modelos">Meus modelos<span class="nav-btn-sub">colunas do jeito que você usa</span></button>
+
+    <div class="nav-group-label" id="nav-admin-label" hidden>Administração</div>
+    <button class="nav-btn" data-tab="admin" id="nav-admin" hidden>Painel administrativo<span class="nav-btn-sub">navegação e custo de todos</span></button>
   </nav>
 
   <div class="sidebar-user" id="user-menu">
@@ -552,10 +555,41 @@
       </div>
       <div class="filter-row">
         <span class="filter-label">Fonte:</span>
-        <span class="source-pill" style="background:#fef3c7;color:#92400e">WorkAPI · telefone reverso</span>
+        <span class="source-pill" style="background:var(--amber-soft);color:var(--amber)">WorkAPI · telefone reverso</span>
       </div>
     </div>
     <div id="tel-results" class="results-area"></div>
+  </section>
+
+  <section id="tab-admin" class="tab-section">
+    <div class="module-header">
+      <div class="module-overline">Administração</div>
+      <h2 class="module-title">Painel administrativo</h2>
+      <p class="module-sub">Histórico de navegação de todos os usuários e custo Assertiva de todos os modelos salvos.</p>
+    </div>
+
+    <div class="search-panel">
+      <h3 style="margin:0 0 12px;font-size:1.05rem">Histórico de navegação</h3>
+      <div class="en-step">
+        <label>De <input id="adm-nav-desde" type="date" class="filter-num"></label>
+        <label>Até <input id="adm-nav-ate" type="date" class="filter-num"></label>
+        <label>Usuário
+          <select id="adm-nav-user" class="filter-select"><option value="">Todos</option></select>
+        </label>
+        <button id="adm-nav-atualizar" class="btn-secondary">🔄 Atualizar</button>
+      </div>
+      <div id="adm-nav-resultado"></div>
+    </div>
+
+    <div class="search-panel">
+      <h3 style="margin:0 0 12px;font-size:1.05rem">Custo por modelo (todos os usuários)</h3>
+      <div class="en-step">
+        <label>De <input id="adm-custo-desde" type="date" class="filter-num"></label>
+        <label>Até <input id="adm-custo-ate" type="date" class="filter-num"></label>
+        <button id="adm-custo-atualizar" class="btn-secondary">🔄 Atualizar</button>
+      </div>
+      <div id="adm-custo-resultado"></div>
+    </div>
   </section>
 
 </main>

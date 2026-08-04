@@ -29,15 +29,9 @@
         init.headers = h;
       }
     }
-    return _fetch(input, init).then(resp => {
-      if (resp.status === 401 && isApi && !url.includes('/api/auth/')) {
-        // Sessão perdida numa chamada autenticada → só volta pro login se o app
-        // estava VISÍVEL (evita loop na própria tela de login).
-        const ov = document.getElementById('login-overlay');
-        if (ov && ov.hidden) { clearToken(); location.reload(); }
-      }
-      return resp;
-    });
+    // NÃO recarregar em 401 de chamadas de dados: causava piscada/loop na tela de
+    // login (401 corria contra o /me). A sessão é decidida só pelo /me no init().
+    return _fetch(input, init);
   };
 
   let currentUser = null;
@@ -49,6 +43,7 @@
     wireMenu();
     wireUsersModal();
     wirePassModal();
+    wireConfigModal();
     // A sessão vem do cookie — basta perguntar quem sou eu (sem depender de token local).
     try {
       const r = await _fetch('/api/auth/me', { credentials: 'same-origin' });
@@ -68,7 +63,11 @@
     document.getElementById('login-overlay').hidden = true;
     document.body.classList.remove('locked');
     document.getElementById('user-name').textContent = currentUser.nome || currentUser.email;
-    document.getElementById('menu-users').hidden = currentUser.role !== 'admin';
+    const isAdmin = currentUser.role === 'admin';
+    document.getElementById('menu-users').hidden = !isAdmin;
+    const mc = document.getElementById('menu-config'); if (mc) mc.hidden = !isAdmin;
+    const na = document.getElementById('nav-admin'); if (na) na.hidden = !isAdmin;
+    const nal = document.getElementById('nav-admin-label'); if (nal) nal.hidden = !isAdmin;
   }
 
   function wireLogin() {
@@ -109,6 +108,46 @@
     });
     document.getElementById('menu-users').addEventListener('click', () => {
       document.getElementById('users-modal').hidden = false; dd.hidden = true; loadUsers();
+    });
+    const mc = document.getElementById('menu-config');
+    if (mc) mc.addEventListener('click', () => {
+      document.getElementById('config-modal').hidden = false; dd.hidden = true; loadConfig();
+    });
+  }
+
+  async function loadConfig() {
+    const st = document.getElementById('cfg-meetime-status');
+    st.textContent = 'carregando…';
+    try {
+      const j = await fetch('/api/config').then(r => r.json());
+      const m = j.meetime || {};
+      st.innerHTML = m.configurado ? `✅ configurado (${esc(m.token_mascarado || '')})` : '⚠️ ainda não configurado';
+      document.getElementById('cfg-meetime-base').value = m.base_url || '';
+      document.getElementById('cfg-meetime-path').value = m.leads_path || '';
+      document.getElementById('cfg-meetime-hdr').value = m.auth_header || '';
+    } catch (e) { st.textContent = 'erro ao carregar (você é admin?)'; }
+  }
+
+  function wireConfigModal() {
+    const modal = document.getElementById('config-modal');
+    if (!modal) return;
+    document.getElementById('config-close').addEventListener('click', () => modal.hidden = true);
+    document.getElementById('config-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const err = document.getElementById('config-err'); err.textContent = '';
+      const body = {
+        token: document.getElementById('cfg-meetime-token').value.trim() || undefined,
+        base_url: document.getElementById('cfg-meetime-base').value.trim() || undefined,
+        leads_path: document.getElementById('cfg-meetime-path').value.trim() || undefined,
+        auth_header: document.getElementById('cfg-meetime-hdr').value.trim() || undefined,
+      };
+      const r = await fetch('/api/config/meetime', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) { err.textContent = j.detail || 'Falha ao salvar.'; return; }
+      document.getElementById('cfg-meetime-token').value = '';
+      alert('Configuração salva!'); loadConfig();
     });
   }
 

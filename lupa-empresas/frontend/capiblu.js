@@ -19,6 +19,8 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
       _prospAutoLoaded = true;
       prospBuscar();
     }
+    if (tab === 'admin' && typeof admCarregar === 'function') admCarregar();
+    fetch(`${API}/api/navlog`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tab }) }).catch(() => {});
   });
 });
 
@@ -1899,3 +1901,81 @@ function useRenderMap(colunas) {
     modal.hidden = true;
   });
 })();
+
+// ══════════════════════════════════════════════════════
+//  PAINEL ADMINISTRATIVO (histórico de navegação + custo geral)
+// ══════════════════════════════════════════════════════
+(function initAdmin() {
+  const desdeEl = document.getElementById('adm-nav-desde');
+  if (!desdeEl) return;
+  const hoje = new Date();
+  const trintaDiasAtras = new Date(hoje.getTime() - 29 * 24 * 60 * 60 * 1000);
+  const fmtISO = d => d.toISOString().slice(0, 10);
+  document.getElementById('adm-nav-desde').value = fmtISO(trintaDiasAtras);
+  document.getElementById('adm-nav-ate').value = fmtISO(hoje);
+  document.getElementById('adm-custo-desde').value = fmtISO(trintaDiasAtras);
+  document.getElementById('adm-custo-ate').value = fmtISO(hoje);
+  document.getElementById('adm-nav-atualizar').addEventListener('click', admNavCarregar);
+  document.getElementById('adm-custo-atualizar').addEventListener('click', admCustoCarregar);
+})();
+
+function admCarregar() { admNavCarregar(); admCustoCarregar(); }
+
+function admNavCarregar() {
+  const box = document.getElementById('adm-nav-resultado'); if (!box) return;
+  const desde = document.getElementById('adm-nav-desde').value;
+  const ate = document.getElementById('adm-nav-ate').value;
+  const user = document.getElementById('adm-nav-user').value;
+  box.innerHTML = '<p class="msg">Carregando…</p>';
+  fetch(`${API}/api/navlog?desde=${desde}&ate=${ate}&user=${encodeURIComponent(user)}`).then(r => r.json()).then(j => {
+    if (j.status !== 'ok') { box.innerHTML = `<p class="msg error">${esc(j.message || j.detail || 'Falha ao carregar.')}</p>`; return; }
+    // Popula o filtro de usuário (uma vez, sem apagar a seleção atual).
+    const sel = document.getElementById('adm-nav-user');
+    if (sel.dataset.pop !== '1') {
+      sel.insertAdjacentHTML('beforeend', (j.usuarios || []).map(u => `<option value="${esc(u)}">${esc(u)}</option>`).join(''));
+      sel.dataset.pop = '1';
+    }
+    const fmtData = ts => new Date(ts * 1000).toLocaleString('pt-BR');
+    const linhas = (j.entradas || []).slice(0, 500).map(e => `
+      <tr><td class="mono">${fmtData(e.ts)}</td><td>${esc(e.user)}</td><td>${esc(e.tab)}</td></tr>`).join('');
+    const porUsuario = Object.entries(j.por_usuario || {}).sort((a, b) => b[1] - a[1])
+      .map(([u, n]) => `<span class="combo-chip"><b>${esc(u)}</b> · ${n}</span>`).join(' ');
+    box.innerHTML = `
+      <div class="prosp-build-row" style="margin-bottom:10px">
+        <span><strong>Total de acessos:</strong> ${j.total}</span>
+        ${j.truncado ? '<span style="color:var(--amber)">(mostrando as 500 mais recentes)</span>' : ''}
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">${porUsuario || '<span class="msg">Nenhum acesso no período.</span>'}</div>
+      ${j.entradas && j.entradas.length
+        ? `<div class="prosp-table-scroll"><table class="prosp-table"><thead><tr><th>Quando</th><th>Usuário</th><th>Tela</th></tr></thead><tbody>${linhas}</tbody></table></div>`
+        : ''}`;
+  }).catch(e => { box.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`; });
+}
+
+function admCustoCarregar() {
+  const box = document.getElementById('adm-custo-resultado'); if (!box) return;
+  const desde = document.getElementById('adm-custo-desde').value;
+  const ate = document.getElementById('adm-custo-ate').value;
+  box.innerHTML = '<p class="msg">Carregando…</p>';
+  fetch(`${API}/api/custos/assertiva?desde=${desde}&ate=${ate}`).then(r => r.json()).then(j => {
+    if (j.status !== 'ok') { box.innerHTML = `<p class="msg error">${esc(j.message || 'Falha ao carregar custos.')}</p>`; return; }
+    const fmtR$ = v => 'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 });
+    const linhas = (j.modelos || []).map(m => `
+      <tr>
+        <td>${m.tipo === 'externo' ? '🧑‍💼 Externo' : (m.tipo === 'interno' ? '🧩 Interno' : '— Sem modelo')}</td>
+        <td>${esc(m.modelo_nome)}</td>
+        <td>${m.n_consultas}</td>
+        <td>${fmtR$(m.custo_total)}</td>
+      </tr>`).join('');
+    box.innerHTML = `
+      <div class="prosp-build-row" style="margin-bottom:10px">
+        <span><strong>Total interno:</strong> ${fmtR$(j.custo_interno)}</span>
+        <span><strong>Total externo (clientes):</strong> ${fmtR$(j.custo_externo)}</span>
+        ${j.custo_sem_modelo ? `<span><strong>Sem modelo:</strong> ${fmtR$(j.custo_sem_modelo)}</span>` : ''}
+        <span><strong>Total geral:</strong> ${fmtR$(j.total_geral)} (${j.total_consultas} consulta(s))</span>
+      </div>
+      ${j.modelos && j.modelos.length
+        ? `<table class="prosp-table"><thead><tr><th>Tipo</th><th>Modelo</th><th>Consultas</th><th>Custo</th></tr></thead><tbody>${linhas}</tbody></table>`
+        : '<p class="msg">Nenhuma consulta Assertiva no período selecionado.</p>'}`;
+  }).catch(e => { box.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`; });
+}

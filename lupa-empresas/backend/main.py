@@ -35,6 +35,7 @@ import config_store
 import custos
 import donodozap
 import meetime
+import navlog
 import sheet_reader
 import linkedin_scraper
 import mkbuscas
@@ -1445,6 +1446,34 @@ async def enrich_export(payload: dict = Body(default={})):
 
 def _is_admin(request: Request) -> bool:
     return (request.headers.get("x-user-role") or "").lower() == "admin"
+
+
+@app.post("/api/navlog")
+async def navlog_registrar(request: Request, payload: dict = Body(default={})):
+    """Log de navegação: qualquer usuário logado pode registrar (não é admin-only)."""
+    email = request.headers.get("x-user-email") or ""
+    navlog.registrar(email, payload.get("tab") or "")
+    return {"ok": True}
+
+
+@app.get("/api/navlog")
+async def navlog_listar(request: Request, desde: str = "", ate: str = "", user: str = ""):
+    """Histórico de navegação de todos os usuários — só admin."""
+    if not _is_admin(request):
+        return JSONResponse({"detail": "Requer admin."}, status_code=403)
+    import datetime as _dt
+    desde_ts = None
+    ate_ts = None
+    try:
+        if desde:
+            desde_ts = _dt.datetime.strptime(desde, "%Y-%m-%d").timestamp()
+        if ate:
+            ate_ts = _dt.datetime.strptime(ate, "%Y-%m-%d").timestamp() + 86400 - 1
+    except ValueError:
+        return {"status": "error", "message": "Datas inválidas (use YYYY-MM-DD)."}
+    res = navlog.listar(desde_ts, ate_ts, user)
+    res["status"] = "ok"
+    return res
 
 
 @app.get("/api/config")

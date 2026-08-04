@@ -66,6 +66,8 @@
     const isAdmin = currentUser.role === 'admin';
     document.getElementById('menu-users').hidden = !isAdmin;
     const mc = document.getElementById('menu-config'); if (mc) mc.hidden = !isAdmin;
+    const na = document.getElementById('nav-admin'); if (na) na.hidden = !isAdmin;
+    const nal = document.getElementById('nav-admin-label'); if (nal) nal.hidden = !isAdmin;
   }
 
   function wireLogin() {
