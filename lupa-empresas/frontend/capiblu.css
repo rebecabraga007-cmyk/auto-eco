@@ -638,10 +638,13 @@ body {
 @media (max-width: 640px) { .as-grid { grid-template-columns: 1fr; } }
 
 /* ── Enriquecer Lista ─────────────────────────────────── */
-.en-step { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid var(--gray-100); }
+.en-step { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 16px 0; border-bottom: 1px solid var(--gray-100); }
 .en-step:last-child { border-bottom: none; }
 .en-step-fields { align-items: flex-start; }
-.en-num { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--blue-mid); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: .85rem; }
+.en-num {
+  flex: none; width: 30px; font-family: "IBM Plex Mono", monospace;
+  font-size: 16px; color: var(--terracota); line-height: 1.2; text-align: left;
+}
 .en-upload input + span { cursor: pointer; }
 .en-fname { font-size: .85rem; color: var(--gray-600); }
 .en-fields-wrap { flex: 1; }
