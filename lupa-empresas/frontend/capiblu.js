@@ -67,9 +67,9 @@ function badgeSit(sit) {
   return `<span class="badge badge-neutra">${esc(label)}</span>`;
 }
 function scoreColor(n) {
-  if (n >= 700) return '#10b981';
-  if (n >= 400) return '#f59e0b';
-  return '#ef4444';
+  if (n >= 700) return 'var(--green)';
+  if (n >= 400) return 'var(--amber)';
+  return 'var(--red)';
 }
 
 // ── CPF input mask ───────────────────────────────────
@@ -225,39 +225,58 @@ function renderPessoa(cpf, jbr, mk) {
   const sitBad  = sit.toLowerCase().includes('suspens') || sit.toLowerCase().includes('cancelad');
   const obitoMort = obito && obito !== 'NÃO' && obito !== 'NÃO' && obito !== 'NAO';
 
-  // Banner
+  // Idade a partir de dd/mm/aaaa (quando disponível).
+  let idade = null;
+  if (nasc !== '—' && /^\d{2}\/\d{2}\/\d{4}$/.test(nasc)) {
+    const [d, m, y] = nasc.split('/').map(Number);
+    const hoje = new Date();
+    idade = hoje.getFullYear() - y - ((hoje.getMonth() + 1 < m || (hoje.getMonth() + 1 === m && hoje.getDate() < d)) ? 1 : 0);
+  }
+  const sitClara = sit === '—' ? '' : (
+    sitGood ? `CPF regular na Receita` : sitBad ? `CPF suspenso na Receita` : `CPF ${sit.toLowerCase()}`
+  );
+
+  // Cabeçalho (nome + CPF/idade/nascimento à esquerda; situação + protocolo à direita).
   let banner = `
-  <div class="person-banner">
-    <h2>${esc(nome)}</h2>
-    <div class="cpf-num">CPF ${fmtCpf(cpf)}</div>
-    <div class="banner-pills">
-      ${nasc !== '—' ? `<span class="banner-pill">🎂 ${esc(nasc)}</span>` : ''}
-      ${sexo ? `<span class="banner-pill">${sexo.includes('M') ? '♂' : '♀'} ${esc(sexo)}</span>` : ''}
-      ${ec ? `<span class="banner-pill">💍 ${esc(ec)}</span>` : ''}
-      <span class="banner-pill ${sitGood ? 'good' : sitBad ? 'bad' : ''}">📋 ${esc(sit)}</span>
-      ${obitoMort ? `<span class="banner-pill bad">💀 Óbito</span>` : ''}
+  <div class="person-header">
+    <div>
+      <h2>${esc(nome)}</h2>
+      <div class="cpf-num">${fmtCpf(cpf)}${idade !== null ? ` · ${idade} anos` : ''}${nasc !== '—' ? ` · nascida em ${esc(nasc)}` : ''}</div>
+    </div>
+    <div class="person-header-right">
+      ${sitClara ? `<span class="badge ${sitGood ? 'badge-ativa' : sitBad ? 'badge-inativa' : 'badge-neutra'}">${esc(sitClara)}</span>` : ''}
+      ${obitoMort ? `<span class="badge badge-inativa">Óbito registrado</span>` : ''}
+      <span class="person-header-note">consultado agora</span>
     </div>
   </div>`;
 
-  // Info cards
-  let infoCards = `<div class="info-grid">`;
-  infoCards += infoCard('👩 Mãe', mae, '');
-  if (renda !== '—') infoCards += infoCard('💰 Renda estimada', renda, faixaRenda);
+  // Métricas explicadas (mãe, renda, score) — cada uma diz o que significa, não só o número.
+  let infoCards = `<div class="metric-grid">`;
+  infoCards += `
+    <div class="metric-cell">
+      <div class="metric-label">Nome da mãe</div>
+      <div class="metric-value">${esc(mae)}</div>
+      <div class="metric-sub">Serve para confirmar que é a pessoa certa.</div>
+    </div>`;
+  if (renda !== '—') infoCards += `
+    <div class="metric-cell">
+      <div class="metric-label">Renda estimada</div>
+      <div class="metric-value mono">${esc(renda)}</div>
+      <div class="metric-sub">${faixaRenda ? esc(faixaRenda) + '. ' : ''}Estimativa, não é salário confirmado.</div>
+    </div>`;
   if (scoreVal) {
     const pct = Math.min(scoreVal, 1000) / 10;
     infoCards += `
-    <div class="info-card">
-      <div class="ic-label">📊 Score Serasa</div>
-      <div class="ic-value" style="color:${scoreColor(scoreVal)}">${scoreVal}</div>
-      <div class="ic-sub">${esc(scoreLabel)}</div>
-      <div class="score-wrap">
-        <div class="score-bar"><div class="score-fill" style="width:${pct}%;background:${scoreColor(scoreVal)}"></div></div>
-      </div>
+    <div class="metric-cell">
+      <div class="metric-label">Score de crédito</div>
+      <div class="metric-value mono">${scoreVal} <span style="font-family:'IBM Plex Sans',sans-serif;font-size:13px;font-weight:600;color:${scoreColor(scoreVal)}">${esc(scoreLabel || '')}</span></div>
+      <div class="metric-bar"><div class="metric-bar-fill" style="width:${pct}%;background:${scoreColor(scoreVal)}"></div></div>
+      <div class="metric-sub">Vai de 0 a 1000. Quanto maior, menor o risco de inadimplência.</div>
     </div>`;
   }
-  if (mosaic) infoCards += infoCard('🎯 Perfil Mosaic', mosaic, '');
-  if (cbo)    infoCards += infoCard('💼 CBO', cbo, '');
-  if (esc_)   infoCards += infoCard('🎓 Escolaridade', esc_, '');
+  if (mosaic) infoCards += `<div class="metric-cell"><div class="metric-label">Perfil Mosaic</div><div class="metric-value">${esc(mosaic)}</div></div>`;
+  if (cbo)    infoCards += `<div class="metric-cell"><div class="metric-label">Profissão declarada</div><div class="metric-value">${esc(cbo)}</div></div>`;
+  if (esc_)   infoCards += `<div class="metric-cell"><div class="metric-label">Escolaridade</div><div class="metric-value">${esc(esc_)}</div></div>`;
   infoCards += `</div>`;
 
   // Endereços
@@ -279,11 +298,11 @@ function renderPessoa(cpf, jbr, mk) {
   const telefones = mkD.telefones || [];
   const telHtml = telefones.length ? `
   <div style="margin-bottom:10px">
-    <button class="btn-secondary" onclick="verificarTelefonesCpf('${cpf}')">🔎 Verificar atrelamento (WorkAPI telefone reverso)</button>
+    <button class="btn-secondary" onclick="verificarTelefonesCpf('${cpf}')">Conferir se os telefones são dela</button>
     <span class="tel-verify-hint">confere, na base de telefone reverso, se cada número realmente aponta pra este CPF</span>
   </div>
   <table class="data-table" id="tel-verify-table">
-    <thead><tr><th>Número</th><th>Tipo</th><th>Operadora</th><th>WhatsApp</th><th>Atrelado ao CPF?</th></tr></thead>
+    <thead><tr><th>Telefone</th><th>Tipo</th><th>Operadora</th><th>Tem WhatsApp?</th><th>É dela mesmo?</th></tr></thead>
     <tbody>${telefones.map(t => {
       const raw = onlyDigits(t.telefone||t.numero||'');
       return `
@@ -291,8 +310,8 @@ function renderPessoa(cpf, jbr, mk) {
         <td class="td-phone">${esc(fmtPhone(t.telefone||t.numero||''))}</td>
         <td>${esc(t.tipo||'')}</td>
         <td>${esc(t.operadora||'')}</td>
-        <td>${t.whatsapp ? '✅' : '—'}</td>
-        <td class="tel-verify-cell" data-raw="${raw}">—</td>
+        <td>${t.whatsapp ? 'Sim' : 'Não sabemos'}</td>
+        <td class="tel-verify-cell" data-raw="${raw}">Não conferido</td>
       </tr>`;}).join('')}
     </tbody>
   </table>` : '';
@@ -365,7 +384,7 @@ function renderPessoa(cpf, jbr, mk) {
   );
   const pcHtml = (pcTrue.length || pcProb.length) ? `
   <div style="padding:14px 16px">
-    ${pcTrue.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">${pcTrue.map(x=>`<span style="background:var(--green-soft);color:#065f46;padding:3px 12px;border-radius:999px;font-size:.8rem">${esc(x)}</span>`).join('')}</div>` : ''}
+    ${pcTrue.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">${pcTrue.map(x=>`<span style="background:var(--green-soft);color:var(--green);padding:3px 12px;border-radius:999px;font-size:.8rem">${esc(x)}</span>`).join('')}</div>` : ''}
     ${pcProb.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px">${pcProb.join('')}</div>` : ''}
   </div>` : '';
 
