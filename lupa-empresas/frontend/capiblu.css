@@ -216,22 +216,46 @@ body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── COMPANY CARD ── */
+/* ── COMPANY CARD (legado, mantido por compatibilidade) ── */
 .card-company {
   background: var(--white); border: 1px solid var(--gray-200);
   border-radius: var(--radius); padding: 18px 22px;
-  box-shadow: var(--shadow-sm); cursor: pointer;
-  transition: transform .12s, box-shadow .12s, border-color .12s;
+  cursor: pointer; transition: border-color .12s;
   text-decoration: none; display: block; color: inherit;
 }
-.card-company:hover {
-  transform: translateY(-2px); border-color: var(--blue-mid);
-  box-shadow: var(--shadow-md);
-}
+.card-company:hover { border-color: var(--blue-mid); }
 .card-company h3 { margin: 0 0 3px; font-size: 1.05rem; }
 .card-company .fantasy { color: var(--gray-500); font-size: .88rem; margin-bottom: 10px; }
 .card-company .meta-row { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: .84rem; color: var(--gray-700); }
 .meta-item { display: flex; align-items: center; gap: 4px; }
+
+/* ── Lista de resultados (empresa, estilo redesign) ── */
+.results-head { display: flex; align-items: baseline; justify-content: space-between; margin: 44px 0 14px; flex-wrap: wrap; gap: 8px; }
+.results-head h2 { font-weight: 600; font-size: 1.19rem; letter-spacing: -.015em; margin: 0; }
+.results-head-note { font-size: .82rem; color: var(--gray-500); }
+
+.result-list { border: 1px solid var(--gray-200); background: #fff; }
+.result-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 20px;
+  padding: 22px 24px; border-bottom: 1px solid var(--gray-100);
+  text-decoration: none; color: inherit; transition: background .12s;
+}
+.result-row:last-child { border-bottom: none; }
+.result-row:hover { background: var(--gray-50); }
+.result-name { font-size: 1.06rem; font-weight: 600; margin-bottom: 4px; }
+.result-fantasy, .result-meta { color: var(--gray-600); font-size: .88rem; }
+.result-meta { margin-top: 2px; }
+.result-meta a { color: var(--blue-mid); }
+.result-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.result-link { font-size: .88rem; font-weight: 600; color: var(--blue-mid); white-space: nowrap; }
+
+/* ── Dica (barra terracota no lugar de tooltip/jargão) ── */
+.dica {
+  border-left: 2px solid var(--terracota); padding: 2px 0 2px 18px;
+  margin-top: 32px; max-width: 60ch;
+}
+.dica-title { font-size: .88rem; font-weight: 600; margin-bottom: 4px; }
+.dica-body { font-size: .88rem; line-height: 1.6; color: var(--gray-700); }
 
 /* ── BADGE ── */
 .badge {

@@ -49,11 +49,22 @@ function fmtPhone(raw) {
   if (d.length === 10) return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;
   return raw;
 }
+// Traduz o termo cru da Receita pra português claro — nunca mostrar "BAIXADA"/"INAPTA" sozinho.
+function situacaoClara(sit) {
+  const s = (sit || '').toLowerCase();
+  if (s.includes('ativa') || s.includes('regular')) return 'Em atividade';
+  if (s.includes('baixa')) return 'Fechada';
+  if (s.includes('suspens')) return 'Suspensa na Receita';
+  if (s.includes('inapt')) return 'Inapta na Receita';
+  if (s.includes('nula')) return 'Cadastro anulado';
+  return sit || 'Situação desconhecida';
+}
 function badgeSit(sit) {
   const s = (sit || '').toLowerCase();
-  if (s.includes('ativa') || s.includes('regular')) return `<span class="badge badge-ativa">${esc(sit)}</span>`;
-  if (s.includes('baixa') || s.includes('inapt') || s.includes('suspens')) return `<span class="badge badge-inativa">${esc(sit)}</span>`;
-  return `<span class="badge badge-neutra">${esc(sit)}</span>`;
+  const label = situacaoClara(sit);
+  if (s.includes('ativa') || s.includes('regular')) return `<span class="badge badge-ativa">${esc(label)}</span>`;
+  if (s.includes('baixa') || s.includes('inapt') || s.includes('suspens')) return `<span class="badge badge-inativa">${esc(label)}</span>`;
+  return `<span class="badge badge-neutra">${esc(label)}</span>`;
 }
 function scoreColor(n) {
   if (n >= 700) return '#10b981';
@@ -119,33 +130,42 @@ function renderEmpresas(data) {
   }
   const list = Array.isArray(data) ? data : (data.companies || data.results || []);
   if (!list.length) {
-    empRes.innerHTML = `<p class="msg">Nenhuma empresa encontrada.</p>`;
+    empRes.innerHTML = `<p class="msg">Nenhuma empresa encontrada${data?.message ? ': ' + esc(data.message) : '.'}</p>`;
     return;
   }
-  empRes.innerHTML = list.map(emp => {
+  const termoRaw = empQ.value.trim();
+  const termo = /^[\d.\/\-]+$/.test(termoRaw) ? '' : esc(termoRaw);
+  const rows = list.map(emp => {
     const cnpj = fmtCnpj(emp.cnpj || emp.tax_id || '');
     const razao = emp.razao_social || emp.company_name || '';
     const fantasia = emp.nome_fantasia || '';
     const cidade = emp.municipio || emp.city || '';
     const uf = emp.uf || emp.state || '';
-    const porte = emp.porte || emp.size || '';
     const sit = emp.descricao_situacao_cadastral || emp.status || emp.situacao_cadastral || '';
     return `
-    <a class="card-company" href="company.html?cnpj=${onlyDigits(cnpj)}" target="_blank">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
-        <div>
-          <h3>${esc(razao)}</h3>
-          ${fantasia ? `<div class="fantasy">${esc(fantasia)}</div>` : ''}
-        </div>
-        ${badgeSit(sit)}
+    <a class="result-row" href="company.html?cnpj=${onlyDigits(cnpj)}" target="_blank">
+      <div>
+        <div class="result-name">${esc(razao)}</div>
+        <div class="result-meta mono">${esc(cnpj)}</div>
+        ${cidade ? `<div class="result-meta">📍 ${esc(cidade)}${uf ? '/' + esc(uf) : ''}</div>` : ''}
+        ${fantasia && fantasia !== razao ? `<div class="result-fantasy">${esc(fantasia)}</div>` : ''}
       </div>
-      <div class="meta-row">
-        <span class="meta-item">📄 ${esc(cnpj)}</span>
-        ${cidade ? `<span class="meta-item">📍 ${esc(cidade)}/${esc(uf)}</span>` : ''}
-        ${porte ? `<span class="meta-item">🏭 ${esc(porte)}</span>` : ''}
+      <div class="result-actions">
+        ${badgeSit(sit)}
+        <span class="result-link">Ver detalhes →</span>
       </div>
     </a>`;
   }).join('');
+  empRes.innerHTML = `
+    <div class="results-head">
+      <h2>${list.length} empresa${list.length === 1 ? '' : 's'}${termo ? ` com "${termo}" no nome` : ''}</h2>
+      <span class="results-head-note">Fonte: Receita Federal</span>
+    </div>
+    <div class="result-list">${rows}</div>
+    <div class="dica">
+      <div class="dica-title">"Fechada", "suspensa", "em atividade" — o que muda pra mim?</div>
+      <div class="dica-body">Só empresa em atividade compra. As outras aparecem porque o sócio pode ter aberto uma empresa nova — abra os detalhes para ver.</div>
+    </div>`;
 }
 
 empBtn.addEventListener('click', searchEmpresa);
