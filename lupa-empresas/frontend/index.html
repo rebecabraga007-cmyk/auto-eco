@@ -227,28 +227,24 @@
 
           <div class="pf-divider"></div>
 
-          <!-- ═══ Campos de EMPRESA (comuns aos dois perfis) ═══ -->
+          <!-- ═══ Campos de EMPRESA (comuns aos dois perfis) — essenciais primeiro ═══ -->
           <div class="pf-field">
-            <label>📄 Documento (CNPJ)</label>
-            <input id="pf-cnpj" type="text" placeholder="Busca direta por CNPJ…" autocomplete="off" maxlength="18" />
-          </div>
-          <div class="pf-field">
-            <label>📍 Localização empresa — Estado (UF) <span class="pf-hint">clique p/ selecionar vários</span></label>
+            <label>Onde ficam <span class="pf-hint">clique nos estados que interessam</span></label>
             <div id="pf-uf" class="uf-chips"></div>
           </div>
           <div class="pf-field">
-            <label>📍 Cidade (município)</label>
+            <label>Cidade (município)</label>
             <div class="combo" id="combo-municipio" data-tipo="municipio" data-code="">
               <input class="combo-input" type="text" placeholder="Selecione uma ou mais cidades…" autocomplete="off" />
               <div class="combo-list" hidden></div>
             </div>
           </div>
           <div class="pf-field">
-            <label>🏭 Setor</label>
-            <input id="pf-setor" type="text" placeholder="Pesquise setores (ex.: construção, varejo)…" autocomplete="off" />
+            <label>Ramo ou setor</label>
+            <input id="pf-setor" type="text" placeholder="Ex.: confecção, padaria, transporte…" autocomplete="off" />
           </div>
           <div class="pf-field">
-            <label>🔧 Atividade (CNAE)</label>
+            <label>Atividade (CNAE)</label>
             <div class="combo" id="combo-cnae" data-tipo="cnae" data-code="">
               <input class="combo-input" type="text" placeholder="Pesquise uma atividade CNAE…" autocomplete="off" />
               <div class="combo-list" hidden></div>
@@ -275,77 +271,91 @@
             <label>⭐ Especialidades <span class="pf-soon" title="Requer dataset de perfis profissionais">🔜</span></label>
             <input id="pf-especialidades" type="text" placeholder="Pesquise especialidades…" disabled />
           </div>
-          <div class="pf-field pf-row2">
-            <div><label>🚩 Fundada — de</label><input id="pf-fundada-de" type="date" /></div>
-            <div><label>🚩 Fundada — até</label><input id="pf-fundada-ate" type="date" /></div>
-          </div>
           <div class="pf-field">
-            <label>🏢 Nome da empresa</label>
-            <input id="pf-nome-empresa" type="text" placeholder="Digite um nome de empresa…" autocomplete="off" />
-          </div>
-          <div class="pf-field">
-            <label>🏷️ Tipo empresa</label>
-            <select id="pf-tipo-empresa">
-              <option value="">Selecione o tipo da empresa</option>
-              <option value="privada">Empresa Privada</option>
-              <option value="publica">Órgão Público</option>
-            </select>
-          </div>
-          <div class="pf-field">
-            <label>🏛️ Natureza jurídica</label>
-            <div class="combo" id="combo-natureza" data-tipo="natureza" data-code="">
-              <input class="combo-input" type="text" placeholder="Selecione uma natureza jurídica…" autocomplete="off" />
-              <div class="combo-list" hidden></div>
-            </div>
-          </div>
-          <div class="pf-field">
-            <label>🔗 Perfil LinkedIn <span class="pf-soon" title="Requer dataset de perfis/empresas do LinkedIn">🔜</span></label>
-            <input id="pf-linkedin-empresa" type="text" placeholder="Insira a URL do perfil LinkedIn" disabled />
-          </div>
-          <div class="pf-field">
-            <label>📋 Omitir Listas <span class="pf-soon" title="CapiBLU ainda não tem listas salvas/CRM">🔜</span></label>
-            <select id="pf-omitir-listas" disabled><option value="">Selecione as listas de contato</option></select>
-          </div>
-          <div class="pf-field">
-            <label>📊 Porte / Tamanho (Receita)</label>
+            <label>Tamanho da empresa</label>
             <select id="pf-porte">
-              <option value="">Todos os portes</option>
-              <option value="01">Micro Empresa (ME)</option>
-              <option value="03">Pequeno Porte (EPP)</option>
-              <option value="05">Demais</option>
-            </select>
-          </div>
-          <div class="pf-field">
-            <label>🚩 Situação cadastral</label>
-            <select id="pf-situacao">
-              <option value="ATIVA" selected>Ativa</option>
               <option value="">Todas</option>
-              <option value="BAIXADA">Baixada</option>
-              <option value="INAPTA">Inapta</option>
-              <option value="SUSPENSA">Suspensa</option>
+              <option value="01">Pequenas (micro)</option>
+              <option value="03">Pequenas (porte pequeno)</option>
+              <option value="05">Médias e grandes</option>
             </select>
-          </div>
-          <div class="pf-field pf-row2">
-            <div>
-              <label>💰 Capital social mín. (R$)</label>
-              <input id="pf-cap-min" type="number" placeholder="0" min="0" />
-            </div>
-            <div>
-              <label>💰 Capital social máx. (R$)</label>
-              <input id="pf-cap-max" type="number" placeholder="0" min="0" />
-            </div>
           </div>
 
           <div class="pf-divider"></div>
 
           <div class="pf-toggles">
-            <label class="toggle-row"><span>Filtro de Exclusão de Listas <span class="pf-soon">🔜</span></span><input id="pf-exclusao-listas" type="checkbox" disabled /></label>
-            <label class="toggle-row"><span>Optante MEI</span><input id="pf-mei-optante" type="checkbox" /></label>
-            <label class="toggle-row"><span>Excluir optantes MEI</span><input id="pf-mei-excluir" type="checkbox" /></label>
-            <label class="toggle-row"><span title="Base é 100% de empresas com CNPJ">Possui CNPJ</span><input id="pf-possui-cnpj" type="checkbox" checked disabled /></label>
+            <label class="toggle-row"><span>Deixar de fora empresas fechadas ou suspensas</span><input id="pf-somente-ativas" type="checkbox" checked /></label>
+            <label class="toggle-row"><span>Filiais — quero só a sede</span><input id="pf-matriz" type="checkbox" /></label>
             <label class="toggle-row"><span>Somente com telefone</span><input id="pf-com-tel" type="checkbox" /></label>
-            <label class="toggle-row"><span>Somente matriz</span><input id="pf-matriz" type="checkbox" /></label>
           </div>
+
+          <details class="pf-advanced">
+            <summary>Filtros avançados (CNAE de código, natureza jurídica, capital social, datas)</summary>
+            <div class="pf-advanced-body">
+              <p class="pf-advanced-hint">Para quem já conhece os códigos da Receita. Você não precisa disso para montar uma boa lista.</p>
+              <div class="pf-field">
+                <label>📄 Documento (CNPJ)</label>
+                <input id="pf-cnpj" type="text" placeholder="Busca direta por CNPJ…" autocomplete="off" maxlength="18" />
+              </div>
+              <div class="pf-field pf-row2">
+                <div><label>🚩 Fundada — de</label><input id="pf-fundada-de" type="date" /></div>
+                <div><label>🚩 Fundada — até</label><input id="pf-fundada-ate" type="date" /></div>
+              </div>
+              <div class="pf-field">
+                <label>🏢 Nome da empresa</label>
+                <input id="pf-nome-empresa" type="text" placeholder="Digite um nome de empresa…" autocomplete="off" />
+              </div>
+              <div class="pf-field">
+                <label>🏷️ Tipo empresa</label>
+                <select id="pf-tipo-empresa">
+                  <option value="">Selecione o tipo da empresa</option>
+                  <option value="privada">Empresa Privada</option>
+                  <option value="publica">Órgão Público</option>
+                </select>
+              </div>
+              <div class="pf-field">
+                <label>🏛️ Natureza jurídica</label>
+                <div class="combo" id="combo-natureza" data-tipo="natureza" data-code="">
+                  <input class="combo-input" type="text" placeholder="Selecione uma natureza jurídica…" autocomplete="off" />
+                  <div class="combo-list" hidden></div>
+                </div>
+              </div>
+              <div class="pf-field">
+                <label>🔗 Perfil LinkedIn <span class="pf-soon" title="Requer dataset de perfis/empresas do LinkedIn">🔜</span></label>
+                <input id="pf-linkedin-empresa" type="text" placeholder="Insira a URL do perfil LinkedIn" disabled />
+              </div>
+              <div class="pf-field">
+                <label>📋 Omitir Listas <span class="pf-soon" title="CapiBLU ainda não tem listas salvas/CRM">🔜</span></label>
+                <select id="pf-omitir-listas" disabled><option value="">Selecione as listas de contato</option></select>
+              </div>
+              <div class="pf-field">
+                <label>🚩 Situação cadastral (detalhada)</label>
+                <select id="pf-situacao">
+                  <option value="ATIVA" selected>Ativa</option>
+                  <option value="">Todas</option>
+                  <option value="BAIXADA">Baixada</option>
+                  <option value="INAPTA">Inapta</option>
+                  <option value="SUSPENSA">Suspensa</option>
+                </select>
+              </div>
+              <div class="pf-field pf-row2">
+                <div>
+                  <label>💰 Capital social mín. (R$)</label>
+                  <input id="pf-cap-min" type="number" placeholder="0" min="0" />
+                </div>
+                <div>
+                  <label>💰 Capital social máx. (R$)</label>
+                  <input id="pf-cap-max" type="number" placeholder="0" min="0" />
+                </div>
+              </div>
+              <div class="pf-toggles">
+                <label class="toggle-row"><span>Filtro de Exclusão de Listas <span class="pf-soon">🔜</span></span><input id="pf-exclusao-listas" type="checkbox" disabled /></label>
+                <label class="toggle-row"><span>Optante MEI</span><input id="pf-mei-optante" type="checkbox" /></label>
+                <label class="toggle-row"><span>Excluir optantes MEI</span><input id="pf-mei-excluir" type="checkbox" /></label>
+                <label class="toggle-row"><span title="Base é 100% de empresas com CNPJ">Possui CNPJ</span><input id="pf-possui-cnpj" type="checkbox" checked disabled /></label>
+              </div>
+            </div>
+          </details>
         </div>
         <div class="prosp-sidebar-foot">
           <button id="pf-buscar" class="btn-primary prosp-filtrar-btn">🔍 Filtrar</button>

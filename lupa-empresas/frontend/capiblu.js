@@ -846,8 +846,8 @@ function renderProspList() {
     <div class="prosp-table-scroll">
       <table class="prosp-table prosp-empresas-table prosp-ds-table">
         <thead><tr>
-          <th></th><th>NOME</th><th>📍 LOCALIZAÇÃO</th><th>🏭 INDÚSTRIA</th>
-          <th>👥 FUNCIONÁRIOS</th><th>💰 FATURAMENTO</th><th>SITUAÇÃO</th>
+          <th></th><th>Empresa e sócio</th><th>Cidade</th><th>O que a empresa faz</th>
+          <th>Funcionários</th><th>Faturamento</th><th>Situação</th>
         </tr></thead>
         <tbody id="prosp-emp-body"></tbody>
       </table>
@@ -1213,6 +1213,12 @@ function prospTrocarPerfil(perfil) {
 }
 document.getElementById('pf-perfil-empresa').addEventListener('click', () => prospTrocarPerfil('empresa'));
 document.getElementById('pf-perfil-pessoa').addEventListener('click', () => prospTrocarPerfil('pessoa'));
+
+// Toggle simples "deixar de fora fechadas/suspensas" — espelha no select detalhado
+// de situação cadastral (que fica nos filtros avançados), sem duplicar lógica de busca.
+document.getElementById('pf-somente-ativas').addEventListener('change', e => {
+  document.getElementById('pf-situacao').value = e.target.checked ? 'ATIVA' : '';
+});
 
 function prospFiltrar() {
   return prospState.perfil === 'pessoa' ? prospBuscarPessoas() : prospBuscar();

@@ -485,6 +485,10 @@ body {
   padding: 8px 10px; background: var(--blue-soft); border-radius: var(--radius-sm);
 }
 .pf-soon { font-size: .78rem; cursor: help; opacity: .75; }
+.pf-advanced { border-top: 1px solid var(--gray-200); padding-top: 16px; }
+.pf-advanced summary { font-size: .85rem; font-weight: 600; color: var(--blue-mid); cursor: pointer; padding: 4px 0; }
+.pf-advanced-body { display: flex; flex-direction: column; gap: 12px; padding-top: 10px; }
+.pf-advanced-hint { font-size: .78rem; line-height: 1.5; color: var(--gray-500); margin: 0; }
 .pf-field input:disabled, .pf-field select:disabled { background: var(--gray-100); color: var(--gray-400); cursor: not-allowed; }
 .toggle-row input:disabled { opacity: .4; cursor: not-allowed; }
 
