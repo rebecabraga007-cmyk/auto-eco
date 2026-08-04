@@ -756,8 +756,10 @@ async function prospBuscar() {
   const btn = document.getElementById('pf-buscar');
   const out = document.getElementById('prosp-results');
   const cnt = document.getElementById('pf-count');
+  const cntSub = document.getElementById('pf-count-sub');
   btn.disabled = true;
   cnt.textContent = '';
+  if (cntSub) cntSub.textContent = '';
   out.innerHTML = spinner();
   try {
     const res = await fetch(`${API}/api/companies/search`, {
@@ -776,9 +778,10 @@ async function prospBuscar() {
     prospState.rows = [];
     const capMsg = prospState.total > prospState.empresas.length
       ? ` (carregadas ${prospState.empresas.length}${prospState.fonte === 'local' ? '' : ' — refine os filtros para focar'})` : '';
-    const fonteTag = prospState.fonte === 'local' ? ' · base local RFB' : (prospState.fonte === 'casadosdados' ? ' · Casa dos Dados' : '');
+    const fonteTag = prospState.fonte === 'local' ? 'base local RFB' : (prospState.fonte === 'casadosdados' ? 'Casa dos Dados' : '');
     const totalStr = res.total_aprox ? `${prospState.total.toLocaleString('pt-BR')}+` : prospState.total.toLocaleString('pt-BR');
-    cnt.textContent = `${totalStr} resultado(s) encontrado(s).${capMsg}${fonteTag}`;
+    cnt.textContent = `${totalStr} empresa${prospState.total === 1 ? '' : 's'} bate${prospState.total === 1 ? '' : 'm'} com seus filtros`;
+    if (cntSub) cntSub.textContent = `${capMsg.trim() || ('Mostrando ' + prospState.empresas.length)}${fonteTag ? ' · ' + fonteTag : ''}`.replace(/^\(|\)$/g, '');
     renderProspList();
   } catch (e) {
     out.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
@@ -797,6 +800,7 @@ function renderProspList() {
   const max = emp.length;
   out.innerHTML = `
     <div class="prosp-build">
+      <div class="prosp-build-overline">Passo 2 — montar a lista para ligar</div>
       <div class="prosp-build-row">
         <label>Montar lista das primeiras
           <input id="pf-qtd" type="number" min="1" max="${max}" value="${Math.min(25, max)}" class="filter-num" />
@@ -846,8 +850,7 @@ function renderProspList() {
     <div class="prosp-table-scroll">
       <table class="prosp-table prosp-empresas-table prosp-ds-table">
         <thead><tr>
-          <th></th><th>Empresa e sócio</th><th>Cidade</th><th>O que a empresa faz</th>
-          <th>Funcionários</th><th>Faturamento</th><th>Situação</th>
+          <th></th><th>Empresa e sócio</th><th>Cidade</th><th>O que a empresa faz</th><th>Situação</th>
         </tr></thead>
         <tbody id="prosp-emp-body"></tbody>
       </table>
@@ -893,7 +896,8 @@ async function prospDedupMeetime() {
     const porCnpj = (j.removidos || []).filter(r => r._dedup === 'cnpj').length;
     const porNome = (j.removidos || []).filter(r => r._dedup === 'nome').length;
     document.getElementById('pf-count').textContent =
-      `${prospState.empresas.length} resultado(s) após dedup · base local RFB`;
+      `${prospState.empresas.length} empresa${prospState.empresas.length === 1 ? '' : 's'} após dedup`;
+    const sub = document.getElementById('pf-count-sub'); if (sub) sub.textContent = 'base local RFB';
     renderProspList();
     const noteEl = document.getElementById('pf-dedup-note');
     if (noteEl) noteEl.innerHTML = `✅ Removidas <strong>${antes - prospState.empresas.length}</strong> já na Meetime ` +
@@ -917,22 +921,18 @@ function renderEmpPage() {
   body.innerHTML = emp.slice(page * perPage, page * perPage + perPage).map((e, k) => {
     const i = page * perPage + k;
     const nome = e.razao_social || e.nome_fantasia || '—';
+    const porteBaixo = (e.porte || '').toLowerCase();
+    const porteLabel = porteBaixo.includes('micro') ? 'micro empresa' : porteBaixo.includes('pequeno') ? 'pequeno porte' : (e.porte || '');
     return `
       <tr>
         <td><input type="checkbox" class="prosp-co-check" data-i="${i}" /></td>
         <td>
-          <div class="prosp-ds-name-cell">
-            <span class="prosp-avatar" style="background:${avatarColor(nome)}">${esc(avatarInitial(nome))}</span>
-            <div>
-              <div class="prosp-co-name prosp-ds-link" title="${esc(fmtCnpj(e.cnpj))}">${esc(nome)}</div>
-              ${e.nome_fantasia && e.nome_fantasia !== e.razao_social ? `<div class="prosp-co-fantasia">${esc(e.nome_fantasia)}</div>` : ''}
-            </div>
-          </div>
+          <div class="prosp-co-name">${esc(nome)}</div>
+          <div class="prosp-co-meta mono" title="${esc(fmtCnpj(e.cnpj))}">${esc(fmtCnpj(e.cnpj))}${porteLabel ? ' · ' + esc(porteLabel) : ''}</div>
+          ${e.nome_fantasia && e.nome_fantasia !== e.razao_social ? `<div class="prosp-co-fantasia">${esc(e.nome_fantasia)}</div>` : ''}
         </td>
-        <td>${[e.municipio, e.uf].filter(Boolean).length ? '📍 ' + esc([e.municipio, e.uf].filter(Boolean).join(', ')) : '—'}</td>
-        <td class="prosp-co-cnae" title="${esc(e.cnae || '')}">${e.cnae ? '🏭 ' + esc(e.cnae) : '—'}</td>
-        <td>${e.porte ? '👥 ' + esc(e.porte) : '—'}<span class="pf-soon" title="Nº exato de funcionários requer dataset de perfis profissionais"> 🔜</span></td>
-        <td>${e.capital_social ? '💰 ' + fmtMoneyShort(e.capital_social) : '—'}<span class="pf-soon" title="Faturamento real requer dataset comercial; mostramos Capital Social (Receita) como referência"> 🔜</span></td>
+        <td>${[e.municipio, e.uf].filter(Boolean).length ? esc([e.municipio, e.uf].filter(Boolean).join(', ')) : '—'}</td>
+        <td class="prosp-co-cnae" title="${esc(e.cnae || '')}">${e.cnae ? esc(e.cnae) : '—'}</td>
         <td>${badgeSit(e.situacao)}</td>
       </tr>`;
   }).join('');

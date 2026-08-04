@@ -148,14 +148,14 @@
       <!-- Sidebar de filtros (retrátil, estilo Datastone) -->
       <aside class="prosp-sidebar" id="prosp-sidebar">
         <div class="prosp-sidebar-head">
-          <span>🔍 Filtros de pesquisa</span>
+          <span class="module-overline" style="margin:0">Passo 1 — quem você procura</span>
           <button type="button" class="prosp-collapse-btn" id="prosp-collapse-btn" title="Recolher/expandir">◄</button>
         </div>
         <div class="prosp-sidebar-body">
           <!-- Perfil: Clientes potenciais (pessoas/sócios) | Empresas -->
           <div class="pf-perfil-toggle">
-            <button type="button" class="pf-perfil-btn active" data-perfil="empresa" id="pf-perfil-empresa">🏢 Empresas</button>
-            <button type="button" class="pf-perfil-btn" data-perfil="pessoa" id="pf-perfil-pessoa">👤 Clientes potenciais</button>
+            <button type="button" class="pf-perfil-btn active" data-perfil="empresa" id="pf-perfil-empresa">Empresas</button>
+            <button type="button" class="pf-perfil-btn" data-perfil="pessoa" id="pf-perfil-pessoa">Sócios</button>
           </div>
           <p class="pf-perfil-note" id="pf-perfil-note-pessoa" hidden>
             ℹ️ Baseado em <strong>sócios reais</strong> da Receita (cargo = qualificação societária). Campos marcados <span class="pf-soon">🔜</span> dependem de um dataset de perfis profissionais ainda não conectado.
@@ -366,7 +366,10 @@
       <div class="prosp-content">
         <div class="prosp-content-head">
           <button type="button" class="prosp-expand-btn" id="prosp-expand-btn" title="Mostrar filtros" hidden>🔍</button>
-          <span id="pf-count" class="prosp-count"></span>
+          <div>
+            <div id="pf-count" class="prosp-count"></div>
+            <p id="pf-count-sub" class="prosp-count-sub"></p>
+          </div>
         </div>
         <div id="prosp-results" class="results-area"></div>
       </div>
