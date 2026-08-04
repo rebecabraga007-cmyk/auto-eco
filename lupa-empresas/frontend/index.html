@@ -13,23 +13,31 @@
 </head>
 <body>
 
-<header class="topbar">
+<div class="app-shell">
+<aside class="sidebar">
   <a class="brand" href="/">
     <span class="logo-icon">🦫</span>
     <span class="brand-name">Capi<strong>BLU</strong></span>
     <span class="brand-tag">BETA</span>
   </a>
-  <nav class="top-nav">
-    <button class="nav-btn active" data-tab="empresa">🏢 Empresa</button>
-    <button class="nav-btn" data-tab="pessoa">👤 Pessoa / CPF</button>
-    <button class="nav-btn" data-tab="nome">🔎 Busca por Nome</button>
-    <button class="nav-btn" data-tab="prospec">📋 Prospecção</button>
-    <button class="nav-btn" data-tab="assertiva">🎯 Busca Assertiva</button>
-    <button class="nav-btn" data-tab="enrich">🔼 Enriquecer Lista</button>
-    <button class="nav-btn" data-tab="modelos">🧩 Meus Modelos</button>
-    <button class="nav-btn" data-tab="telefone">📞 Telefone</button>
+
+  <nav class="sidebar-nav">
+    <div class="nav-group-label">Achar alguém</div>
+    <button class="nav-btn active" data-tab="empresa">Uma empresa<span class="nav-btn-sub">por CNPJ ou nome</span></button>
+    <button class="nav-btn" data-tab="pessoa">Uma pessoa<span class="nav-btn-sub">por CPF, com dados completos</span></button>
+    <button class="nav-btn" data-tab="nome">Uma pessoa pelo nome<span class="nav-btn-sub">quando não sei o CPF</span></button>
+    <button class="nav-btn" data-tab="telefone">De quem é este telefone<span class="nav-btn-sub">descobrir o dono do número</span></button>
+
+    <div class="nav-group-label">Montar uma lista</div>
+    <button class="nav-btn" data-tab="prospec">Procurar clientes<span class="nav-btn-sub">filtrar empresas e sócios</span></button>
+    <button class="nav-btn" data-tab="assertiva">Consulta completa<span class="nav-btn-sub">tudo sobre um CPF ou CNPJ</span></button>
+
+    <div class="nav-group-label">Completar o que já tenho</div>
+    <button class="nav-btn" data-tab="enrich">Minha planilha<span class="nav-btn-sub">subir e receber preenchida</span></button>
+    <button class="nav-btn" data-tab="modelos">Meus modelos<span class="nav-btn-sub">colunas do jeito que você usa</span></button>
   </nav>
-  <div class="topbar-user" id="user-menu">
+
+  <div class="sidebar-user" id="user-menu">
     <span class="topbar-user-name" id="user-name">—</span>
     <span class="topbar-user-caret">▾</span>
     <div class="user-dropdown" id="user-dropdown" hidden>
@@ -39,15 +47,16 @@
       <button id="menu-logout">🚪 Sair</button>
     </div>
   </div>
-</header>
+</aside>
 
 <main class="main-wrap">
 
   <!-- ══ MÓDULO EMPRESA ══ -->
   <section id="tab-empresa" class="tab-section active">
     <div class="module-header">
-      <h2 class="module-title">🏢 Busca de Empresa</h2>
-      <p class="module-sub">CNPJ exato ou nome — Receita Federal · sócios com CPF resolvido</p>
+      <div class="module-overline">Achar alguém · empresa</div>
+      <h2 class="module-title">Qual empresa você quer conhecer?</h2>
+      <p class="module-sub">Cole o CNPJ ou escreva o nome. A gente busca na base da Receita Federal e mostra também quem são os sócios, com o CPF já resolvido.</p>
     </div>
     <div class="search-panel">
       <div class="search-row">
@@ -71,8 +80,9 @@
   <!-- ══ MÓDULO PESSOA CPF ══ -->
   <section id="tab-pessoa" class="tab-section">
     <div class="module-header">
-      <h2 class="module-title">👤 Pessoa por CPF</h2>
-      <p class="module-sub">JBR (223M CPFs) + Mk Buscas — dados completos, telefones, endereços, vínculos</p>
+      <div class="module-overline">Achar alguém · pessoa</div>
+      <h2 class="module-title">Quem é essa pessoa?</h2>
+      <p class="module-sub">Cole o CPF. Procuro em duas bases públicas e mostro tudo que aparece: nome da mãe, endereços, telefones e a situação na Receita.</p>
     </div>
     <div class="search-panel">
       <div class="search-row">
@@ -84,8 +94,8 @@
       </div>
       <div class="filter-row">
         <span class="filter-label">Fontes:</span>
-        <span class="source-pill" style="background:#dbeafe;color:#1d4ed8">JBR 223M</span>
-        <span class="source-pill" style="background:#d1fae5;color:#065f46">Mk Buscas</span>
+        <span class="source-pill" style="background:var(--blue-soft);color:var(--blue-dark)">JBR 223M</span>
+        <span class="source-pill" style="background:var(--green-soft);color:var(--green)">Mk Buscas</span>
       </div>
     </div>
     <div id="cpf-results" class="results-area"></div>
@@ -94,8 +104,9 @@
   <!-- ══ MÓDULO NOME ══ -->
   <section id="tab-nome" class="tab-section">
     <div class="module-header">
-      <h2 class="module-title">🔎 Busca por Nome</h2>
-      <p class="module-sub">Candidatos no JBR — clique em qualquer pessoa para enriquecer com Mk Buscas</p>
+      <div class="module-overline">Achar alguém · pelo nome</div>
+      <h2 class="module-title">Não sabe o CPF? Busque pelo nome</h2>
+      <p class="module-sub">Mostro os candidatos com esse nome na base JBR — clique em qualquer um para completar com telefone (Mk Buscas).</p>
     </div>
     <div class="search-panel">
       <div class="search-row">
@@ -352,8 +363,9 @@
   <!-- ══ MÓDULO TELEFONE REVERSO ══ -->
   <section id="tab-assertiva" class="tab-section">
     <div class="module-header">
-      <h2 class="module-title">🎯 Busca Assertiva</h2>
-      <p class="module-sub">Consulta cadastral rica (Assertiva Localize): CPF, Nome/Endereço, Telefone, E-mail e CNPJ.</p>
+      <div class="module-overline">Achar alguém · consulta completa</div>
+      <h2 class="module-title">Consulta completa</h2>
+      <p class="module-sub">Tudo que existe sobre um CPF ou CNPJ na Assertiva: nome, endereço, telefone, e-mail.</p>
     </div>
     <div class="search-panel">
       <div class="filter-row">
@@ -452,8 +464,9 @@
 
   <section id="tab-enrich" class="tab-section">
     <div class="module-header">
-      <h2 class="module-title">🔼 Enriquecer Lista</h2>
-      <p class="module-sub">Suba uma planilha (por CNPJ), qualifique os dados pela Receita + Assertiva e verifique telefones (integralX). Escolha quais campos adicionar.</p>
+      <div class="module-overline">Completar o que já tenho</div>
+      <h2 class="module-title">Sua planilha, devolvida completa</h2>
+      <p class="module-sub">Suba um arquivo com uma coluna de CNPJ. A gente procura na Receita e nas bases de telefone e devolve o mesmo arquivo com as colunas novas do lado.</p>
     </div>
     <div class="search-panel">
       <div class="en-step">
@@ -493,8 +506,9 @@
 
   <section id="tab-modelos" class="tab-section">
     <div class="module-header">
-      <h2 class="module-title">🧩 Meus Modelos</h2>
-      <p class="module-sub">Crie modelos de planilha (escolha os cabeçalhos e qual campo/API preenche cada um) e reuse na Prospecção B2B. Ou suba uma planilha-modelo para detectar os cabeçalhos automaticamente.</p>
+      <div class="module-overline">Completar o que já tenho</div>
+      <h2 class="module-title">Sempre com os mesmos cabeçalhos?</h2>
+      <p class="module-sub">Salve um modelo (escolha os cabeçalhos e o que preenche cada um) e a planilha sai pronta no formato que seu time já usa, sem reorganizar coluna na mão.</p>
     </div>
     <div class="search-panel">
       <div class="en-step">
@@ -524,8 +538,9 @@
 
   <section id="tab-telefone" class="tab-section">
     <div class="module-header">
-      <h2 class="module-title">📞 Telefone Reverso</h2>
-      <p class="module-sub">Descubra quais CPFs/CNPJs estão atrelados a um telefone (WorkAPI intelgrax-tel).</p>
+      <div class="module-overline">Achar alguém · pelo telefone</div>
+      <h2 class="module-title">De quem é este telefone?</h2>
+      <p class="module-sub">Descubra quais CPFs e CNPJs estão atrelados a um número.</p>
     </div>
     <div class="search-panel">
       <div class="search-row">
@@ -544,6 +559,7 @@
   </section>
 
 </main>
+</div>
 
 <footer class="footer">
   CapiBLU · BLU Sales Group · Receita Federal via BrasilAPI · JBR 223M · Mk Buscas
