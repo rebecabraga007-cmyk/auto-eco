@@ -408,6 +408,7 @@ body {
 .rank-badge.rank-alta { background: var(--green-soft); color: var(--green); }
 .rank-badge.rank-media { background: var(--amber-soft); color: var(--amber); }
 .rank-badge.rank-baixa { background: var(--red-soft); color: var(--red); }
+.rank-porque { font-size: .74rem; line-height: 1.5; color: var(--gray-500); margin-top: 4px; }
 
 /* ── RESULT TABS (nome module) ── */
 .res-tabs {

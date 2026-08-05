@@ -766,24 +766,32 @@ function calcularScorePessoa(mk, pistas, extra) {
   ].join(' '));
 
   let pontos = 0, maxPontos = 0;
+  const motivos = [];
 
   if (pistas.uf) {
     maxPontos += 35;
-    if (enderecos.some(e => normTexto(e.uf) === normTexto(pistas.uf))) pontos += 35;
+    const bate = enderecos.some(e => normTexto(e.uf) === normTexto(pistas.uf));
+    if (bate) { pontos += 35; motivos.push(`✅ Estado bate (${pistas.uf.toUpperCase()})`); }
+    else motivos.push(`❌ Estado não bate com nenhum endereço encontrado`);
   }
   if (pistas.cidade) {
     maxPontos += 35;
-    if (enderecos.some(e => normTexto(e.cidade).includes(normTexto(pistas.cidade)))) pontos += 35;
+    const bate = enderecos.some(e => normTexto(e.cidade).includes(normTexto(pistas.cidade)));
+    if (bate) { pontos += 35; motivos.push(`✅ Cidade bate (${pistas.cidade})`); }
+    else motivos.push(`❌ Cidade "${pistas.cidade}" não bate com nenhum endereço encontrado`);
   }
   if (pistas.descricao) {
     maxPontos += 30;
     const termos = normTexto(pistas.descricao).split(/\s+/).filter(t => t.length >= 3);
-    const bateu = termos.filter(t => camposTexto.includes(t)).length;
-    if (termos.length) pontos += Math.round((bateu / termos.length) * 30);
+    const bateram = termos.filter(t => camposTexto.includes(t));
+    if (termos.length) pontos += Math.round((bateram.length / termos.length) * 30);
+    if (bateram.length) motivos.push(`✅ Descrição: bateu "${bateram.join(', ')}" (de ${termos.length} termo${termos.length===1?'':'s'})`);
+    else motivos.push(`❌ Nenhum termo da descrição apareceu nos dados encontrados`);
   }
+  if (!enderecos.length && (pistas.uf || pistas.cidade)) motivos.unshift('⚠️ Nenhum endereço encontrado pra essa pessoa (Mk/Assertiva sem dado)');
   // Sem nenhuma pista: não dá pra rankear além do que a busca por nome já fez.
-  if (maxPontos === 0) return null;
-  return Math.round((pontos / maxPontos) * 100);
+  if (maxPontos === 0) return { score: null, motivos: [] };
+  return { score: Math.round((pontos / maxPontos) * 100), motivos };
 }
 
 window.calcularRanking = async function(prefix, agressivo) {
@@ -822,14 +830,14 @@ window.calcularRanking = async function(prefix, agressivo) {
           extra = extrairAssertiva(as);
         } catch (e) { /* segue só com Mk */ }
       }
-      const score = calcularScorePessoa(mk, pistas, extra);
-      resultados.push({ card, score });
+      const { score, motivos } = calcularScorePessoa(mk, pistas, extra);
+      resultados.push({ card, score, motivos });
     } catch (e) {
-      resultados.push({ card, score: null });
+      resultados.push({ card, score: null, motivos: ['❌ Erro ao consultar dados desta pessoa'] });
     }
   }
   resultados.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
-  resultados.forEach(({ card, score }) => {
+  resultados.forEach(({ card, score, motivos }) => {
     container.appendChild(card);
     let badge = card.querySelector('.rank-badge');
     if (!badge) {
@@ -837,11 +845,20 @@ window.calcularRanking = async function(prefix, agressivo) {
       badge.className = 'rank-badge';
       card.querySelector('.card-person-header > div:last-child').prepend(badge);
     }
-    if (score === null) { badge.textContent = ''; badge.hidden = true; }
-    else {
+    let porque = card.querySelector('.rank-porque');
+    if (!porque) {
+      porque = document.createElement('div');
+      porque.className = 'rank-porque';
+      card.querySelector('.card-person-header > div:first-child').appendChild(porque);
+    }
+    if (score === null) {
+      badge.textContent = ''; badge.hidden = true;
+      porque.innerHTML = '';
+    } else {
       badge.hidden = false;
       badge.textContent = `${score}% chance`;
       badge.className = 'rank-badge ' + (score >= 66 ? 'rank-alta' : score >= 33 ? 'rank-media' : 'rank-baixa');
+      porque.innerHTML = (motivos || []).map(m => `<div>${esc(m)}</div>`).join('');
     }
   });
   note.textContent = `Ranking (${fonte}) calculado para ${alvo.length} candidato(s). Ordenado por % de chance.`;
