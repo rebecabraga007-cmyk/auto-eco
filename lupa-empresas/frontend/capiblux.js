@@ -857,14 +857,25 @@ window.calcularRanking = async function(prefix, agressivo) {
       const mk = await fetch(`${API}/api/person/${cpf}/mk`).then(r => r.json());
       let extra = null;
       if (agressivo) {
+        window._assertivaPorCpf = window._assertivaPorCpf || {};
         try {
-          const as = await fetch(`${API}/api/assertiva/cpf?cpf=${cpf}&finalidade=5`).then(r => r.json());
+          const asResp = await fetch(`${API}/api/assertiva/cpf?cpf=${cpf}&finalidade=5`);
+          const asText = await asResp.text();
+          let as;
+          try { as = JSON.parse(asText); }
+          catch (parseErr) {
+            // Resposta não é JSON (ex.: página de erro HTML) — mostra os primeiros
+            // caracteres pra dar pra diagnosticar, em vez de sumir sem explicação.
+            as = { status: 'error', message: `Resposta inesperada (HTTP ${asResp.status}): ${asText.slice(0, 150)}` };
+          }
           extra = extrairAssertiva(as);
           // Guarda o JSON cru pra exibir por completo quando a pessoa abrir o card
           // (mesmos blocos da aba Consulta Assertiva) — não fica só influenciando a nota.
-          window._assertivaPorCpf = window._assertivaPorCpf || {};
           window._assertivaPorCpf[cpf] = as;
-        } catch (e) { /* segue só com Mk */ }
+        } catch (e) {
+          // Erro de rede/fetch em si (não da resposta) — também fica visível no card.
+          window._assertivaPorCpf[cpf] = { status: 'error', message: `Falha ao consultar: ${e.message}` };
+        }
       }
       const { score, motivos } = calcularScorePessoa(mk, pistas, extra);
       resultados.push({ card, score, motivos });
