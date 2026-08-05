@@ -107,9 +107,23 @@ body {
 /* Prospecção ocupa a tela toda (estilo Datastone), fora do container de medida fixa. */
 .main-wrap:has(#tab-prospec.active) { max-width: 100%; padding: 34px 40px 80px; }
 
+/* ── Hambúrguer (menu lateral vira topo colapsável em telas pequenas) ── */
+.hamburger-btn { display: none; flex-direction: column; justify-content: center; gap: 4px; width: 32px; height: 32px; background: transparent; border: none; cursor: pointer; padding: 0; flex-shrink: 0; }
+.hamburger-btn span { display: block; width: 22px; height: 2px; background: #fff; border-radius: 1px; transition: transform .15s, opacity .15s; }
+.sidebar.mobile-open .hamburger-btn span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.sidebar.mobile-open .hamburger-btn span:nth-child(2) { opacity: 0; }
+.sidebar.mobile-open .hamburger-btn span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+.sidebar-topbar { display: flex; align-items: center; justify-content: space-between; }
+
 @media (max-width: 900px) {
   .app-shell { grid-template-columns: 1fr; }
   .sidebar { position: static; height: auto; }
+  .sidebar-topbar { padding: 18px 20px; border-bottom: 1px solid #1E4265; }
+  .brand { padding: 0; border-bottom: none; }
+  .hamburger-btn { display: flex; }
+  .sidebar-nav, .sidebar-user { display: none; }
+  .sidebar.mobile-open .sidebar-nav, .sidebar.mobile-open .sidebar-user { display: flex; }
+  .sidebar.mobile-open .sidebar-nav { flex-direction: column; }
   .main-wrap { padding: 28px 20px 60px; }
 }
 

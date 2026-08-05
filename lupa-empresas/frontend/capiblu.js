@@ -4,6 +4,17 @@
 
 const API = '';  // same origin
 
+// ── Menu hambúrguer (sidebar colapsa em telas pequenas) ──────────────
+(function initHamburger() {
+  const btn = document.getElementById('hamburger-btn');
+  const sidebar = document.getElementById('sidebar');
+  if (!btn || !sidebar) return;
+  btn.addEventListener('click', () => {
+    const open = sidebar.classList.toggle('mobile-open');
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+})();
+
 // ── Tab navigation ──────────────────────────────────
 let _prospAutoLoaded = false;
 document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -21,6 +32,8 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     }
     if (tab === 'admin' && typeof admCarregar === 'function') admCarregar();
     fetch(`${API}/api/navlog`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tab }) }).catch(() => {});
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar) sidebar.classList.remove('mobile-open');
   });
 });
 

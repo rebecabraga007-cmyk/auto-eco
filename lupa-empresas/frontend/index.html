@@ -14,14 +14,19 @@
 <body>
 
 <div class="app-shell">
-<aside class="sidebar">
-  <a class="brand" href="/">
-    <span class="logo-icon">🦫</span>
-    <span class="brand-name">Capi<strong>BLU</strong></span>
-    <span class="brand-tag">BETA</span>
-  </a>
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-topbar">
+    <a class="brand" href="/">
+      <span class="logo-icon">🦫</span>
+      <span class="brand-name">Capi<strong>BLU</strong></span>
+      <span class="brand-tag">BETA</span>
+    </a>
+    <button type="button" class="hamburger-btn" id="hamburger-btn" aria-label="Abrir menu" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
 
-  <nav class="sidebar-nav">
+  <nav class="sidebar-nav" id="sidebar-nav">
     <div class="nav-group-label">Achar alguém</div>
     <button class="nav-btn active" data-tab="empresa">Uma empresa<span class="nav-btn-sub">por CNPJ ou nome</span></button>
     <button class="nav-btn" data-tab="pessoa">Uma pessoa<span class="nav-btn-sub">por CPF, com dados completos</span></button>
@@ -613,10 +618,6 @@
 
 </main>
 </div>
-
-<footer class="footer">
-  CapiBLU · BLU Sales Group · Receita Federal via BrasilAPI · JBR 223M · Mk Buscas
-</footer>
 
 <!-- Tela de login (cobre tudo até autenticar) -->
 <div id="login-overlay" class="login-overlay" hidden>
