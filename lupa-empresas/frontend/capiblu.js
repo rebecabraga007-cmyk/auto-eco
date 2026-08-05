@@ -771,20 +771,18 @@ function achatarEmTexto(obj, profundidade) {
 }
 
 function extrairAssertiva(as) {
-  if (as?.status !== 'ok') return { enderecos: [], textoExtra: '' };
+  if (as?.status !== 'ok') return { enderecos: [], textoExtra: '', participacoes: [] };
   const resp = as.data?.resposta || {};
-  const dc = resp.dadosCadastrais || {};
   const enderecos = mergeArr(resp.enderecos, resp.enderecosAdicionados).map(e => ({
     uf: e.uf, cidade: e.cidade, bairro: e.bairro, logradouro: e.logradouro,
   }));
-  // Todo o dadosCadastrais (nome da mãe, estado civil, CBO/profissão, classe social,
-  // renda, óbito etc.) + nomes de sócios — vira texto pra casar com a descrição livre.
-  const textoExtra = [
-    achatarEmTexto(dc),
-    (resp.socios || []).map(s => s.nome || '').join(' '),
-    (resp.possiveisDecisores || []).map(s => s.nome || '').join(' '),
-  ].filter(Boolean).join(' ');
-  return { enderecos, textoExtra };
+  const participacoes = resp.participacoesEmpresas || resp.participacoesSocietarias || [];
+  // Achata a resposta INTEIRA da Assertiva (dadosCadastrais, participações
+  // societárias/vínculo profissional, sócios, decisores, telefones, o que vier) —
+  // "vendas" ou qualquer outro termo pode estar em qualquer canto do JSON, não só
+  // em dadosCadastrais.
+  const textoExtra = achatarEmTexto(resp);
+  return { enderecos, textoExtra, participacoes };
 }
 
 // Fontes de texto NOMEADAS (pra dizer EM QUE CAMPO um termo da descrição bateu,
@@ -801,7 +799,8 @@ function fontesTexto(mkD, extra) {
     { fonte: 'Parentes', texto: (mkD.parentes || []).map(p => p.nomeParente || '').join(' ') },
     { fonte: 'Vizinhos', texto: (mkD.vizinhos || []).map(v => v.nome || '').join(' ') },
     { fonte: 'Empresas vinculadas (Mk)', texto: (mkD.empresas || []).map(e => e.relacao || e.tipoRelacao || '').join(' ') },
-    { fonte: 'Dados da Assertiva (ranking agressivo)', texto: (extra && extra.textoExtra) || '' },
+    { fonte: 'Vínculo profissional (Assertiva)', texto: ((extra && extra.participacoes) || []).map(p => `${p.cargo || ''} ${p.razaoSocial || ''}`).join(' ') },
+    { fonte: 'Outros dados da Assertiva (ranking agressivo)', texto: (extra && extra.textoExtra) || '' },
     // Rede de segurança: qualquer outro campo do Mk (escolaridade, benefícios,
     // perfil de consumo etc.) que não tenha um rótulo específico acima.
     { fonte: 'Outros dados (Mk)', texto: achatarEmTexto(mkD) },
