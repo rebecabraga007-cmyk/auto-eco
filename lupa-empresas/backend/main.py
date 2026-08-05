@@ -40,6 +40,7 @@ import sheet_reader
 import linkedin_scraper
 import mkbuscas
 import serasa
+import dossie
 
 # Base local de CPF (JBR_PF) — modulo compartilhado em ../../jbr_base.
 _JBR = os.path.join(
@@ -292,6 +293,35 @@ async def company(cnpj: str):
             status_code=502,
             content={"status": "error", "message": "Falha ao consultar a BrasilAPI."},
         )
+
+
+@app.get("/api/dossie/pdf")
+async def dossie_pdf(tipo: str, doc: str):
+    """Dossiê em PDF: junta Mk Buscas + Assertiva + confirmação de telefone
+    (CPF) ou Receita Federal + Assertiva + confirmação de telefone (CNPJ)."""
+    doc_digits = re.sub(r"\D", "", doc or "")
+    try:
+        if tipo == "cpf":
+            if len(doc_digits) != 11:
+                return JSONResponse(status_code=400, content={"status": "error", "message": "CPF inválido."})
+            dados = await dossie.montar_cpf(doc_digits)
+            pdf_bytes = dossie.gerar_pdf_cpf(dados)
+            nome_arquivo = f"dossie-cpf-{doc_digits}.pdf"
+        elif tipo == "cnpj":
+            if len(doc_digits) != 14:
+                return JSONResponse(status_code=400, content={"status": "error", "message": "CNPJ inválido."})
+            dados = await dossie.montar_cnpj(doc_digits)
+            pdf_bytes = dossie.gerar_pdf_cnpj(dados)
+            nome_arquivo = f"dossie-cnpj-{doc_digits}.pdf"
+        else:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "tipo deve ser 'cpf' ou 'cnpj'."})
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"status": "error", "message": f"Falha ao montar dossiê: {str(exc)[:200]}"})
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes), media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{nome_arquivo}"'},
+    )
 
 
 @app.get("/api/company/{cnpj}/employees")

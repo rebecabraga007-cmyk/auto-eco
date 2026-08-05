@@ -168,6 +168,7 @@ function renderEmpresas(data) {
       </div>
       <div class="result-actions">
         ${badgeSit(sit)}
+        <button class="btn-secondary" onclick="event.preventDefault(); event.stopPropagation(); exportarDossie('cnpj','${onlyDigits(cnpj)}', this)">📄 PDF</button>
         <span class="result-link">Ver detalhes →</span>
       </div>
     </a>`;
@@ -264,6 +265,7 @@ function renderPessoa(cpf, jbr, mk) {
     <div class="person-header-right">
       ${sitClara ? `<span class="badge ${sitGood ? 'badge-ativa' : sitBad ? 'badge-inativa' : 'badge-neutra'}">${esc(sitClara)}</span>` : ''}
       ${obitoMort ? `<span class="badge badge-inativa">Óbito registrado</span>` : ''}
+      <button class="btn-secondary" onclick="exportarDossie('cpf','${onlyDigits(cpf)}', this)">📄 Exportar PDF</button>
       <span class="person-header-note">consultado agora</span>
     </div>
   </div>`;
@@ -2397,3 +2399,31 @@ document.getElementById('inicio-precisa')?.addEventListener('click', e => {
   if (!item) return;
   document.querySelector(`.nav-btn[data-tab="${item.dataset.goto}"]`)?.click();
 });
+
+// ── Dossiê PDF (Mk + Assertiva + confirmação de telefone, CPF ou CNPJ) ──
+window.exportarDossie = async function(tipo, doc, btn) {
+  const original = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Gerando…'; }
+  try {
+    const r = await fetch(`${API}/api/dossie/pdf?tipo=${tipo}&doc=${doc}`);
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      alert(j.message || 'Falha ao gerar o dossiê.');
+      return;
+    }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `dossie-${tipo}-${doc}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    logBusca('Dossiê PDF', doc, `Dossiê ${tipo.toUpperCase()} gerado`);
+  } catch (e) {
+    alert('Erro ao gerar dossiê: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = original; }
+  }
+};
