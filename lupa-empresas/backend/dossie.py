@@ -45,6 +45,16 @@ def _fmt_cnpj(d: str) -> str:
     return f"{d[:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:14]}"
 
 
+def _lista_assertiva(bloco: Any) -> list[dict[str, Any]]:
+    """A Assertiva às vezes devolve telefones/enderecos como lista simples,
+    às vezes como {fixos:[...], moveis:[...]} — normaliza pros dois casos."""
+    if isinstance(bloco, list):
+        return bloco
+    if isinstance(bloco, dict):
+        return (bloco.get("fixos") or []) + (bloco.get("moveis") or [])
+    return []
+
+
 # ────────────────────────────────────────────────────────────────
 # Coleta de dados
 # ────────────────────────────────────────────────────────────────
@@ -60,16 +70,16 @@ async def montar_cpf(cpf: str) -> dict[str, Any]:
     as_cad = as_resp.get("dadosCadastrais") or {}
 
     telefones: list[dict[str, Any]] = list(mkbuscas._extract_phones(mk_data))
-    for t in (as_resp.get("telefones") or []) + (as_resp.get("telefonesAdicionados") or []):
-        num = str(t.get("telefone") or t.get("numero") or "")
+    for t in _lista_assertiva(as_resp.get("telefones")) + _lista_assertiva(as_resp.get("telefonesAdicionados")):
+        num = str(t.get("numero") or t.get("telefone") or "")
         if num:
             telefones.append({"telefone": num, "ddd": str(t.get("ddd") or ""), "fonte": "Assertiva"})
 
     confirmacoes = await _confirmar_telefones(telefones, doc)
 
     enderecos = mkbuscas._extract_cities(mk_data)
-    for e in (as_resp.get("enderecos") or []) + (as_resp.get("enderecosAdicionados") or []):
-        if e.get("cidade"):
+    for e in _lista_assertiva(as_resp.get("enderecos")) + _lista_assertiva(as_resp.get("enderecosAdicionados")):
+        if isinstance(e, dict) and e.get("cidade"):
             enderecos.append({"cidade": e.get("cidade", ""), "uf": e.get("uf", ""), "bairro": e.get("bairro", "")})
 
     return {
@@ -80,7 +90,8 @@ async def montar_cpf(cpf: str) -> dict[str, Any]:
         "nascimento": db.get("dataNascimento") or as_cad.get("dataNascimento") or "",
         "estado_civil": db.get("estadoCivil") or as_cad.get("estadoCivil") or "",
         "sexo": db.get("sexo") or as_cad.get("sexo") or "",
-        "situacao_cpf": db.get("situacaoCadastral") or "",
+        "situacao_cpf": (db.get("situacaoCadastral") or {}).get("descricaoSituacaoCadastral", "")
+                        if isinstance(db.get("situacaoCadastral"), dict) else (db.get("situacaoCadastral") or ""),
         "renda": db.get("faixaRenda") or db.get("renda") or "",
         "score": (db.get("scoreCredito") or {}).get("faixa") if isinstance(db.get("scoreCredito"), dict) else db.get("scoreCredito"),
         "profissao": (mk_data.get("profissao") or {}).get("cboDescricao") or "",
@@ -115,8 +126,8 @@ async def montar_cnpj(cnpj: str) -> dict[str, Any]:
         ddd = company.get(f"ddd_telefone_{i}")
         if ddd:
             telefones.append({"telefone": only_digits(ddd), "fonte": "Receita Federal"})
-    for t in (as_resp.get("telefones") or []) + (as_resp.get("telefonesAdicionados") or []):
-        num = str(t.get("telefone") or t.get("numero") or "")
+    for t in _lista_assertiva(as_resp.get("telefones")) + _lista_assertiva(as_resp.get("telefonesAdicionados")):
+        num = str(t.get("numero") or t.get("telefone") or "")
         if num:
             telefones.append({"telefone": num, "ddd": str(t.get("ddd") or ""), "fonte": "Assertiva"})
 
@@ -182,8 +193,17 @@ def _styles():
     return ss
 
 
+def _texto(v: Any) -> str:
+    """Garante string simples pro PDF — nunca deixa um dict/lista bruto quebrar o Paragraph."""
+    if v is None or v == "":
+        return "—"
+    if isinstance(v, (dict, list)):
+        return "—"
+    return str(v)
+
+
 def _tabela(linhas: list[tuple[str, str]], col1=45 * mm) -> Table:
-    rows = [[Paragraph(f"<b>{k}</b>", _styles()["DCampo"]), Paragraph(v or "—", _styles()["DCampo"])] for k, v in linhas]
+    rows = [[Paragraph(f"<b>{k}</b>", _styles()["DCampo"]), Paragraph(_texto(v), _styles()["DCampo"])] for k, v in linhas]
     t = Table(rows, colWidths=[col1, None])
     t.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),

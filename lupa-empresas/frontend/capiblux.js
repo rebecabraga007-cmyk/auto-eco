@@ -2376,7 +2376,7 @@ function inicioCarregar(dias) {
 
     tbody.innerHTML = j.ultimas_pesquisas.length
       ? j.ultimas_pesquisas.map(p => `
-        <tr>
+        <tr class="inicio-pesquisa-row" title="Clique pra refazer essa busca" data-tipo="${esc(p.tipo || '')}" data-query="${esc(p.query || '')}">
           <td>${esc(p.query || '—')}</td>
           <td>${esc(p.tipo || '—')}</td>
           <td>${esc(p.resultado || '—')}</td>
@@ -2427,3 +2427,47 @@ window.exportarDossie = async function(tipo, doc, btn) {
     if (btn) { btn.disabled = false; btn.textContent = original; }
   }
 };
+
+// ── Refazer busca a partir do histórico (Início) — usa o cache do backend,
+// então clicar de novo não gera nova consulta paga (Mk/Assertiva já cacheiam
+// por CPF/CNPJ no servidor; JBR e telefone reverso não têm custo por consulta
+// repetida na mesma sessão do processo).
+document.getElementById('inicio-tabela')?.addEventListener('click', e => {
+  const row = e.target.closest('.inicio-pesquisa-row');
+  if (!row) return;
+  const tipo = row.dataset.tipo || '';
+  const query = row.dataset.query || '';
+  if (!query) return;
+
+  const irPara = tab => document.querySelector(`.nav-btn[data-tab="${tab}"]`)?.click();
+
+  if (tipo === 'Empresa') {
+    irPara('empresa');
+    setTimeout(() => { document.getElementById('emp-q').value = query; searchEmpresa(); }, 0);
+  } else if (tipo === 'CPF') {
+    irPara('pessoa');
+    setTimeout(() => { document.getElementById('cpf-q').value = query; searchCpf(); }, 0);
+  } else if (tipo === 'Nome') {
+    irPara('nome');
+    setTimeout(() => { document.getElementById('nome-q').value = query; searchNome(); }, 0);
+  } else if (tipo === 'Telefone') {
+    irPara('telefone');
+    setTimeout(() => { document.getElementById('tel-q').value = query; buscarTelefone(); }, 0);
+  } else if (tipo.startsWith('Assertiva')) {
+    const modo = (tipo.match(/\(([^)]+)\)/) || [])[1] || 'cpf';
+    irPara('assertiva');
+    setTimeout(() => {
+      document.querySelector(`.as-modo[data-modo="${modo}"]`)?.click();
+      const campo = document.getElementById('as-' + modo);
+      if (campo) campo.value = query;
+      document.getElementById('as-btn')?.click();
+    }, 0);
+  } else {
+    toast_inicio(`"${tipo}" não pode ser refeito automaticamente por aqui — abra a aba correspondente.`);
+  }
+});
+
+function toast_inicio(msg) {
+  const link = document.getElementById('inicio-ultimos-link');
+  if (link) { const old = link.textContent; link.textContent = msg; setTimeout(() => { link.textContent = old; }, 3000); }
+}

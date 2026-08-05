@@ -768,6 +768,8 @@ body.locked { overflow: hidden; }
 .inicio-ultimos-link { font-size: .82rem; color: var(--gray-500); text-decoration: none; float: right; }
 .inicio-tabela-wrap { padding: 0; overflow-x: auto; }
 .inicio-tabela-wrap table { width: 100%; }
+.inicio-pesquisa-row { cursor: pointer; }
+.inicio-pesquisa-row:hover { background: var(--gray-50); }
 .inicio-precisa { border: 1px solid var(--gray-200); border-radius: var(--radius); overflow: hidden; }
 .inicio-precisa-item {
   display: flex; align-items: center; gap: 14px; padding: 16px 20px; cursor: pointer;
