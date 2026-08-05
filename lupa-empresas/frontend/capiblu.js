@@ -755,6 +755,13 @@ function normTexto(s) {
   return (s || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 }
 
+// Versão só-alfanumérica pra COMPARAR termo x fonte — telefone digitado como
+// "(51) 98451-5244" precisa bater com o dado guardado como "984515244" (só
+// dígitos, sem parênteses/hífen/espaço); sem isso a pontuação nunca casa.
+function normComparar(s) {
+  return normTexto(s).replace(/[^a-z0-9]/g, '');
+}
+
 // Extrai {enderecos:[{uf,cidade,bairro,logradouro}], textoExtra} de uma resposta
 // da Assertiva (mesma forma vinda de /api/assertiva/cpf), pra somar à pontuação.
 // Achata qualquer objeto (raso ou 1 nível de aninhamento) em texto — pega CBO,
@@ -799,13 +806,14 @@ function fontesTexto(mkD, extra) {
     { fonte: 'Parentes', texto: (mkD.parentes || []).map(p => p.nomeParente || '').join(' ') },
     { fonte: 'Vizinhos', texto: (mkD.vizinhos || []).map(v => v.nome || '').join(' ') },
     { fonte: 'Empresas vinculadas (Mk)', texto: (mkD.empresas || []).map(e => e.relacao || e.tipoRelacao || '').join(' ') },
+    { fonte: 'Telefone', texto: (mkD.telefones || []).map(t => t.telefone || t.numero || '').join(' ') },
     { fonte: 'Vínculo profissional (Assertiva)', texto: ((extra && extra.participacoes) || []).map(p => `${p.cargo || ''} ${p.razaoSocial || ''}`).join(' ') },
     { fonte: 'Outros dados da Assertiva (ranking agressivo)', texto: (extra && extra.textoExtra) || '' },
     // Rede de segurança: qualquer outro campo do Mk (escolaridade, benefícios,
     // perfil de consumo etc.) que não tenha um rótulo específico acima.
     { fonte: 'Outros dados (Mk)', texto: achatarEmTexto(mkD) },
   ];
-  return fontes.map(f => ({ fonte: f.fonte, texto: normTexto(f.texto || '') })).filter(f => f.texto);
+  return fontes.map(f => ({ fonte: f.fonte, texto: normComparar(f.texto || '') })).filter(f => f.texto);
 }
 
 function calcularScorePessoa(mk, pistas, extra) {
@@ -829,7 +837,7 @@ function calcularScorePessoa(mk, pistas, extra) {
   }
   if (pistas.descricao) {
     maxPontos += 30;
-    const termos = normTexto(pistas.descricao).split(/\s+/).filter(t => t.length >= 3);
+    const termos = normTexto(pistas.descricao).split(/\s+/).map(t => normComparar(t)).filter(t => t.length >= 3);
     const fontes = fontesTexto(mkD, extra);
     const achados = termos.map(t => ({ termo: t, fontes: fontes.filter(f => f.texto.includes(t)).map(f => f.fonte) }));
     const bateram = achados.filter(a => a.fontes.length);
