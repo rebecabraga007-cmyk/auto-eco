@@ -34,6 +34,7 @@
     <button class="nav-btn" data-tab="pessoa">Uma pessoa<span class="nav-btn-sub">por CPF, com dados completos</span></button>
     <button class="nav-btn" data-tab="nome">Uma pessoa pelo nome<span class="nav-btn-sub">quando não sei o CPF</span></button>
     <button class="nav-btn" data-tab="telefone">De quem é este telefone<span class="nav-btn-sub">descobrir o dono do número</span></button>
+    <button class="nav-btn" data-tab="dossie">Dossiê<span class="nav-btn-sub">PDF completo por CPF ou CNPJ</span></button>
 
     <div class="nav-group-label">Montar uma lista</div>
     <button class="nav-btn" data-tab="prospec">Procurar clientes<span class="nav-btn-sub">filtrar empresas e sócios</span></button>
@@ -645,6 +646,28 @@
       </div>
     </div>
     <div id="tel-results" class="results-area"></div>
+  </section>
+
+  <section id="tab-dossie" class="tab-section">
+    <div class="module-header">
+      <div class="module-overline">Achar alguém · dossiê</div>
+      <h2 class="module-title">Dossiê completo em PDF</h2>
+      <p class="module-sub">Digite um CPF ou CNPJ e baixe um PDF juntando Mk Buscas, Assertiva e a confirmação de telefone (intelgrax-tel) — tudo o que essas 3 fontes sabem, num só documento.</p>
+    </div>
+    <div class="search-panel">
+      <div class="filter-row" style="margin-bottom:12px">
+        <button class="btn-secondary doss-modo active" data-modo="cpf">CPF</button>
+        <button class="btn-secondary doss-modo" data-modo="cnpj">CNPJ</button>
+      </div>
+      <div class="search-row">
+        <div class="input-wrap input-sm">
+          <span class="input-icon">🪪</span>
+          <input id="doss-q" type="text" placeholder="000.000.000-00" maxlength="18" autocomplete="off" />
+        </div>
+        <button id="doss-btn" class="btn-primary">📄 Gerar dossiê PDF</button>
+      </div>
+      <p class="msg" id="doss-status" style="padding:12px 0 0;text-align:left"></p>
+    </div>
   </section>
 
   <section id="tab-admin" class="tab-section">

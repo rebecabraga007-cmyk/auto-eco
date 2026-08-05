@@ -2409,7 +2409,7 @@ window.exportarDossie = async function(tipo, doc, btn) {
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));
       alert(j.message || 'Falha ao gerar o dossiê.');
-      return;
+      return false;
     }
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
@@ -2421,8 +2421,10 @@ window.exportarDossie = async function(tipo, doc, btn) {
     a.remove();
     URL.revokeObjectURL(url);
     logBusca('Dossiê PDF', doc, `Dossiê ${tipo.toUpperCase()} gerado`);
+    return true;
   } catch (e) {
     alert('Erro ao gerar dossiê: ' + e.message);
+    return false;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = original; }
   }
@@ -2471,3 +2473,33 @@ function toast_inicio(msg) {
   const link = document.getElementById('inicio-ultimos-link');
   if (link) { const old = link.textContent; link.textContent = msg; setTimeout(() => { link.textContent = old; }, 3000); }
 }
+
+// ── Aba Dossiê (CPF ou CNPJ) ──────────────────────────
+(function initDossieTab() {
+  const btns = [...document.querySelectorAll('.doss-modo')];
+  const input = document.getElementById('doss-q');
+  const btn = document.getElementById('doss-btn');
+  const status = document.getElementById('doss-status');
+  if (!input || !btn) return;
+  let modo = 'cpf';
+
+  btns.forEach(b => b.addEventListener('click', () => {
+    modo = b.dataset.modo;
+    btns.forEach(x => x.classList.toggle('active', x === b));
+    input.placeholder = modo === 'cpf' ? '000.000.000-00' : '00.000.000/0000-00';
+    input.value = '';
+  }));
+
+  input.addEventListener('input', () => {
+    input.value = modo === 'cpf' ? fmtCpf(input.value) : fmtCnpj(input.value);
+  });
+
+  btn.addEventListener('click', async () => {
+    const doc = onlyDigits(input.value);
+    if (modo === 'cpf' && doc.length !== 11) { status.textContent = 'CPF inválido — precisa ter 11 dígitos.'; return; }
+    if (modo === 'cnpj' && doc.length !== 14) { status.textContent = 'CNPJ inválido — precisa ter 14 dígitos.'; return; }
+    status.textContent = '';
+    const ok = await exportarDossie(modo, doc, btn);
+    status.textContent = ok ? '✅ Dossiê gerado e baixado.' : '';
+  });
+})();
