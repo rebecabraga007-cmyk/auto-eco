@@ -1452,8 +1452,20 @@ def _is_admin(request: Request) -> bool:
 async def navlog_registrar(request: Request, payload: dict = Body(default={})):
     """Log de navegação: qualquer usuário logado pode registrar (não é admin-only)."""
     email = request.headers.get("x-user-email") or ""
-    navlog.registrar(email, payload.get("tab") or "")
+    navlog.registrar(
+        email, payload.get("tab") or "",
+        tipo=payload.get("tipo") or "", query=payload.get("query") or "", resultado=payload.get("resultado") or "",
+    )
     return {"ok": True}
+
+
+@app.get("/api/navlog/mine")
+async def navlog_mine(request: Request, dias: int = 7):
+    """Resumo de uso do próprio usuário (painel "Início") — não é admin-only."""
+    email = request.headers.get("x-user-email") or ""
+    res = navlog.resumo_usuario(email, dias)
+    res["status"] = "ok"
+    return res
 
 
 @app.get("/api/navlog")

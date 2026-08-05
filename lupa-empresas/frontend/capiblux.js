@@ -31,6 +31,7 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
       prospBuscar();
     }
     if (tab === 'admin' && typeof admCarregar === 'function') admCarregar();
+    if (tab === 'inicio' && typeof inicioCarregar === 'function') inicioCarregar();
     fetch(`${API}/api/navlog`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tab }) }).catch(() => {});
     const sidebar = document.getElementById('sidebar');
     if (sidebar) sidebar.classList.remove('mobile-open');
@@ -2315,3 +2316,73 @@ function admCustoCarregar() {
         : '<p class="msg">Nenhuma consulta Assertiva no período selecionado.</p>'}`;
   }).catch(e => { box.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`; });
 }
+
+// ── Painel Início ────────────────────────────────────
+const NOME_ABA = {
+  empresa: 'Empresa', pessoa: 'Pessoa', nome: 'Pessoa (por nome)', telefone: 'Telefone',
+  prospec: 'Clientes', assertiva: 'Consulta Assertiva', enrich: 'Planilha', modelos: 'Modelos', admin: 'Admin',
+};
+
+function logBusca(tipo, query, resultado) {
+  fetch(`${API}/api/navlog`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tab: document.querySelector('.nav-btn.active')?.dataset.tab || '', tipo, query, resultado }),
+  }).catch(() => {});
+}
+
+let _inicioDias = 7;
+function inicioCarregar(dias) {
+  if (dias) _inicioDias = dias;
+  const chart = document.getElementById('inicio-chart');
+  const ranking = document.getElementById('inicio-ranking');
+  const tbody = document.querySelector('#inicio-tabela tbody');
+  const link = document.getElementById('inicio-ultimos-link');
+  if (!chart) return;
+  if (link) link.textContent = `últimos ${_inicioDias} dias`;
+  fetch(`${API}/api/navlog/mine?dias=${_inicioDias}`).then(r => r.json()).then(j => {
+    if (j.status !== 'ok') return;
+
+    document.getElementById('inicio-total').innerHTML = `${j.total_pesquisas}<span class="inicio-total-sub">no período</span>`;
+
+    const diasChave = Object.keys(j.por_dia).slice(-7);
+    const max = Math.max(1, ...diasChave.map(d => j.por_dia[d]));
+    chart.innerHTML = diasChave.length
+      ? diasChave.map(d => `<div class="inicio-bar-col"><div class="inicio-bar" style="height:${Math.max(4, Math.round(j.por_dia[d] / max * 100))}%"></div><div class="inicio-bar-lbl">${esc(d)}</div></div>`).join('')
+      : '<p class="msg" style="padding:0">Sem uso registrado no período.</p>';
+
+    const abas = Object.entries(j.por_aba).filter(([t]) => t !== 'inicio').sort((a, b) => b[1] - a[1]).slice(0, 4);
+    const maxAba = Math.max(1, ...abas.map(a => a[1]));
+    ranking.innerHTML = abas.length
+      ? abas.map(([t, n], i) => `
+        <div class="inicio-rank-row">
+          <span class="inicio-rank-nome">${i + 1}. ${esc(NOME_ABA[t] || t)}</span>
+          <span class="inicio-rank-n">${n}×</span>
+          <div class="inicio-rank-bar-wrap"><div class="inicio-rank-bar" style="width:${Math.round(n / maxAba * 100)}%"></div></div>
+        </div>`).join('')
+      : '<p class="msg" style="padding:0">Sem uso registrado no período.</p>';
+
+    tbody.innerHTML = j.ultimas_pesquisas.length
+      ? j.ultimas_pesquisas.map(p => `
+        <tr>
+          <td>${esc(p.query || '—')}</td>
+          <td>${esc(p.tipo || '—')}</td>
+          <td>${esc(p.resultado || '—')}</td>
+          <td>${new Date(p.ts * 1000).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</td>
+        </tr>`).join('')
+      : '<tr><td colspan="4" class="msg">Nenhuma pesquisa registrada ainda no período.</td></tr>';
+  }).catch(() => {});
+}
+
+document.getElementById('inicio-periodo')?.addEventListener('click', e => {
+  const btn = e.target.closest('.inicio-per-btn');
+  if (!btn) return;
+  document.querySelectorAll('.inicio-per-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  inicioCarregar(Number(btn.dataset.dias));
+});
+
+document.getElementById('inicio-precisa')?.addEventListener('click', e => {
+  const item = e.target.closest('.inicio-precisa-item');
+  if (!item) return;
+  document.querySelector(`.nav-btn[data-tab="${item.dataset.goto}"]`)?.click();
+});

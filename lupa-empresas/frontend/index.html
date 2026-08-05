@@ -27,8 +27,10 @@
   </div>
 
   <nav class="sidebar-nav" id="sidebar-nav">
+    <button class="nav-btn active" data-tab="inicio">Início<span class="nav-btn-sub">por onde começar hoje</span></button>
+
     <div class="nav-group-label">Achar alguém</div>
-    <button class="nav-btn active" data-tab="empresa">Uma empresa<span class="nav-btn-sub">por CNPJ ou nome</span></button>
+    <button class="nav-btn" data-tab="empresa">Uma empresa<span class="nav-btn-sub">por CNPJ ou nome</span></button>
     <button class="nav-btn" data-tab="pessoa">Uma pessoa<span class="nav-btn-sub">por CPF, com dados completos</span></button>
     <button class="nav-btn" data-tab="nome">Uma pessoa pelo nome<span class="nav-btn-sub">quando não sei o CPF</span></button>
     <button class="nav-btn" data-tab="telefone">De quem é este telefone<span class="nav-btn-sub">descobrir o dono do número</span></button>
@@ -59,8 +61,54 @@
 
 <main class="main-wrap">
 
+  <!-- ══ INÍCIO (painel) ══ -->
+  <section id="tab-inicio" class="tab-section active">
+    <div class="module-header">
+      <div class="module-overline">Início</div>
+      <h2>Seu painel</h2>
+      <p class="module-sub">Como você tem usado o CapiBLU nos últimos dias.</p>
+    </div>
+
+    <div class="inicio-toprow">
+      <h3 class="inicio-h3">Seu uso recente</h3>
+      <div class="inicio-periodo" id="inicio-periodo">
+        <button class="inicio-per-btn active" data-dias="7">7 dias</button>
+        <button class="inicio-per-btn" data-dias="14">14 dias</button>
+        <button class="inicio-per-btn" data-dias="30">30 dias</button>
+      </div>
+    </div>
+
+    <div class="inicio-grid">
+      <div class="inicio-card">
+        <div class="inicio-card-label">Consultas por dia</div>
+        <div class="inicio-total" id="inicio-total">0<span class="inicio-total-sub">no período</span></div>
+        <div class="inicio-chart" id="inicio-chart"></div>
+      </div>
+      <div class="inicio-card">
+        <div class="inicio-card-label">Ferramenta mais usada</div>
+        <div class="inicio-ranking" id="inicio-ranking"></div>
+      </div>
+    </div>
+
+    <h3 class="inicio-h3" style="margin-top:28px">Últimas pesquisas <a href="#" class="inicio-ultimos-link" id="inicio-ultimos-link">últimos 7 dias</a></h3>
+    <div class="inicio-card inicio-tabela-wrap">
+      <table class="data-table" id="inicio-tabela">
+        <thead><tr><th>O que buscou</th><th>Tipo</th><th>Resultado</th><th>Quando</th></tr></thead>
+        <tbody><tr><td colspan="4" class="msg">Nenhuma pesquisa registrada ainda no período.</td></tr></tbody>
+      </table>
+    </div>
+
+    <h3 class="inicio-h3" style="margin-top:28px">O que você precisa hoje?</h3>
+    <div class="inicio-precisa" id="inicio-precisa">
+      <div class="inicio-precisa-item" data-goto="pessoa"><span class="inicio-precisa-n">1</span><span class="inicio-precisa-txt">Tenho o nome, o CPF ou o telefone de alguém</span><span class="inicio-precisa-go">Começar →</span></div>
+      <div class="inicio-precisa-item" data-goto="empresa"><span class="inicio-precisa-n">2</span><span class="inicio-precisa-txt">Quero saber sobre uma empresa</span><span class="inicio-precisa-go">Começar →</span></div>
+      <div class="inicio-precisa-item" data-goto="prospec"><span class="inicio-precisa-n">3</span><span class="inicio-precisa-txt">Quero achar clientes novos pra ligar</span><span class="inicio-precisa-go">Começar →</span></div>
+      <div class="inicio-precisa-item" data-goto="enrich"><span class="inicio-precisa-n">4</span><span class="inicio-precisa-txt">Já tenho uma planilha, falta informação nela</span><span class="inicio-precisa-go">Começar →</span></div>
+    </div>
+  </section>
+
   <!-- ══ MÓDULO EMPRESA ══ -->
-  <section id="tab-empresa" class="tab-section active">
+  <section id="tab-empresa" class="tab-section">
     <div class="module-header">
       <div class="module-overline">Achar alguém · empresa</div>
       <h2 class="module-title">Qual empresa você quer conhecer?</h2>
