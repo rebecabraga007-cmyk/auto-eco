@@ -656,6 +656,17 @@ window.togglePerson = async function(id, cpf) {
       mkDiv.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
     }
   }
+  // Se o ranking agressivo já consultou a Assertiva pra esse CPF (antes ou depois
+  // de abrir o card), mostra TODOS os dados dela aqui — não só usados na nota.
+  // Checado toda vez que abre (não só na 1ª vez), pra pegar quando o ranking roda depois.
+  const as = window._assertivaPorCpf && window._assertivaPorCpf[cpf];
+  if (!isOpen && as && mkDiv.dataset.asLoaded !== '1') {
+    mkDiv.dataset.asLoaded = '1';
+    const box = document.createElement('div');
+    box.innerHTML = `<h3 style="font-weight:600;font-size:.95rem;margin:18px 0 10px">🎯 Assertiva (usada no ranking agressivo)</h3>` +
+      (as.status === 'ok' ? montarHtmlAssertiva(as.data || {}, 'cpf') : `<p class="msg error">${esc(as.message || 'Falha na consulta Assertiva.')}</p>`);
+    mkDiv.appendChild(box);
+  }
 };
 
 function renderPessoaInline(container, cpf, jbr, mk) {
@@ -845,6 +856,10 @@ window.calcularRanking = async function(prefix, agressivo) {
         try {
           const as = await fetch(`${API}/api/assertiva/cpf?cpf=${cpf}&finalidade=5`).then(r => r.json());
           extra = extrairAssertiva(as);
+          // Guarda o JSON cru pra exibir por completo quando a pessoa abrir o card
+          // (mesmos blocos da aba Consulta Assertiva) — não fica só influenciando a nota.
+          window._assertivaPorCpf = window._assertivaPorCpf || {};
+          window._assertivaPorCpf[cpf] = as;
         } catch (e) { /* segue só com Mk */ }
       }
       const { score, motivos } = calcularScorePessoa(mk, pistas, extra);
@@ -1717,20 +1732,11 @@ const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MT','MS','MG',
   if (telEl) telEl.addEventListener('input', e => e.target.value = fmtPhone(e.target.value));
 })();
 
-function renderAssertiva(j, modo) {
-  const out = document.getElementById('as-results');
-  const msgs = {
-    unavailable: '⚙️ Integração não configurada (defina ASSERTIVA_CLIENT_ID/SECRET no .env).',
-    auth_error: '🔒 Falha ao autenticar na Assertiva. Confira as credenciais.',
-    no_access: '🚫 Sem permissão para este recurso na Assertiva (403).',
-    invalid: '⚠️ Dados inválidos para a consulta.',
-    error: '❌ Erro na consulta.',
-  };
-  if (j.status !== 'ok') {
-    out.innerHTML = `<p class="msg error">${esc(msgs[j.status] || j.message || 'Falha.')}${j.message && msgs[j.status] ? ' — ' + esc(j.message) : ''}</p>`;
-    return;
-  }
-  const data = j.data || {};
+// Monta o HTML com TODOS os blocos da resposta da Assertiva (cadastral, contatos,
+// endereços, sócios, decisores, + qualquer campo restante renderizado automaticamente,
+// + JSON completo). Compartilhado entre a aba "Consulta Assertiva" e o ranking
+// agressivo da Busca por Nome — nenhum dado fica de fora em nenhum dos dois lugares.
+function montarHtmlAssertiva(data, modo) {
   const cab = data.cabecalho || {};
   const resp = data.resposta || {};
   let html = `<div class="as-cab">
@@ -1774,7 +1780,23 @@ function renderAssertiva(j, modo) {
   });
 
   html += `<details class="as-raw"><summary>Ver JSON completo</summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details>`;
-  out.innerHTML = html;
+  return html;
+}
+
+function renderAssertiva(j, modo) {
+  const out = document.getElementById('as-results');
+  const msgs = {
+    unavailable: '⚙️ Integração não configurada (defina ASSERTIVA_CLIENT_ID/SECRET no .env).',
+    auth_error: '🔒 Falha ao autenticar na Assertiva. Confira as credenciais.',
+    no_access: '🚫 Sem permissão para este recurso na Assertiva (403).',
+    invalid: '⚠️ Dados inválidos para a consulta.',
+    error: '❌ Erro na consulta.',
+  };
+  if (j.status !== 'ok') {
+    out.innerHTML = `<p class="msg error">${esc(msgs[j.status] || j.message || 'Falha.')}${j.message && msgs[j.status] ? ' — ' + esc(j.message) : ''}</p>`;
+    return;
+  }
+  out.innerHTML = montarHtmlAssertiva(j.data || {}, modo);
 }
 
 // Renderiza qualquer valor "sobrando" do JSON da Assertiva sem card dedicado —
