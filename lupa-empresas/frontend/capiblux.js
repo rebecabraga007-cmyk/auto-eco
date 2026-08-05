@@ -1682,6 +1682,13 @@ function renderAssertiva(j, modo) {
     ${data.alerta ? `<span class="tel-warn">⚠️ ${esc(data.alerta)}</span>` : ''}
   </div>`;
 
+  // Chaves que já ganham um bloco dedicado abaixo — o resto é renderizado
+  // automaticamente, pra nenhum dado do JSON ficar só no "Ver JSON completo".
+  const consumidas = new Set([
+    'dadosCadastrais', 'telefones', 'telefonesAdicionados', 'emails', 'emailsAdicionados',
+    'enderecos', 'enderecosAdicionados', 'socios', 'possiveisDecisores', 'pessoaFisica', 'pessoaJuridica',
+  ]);
+
   // CPF / CNPJ → ficha cadastral + contatos
   if (modo === 'cpf' || modo === 'cnpj') {
     html += asCadastralCard(resp.dadosCadastrais || {});
@@ -1698,8 +1705,39 @@ function renderAssertiva(j, modo) {
     if (!pf.length && !pj.length) html += `<p class="msg">Nenhum registro vinculado encontrado.</p>`;
   }
 
+  // Todo o resto do JSON que a Assertiva devolveu e ainda não apareceu em
+  // nenhum bloco acima — renderizado automaticamente (tabela/lista/kv conforme o formato).
+  Object.keys(resp).forEach(k => {
+    if (consumidas.has(k)) return;
+    html += asAutoRender(humanKey(k), resp[k]);
+  });
+  Object.keys(data).forEach(k => {
+    if (k === 'cabecalho' || k === 'resposta' || k === 'alerta') return;
+    html += asAutoRender(humanKey(k), data[k]);
+  });
+
   html += `<details class="as-raw"><summary>Ver JSON completo</summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details>`;
   out.innerHTML = html;
+}
+
+// Renderiza qualquer valor "sobrando" do JSON da Assertiva sem card dedicado —
+// tabela se for lista de objetos, lista simples se for lista de valores,
+// pares chave/valor se for objeto, ou uma linha só se for valor simples.
+function asAutoRender(titulo, valor) {
+  if (valor == null || valor === '' || (Array.isArray(valor) && !valor.length)) return '';
+  if (Array.isArray(valor)) {
+    if (typeof valor[0] === 'object' && valor[0] !== null) {
+      const cols = [...new Set(valor.flatMap(v => Object.keys(v || {})))].slice(0, 6);
+      const rows = valor.map(v => `<tr>${cols.map(c => `<td>${esc(asStr(v[c]))}</td>`).join('')}</tr>`).join('');
+      return `<div class="as-card"><h4>${esc(titulo)} <span class="as-count">${valor.length}</span></h4>
+        <div class="prosp-table-scroll"><table class="prosp-table">
+        <thead><tr>${cols.map(c => `<th>${esc(humanKey(c))}</th>`).join('')}</tr></thead>
+        <tbody>${rows}</tbody></table></div></div>`;
+    }
+    return asListBlock(titulo, valor.map(asStr));
+  }
+  if (typeof valor === 'object') return asCadastralCard(valor);
+  return `<div class="as-card"><h4>${esc(titulo)}</h4><div class="as-kv"><div><strong>${esc(asStr(valor))}</strong></div></div></div>`;
 }
 
 // ── helpers de render Assertiva ──
