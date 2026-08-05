@@ -143,6 +143,20 @@
           <option value="100">Máx 100</option>
         </select>
       </div>
+
+      <div class="pf-divider" style="margin:14px 0"></div>
+      <div class="pf-advanced-hint" style="margin-bottom:8px">Não sabe o CPF nem o sobrenome certo? Dê pistas sobre a pessoa — depois clique em "Calcular ranking" nos resultados pra ordenar por % de chance de ser ela.</div>
+      <div class="filter-row">
+        <span class="filter-label">Pistas (opcional):</span>
+        <select id="nome-uf-suposta" class="filter-select">
+          <option value="">Suposto estado (UF)</option>
+        </select>
+        <input id="nome-cidade-suposta" type="text" class="filter-select" placeholder="Suposta cidade…" style="width:180px" />
+      </div>
+      <div class="pf-field" style="margin-top:10px">
+        <label>Descrição livre <span class="pf-advanced-hint" style="display:inline">local que trabalha, setor, qualquer detalhe que ajude a reconhecer</span></label>
+        <input id="nome-descricao" type="text" placeholder="Ex.: trabalha numa concessionária, é da área de vendas…" autocomplete="off" />
+      </div>
     </div>
     <div id="nome-results" class="results-area"></div>
   </section>

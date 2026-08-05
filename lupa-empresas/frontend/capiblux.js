@@ -535,8 +535,16 @@ function renderNome(exatos, q) {
     </button>
   </div>`;
 
+  const rankBar = prefix => `
+    <div class="rank-bar">
+      <button id="rank-btn-${prefix}" class="btn-secondary" onclick="calcularRanking('${prefix}')">Calcular ranking</button>
+      <span id="rank-note-${prefix}" class="rank-note"></span>
+    </div>`;
+
   nomeRes.innerHTML = tabsHtml +
+    (exatos.length > 1 ? rankBar('exatos') : '') +
     `<div id="rpanel-exatos">${renderPessoaCards(exatos, 'ex')}</div>` +
+    rankBar('outros') +
     `<div id="rpanel-outros" style="display:none">${renderOutrosPanel()}</div>`;
 }
 
@@ -607,7 +615,7 @@ function renderPessoaCards(pessoas, prefix) {
     const cpfFmt = fmtCpf(p.cpf || '');
     const sexoIcon = (p.sexo || '').toUpperCase().startsWith('M') ? '♂' : (p.sexo || '').toUpperCase().startsWith('F') ? '♀' : '';
     return `
-    <div class="card-person" id="card-${id}">
+    <div class="card-person" id="card-${id}" data-cpf="${esc(p.cpf || '')}">
       <div class="card-person-header" onclick="togglePerson('${id}', '${p.cpf}')">
         <div>
           <div class="person-name">${esc(p.nome)}</div>
@@ -718,6 +726,104 @@ function renderPessoaInline(container, cpf, jbr, mk) {
 
 nomeBtn.addEventListener('click', searchNome);
 nomeQ.addEventListener('keydown', e => e.key === 'Enter' && searchNome());
+
+(function initNomeUf() {
+  const sel = document.getElementById('nome-uf-suposta');
+  if (!sel) return;
+  const ufs = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MT','MS','MG',
+    'PA','PB','PR','PE','PI','RJ','RN','RO','RS','RR','SC','SE','SP','TO'];
+  ufs.forEach(u => { const o = document.createElement('option'); o.value = u; o.textContent = u; sel.appendChild(o); });
+})();
+
+// ── Ranking por % de match (só quando a usuária pede — consulta Mk Buscas) ──
+const RANKING_MAX_CANDIDATOS = 20;
+
+function normTexto(s) {
+  return (s || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
+function calcularScorePessoa(mk, pistas) {
+  const mkD = mk?.data || {};
+  const enderecos = mkD.enderecos || [];
+  const cbo = normTexto((mkD.profissao || {}).cboDescricao || '');
+  const camposTexto = normTexto([
+    cbo,
+    ...enderecos.map(e => `${e.bairro||''} ${e.logradouro||''}`),
+  ].join(' '));
+
+  let pontos = 0, maxPontos = 0;
+
+  if (pistas.uf) {
+    maxPontos += 35;
+    if (enderecos.some(e => normTexto(e.uf) === normTexto(pistas.uf))) pontos += 35;
+  }
+  if (pistas.cidade) {
+    maxPontos += 35;
+    if (enderecos.some(e => normTexto(e.cidade).includes(normTexto(pistas.cidade)))) pontos += 35;
+  }
+  if (pistas.descricao) {
+    maxPontos += 30;
+    const termos = normTexto(pistas.descricao).split(/\s+/).filter(t => t.length >= 3);
+    const bateu = termos.filter(t => camposTexto.includes(t)).length;
+    if (termos.length) pontos += Math.round((bateu / termos.length) * 30);
+  }
+  // Sem nenhuma pista: não dá pra rankear além do que a busca por nome já fez.
+  if (maxPontos === 0) return null;
+  return Math.round((pontos / maxPontos) * 100);
+}
+
+window.calcularRanking = async function(prefix) {
+  const btn = document.getElementById('rank-btn-' + prefix);
+  const note = document.getElementById('rank-note-' + prefix);
+  const pistas = {
+    uf: document.getElementById('nome-uf-suposta').value,
+    cidade: document.getElementById('nome-cidade-suposta').value.trim(),
+    descricao: document.getElementById('nome-descricao').value.trim(),
+  };
+  if (!pistas.uf && !pistas.cidade && !pistas.descricao) {
+    note.textContent = 'Preencha ao menos uma pista (estado, cidade ou descrição) antes de calcular.';
+    return;
+  }
+  const container = document.getElementById('rpanel-' + prefix);
+  const cards = [...container.querySelectorAll('.card-person')];
+  const alvo = cards.slice(0, RANKING_MAX_CANDIDATOS);
+  if (cards.length > RANKING_MAX_CANDIDATOS) {
+    note.innerHTML = `Calculando pros ${RANKING_MAX_CANDIDATOS} primeiros de ${cards.length} — consulta Mk Buscas paga por CPF.`;
+  }
+  btn.disabled = true;
+  let feitos = 0;
+  const resultados = [];
+  for (const card of alvo) {
+    const cpf = card.dataset.cpf;
+    feitos++;
+    note.textContent = `Calculando ${feitos} de ${alvo.length}…`;
+    try {
+      const mk = await fetch(`${API}/api/person/${cpf}/mk`).then(r => r.json());
+      const score = calcularScorePessoa(mk, pistas);
+      resultados.push({ card, score });
+    } catch (e) {
+      resultados.push({ card, score: null });
+    }
+  }
+  resultados.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  resultados.forEach(({ card, score }) => {
+    container.appendChild(card);
+    let badge = card.querySelector('.rank-badge');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'rank-badge';
+      card.querySelector('.card-person-header > div:last-child').prepend(badge);
+    }
+    if (score === null) { badge.textContent = ''; badge.hidden = true; }
+    else {
+      badge.hidden = false;
+      badge.textContent = `${score}% chance`;
+      badge.className = 'rank-badge ' + (score >= 66 ? 'rank-alta' : score >= 33 ? 'rank-media' : 'rank-baixa');
+    }
+  });
+  note.textContent = `Ranking calculado para ${alvo.length} candidato(s). Ordenado por % de chance.`;
+  btn.disabled = false;
+};
 
 // ══════════════════════════════════════════════════════
 //  MÓDULO PROSPECÇÃO (filtros → lista → validar → exportar)

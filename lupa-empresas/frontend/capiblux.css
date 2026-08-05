@@ -398,6 +398,17 @@ body {
 .score-fill { height: 100%; border-radius: 999px; }
 .score-num { font-size: .85rem; font-weight: 700; }
 
+/* ── Ranking por % (busca por nome) ── */
+.rank-bar { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; }
+.rank-note { font-size: .82rem; color: var(--gray-500); }
+.rank-badge {
+  font-size: .74rem; font-weight: 700; padding: 2px 10px; border-radius: 999px;
+  white-space: nowrap;
+}
+.rank-badge.rank-alta { background: var(--green-soft); color: var(--green); }
+.rank-badge.rank-media { background: var(--amber-soft); color: var(--amber); }
+.rank-badge.rank-baixa { background: var(--red-soft); color: var(--red); }
+
 /* ── RESULT TABS (nome module) ── */
 .res-tabs {
   display: flex; gap: 6px; margin-bottom: 16px;
