@@ -25,6 +25,7 @@ _JWT_ALG = "HS256"
 COOKIE_NAME = "capiblu_session"  # sessão via cookie httpOnly (robusto, não depende de localStorage)
 _TOKEN_TTL = int(os.environ.get("JWT_TTL_SECONDS", str(60 * 60 * 12)))  # 12h
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_UNSET = object()  # sentinela p/ distinguir "não mandou o campo" de "mandou vazio/None"
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS users (
@@ -38,7 +39,20 @@ CREATE TABLE IF NOT EXISTS users (
   ultimo_login  INTEGER
 );
 CREATE TABLE IF NOT EXISTS meta (chave TEXT PRIMARY KEY, valor TEXT);
+CREATE TABLE IF NOT EXISTS grupos (
+  id       TEXT PRIMARY KEY,
+  nome     TEXT UNIQUE NOT NULL,
+  criado_em INTEGER NOT NULL
+);
 """
+
+
+def _migrar_grupo_id(con) -> None:
+    """Adiciona users.grupo_id se ainda não existir (SQLite não tem ADD COLUMN IF NOT EXISTS)."""
+    cols = [r["name"] for r in con.execute("PRAGMA table_info(users)").fetchall()]
+    if "grupo_id" not in cols:
+        con.execute("ALTER TABLE users ADD COLUMN grupo_id TEXT")
+        con.commit()
 
 
 def _conn():
@@ -73,9 +87,11 @@ def _check(senha: str, hash_: str) -> bool:
 
 
 def _row_to_user(r: sqlite3.Row) -> dict:
+    cols = r.keys()
     return {"id": r["id"], "email": r["email"], "nome": r["nome"],
             "role": r["role"], "ativo": bool(r["ativo"]),
-            "criado_em": r["criado_em"], "ultimo_login": r["ultimo_login"]}
+            "criado_em": r["criado_em"], "ultimo_login": r["ultimo_login"],
+            "grupo_id": r["grupo_id"] if "grupo_id" in cols else None}
 
 
 def init() -> None:
@@ -83,6 +99,7 @@ def init() -> None:
     con = _conn()
     con.executescript(_DDL)
     con.commit()
+    _migrar_grupo_id(con)
     n = con.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
     if n == 0:
         email = (os.environ.get("ADMIN_EMAIL") or "rebeca@blusalesgroup.com.br").strip().lower()
@@ -140,7 +157,7 @@ def list_users() -> list[dict]:
     return [_row_to_user(r) for r in rows]
 
 
-def create_user(email: str, nome: str, senha: str, role: str = "user") -> dict:
+def create_user(email: str, nome: str, senha: str, role: str = "user", grupo_id: str = "") -> dict:
     email = (email or "").strip().lower()
     if not _EMAIL_RE.match(email):
         raise ValueError("E-mail inválido.")
@@ -152,8 +169,8 @@ def create_user(email: str, nome: str, senha: str, role: str = "user") -> dict:
         raise ValueError("Já existe um usuário com esse e-mail.")
     con = _conn()
     cur = con.execute(
-        "INSERT INTO users (email,nome,senha_hash,role,ativo,criado_em) VALUES (?,?,?,?,1,?)",
-        (email, (nome or "").strip(), _hash(senha), role, int(time.time())))
+        "INSERT INTO users (email,nome,senha_hash,role,ativo,criado_em,grupo_id) VALUES (?,?,?,?,1,?,?)",
+        (email, (nome or "").strip(), _hash(senha), role, int(time.time()), grupo_id or None))
     con.commit()
     uid = cur.lastrowid
     r = con.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
@@ -161,19 +178,55 @@ def create_user(email: str, nome: str, senha: str, role: str = "user") -> dict:
     return _row_to_user(r)
 
 
-def update_user(uid: int, *, nome=None, role=None, ativo=None) -> dict:
+def update_user(uid: int, *, nome=None, role=None, ativo=None, grupo_id=_UNSET) -> dict:
     con = _conn()
     r = con.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
     if not r:
         con.close(); raise ValueError("Usuário não encontrado.")
     if role is not None and role not in ("admin", "user"):
         con.close(); raise ValueError("Role inválida.")
-    con.execute("UPDATE users SET nome=COALESCE(?,nome), role=COALESCE(?,role), ativo=COALESCE(?,ativo) WHERE id=?",
-                (nome, role, (None if ativo is None else int(bool(ativo))), uid))
+    if grupo_id is _UNSET:
+        con.execute("UPDATE users SET nome=COALESCE(?,nome), role=COALESCE(?,role), ativo=COALESCE(?,ativo) WHERE id=?",
+                    (nome, role, (None if ativo is None else int(bool(ativo))), uid))
+    else:
+        # grupo_id explicitamente enviado (mesmo "" pra remover do grupo) — não é COALESCE.
+        gid = grupo_id or None
+        con.execute("UPDATE users SET nome=COALESCE(?,nome), role=COALESCE(?,role), ativo=COALESCE(?,ativo), grupo_id=? WHERE id=?",
+                    (nome, role, (None if ativo is None else int(bool(ativo))), gid, uid))
     con.commit()
     r = con.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
     con.close()
     return _row_to_user(r)
+
+
+# ---- Grupos (cada grupo tem seu proprio token Meetime, gerenciado no servico de dados) ----
+
+def listar_grupos() -> list[dict]:
+    con = _conn()
+    rows = con.execute("SELECT * FROM grupos ORDER BY nome").fetchall()
+    con.close()
+    return [{"id": r["id"], "nome": r["nome"], "criado_em": r["criado_em"]} for r in rows]
+
+
+def criar_grupo(nome: str) -> dict:
+    nome = (nome or "").strip()
+    if not nome:
+        raise ValueError("Informe um nome para o grupo.")
+    con = _conn()
+    existente = con.execute("SELECT id FROM grupos WHERE nome=?", (nome,)).fetchone()
+    if existente:
+        con.close(); raise ValueError("Já existe um grupo com esse nome.")
+    gid = secrets.token_hex(6)
+    con.execute("INSERT INTO grupos (id,nome,criado_em) VALUES (?,?,?)", (gid, nome, int(time.time())))
+    con.commit(); con.close()
+    return {"id": gid, "nome": nome}
+
+
+def excluir_grupo(gid: str) -> None:
+    con = _conn()
+    con.execute("UPDATE users SET grupo_id=NULL WHERE grupo_id=?", (gid,))
+    con.execute("DELETE FROM grupos WHERE id=?", (gid,))
+    con.commit(); con.close()
 
 
 def set_password(uid: int, senha: str) -> None:
@@ -311,7 +364,8 @@ async def admin_list(_: dict = Depends(require_admin)):
 async def admin_create(payload: dict = Body(default={}), _: dict = Depends(require_admin)):
     try:
         u = create_user(payload.get("email", ""), payload.get("nome", ""),
-                        payload.get("senha", ""), payload.get("role", "user"))
+                        payload.get("senha", ""), payload.get("role", "user"),
+                        payload.get("grupo_id", ""))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"user": u}
@@ -324,10 +378,31 @@ async def admin_update(uid: int, payload: dict = Body(default={}),
         raise HTTPException(status_code=400, detail="Você não pode se desativar.")
     try:
         u = update_user(uid, nome=payload.get("nome"), role=payload.get("role"),
-                        ativo=payload.get("ativo"))
+                        ativo=payload.get("ativo"),
+                        grupo_id=(payload.get("grupo_id") if "grupo_id" in payload else _UNSET))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"user": u}
+
+
+@router.get("/api/admin/grupos")
+async def admin_grupos_listar(_: dict = Depends(require_admin)):
+    return {"grupos": listar_grupos()}
+
+
+@router.post("/api/admin/grupos")
+async def admin_grupos_criar(payload: dict = Body(default={}), _: dict = Depends(require_admin)):
+    try:
+        g = criar_grupo(payload.get("nome", ""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"grupo": g}
+
+
+@router.delete("/api/admin/grupos/{gid}")
+async def admin_grupos_excluir(gid: str, _: dict = Depends(require_admin)):
+    excluir_grupo(gid)
+    return {"ok": True}
 
 
 @router.post("/api/admin/users/{uid}/password")

@@ -538,6 +538,7 @@ function renderNome(exatos, q) {
   const rankBar = prefix => `
     <div class="rank-bar">
       <button id="rank-btn-${prefix}" class="btn-secondary" onclick="calcularRanking('${prefix}')">Calcular ranking</button>
+      <button id="rank-btn-agr-${prefix}" class="btn-secondary" title="Também consulta a Assertiva por CPF — mais completo, custa 2 consultas por pessoa" onclick="calcularRanking('${prefix}', true)">Ranking agressivo</button>
       <span id="rank-note-${prefix}" class="rank-note"></span>
     </div>`;
 
@@ -742,12 +743,25 @@ function normTexto(s) {
   return (s || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 }
 
-function calcularScorePessoa(mk, pistas) {
+// Extrai {enderecos:[{uf,cidade,bairro,logradouro}], textoExtra} de uma resposta
+// da Assertiva (mesma forma vinda de /api/assertiva/cpf), pra somar à pontuação.
+function extrairAssertiva(as) {
+  if (as?.status !== 'ok') return { enderecos: [], textoExtra: '' };
+  const resp = as.data?.resposta || {};
+  const dc = resp.dadosCadastrais || {};
+  const enderecos = mergeArr(resp.enderecos, resp.enderecosAdicionados).map(e => ({
+    uf: e.uf, cidade: e.cidade, bairro: e.bairro, logradouro: e.logradouro,
+  }));
+  const textoExtra = [dc.nomeMae, dc.estadoCivil, (resp.socios || []).map(s => s.nome || '').join(' ')].filter(Boolean).join(' ');
+  return { enderecos, textoExtra };
+}
+
+function calcularScorePessoa(mk, pistas, extra) {
   const mkD = mk?.data || {};
-  const enderecos = mkD.enderecos || [];
+  const enderecos = [...(mkD.enderecos || []), ...((extra && extra.enderecos) || [])];
   const cbo = normTexto((mkD.profissao || {}).cboDescricao || '');
   const camposTexto = normTexto([
-    cbo,
+    cbo, (extra && extra.textoExtra) || '',
     ...enderecos.map(e => `${e.bairro||''} ${e.logradouro||''}`),
   ].join(' '));
 
@@ -772,8 +786,9 @@ function calcularScorePessoa(mk, pistas) {
   return Math.round((pontos / maxPontos) * 100);
 }
 
-window.calcularRanking = async function(prefix) {
+window.calcularRanking = async function(prefix, agressivo) {
   const btn = document.getElementById('rank-btn-' + prefix);
+  const btnAgr = document.getElementById('rank-btn-agr-' + prefix);
   const note = document.getElementById('rank-note-' + prefix);
   const pistas = {
     uf: document.getElementById('nome-uf-suposta').value,
@@ -787,19 +802,27 @@ window.calcularRanking = async function(prefix) {
   const container = document.getElementById('rpanel-' + prefix);
   const cards = [...container.querySelectorAll('.card-person')];
   const alvo = cards.slice(0, RANKING_MAX_CANDIDATOS);
+  const fonte = agressivo ? 'Mk Buscas + Assertiva (2 consultas pagas por CPF)' : 'Mk Buscas (1 consulta paga por CPF)';
   if (cards.length > RANKING_MAX_CANDIDATOS) {
-    note.innerHTML = `Calculando pros ${RANKING_MAX_CANDIDATOS} primeiros de ${cards.length} — consulta Mk Buscas paga por CPF.`;
+    note.innerHTML = `Calculando pros ${RANKING_MAX_CANDIDATOS} primeiros de ${cards.length} — ${fonte}.`;
   }
-  btn.disabled = true;
+  btn.disabled = true; if (btnAgr) btnAgr.disabled = true;
   let feitos = 0;
   const resultados = [];
   for (const card of alvo) {
     const cpf = card.dataset.cpf;
     feitos++;
-    note.textContent = `Calculando ${feitos} de ${alvo.length}…`;
+    note.textContent = `Calculando ${feitos} de ${alvo.length} (${fonte})…`;
     try {
       const mk = await fetch(`${API}/api/person/${cpf}/mk`).then(r => r.json());
-      const score = calcularScorePessoa(mk, pistas);
+      let extra = null;
+      if (agressivo) {
+        try {
+          const as = await fetch(`${API}/api/assertiva/cpf?cpf=${cpf}&finalidade=5`).then(r => r.json());
+          extra = extrairAssertiva(as);
+        } catch (e) { /* segue só com Mk */ }
+      }
+      const score = calcularScorePessoa(mk, pistas, extra);
       resultados.push({ card, score });
     } catch (e) {
       resultados.push({ card, score: null });
@@ -821,8 +844,8 @@ window.calcularRanking = async function(prefix) {
       badge.className = 'rank-badge ' + (score >= 66 ? 'rank-alta' : score >= 33 ? 'rank-media' : 'rank-baixa');
     }
   });
-  note.textContent = `Ranking calculado para ${alvo.length} candidato(s). Ordenado por % de chance.`;
-  btn.disabled = false;
+  note.textContent = `Ranking (${fonte}) calculado para ${alvo.length} candidato(s). Ordenado por % de chance.`;
+  btn.disabled = false; if (btnAgr) btnAgr.disabled = false;
 };
 
 // ══════════════════════════════════════════════════════

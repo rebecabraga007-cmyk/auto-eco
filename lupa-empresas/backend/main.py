@@ -1486,6 +1486,7 @@ async def config_get(request: Request):
         "token_mascarado": (tok[:4] + "…" + tok[-4:]) if tok and len(tok) > 8 else ("definido" if tok else ""),
         "base_url": meetime._base_url(), "leads_path": meetime._leads_path(),
         "auth_header": meetime._auth_header(),
+        "por_grupo": meetime.status_grupos(),
     }}
 
 
@@ -1493,37 +1494,47 @@ async def config_get(request: Request):
 async def config_meetime(request: Request, payload: dict = Body(default={})):
     if not _is_admin(request):
         return JSONResponse({"detail": "Requer admin."}, status_code=403)
+    # Token específico de um grupo (multi-tenant) — não passa pelo config_store global.
+    if payload.get("grupo_id"):
+        meetime.set_token_grupo(payload["grupo_id"], str(payload.get("token") or "").strip())
+        return {"status": "ok", "configurado": bool(meetime._token(payload["grupo_id"]))}
     updates = {}
     for k_in, k_cfg in (("token", "meetime_token"), ("base_url", "meetime_base_url"),
                         ("leads_path", "meetime_leads_path"), ("auth_header", "meetime_auth_header")):
         if payload.get(k_in) is not None:
             updates[k_cfg] = str(payload[k_in]).strip()
     config_store.set_many(updates)
-    meetime._cache["ts"] = 0  # invalida cache (força rebaixar com o token novo)
+    meetime._cache.clear()  # invalida cache (força rebaixar com a config nova)
     return {"status": "ok", "configurado": bool(meetime._token())}
 
 
 # ---- Meetime: dedup (não prospectar quem já está no CRM) ----
+# Cada usuário pertence a um grupo (X-User-Grupo, definido pelo admin em Usuários),
+# e cada grupo tem seu próprio token/conta Meetime — usuários de grupos diferentes
+# nunca cruzam dados de CRMs diferentes.
 
 @app.get("/api/meetime/status")
-async def meetime_status(refresh: bool = False):
-    if not meetime.enabled():
+async def meetime_status(request: Request, refresh: bool = False):
+    grupo_id = request.headers.get("x-user-grupo") or ""
+    if not meetime.enabled(grupo_id):
         return {"enabled": False}
-    ex = await meetime.fetch_existing(force=refresh)
+    ex = await meetime.fetch_existing(force=refresh, grupo_id=grupo_id)
     return {"enabled": True, "status": ex.get("status"), "message": ex.get("message"),
             "total_cnpjs": len(ex.get("cnpjs") or []),
             "total_nomes": len(ex.get("nomes") or []), "cache": ex.get("cache")}
 
 
 @app.post("/api/meetime/dedup")
-async def meetime_dedup(payload: dict = Body(default={})):
+async def meetime_dedup(request: Request, payload: dict = Body(default={})):
     """Body: {empresas:[{cnpj, razao_social}]}. Remove quem já está na Meetime
     (CNPJ exato OU nome por similaridade LIKE %). Retorna {novos, removidos}."""
+    grupo_id = request.headers.get("x-user-grupo") or ""
     empresas = payload.get("empresas") or payload.get("candidatos") or []
-    if not meetime.enabled():
-        return {"status": "unavailable", "message": "Meetime não configurada (MEETIME_TOKEN).",
+    if not meetime.enabled(grupo_id):
+        return {"status": "unavailable",
+                "message": "Meetime não configurada para o seu grupo — peça ao admin para configurar em Usuários.",
                 "novos": empresas, "removidos": []}
-    ex = await meetime.fetch_existing(force=bool(payload.get("refresh")))
+    ex = await meetime.fetch_existing(force=bool(payload.get("refresh")), grupo_id=grupo_id)
     if ex.get("status") and ex["status"] != "ok":
         return {"status": ex["status"], "message": ex.get("message"),
                 "novos": empresas, "removidos": []}

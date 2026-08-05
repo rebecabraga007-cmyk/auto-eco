@@ -35,7 +35,29 @@ def _cfg(key, env, default=""):
     return os.environ.get(env, default).strip()
 
 
-def _token() -> str:
+def _grupos_tokens() -> dict:
+    """{grupo_id: {"token":..., "nome":...}} — um token Meetime por grupo de usuários."""
+    v = config_store.get("meetime_grupos") or {}
+    return v if isinstance(v, dict) else {}
+
+
+def set_token_grupo(grupo_id: str, token: str) -> None:
+    grupos = _grupos_tokens()
+    grupos[grupo_id] = {**grupos.get(grupo_id, {}), "token": token}
+    config_store.set_many({"meetime_grupos": grupos})
+    _cache.pop(grupo_id or "__default__", None)
+
+
+def status_grupos() -> dict:
+    """Resumo (sem expor o token) de quais grupos têm token Meetime configurado."""
+    return {gid: {"configurado": bool((v or {}).get("token"))} for gid, v in _grupos_tokens().items()}
+
+
+def _token(grupo_id: str = "") -> str:
+    if grupo_id:
+        tok = (_grupos_tokens().get(grupo_id) or {}).get("token")
+        if tok:
+            return str(tok).strip()
     return _cfg("meetime_token", "MEETIME_TOKEN", "")
 
 
@@ -60,13 +82,15 @@ _SUFIXOS = re.compile(
     r"comercio|comercial|industria|industrial|servicos|transportes|transporte|"
     r"do brasil|brasil|cia|companhia|grupo|holding|participacoes)\b")
 
-# Cache em memória dos existentes (evita rebaixar a API a cada dedup).
-_cache: dict[str, Any] = {"ts": 0, "cnpjs": set(), "nomes": []}
+# Cache em memória dos existentes, por grupo (cada grupo é uma conta Meetime
+# diferente — não dá pra compartilhar cache entre grupos). Evita rebaixar a
+# API a cada dedup.
+_cache: dict[str, dict[str, Any]] = {}
 _CACHE_TTL = 1800  # 30 min
 
 
-def enabled() -> bool:
-    return bool(_token() and _base_url())
+def enabled(grupo_id: str = "") -> bool:
+    return bool(_token(grupo_id) and _base_url())
 
 
 def only_digits(s: str) -> str:
@@ -107,17 +131,22 @@ def _extrai_lead(rec: dict) -> tuple[str, list[str]]:
     return cnpj, nomes
 
 
-async def fetch_existing(max_pages: int = 200, force: bool = False) -> dict:
-    """Baixa (paginando) os leads da Meetime → {cnpjs:set, nomes:[(norm, tokens)]}."""
-    if not enabled():
-        return {"status": "unavailable", "message": "Meetime não configurada (MEETIME_TOKEN).",
+async def fetch_existing(max_pages: int = 200, force: bool = False, grupo_id: str = "") -> dict:
+    """Baixa (paginando) os leads da Meetime do grupo → {cnpjs:set, nomes:[(norm, tokens)]}.
+
+    Cada grupo tem sua própria conta/token Meetime, então o cache também é por grupo.
+    """
+    cache_key = grupo_id or "__default__"
+    if not enabled(grupo_id):
+        return {"status": "unavailable", "message": "Meetime não configurada para este grupo (token ausente).",
                 "cnpjs": set(), "nomes": []}
     now = time.time()
-    if not force and _cache["ts"] and now - _cache["ts"] < _CACHE_TTL:
-        return {"status": "ok", "cnpjs": _cache["cnpjs"], "nomes": _cache["nomes"],
-                "total": len(_cache["cnpjs"]) + len(_cache["nomes"]), "cache": True}
+    cached = _cache.get(cache_key)
+    if not force and cached and cached["ts"] and now - cached["ts"] < _CACHE_TTL:
+        return {"status": "ok", "cnpjs": cached["cnpjs"], "nomes": cached["nomes"],
+                "total": len(cached["cnpjs"]) + len(cached["nomes"]), "cache": True}
 
-    headers = {"Accept": "application/json", _auth_header(): _token()}
+    headers = {"Accept": "application/json", _auth_header(): _token(grupo_id)}
     cnpjs, nomes = set(), []
     url = _base_url() + _leads_path()
     start = 0
@@ -158,7 +187,7 @@ async def fetch_existing(max_pages: int = 200, force: bool = False) -> dict:
         return {"status": "error", "message": f"Erro de conexão Meetime: {str(exc)[:150]}",
                 "cnpjs": cnpjs, "nomes": nomes}
 
-    _cache.update(ts=now, cnpjs=cnpjs, nomes=nomes)
+    _cache[cache_key] = {"ts": now, "cnpjs": cnpjs, "nomes": nomes}
     return {"status": "ok", "cnpjs": cnpjs, "nomes": nomes,
             "total_cnpjs": len(cnpjs), "total_nomes": len(nomes), "cache": False}
 

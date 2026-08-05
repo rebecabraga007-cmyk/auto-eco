@@ -119,12 +119,28 @@
     const st = document.getElementById('cfg-meetime-status');
     st.textContent = 'carregando…';
     try {
-      const j = await fetch('/api/config').then(r => r.json());
+      const [j, gruposRes] = await Promise.all([
+        fetch('/api/config').then(r => r.json()),
+        fetch('/api/admin/grupos').then(r => r.json()).catch(() => ({ grupos: [] })),
+      ]);
       const m = j.meetime || {};
+      const porGrupo = m.por_grupo || {};
       st.innerHTML = m.configurado ? `✅ configurado (${esc(m.token_mascarado || '')})` : '⚠️ ainda não configurado';
       document.getElementById('cfg-meetime-base').value = m.base_url || '';
       document.getElementById('cfg-meetime-path').value = m.leads_path || '';
       document.getElementById('cfg-meetime-hdr').value = m.auth_header || '';
+
+      const box = document.getElementById('cfg-meetime-grupos');
+      const grupos = gruposRes.grupos || [];
+      box.innerHTML = grupos.length
+        ? grupos.map(g => `
+          <div class="user-create-row" data-grupo-id="${esc(g.id)}" style="margin-bottom:6px">
+            <span style="min-width:120px;font-size:.85rem;font-weight:600">${esc(g.nome)}</span>
+            <input type="text" class="cfg-grupo-token" placeholder="token deste grupo" autocomplete="off" />
+            <span class="en-fname">${(porGrupo[g.id] || {}).configurado ? '✅ configurado' : '— sem token'}</span>
+            <button type="button" class="btn-secondary cfg-grupo-salvar">Salvar</button>
+          </div>`).join('')
+        : '<p class="msg" style="padding:8px 0">Nenhum grupo criado ainda — crie em 👥 Usuários.</p>';
     } catch (e) { st.textContent = 'erro ao carregar (você é admin?)'; }
   }
 
@@ -149,19 +165,60 @@
       document.getElementById('cfg-meetime-token').value = '';
       alert('Configuração salva!'); loadConfig();
     });
+    document.getElementById('cfg-meetime-grupos').addEventListener('click', async e => {
+      const btn = e.target.closest('.cfg-grupo-salvar'); if (!btn) return;
+      const row = btn.closest('[data-grupo-id]');
+      const grupo_id = row.dataset.grupoId;
+      const token = row.querySelector('.cfg-grupo-token').value.trim();
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/config/meetime', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ grupo_id, token }),
+        });
+        if (!r.ok) { alert((await r.json()).detail || 'Falha ao salvar.'); return; }
+        alert('Token do grupo salvo!'); loadConfig();
+      } finally { btn.disabled = false; }
+    });
   }
 
-  // ---- Admin: usuários ----
+  // ---- Admin: usuários + grupos (cada grupo = 1 token/conta Meetime) ----
+  let _gruposCache = [];
+
+  async function loadGrupos() {
+    try {
+      const j = await fetch('/api/admin/grupos').then(r => r.json());
+      _gruposCache = j.grupos || [];
+    } catch (e) { _gruposCache = []; }
+    const opts = g => `<option value="${esc(g.id)}">${esc(g.nome)}</option>`;
+    const ucSel = document.getElementById('uc-grupo');
+    if (ucSel) ucSel.innerHTML = '<option value="">Sem grupo</option>' + _gruposCache.map(opts).join('');
+    const lista = document.getElementById('grupos-lista');
+    if (lista) {
+      lista.innerHTML = _gruposCache.length
+        ? _gruposCache.map(g => `<span class="chip-ex" data-grupo-del="${esc(g.id)}" title="Clique pra excluir">${esc(g.nome)} ✕</span>`).join('')
+        : '<span class="pf-advanced-hint">Nenhum grupo criado ainda.</span>';
+    }
+  }
+
+  function nomeGrupo(gid) {
+    const g = _gruposCache.find(x => x.id === gid);
+    return g ? g.nome : '';
+  }
+
   async function loadUsers() {
     const tb = document.querySelector('#users-table tbody');
-    tb.innerHTML = '<tr><td colspan="5">Carregando…</td></tr>';
+    tb.innerHTML = '<tr><td colspan="6">Carregando…</td></tr>';
+    await loadGrupos();
     try {
       const j = await fetch('/api/admin/users').then(r => r.json());
+      const gruposOpts = ['<option value="">Sem grupo</option>'].concat(
+        _gruposCache.map(g => `<option value="${esc(g.id)}">${esc(g.nome)}</option>`)).join('');
       tb.innerHTML = (j.users || []).map(u => `
         <tr data-id="${u.id}">
           <td>${esc(u.nome || '')}</td>
           <td class="mono">${esc(u.email)}</td>
           <td>${u.role === 'admin' ? '<b>admin</b>' : 'user'}</td>
+          <td><select class="user-grupo-sel" data-cur="${esc(u.grupo_id || '')}">${gruposOpts}</select></td>
           <td>${u.ativo ? '🟢 ativo' : '⚪ inativo'}</td>
           <td class="user-actions">
             <button data-act="toggle">${u.ativo ? 'Desativar' : 'Ativar'}</button>
@@ -170,7 +227,8 @@
             <button data-act="del" class="danger">Excluir</button>
           </td>
         </tr>`).join('');
-    } catch (e) { tb.innerHTML = '<tr><td colspan="5">Erro ao carregar.</td></tr>'; }
+      tb.querySelectorAll('.user-grupo-sel').forEach(sel => { sel.value = sel.dataset.cur; });
+    } catch (e) { tb.innerHTML = '<tr><td colspan="6">Erro ao carregar.</td></tr>'; }
   }
 
   function wireUsersModal() {
@@ -184,6 +242,7 @@
         email: document.getElementById('uc-email').value.trim(),
         senha: document.getElementById('uc-senha').value,
         role: document.getElementById('uc-role').value,
+        grupo_id: document.getElementById('uc-grupo').value,
       };
       const r = await fetch('/api/admin/users', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -193,11 +252,30 @@
       document.getElementById('user-create').reset();
       loadUsers();
     });
+    document.getElementById('grupo-create').addEventListener('submit', async e => {
+      e.preventDefault();
+      const err = document.getElementById('gc-err'); err.textContent = '';
+      const nome = document.getElementById('gc-nome').value.trim();
+      const r = await fetch('/api/admin/grupos', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome }),
+      });
+      const j = await r.json();
+      if (!r.ok) { err.textContent = j.detail || 'Falha ao criar grupo.'; return; }
+      document.getElementById('grupo-create').reset();
+      loadUsers();
+    });
+    document.getElementById('grupos-lista').addEventListener('click', async e => {
+      const chip = e.target.closest('[data-grupo-del]'); if (!chip) return;
+      const gid = chip.dataset.grupoDel;
+      if (!confirm(`Excluir o grupo "${nomeGrupo(gid)}"? Usuários dele ficam sem grupo.`)) return;
+      await fetch(`/api/admin/grupos/${gid}`, { method: 'DELETE' });
+      loadUsers();
+    });
     document.querySelector('#users-table tbody').addEventListener('click', async e => {
       const btn = e.target.closest('button'); if (!btn) return;
       const tr = btn.closest('tr'); const id = tr.dataset.id; const act = btn.dataset.act;
       if (act === 'toggle') {
-        const ativo = tr.children[3].textContent.includes('ativo') ? false : true;
+        const ativo = tr.children[4].textContent.includes('ativo') ? false : true;
         await fetch(`/api/admin/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ativo }) });
       } else if (act === 'role') {
         const role = btn.textContent.includes('admin') ? 'admin' : 'user';
@@ -214,6 +292,11 @@
         if (!r.ok) { alert((await r.json()).detail || 'Falha.'); return; }
       }
       loadUsers();
+    });
+    document.querySelector('#users-table tbody').addEventListener('change', async e => {
+      const sel = e.target.closest('.user-grupo-sel'); if (!sel) return;
+      const id = sel.closest('tr').dataset.id;
+      await fetch(`/api/admin/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ grupo_id: sel.value }) });
     });
   }
 

@@ -654,11 +654,24 @@
       <input id="uc-email" type="email" placeholder="E-mail" required />
       <input id="uc-senha" type="text" placeholder="Senha inicial (mín. 8)" required />
       <select id="uc-role"><option value="user">Usuário</option><option value="admin">Admin</option></select>
+      <select id="uc-grupo"><option value="">Sem grupo</option></select>
       <button class="btn-primary" type="submit">+ Criar</button>
     </form>
     <div id="uc-err" class="login-err"></div>
+
+    <div class="en-step" style="border-top:1px solid var(--gray-100);margin-top:6px;padding-top:14px">
+      <strong style="font-size:.85rem">Grupos</strong>
+      <span class="pf-advanced-hint" style="display:inline">cada grupo usa um token da Meetime diferente — configure em ⚙️ Configurações</span>
+    </div>
+    <div id="grupos-lista" class="filter-row" style="margin-bottom:6px"></div>
+    <form id="grupo-create" class="user-create-row" style="margin-bottom:14px">
+      <input id="gc-nome" placeholder="Nome do novo grupo (ex.: Time SP, Time RJ)" />
+      <button class="btn-secondary" type="submit">+ Novo grupo</button>
+    </form>
+    <div id="gc-err" class="login-err"></div>
+
     <div class="prosp-table-scroll"><table class="prosp-table" id="users-table">
-      <thead><tr><th>Nome</th><th>E-mail</th><th>Role</th><th>Status</th><th>Ações</th></tr></thead>
+      <thead><tr><th>Nome</th><th>E-mail</th><th>Role</th><th>Grupo</th><th>Status</th><th>Ações</th></tr></thead>
       <tbody></tbody>
     </table></div>
   </div>
@@ -680,10 +693,17 @@
   <form id="config-form" class="modal-card">
     <div class="modal-head"><h3>⚙️ Configurações — Integrações</h3><button class="modal-x" id="config-close" type="button">✕</button></div>
     <p class="msg"><strong>Meetime</strong> — token da API usado para deduplicar leads (não prospectar quem já está no CRM). Fica guardado no serviço de dados local, nunca no navegador.</p>
-    <label>Token da Meetime<input id="cfg-meetime-token" type="text" placeholder="cole o token aqui" autocomplete="off" /></label>
+
+    <label>Token padrão (usuários sem grupo)<input id="cfg-meetime-token" type="text" placeholder="cole o token aqui" autocomplete="off" /></label>
     <div id="cfg-meetime-status" class="en-fname"></div>
+
+    <div class="pf-divider" style="margin:10px 0"></div>
+    <strong style="font-size:.85rem">Token por grupo</strong>
+    <p class="pf-advanced-hint" style="margin:2px 0 8px">Cada grupo de usuários (crie em 👥 Usuários) pode ter sua própria conta Meetime. Deixe em branco pra esse grupo usar o token padrão acima.</p>
+    <div id="cfg-meetime-grupos"></div>
+
     <details style="font-size:.8rem;color:#64748b">
-      <summary>Avançado (host/endpoint)</summary>
+      <summary>Avançado (host/endpoint — vale pra todos os grupos)</summary>
       <label>Base URL<input id="cfg-meetime-base" type="text" placeholder="https://api.meetime.com.br" /></label>
       <label>Endpoint de leads<input id="cfg-meetime-path" type="text" placeholder="/v2/leads" /></label>
       <label>Header de auth<input id="cfg-meetime-hdr" type="text" placeholder="api-token" /></label>

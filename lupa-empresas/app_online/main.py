@@ -100,6 +100,7 @@ async def proxy(path: str, request: Request):
     if user:
         headers["X-User-Email"] = user.get("email", "")
         headers["X-User-Role"] = user.get("role", "")
+        headers["X-User-Grupo"] = user.get("grupo_id") or ""
     body = await request.body()
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
