@@ -663,6 +663,7 @@ window.togglePerson = async function(id, cpf) {
   if (!isOpen && as && mkDiv.dataset.asLoaded !== '1') {
     mkDiv.dataset.asLoaded = '1';
     const box = document.createElement('div');
+    box.className = 'rank-assertiva-extra';
     box.innerHTML = `<h3 style="font-weight:600;font-size:.95rem;margin:18px 0 10px">🎯 Assertiva (usada no ranking agressivo)</h3>` +
       (as.status === 'ok' ? montarHtmlAssertiva(as.data || {}, 'cpf') : `<p class="msg error">${esc(as.message || 'Falha na consulta Assertiva.')}</p>`);
     mkDiv.appendChild(box);
@@ -786,16 +787,31 @@ function extrairAssertiva(as) {
   return { enderecos, textoExtra };
 }
 
+// Fontes de texto NOMEADAS (pra dizer EM QUE CAMPO um termo da descrição bateu,
+// não só "bateu"). Cobre Mk Buscas inteiro (achatado, fallback) + campos
+// específicos com rótulo bonito quando dá pra identificar.
+function fontesTexto(mkD, extra) {
+  const db = mkD.DadosBasicos || {};
+  const enderecos = [...(mkD.enderecos || []), ...((extra && extra.enderecos) || [])];
+  const fontes = [
+    { fonte: 'Nome da mãe', texto: db.nomeMae },
+    { fonte: 'Estado civil', texto: db.estadoCivil },
+    { fonte: 'Profissão (Mk)', texto: (mkD.profissao || {}).cboDescricao },
+    { fonte: 'Endereço', texto: enderecos.map(e => `${e.bairro || ''} ${e.logradouro || ''}`).join(' ') },
+    { fonte: 'Parentes', texto: (mkD.parentes || []).map(p => p.nomeParente || '').join(' ') },
+    { fonte: 'Vizinhos', texto: (mkD.vizinhos || []).map(v => v.nome || '').join(' ') },
+    { fonte: 'Empresas vinculadas (Mk)', texto: (mkD.empresas || []).map(e => e.relacao || e.tipoRelacao || '').join(' ') },
+    { fonte: 'Dados da Assertiva (ranking agressivo)', texto: (extra && extra.textoExtra) || '' },
+    // Rede de segurança: qualquer outro campo do Mk (escolaridade, benefícios,
+    // perfil de consumo etc.) que não tenha um rótulo específico acima.
+    { fonte: 'Outros dados (Mk)', texto: achatarEmTexto(mkD) },
+  ];
+  return fontes.map(f => ({ fonte: f.fonte, texto: normTexto(f.texto || '') })).filter(f => f.texto);
+}
+
 function calcularScorePessoa(mk, pistas, extra) {
   const mkD = mk?.data || {};
   const enderecos = [...(mkD.enderecos || []), ...((extra && extra.enderecos) || [])];
-  // Achata TUDO que o Mk Buscas devolveu (nome da mãe, profissão, parentes,
-  // empresas, vizinhos, estado civil etc.) — qualquer palavra da descrição livre
-  // pode bater com qualquer campo, não só profissão/endereço.
-  const camposTexto = normTexto([
-    achatarEmTexto(mkD),
-    (extra && extra.textoExtra) || '',
-  ].join(' '));
 
   let pontos = 0, maxPontos = 0;
   const motivos = [];
@@ -815,10 +831,14 @@ function calcularScorePessoa(mk, pistas, extra) {
   if (pistas.descricao) {
     maxPontos += 30;
     const termos = normTexto(pistas.descricao).split(/\s+/).filter(t => t.length >= 3);
-    const bateram = termos.filter(t => camposTexto.includes(t));
+    const fontes = fontesTexto(mkD, extra);
+    const achados = termos.map(t => ({ termo: t, fontes: fontes.filter(f => f.texto.includes(t)).map(f => f.fonte) }));
+    const bateram = achados.filter(a => a.fontes.length);
     if (termos.length) pontos += Math.round((bateram.length / termos.length) * 30);
-    if (bateram.length) motivos.push(`✅ Descrição: bateu "${bateram.join(', ')}" (de ${termos.length} termo${termos.length===1?'':'s'})`);
-    else motivos.push(`❌ Nenhum termo da descrição apareceu nos dados encontrados`);
+    if (bateram.length) {
+      const detalhe = bateram.map(a => `"${a.termo}" → ${a.fontes.join(' / ')}`).join('; ');
+      motivos.push(`✅ Descrição (${bateram.length} de ${termos.length} termo${termos.length===1?'':'s'}): ${detalhe}`);
+    } else motivos.push(`❌ Nenhum termo da descrição apareceu nos dados encontrados`);
   }
   if (!enderecos.length && (pistas.uf || pistas.cidade)) motivos.unshift('⚠️ Nenhum endereço encontrado pra essa pessoa (Mk/Assertiva sem dado)');
   // Sem nenhuma pista: não dá pra rankear além do que a busca por nome já fez.
@@ -843,6 +863,20 @@ window.calcularRanking = async function(prefix, agressivo) {
   const cards = [...container.querySelectorAll('.card-person')];
   const alvo = cards.slice(0, RANKING_MAX_CANDIDATOS);
   const fonte = agressivo ? 'Mk Buscas + Assertiva (2 consultas pagas por CPF)' : 'Mk Buscas (1 consulta paga por CPF)';
+
+  // Limpa qualquer dado de Assertiva de uma rodada ANTERIOR pra esses candidatos —
+  // a Assertiva só deve aparecer se ESSE clique for "Ranking agressivo". Sem isso,
+  // rodar o ranking normal depois do agressivo ainda mostrava dados velhos no card.
+  alvo.forEach(card => {
+    const cpf = card.dataset.cpf;
+    if (window._assertivaPorCpf) delete window._assertivaPorCpf[cpf];
+    const mkDiv = document.getElementById('mk-' + card.id.replace('card-', ''));
+    if (mkDiv) {
+      mkDiv.dataset.asLoaded = '0';
+      const antigo = mkDiv.querySelector('.rank-assertiva-extra');
+      if (antigo) antigo.remove();
+    }
+  });
   if (cards.length > RANKING_MAX_CANDIDATOS) {
     note.innerHTML = `Calculando pros ${RANKING_MAX_CANDIDATOS} primeiros de ${cards.length} — ${fonte}.`;
   }
