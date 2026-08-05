@@ -763,7 +763,9 @@ function achatarEmTexto(obj, profundidade) {
   if (obj == null) return '';
   if (typeof obj !== 'object') return String(obj);
   if (Array.isArray(obj)) return obj.map(v => achatarEmTexto(v, (profundidade || 0) + 1)).join(' ');
-  if ((profundidade || 0) >= 2) return '';
+  // Limite generoso (cobre objeto > array > objeto > campo, ex.: mkD.parentes[].nomeParente)
+  // sem risco de loop — respostas de API são finitas e não-circulares.
+  if ((profundidade || 0) >= 6) return '';
   return Object.values(obj).map(v => achatarEmTexto(v, (profundidade || 0) + 1)).join(' ');
 }
 
@@ -787,10 +789,12 @@ function extrairAssertiva(as) {
 function calcularScorePessoa(mk, pistas, extra) {
   const mkD = mk?.data || {};
   const enderecos = [...(mkD.enderecos || []), ...((extra && extra.enderecos) || [])];
-  const cbo = normTexto((mkD.profissao || {}).cboDescricao || '');
+  // Achata TUDO que o Mk Buscas devolveu (nome da mãe, profissão, parentes,
+  // empresas, vizinhos, estado civil etc.) — qualquer palavra da descrição livre
+  // pode bater com qualquer campo, não só profissão/endereço.
   const camposTexto = normTexto([
-    cbo, (extra && extra.textoExtra) || '',
-    ...enderecos.map(e => `${e.bairro||''} ${e.logradouro||''}`),
+    achatarEmTexto(mkD),
+    (extra && extra.textoExtra) || '',
   ].join(' '));
 
   let pontos = 0, maxPontos = 0;
