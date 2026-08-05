@@ -745,6 +745,17 @@ function normTexto(s) {
 
 // Extrai {enderecos:[{uf,cidade,bairro,logradouro}], textoExtra} de uma resposta
 // da Assertiva (mesma forma vinda de /api/assertiva/cpf), pra somar à pontuação.
+// Achata qualquer objeto (raso ou 1 nível de aninhamento) em texto — pega CBO,
+// profissão, classe social, ou qualquer outro campo que a Assertiva devolver,
+// sem precisar saber o nome exato de cada chave de antemão.
+function achatarEmTexto(obj, profundidade) {
+  if (obj == null) return '';
+  if (typeof obj !== 'object') return String(obj);
+  if (Array.isArray(obj)) return obj.map(v => achatarEmTexto(v, (profundidade || 0) + 1)).join(' ');
+  if ((profundidade || 0) >= 2) return '';
+  return Object.values(obj).map(v => achatarEmTexto(v, (profundidade || 0) + 1)).join(' ');
+}
+
 function extrairAssertiva(as) {
   if (as?.status !== 'ok') return { enderecos: [], textoExtra: '' };
   const resp = as.data?.resposta || {};
@@ -752,7 +763,13 @@ function extrairAssertiva(as) {
   const enderecos = mergeArr(resp.enderecos, resp.enderecosAdicionados).map(e => ({
     uf: e.uf, cidade: e.cidade, bairro: e.bairro, logradouro: e.logradouro,
   }));
-  const textoExtra = [dc.nomeMae, dc.estadoCivil, (resp.socios || []).map(s => s.nome || '').join(' ')].filter(Boolean).join(' ');
+  // Todo o dadosCadastrais (nome da mãe, estado civil, CBO/profissão, classe social,
+  // renda, óbito etc.) + nomes de sócios — vira texto pra casar com a descrição livre.
+  const textoExtra = [
+    achatarEmTexto(dc),
+    (resp.socios || []).map(s => s.nome || '').join(' '),
+    (resp.possiveisDecisores || []).map(s => s.nome || '').join(' '),
+  ].filter(Boolean).join(' ');
   return { enderecos, textoExtra };
 }
 
