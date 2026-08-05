@@ -130,6 +130,8 @@ async function searchEmpresa() {
     const r = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}`);
     const data = await r.json();
     renderEmpresas(data);
+    const listaEmp = Array.isArray(data) ? data : (data?.companies || data?.results || []);
+    logBusca('Empresa', q, `${listaEmp.length} empresa${listaEmp.length === 1 ? '' : 's'}`);
   } catch(e) {
     empRes.innerHTML = `<p class="msg error">Erro ao consultar: ${esc(e.message)}</p>`;
   } finally {
@@ -206,6 +208,8 @@ async function searchCpf() {
       fetch(`${API}/api/person/${raw}/mk`).then(r => r.json()),
     ]);
     renderPessoa(raw, jbrRes, mkRes);
+    const nomeAchado = jbrRes?.pessoa?.nome || mkRes?.data?.DadosBasicos?.nome || '';
+    logBusca('CPF', fmtCpf(raw), nomeAchado ? `Encontrado: ${nomeAchado}` : 'Sem dados encontrados');
   } catch(e) {
     cpfRes.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
   } finally {
@@ -507,6 +511,8 @@ async function searchNome() {
 
     const exatos = nomeFilters(exactRes.pessoas || []);
     renderNome(exatos, q);
+    const total = exatos.length + outrosFiltrados().length;
+    logBusca('Nome', q, `${total} candidato${total === 1 ? '' : 's'}`);
   } catch(e) {
     nomeRes.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
   } finally {
@@ -1033,6 +1039,8 @@ async function prospBuscar() {
     renderProspList();
     const excluirMeetime = document.getElementById('pf-excluir-meetime');
     if (excluirMeetime && excluirMeetime.checked) prospDedupMeetime();
+    const filtrosResumo = Object.entries(prospFiltros()).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join(', ') || 'sem filtro';
+    logBusca('Lista', filtrosResumo.slice(0, 120), `${totalStr} empresa${prospState.total === 1 ? '' : 's'}`);
   } catch (e) {
     out.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
   } finally {
@@ -1676,6 +1684,7 @@ async function buscarTelefone() {
           }).join('')}</tbody>
         </table>
       </div>`;
+    logBusca('Telefone', fmtPhone(raw), `${(j.total || 0).toLocaleString('pt-BR')} vínculo(s)`);
   } catch (e) {
     telRes.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
   } finally {
@@ -1770,6 +1779,7 @@ const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MT','MS','MG',
     try {
       const j = await req.then(r => r.json());
       renderAssertiva(j, modo);
+      logBusca('Assertiva (' + modo + ')', val('as-cpf') || val('as-cnpj') || val('as-telefone') || val('as-email') || val('as-nome') || '—', j.status === 'ok' ? 'Encontrado' : (j.message || 'Sem resultado'));
     } catch (e) {
       out.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
     } finally { btn.disabled = false; }
@@ -1997,6 +2007,7 @@ const enrichState = { upload_id: null, sheets: [], result: null };
       cfg.hidden = false;
       const tot = j.sheets.reduce((a, s) => a + s.linhas, 0);
       nameEl.textContent = `${f.name} — ${j.sheets.length} aba(s), ${tot} linhas` + (j.aviso ? ` · ⚠️ ${j.aviso}` : '');
+      logBusca('Planilha', f.name, `${tot} linhas`);
     } catch (e) { nameEl.textContent = 'Erro: ' + e.message; }
   });
 
