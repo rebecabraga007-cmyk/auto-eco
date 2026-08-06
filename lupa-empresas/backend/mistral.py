@@ -56,6 +56,11 @@ def _fmt_familia(parentes: list[dict[str, Any]]) -> str:
     return "; ".join(linhas)
 
 
+def _fmt_participacoes_mk(itens: list[dict[str, Any]]) -> str:
+    linhas = [f"{p['relacao']} em {p['cnpj']} ({p['desde']}–{p['ate']})" for p in (itens or [])]
+    return "; ".join(linhas) or "nenhuma"
+
+
 def _resumo_dados_para_prompt(d: dict[str, Any]) -> str:
     """Reduz o dict do dossiê a um texto compacto pro prompt (sem mandar o
     JSON inteiro — só o que é relevante pro insight)."""
@@ -71,6 +76,7 @@ def _resumo_dados_para_prompt(d: dict[str, Any]) -> str:
         f"Profissão / CBO: {d.get('profissao', '')}",
         f"Emprego atual na base: {', '.join(e.get('razaoSocial') or e.get('nome', '') for e in d.get('empregos', [])) or 'nenhum'}",
         f"Participação em empresas: {', '.join(d.get('empresas_vinculadas', [])) or 'nenhuma'}",
+        f"Participação societária (Mk, CNPJ/relação/período): {_fmt_participacoes_mk(d.get('participacoes_mk', []))}",
         f"Histórico profissional (Assertiva): {_fmt_historico(d.get('historico_profissional', []))}",
         f"Benefícios sociais recebidos: {'; '.join(b.get('beneficio', '') for b in d.get('beneficios', [])) or 'nenhum'}",
         f"Nº de endereços já registrados: {len(d.get('enderecos', []))}",

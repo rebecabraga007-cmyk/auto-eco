@@ -269,6 +269,7 @@ async def montar_cpf(cpf: str, incluir_familia: bool = False) -> dict[str, Any]:
 
     telefones: list[dict[str, Any]] = [
         {**t, "tipo": _tel_tipo(t.get("tipo", ""))} for t in mkbuscas._extract_phones(mk_data)
+        if mkbuscas.classify_phone(t)["categoria"] != "invalido"
     ]
     for num, ddd, tipo, resto in _telefones_assertiva_com_tipo(as_resp):
         telefones.append({
@@ -319,6 +320,14 @@ async def montar_cpf(cpf: str, incluir_familia: bool = False) -> dict[str, Any]:
     redes_sociais = [r for r in (as_resp.get("redesSociais") or []) if isinstance(r, dict)]
     empregos = [e for e in (mk_data.get("empregos") or []) if isinstance(e, dict)]
     empresas_vinc = mkbuscas._extract_companies(mk_data)
+    # mk_data["empresas"] às vezes só tem CNPJ/relação/período (sem nome da
+    # empresa) — _extract_companies ignora esses itens por não achar campo de
+    # nome, mas é justamente onde aparece sócio-administrador/proprietário.
+    participacoes_mk = [
+        {"cnpj": _fmt_cnpj(e["cnpj"]), "relacao": (e.get("relacao") or e.get("tipoRelacao") or "").replace("-", " ").title(),
+         "desde": e.get("admissao", ""), "ate": "atual" if (e.get("demissao") or "").strip() in ("", "31/12/9999") else e.get("demissao", "")}
+        for e in (mk_data.get("empresas") or []) if isinstance(e, dict) and e.get("cnpj")
+    ]
     participacoes = as_resp.get("participacoesEmpresas") or as_resp.get("participacoesSocietarias") or []
     hist_seg = as_resp.get("historicoConsultasPorSegmento") or {}
     historico_profissional = [h for h in (as_resp.get("possivelHistoricoProfissional") or []) if isinstance(h, dict)]
@@ -373,6 +382,7 @@ async def montar_cpf(cpf: str, incluir_familia: bool = False) -> dict[str, Any]:
         "eh_servidor_publico": eh_servidor,
         "empregos": empregos,
         "empresas_vinculadas": empresas_vinc,
+        "participacoes_mk": participacoes_mk,
         "participacoes": participacoes,
         "historico_profissional": historico_profissional,
         "registros_profissionais": registros_profissionais,
@@ -577,14 +587,34 @@ def _cards(cards: list[tuple[str, str, str]]) -> Table:
     return t
 
 
+def _limpar_complemento(complemento: str, numero: str) -> str:
+    """A Mk às vezes manda o complemento com o número da casa duplicado dentro
+    (ex.: 'AP 304 1350 AP 304' pro nº 1350) ou o trecho inteiro repetido —
+    remove o número redundante e colapsa repetição exata."""
+    comp = complemento or ""
+    if numero:
+        comp = re.sub(rf"\b{re.escape(str(numero))}\b", "", comp)
+    palavras = comp.split()
+    meio = len(palavras) // 2
+    if meio and palavras[:meio] == palavras[meio:]:
+        palavras = palavras[:meio]
+    # remove palavras adjacentes repetidas ("AP AP 301" -> "AP 301")
+    sem_repeticao = []
+    for p in palavras:
+        if not sem_repeticao or sem_repeticao[-1].upper() != p.upper():
+            sem_repeticao.append(p)
+    return " ".join(sem_repeticao).strip()
+
+
 def _endereco_txt(e: dict[str, Any]) -> str:
     tipo = _TIPO_LOGRADOURO.get((e.get("tipoLogradouro") or "").upper(), (e.get("tipoLogradouro") or "").title())
     partes = [tipo, _titlecase(e.get("logradouro", ""))]
     linha1 = " ".join(p for p in partes if p).strip()
     if e.get("logradouroNumero"):
         linha1 += f", {e['logradouroNumero']}"
-    if e.get("complemento"):
-        linha1 += f" · {_titlecase(e['complemento'])}"
+    complemento_limpo = _limpar_complemento(e.get("complemento", ""), e.get("logradouroNumero", ""))
+    if complemento_limpo:
+        linha1 += f" · {_titlecase(complemento_limpo)}"
     if e.get("bairro"):
         linha1 += f" — {_titlecase(e['bairro'])}"
     linha2 = ", ".join(p for p in [_titlecase(e.get("cidade", "")), e.get("uf", "")] if p)
@@ -678,8 +708,9 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
     ]))
     flow = [cab]
 
+    nascida_nascido = "nascido" if (d.get("sexo") or "").upper().startswith("M") else "nascida"
     idade_txt = f"{d['idade']} anos" if d.get("idade") else ""
-    nasc_txt = f"nascida em {d['nascimento']}" if d.get("nascimento") else ""
+    nasc_txt = f"{nascida_nascido} em {d['nascimento']}" if d.get("nascimento") else ""
     nasc_local = f" em {_titlecase(d['municipio_nascimento'])}" if d.get("municipio_nascimento") else ""
     subtitulo = " · ".join(p for p in [d["doc"], idade_txt, (nasc_txt + nasc_local).strip(), (d.get("sexo") or "").lower()] if p)
     flow.append(Paragraph(_titlecase(d["nome"]) or "Nome não encontrado", styles["DNome"]))
@@ -706,14 +737,19 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
             sub_renda += ". Estimativa, não é salário confirmado."
         cards.append(("Renda estimada", f"R$ {_fmt_moeda(d['renda'])}", sub_renda))
     if d.get("score"):
-        risco = {"medio": "médio"}.get((d.get("score_faixa") or "").lower(), (d.get("score_faixa") or "").lower())
+        # scoreCSBAFaixaRisco vem ora só a palavra ("MEDIO"), ora a frase inteira
+        # ("BAIXISSIMO RISCO") — sem tirar o "risco" que já vem embutido, o card
+        # duplicava a palavra ("risco baixissimo risco").
+        risco_bruto = re.sub(r"\s*risco\s*$", "", (d.get("score_faixa") or "").lower()).strip()
+        risco = {"medio": "médio", "baixissimo": "baixíssimo"}.get(risco_bruto, risco_bruto)
         cor_risco = VERDE if "baixo" in risco else (TERRACOTA if "alto" in risco else AMBAR)
         cor_hex = "#" + cor_risco.hexval()[2:]
         valor_html = f"{d['score']}  <font size='8.5' color='{cor_hex}'>risco {risco}</font>" if risco else str(d["score"])
         sub_score = "Uma segunda base não devolveu score para este CPF." if d.get("score_csb_ausente") else ""
         cards.append(("Score de crédito", valor_html, sub_score))
-    if d.get("mosaic"):
-        sub_mosaic = f'Grupo principal "{d["mosaic_grupo_principal"]}"; classificação de mercado, não é renda confirmada.' if d.get("mosaic_grupo_principal") else "Classificação de mercado, não é renda confirmada."
+    if d.get("mosaic") and d["mosaic"].upper() != "SEM CODIGO":
+        grupo = d.get("mosaic_grupo_principal") or ""
+        sub_mosaic = f'Grupo principal "{grupo}"; classificação de mercado, não é renda confirmada.' if grupo and grupo.upper() != "SEM CODIGO" else "Classificação de mercado, não é renda confirmada."
         cards.append(("Perfil de consumo", d["mosaic"], sub_mosaic))
     if cards:
         flow.append(_cards(cards))
@@ -737,6 +773,35 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
     # ── Página 2 — como falar com ela ─────────────────────────────
     flow.append(PageBreak())
     flow.append(_header_pagina("Como falar com ela", 2))
+
+    kv_trab = [
+        ("Profissão", f"{d['profissao']} (CBO {d['cbo']})" if d.get("profissao") else ""),
+        ("Emprego atual", ", ".join(e.get("razaoSocial") or e.get("nomeEmpresa") or e.get("nome", "") for e in d.get("empregos", [])) or ""),
+        ("PIS/PASEP", str(d["pis"]) if d.get("pis") else ""),
+        ("Participação em empresas", "; ".join(d.get("empresas_vinculadas", [])) or ("" if d.get("participacoes_mk") else (
+            ("É servidora pública (SIAPE)." if d.get("sexo", "").lower().startswith("f") else "É servidor público (SIAPE).") if d.get("eh_servidor_publico")
+            else ("Nenhuma. Não é servidora pública." if d.get("sexo", "").lower().startswith("f") else "Nenhuma. Não é servidor público.")))),
+    ]
+    kv_trab_filtrado = [(k, v) for k, v in kv_trab if v]
+    if kv_trab_filtrado:
+        flow.append(Paragraph("Trabalho e renda formal", styles["DSubsecao"]))
+        flow.append(_tabela_kv(kv_trab_filtrado))
+
+    if d.get("participacoes_mk"):
+        flow.append(Paragraph("Participação societária (Mk)", styles["DSubsecao"]))
+        flow.append(_tabela_dados(["CNPJ", "Relação", "Desde", "Até"],
+                                   [[p["cnpj"], p["relacao"], p["desde"], p["ate"]] for p in d["participacoes_mk"][:10]]))
+
+    if d.get("registros_profissionais"):
+        flow.append(Paragraph("Registros profissionais (conselhos de classe)", styles["DSubsecao"]))
+        flow.append(_tabela_dados(["Profissão", "Registro", "UF"],
+                                   [[r.get("profissao", ""), f"{r.get('sigla', '')} {r.get('numeroInscricao', '')}".strip(), r.get("uf", "") or ""] for r in d["registros_profissionais"][:10]]))
+
+    if d.get("historico_profissional"):
+        flow.append(Paragraph("Histórico de vínculos profissionais (Assertiva)", styles["DSubsecao"]))
+        flow.append(_tabela_dados(["Cargo", "Empresa", "Setor", "Desde"],
+                                   [[h.get("cboDescricao", ""), h.get("razaoSocial", ""), h.get("setor", ""), h.get("dataRegistro", "")] for h in d["historico_profissional"][:10]],
+                                   col_widths=[35 * mm, None, 40 * mm, 22 * mm]))
 
     if d.get("telefones"):
         n = len(d["telefones"])
@@ -912,9 +977,9 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
         faltantes.append("CNS")
     if not d.get("estado_civil"):
         faltantes.append("estado civil")
-    if not d.get("profissao"):
+    if not d.get("profissao") and not d.get("registros_profissionais"):
         faltantes.append("profissão")
-    if not d.get("empregos"):
+    if not d.get("empregos") and not d.get("historico_profissional"):
         faltantes.append("emprego")
     if not d.get("tem_vacinacao"):
         faltantes.append("vacinação")
