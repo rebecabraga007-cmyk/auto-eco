@@ -549,7 +549,7 @@ function renderNome(exatos, q) {
       <button id="rank-btn-${prefix}" class="btn-secondary" onclick="calcularRanking('${prefix}')">Calcular ranking</button>
       <button id="rank-btn-agr-${prefix}" class="btn-secondary" title="Também consulta a Assertiva por CPF — mais completo, custa 2 consultas por pessoa" onclick="calcularRanking('${prefix}', true)">Ranking agressivo</button>
       <label class="rank-qtd" title="Quantos candidatos puxar no ranking">
-        Puxar <input type="number" id="rank-qtd-${prefix}" value="20" min="1" max="200" style="width:56px">
+        Puxar <input type="number" id="rank-qtd-${prefix}" value="20" min="1" max="5000" style="width:56px">
       </label>
       <label class="rank-so-positivos" title="No ranking agressivo, não gasta consulta Assertiva com quem já teve 0% no ranking normal (Mk)">
         <input type="checkbox" id="rank-so-positivos-${prefix}">
@@ -884,7 +884,7 @@ window.calcularRanking = async function(prefix, agressivo) {
   }
   const container = document.getElementById('rpanel-' + prefix);
   const qtdInput = document.getElementById('rank-qtd-' + prefix);
-  const maxCandidatos = Math.max(1, Math.min(200, parseInt(qtdInput && qtdInput.value, 10) || RANKING_MAX_CANDIDATOS));
+  const maxCandidatos = Math.max(1, Math.min(5000, parseInt(qtdInput && qtdInput.value, 10) || RANKING_MAX_CANDIDATOS));
   const soPositivos = agressivo && document.getElementById('rank-so-positivos-' + prefix)?.checked;
   const cards = [...container.querySelectorAll('.card-person')];
   const alvo = cards.slice(0, maxCandidatos);
