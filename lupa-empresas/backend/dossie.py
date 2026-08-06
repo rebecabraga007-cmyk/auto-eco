@@ -29,7 +29,6 @@ from reportlab.platypus import (
 
 import assertiva
 import brasilapi
-import infosimples
 import mkbuscas
 
 _MAX_CONFIRMACOES = 5
@@ -409,19 +408,6 @@ async def montar_cpf(cpf: str, incluir_familia: bool = False) -> dict[str, Any]:
     tem_vacinacao = bool(mk_data.get("imunoBiologicos"))
     lista_docs = mk_data.get("listaDocumentos") if isinstance(mk_data.get("listaDocumentos"), dict) else {}
     cns_lista = lista_docs.get("CNS") or []
-    uf_nascimento = (
-        db.get("ufNascimento") or db.get("uf_nascimento") or db.get("estadoNascimento")
-        or db.get("naturalidadeUf") or as_cad.get("ufNascimento") or ""
-    )
-    antecedentes = await infosimples.antecedentes_pf_emitir(
-        cpf=doc,
-        nome=db.get("nome") or as_cad.get("nome") or "",
-        nascimento=db.get("dataNascimento") or as_cad.get("dataNascimento") or "",
-        nome_mae=db.get("nomeMae") or as_cad.get("maeNome") or "",
-        nome_pai=db.get("nomePai") or "",
-        uf_nascimento=uf_nascimento,
-    )
-
     return {
         "tipo": "cpf",
         "doc": _fmt_cpf(doc),
@@ -479,11 +465,9 @@ async def montar_cpf(cpf: str, incluir_familia: bool = False) -> dict[str, Any]:
         "declaracao_imposto": imposto,
         "tem_vacinacao": tem_vacinacao,
         "incluiu_familia": incluir_familia,
-        "antecedentes_criminais_pf": antecedentes,
         "fontes": {
             "mk": mk_r.get("status", "unavailable"),
             "assertiva": as_r.get("status", "unavailable"),
-            "infosimples_antecedentes_pf": antecedentes.get("status", "unavailable"),
             "telefone": "ok" if confirmacoes else ("unavailable" if not mkbuscas.TEL_AUTH_VALUE else "sem números pra confirmar"),
         },
     }
@@ -773,37 +757,6 @@ def _parece_comercial(email: str) -> bool:
     local, _, dominio = (email or "").partition("@")
     dominio_nome = dominio.split(".")[0].lower()
     return bool(local) and bool(dominio_nome) and (local.lower() == dominio_nome or local.lower() in dominio_nome)
-
-
-def _antecedentes_linhas(a: dict[str, Any]) -> list[tuple[str, str]]:
-    cert = a.get("certidao") or {}
-    negativo = cert.get("conseguiu_emitir_certidao_negativa")
-    if negativo is True:
-        status = "Certidao negativa emitida"
-    elif negativo is False:
-        status = "Nao foi possivel emitir certidao negativa"
-    else:
-        status = a.get("status", "")
-    return [
-        ("Status da consulta", status),
-        ("Mensagem", cert.get("mensagem") or a.get("message") or ""),
-        ("Numero", cert.get("numero") or ""),
-        ("Codigo da certidao", cert.get("certidao_codigo") or ""),
-        ("Emissao", cert.get("emissao_datahora") or cert.get("emissao_data") or ""),
-        ("Validade", cert.get("validade_data") or ""),
-    ]
-
-
-def _json_resumido(v: Any, max_chars: int = 1700) -> str:
-    import json
-
-    try:
-        txt = json.dumps(v, ensure_ascii=False, indent=2, default=str)
-    except Exception:
-        txt = str(v)
-    if len(txt) > max_chars:
-        txt = txt[:max_chars] + "\n..."
-    return txt.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>")
 
 
 def _web_achados_linhas(w: dict[str, Any]) -> list[list[str]]:
@@ -1187,18 +1140,6 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
                 ParagraphStyle("DAvisoFam", parent=styles["DNota"], textColor=TERRACOTA, spaceAfter=8),
             ))
             flow.append(Paragraph(_texto(insight_fam["texto"]), styles["DCampo"]))
-
-    antecedentes = d.get("antecedentes_criminais_pf") or {}
-    if antecedentes:
-        flow.append(PageBreak())
-        flow.append(Paragraph("Antecedentes criminais - Policia Federal", styles["DSecao"]))
-        flow.append(Paragraph(
-            "Consulta publica de emissao da Certidao de Antecedentes Criminais da PF via Infosimples.",
-            styles["DNota"],
-        ))
-        flow.append(_tabela_kv([(k, v) for k, v in _antecedentes_linhas(antecedentes) if v]))
-        flow.append(Paragraph("JSON retornado", styles["DSubsecao"]))
-        flow.append(Paragraph(_json_resumido(antecedentes.get("raw") or antecedentes), styles["DNota"]))
 
     achados_web = d.get("achados_web") or {}
     if achados_web:
