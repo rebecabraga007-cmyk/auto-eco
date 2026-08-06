@@ -401,7 +401,7 @@ body {
 /* ── Ranking por % (busca por nome) ── */
 .rank-bar { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; flex-wrap: wrap; }
 .rank-note { font-size: .82rem; color: var(--gray-500); }
-.rank-qtd, .rank-so-positivos {
+.rank-qtd {
   display: flex; align-items: center; gap: 6px; font-size: .82rem; color: var(--gray-700); white-space: nowrap;
 }
 .rank-qtd input[type="number"] {

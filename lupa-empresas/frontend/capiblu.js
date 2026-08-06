@@ -551,10 +551,10 @@ function renderNome(exatos, q) {
       <label class="rank-qtd" title="Quantos candidatos puxar no ranking">
         Puxar <input type="number" id="rank-qtd-${prefix}" value="20" min="1" max="5000" style="width:56px">
       </label>
-      <label class="rank-so-positivos" title="No ranking agressivo, não gasta consulta Assertiva com quem já teve 0% no ranking normal (Mk)">
-        <input type="checkbox" id="rank-so-positivos-${prefix}">
-        Agressivo: só quem teve % no Mk
+      <label class="rank-qtd" title="No ranking agressivo, só chama a Assertiva (2ª consulta paga) pra quem já teve pelo menos esse % no Mk. 0 = chama pra todo mundo.">
+        Agressivo a partir de <input type="number" id="rank-min-pct-${prefix}" value="1" min="0" max="100" style="width:52px">%
       </label>
+      <button id="rank-btn-restantes-${prefix}" class="btn-secondary" style="display:none" onclick="calcularRankingRestantes('${prefix}')">Buscar Assertiva nos que ficaram de fora →</button>
       <span id="rank-note-${prefix}" class="rank-note"></span>
     </div>`;
 
@@ -869,90 +869,16 @@ function calcularScorePessoa(mk, pistas, extra) {
   return { score: Math.round((pontos / maxPontos) * 100), motivos };
 }
 
-window.calcularRanking = async function(prefix, agressivo) {
-  const btn = document.getElementById('rank-btn-' + prefix);
-  const btnAgr = document.getElementById('rank-btn-agr-' + prefix);
-  const note = document.getElementById('rank-note-' + prefix);
-  const pistas = {
-    uf: document.getElementById('nome-uf-suposta').value,
-    cidade: document.getElementById('nome-cidade-suposta').value.trim(),
-    descricao: document.getElementById('nome-descricao').value.trim(),
-  };
-  if (!pistas.uf && !pistas.cidade && !pistas.descricao) {
-    note.textContent = 'Preencha ao menos uma pista (estado, cidade ou descrição) antes de calcular.';
-    return;
-  }
-  const container = document.getElementById('rpanel-' + prefix);
-  const qtdInput = document.getElementById('rank-qtd-' + prefix);
-  const maxCandidatos = Math.max(1, Math.min(5000, parseInt(qtdInput && qtdInput.value, 10) || RANKING_MAX_CANDIDATOS));
-  const soPositivos = agressivo && document.getElementById('rank-so-positivos-' + prefix)?.checked;
-  const cards = [...container.querySelectorAll('.card-person')];
-  const alvo = cards.slice(0, maxCandidatos);
-  const fonte = agressivo
-    ? (soPositivos ? 'Mk Buscas + Assertiva só pra quem teve % no Mk' : 'Mk Buscas + Assertiva (2 consultas pagas por CPF)')
-    : 'Mk Buscas (1 consulta paga por CPF)';
+// Guarda estado entre a rodada normal/agressiva e "buscar nos que ficaram de
+// fora" — por prefixo ('exatos'/'outros'): resultado atual de cada CPF, quais
+// ficaram pendentes (abaixo do % mínimo) e o conjunto de cards da última rodada.
+window._rankResultado = window._rankResultado || {};   // { [prefix]: Map(cpf -> {score, motivos}) }
+window._rankPendentes = window._rankPendentes || {};   // { [prefix]: [cpf, ...] }
+window._rankAlvo = window._rankAlvo || {};             // { [prefix]: [card, ...] }
 
-  // Limpa qualquer dado de Assertiva de uma rodada ANTERIOR pra esses candidatos —
-  // a Assertiva só deve aparecer se ESSE clique for "Ranking agressivo". Sem isso,
-  // rodar o ranking normal depois do agressivo ainda mostrava dados velhos no card.
-  alvo.forEach(card => {
-    const cpf = card.dataset.cpf;
-    if (window._assertivaPorCpf) delete window._assertivaPorCpf[cpf];
-    const mkDiv = document.getElementById('mk-' + card.id.replace('card-', ''));
-    if (mkDiv) {
-      mkDiv.dataset.asLoaded = '0';
-      const antigo = mkDiv.querySelector('.rank-assertiva-extra');
-      if (antigo) antigo.remove();
-    }
-  });
-  if (cards.length > maxCandidatos) {
-    note.innerHTML = `Calculando pros ${maxCandidatos} primeiros de ${cards.length} — ${fonte}.`;
-  }
-  btn.disabled = true; if (btnAgr) btnAgr.disabled = true;
-  let feitos = 0;
-  let pulados = 0;
-  const resultados = [];
-  for (const card of alvo) {
-    const cpf = card.dataset.cpf;
-    feitos++;
-    note.textContent = `Calculando ${feitos} de ${alvo.length} (${fonte})…`;
-    try {
-      const mk = await fetch(`${API}/api/person/${cpf}/mk`).then(r => r.json());
-      let extra = null;
-      // Score só com Mk primeiro — se "só quem teve % no Mk" estiver marcado e a
-      // pessoa deu 0% (ou nulo), pula a consulta Assertiva pra ela e economiza.
-      const scoreMkSomente = calcularScorePessoa(mk, pistas, null).score;
-      const pulaAssertiva = soPositivos && !(scoreMkSomente > 0);
-      if (pulaAssertiva) pulados++;
-      if (agressivo && !pulaAssertiva) {
-        window._assertivaPorCpf = window._assertivaPorCpf || {};
-        try {
-          const asResp = await fetch(`${API}/api/assertiva/cpf?cpf=${cpf}&finalidade=5`);
-          const asText = await asResp.text();
-          let as;
-          try { as = JSON.parse(asText); }
-          catch (parseErr) {
-            // Resposta não é JSON (ex.: página de erro HTML) — mostra os primeiros
-            // caracteres pra dar pra diagnosticar, em vez de sumir sem explicação.
-            as = { status: 'error', message: `Resposta inesperada (HTTP ${asResp.status}): ${asText.slice(0, 150)}` };
-          }
-          extra = extrairAssertiva(as);
-          // Guarda o JSON cru pra exibir por completo quando a pessoa abrir o card
-          // (mesmos blocos da aba Consulta Assertiva) — não fica só influenciando a nota.
-          window._assertivaPorCpf[cpf] = as;
-        } catch (e) {
-          // Erro de rede/fetch em si (não da resposta) — também fica visível no card.
-          window._assertivaPorCpf[cpf] = { status: 'error', message: `Falha ao consultar: ${e.message}` };
-        }
-      }
-      const { score, motivos } = calcularScorePessoa(mk, pistas, extra);
-      resultados.push({ card, score, motivos });
-    } catch (e) {
-      resultados.push({ card, score: null, motivos: ['❌ Erro ao consultar dados desta pessoa'] });
-    }
-  }
-  resultados.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
-  resultados.forEach(({ card, score, motivos }) => {
+function _renderResultadosRanking(container, resultados) {
+  const ordenados = [...resultados].sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  ordenados.forEach(({ card, score, motivos }) => {
     container.appendChild(card);
     let badge = card.querySelector('.rank-badge');
     if (!badge) {
@@ -976,9 +902,147 @@ window.calcularRanking = async function(prefix, agressivo) {
       porque.innerHTML = (motivos || []).map(m => `<div>${esc(m)}</div>`).join('');
     }
   });
-  const notaPulados = pulados ? ` (${pulados} pulado(s) por terem 0% no Mk — não gastou Assertiva com eles)` : '';
-  note.textContent = `Ranking (${fonte}) calculado para ${alvo.length} candidato(s)${notaPulados}. Ordenado por % de chance.`;
+}
+
+async function _consultarAssertivaCpf(cpf) {
+  window._assertivaPorCpf = window._assertivaPorCpf || {};
+  try {
+    const asResp = await fetch(`${API}/api/assertiva/cpf?cpf=${cpf}&finalidade=5`);
+    const asText = await asResp.text();
+    let as;
+    try { as = JSON.parse(asText); }
+    catch (parseErr) {
+      // Resposta não é JSON (ex.: página de erro HTML) — mostra os primeiros
+      // caracteres pra dar pra diagnosticar, em vez de sumir sem explicação.
+      as = { status: 'error', message: `Resposta inesperada (HTTP ${asResp.status}): ${asText.slice(0, 150)}` };
+    }
+    window._assertivaPorCpf[cpf] = as;
+    return extrairAssertiva(as);
+  } catch (e) {
+    // Erro de rede/fetch em si (não da resposta) — também fica visível no card.
+    window._assertivaPorCpf[cpf] = { status: 'error', message: `Falha ao consultar: ${e.message}` };
+    return null;
+  }
+}
+
+window.calcularRanking = async function(prefix, agressivo) {
+  const btn = document.getElementById('rank-btn-' + prefix);
+  const btnAgr = document.getElementById('rank-btn-agr-' + prefix);
+  const btnRestantes = document.getElementById('rank-btn-restantes-' + prefix);
+  const note = document.getElementById('rank-note-' + prefix);
+  const pistas = {
+    uf: document.getElementById('nome-uf-suposta').value,
+    cidade: document.getElementById('nome-cidade-suposta').value.trim(),
+    descricao: document.getElementById('nome-descricao').value.trim(),
+  };
+  if (!pistas.uf && !pistas.cidade && !pistas.descricao) {
+    note.textContent = 'Preencha ao menos uma pista (estado, cidade ou descrição) antes de calcular.';
+    return;
+  }
+  const container = document.getElementById('rpanel-' + prefix);
+  const qtdInput = document.getElementById('rank-qtd-' + prefix);
+  const maxCandidatos = Math.max(1, Math.min(5000, parseInt(qtdInput && qtdInput.value, 10) || RANKING_MAX_CANDIDATOS));
+  const minPctInput = document.getElementById('rank-min-pct-' + prefix);
+  const minPct = agressivo ? Math.max(0, Math.min(100, parseInt(minPctInput && minPctInput.value, 10) || 0)) : 0;
+  const cards = [...container.querySelectorAll('.card-person')];
+  const alvo = cards.slice(0, maxCandidatos);
+  const fonte = agressivo
+    ? (minPct > 0 ? `Mk Buscas + Assertiva só a partir de ${minPct}% no Mk` : 'Mk Buscas + Assertiva (2 consultas pagas por CPF)')
+    : 'Mk Buscas (1 consulta paga por CPF)';
+
+  // Limpa qualquer dado de Assertiva de uma rodada ANTERIOR pra esses candidatos —
+  // a Assertiva só deve aparecer se ESSE clique for "Ranking agressivo". Sem isso,
+  // rodar o ranking normal depois do agressivo ainda mostrava dados velhos no card.
+  alvo.forEach(card => {
+    const cpf = card.dataset.cpf;
+    if (window._assertivaPorCpf) delete window._assertivaPorCpf[cpf];
+    const mkDiv = document.getElementById('mk-' + card.id.replace('card-', ''));
+    if (mkDiv) {
+      mkDiv.dataset.asLoaded = '0';
+      const antigo = mkDiv.querySelector('.rank-assertiva-extra');
+      if (antigo) antigo.remove();
+    }
+  });
+  if (btnRestantes) btnRestantes.style.display = 'none';
+  window._rankPendentes[prefix] = [];
+  window._rankResultado[prefix] = new Map();
+  window._rankAlvo[prefix] = alvo;
+  if (cards.length > maxCandidatos) {
+    note.innerHTML = `Calculando pros ${maxCandidatos} primeiros de ${cards.length} — ${fonte}.`;
+  }
+  btn.disabled = true; if (btnAgr) btnAgr.disabled = true;
+  let feitos = 0;
+  let pulados = 0;
+  const resultados = [];
+  for (const card of alvo) {
+    const cpf = card.dataset.cpf;
+    feitos++;
+    note.textContent = `Calculando ${feitos} de ${alvo.length} (${fonte})…`;
+    try {
+      const mk = await fetch(`${API}/api/person/${cpf}/mk`).then(r => r.json());
+      let extra = null;
+      // Score só com Mk primeiro — se o "% mínimo" do agressivo for > 0 e a
+      // pessoa ficar abaixo dele, pula a consulta Assertiva e marca como
+      // pendente (pode ser buscada depois, sob demanda, no botão "restantes").
+      const scoreMkSomente = calcularScorePessoa(mk, pistas, null).score;
+      const pulaAssertiva = agressivo && minPct > 0 && !(scoreMkSomente >= minPct);
+      if (pulaAssertiva) { pulados++; window._rankPendentes[prefix].push(cpf); }
+      if (agressivo && !pulaAssertiva) {
+        extra = await _consultarAssertivaCpf(cpf);
+      }
+      const { score, motivos } = calcularScorePessoa(mk, pistas, extra);
+      resultados.push({ card, score, motivos });
+      window._rankResultado[prefix].set(cpf, { score, motivos });
+    } catch (e) {
+      resultados.push({ card, score: null, motivos: ['❌ Erro ao consultar dados desta pessoa'] });
+    }
+  }
+  _renderResultadosRanking(container, resultados);
+  if (pulados > 0 && btnRestantes) {
+    btnRestantes.style.display = '';
+    btnRestantes.textContent = `Buscar Assertiva nos ${pulados} que ficaram de fora (abaixo de ${minPct}%) →`;
+  }
+  const notaPulados = pulados ? ` ${pulados} ficaram só com o score do Mk (abaixo de ${minPct}%) — use o botão acima pra completar com Assertiva se quiser.` : '';
+  note.textContent = `Ranking (${fonte}) calculado para ${alvo.length} candidato(s).${notaPulados} Ordenado por % de chance.`;
   btn.disabled = false; if (btnAgr) btnAgr.disabled = false;
+};
+
+window.calcularRankingRestantes = async function(prefix) {
+  const note = document.getElementById('rank-note-' + prefix);
+  const btnRestantes = document.getElementById('rank-btn-restantes-' + prefix);
+  const container = document.getElementById('rpanel-' + prefix);
+  const pendentes = window._rankPendentes[prefix] || [];
+  const alvo = window._rankAlvo[prefix] || [];
+  const resultadoMap = window._rankResultado[prefix] || new Map();
+  if (!pendentes.length) {
+    note.textContent = 'Nenhum candidato pendente pra buscar.';
+    return;
+  }
+  const pistas = {
+    uf: document.getElementById('nome-uf-suposta').value,
+    cidade: document.getElementById('nome-cidade-suposta').value.trim(),
+    descricao: document.getElementById('nome-descricao').value.trim(),
+  };
+  btnRestantes.disabled = true;
+  let feitos = 0;
+  for (const cpf of pendentes) {
+    feitos++;
+    note.textContent = `Buscando Assertiva ${feitos} de ${pendentes.length} pendente(s)…`;
+    try {
+      const mk = await fetch(`${API}/api/person/${cpf}/mk`).then(r => r.json());
+      const extra = await _consultarAssertivaCpf(cpf);
+      const { score, motivos } = calcularScorePessoa(mk, pistas, extra);
+      resultadoMap.set(cpf, { score, motivos });
+    } catch (e) {
+      resultadoMap.set(cpf, { score: null, motivos: ['❌ Erro ao consultar dados desta pessoa'] });
+    }
+  }
+  const resultadosFinal = alvo.map(card => ({ card, ...(resultadoMap.get(card.dataset.cpf) || { score: null, motivos: [] }) }));
+  _renderResultadosRanking(container, resultadosFinal);
+  window._rankPendentes[prefix] = [];
+  btnRestantes.style.display = 'none';
+  btnRestantes.disabled = false;
+  note.textContent = `Assertiva buscada nos ${pendentes.length} que estavam pendentes. Ordenado por % de chance.`;
 };
 
 // ══════════════════════════════════════════════════════
