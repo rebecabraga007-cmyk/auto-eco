@@ -114,6 +114,15 @@ async def _get(path: str, params: dict) -> dict[str, Any]:
                 "message": "Sem permissão para este recurso na Assertiva (403)."}
     if resp.status_code == 422:
         return {"status": "invalid", "message": f"Dados inválidos (422): {resp.text[:200]}"}
+    if resp.status_code == 404:
+        # A Assertiva usa 404 pra "não encontrei nada" (não é erro de sistema) —
+        # o corpo traz {"resposta": "Não localizamos..."} com o motivo real.
+        try:
+            corpo = resp.json()
+            motivo = corpo.get("resposta") or corpo.get("mensagem") or "Nenhum resultado encontrado."
+        except Exception:
+            motivo = "Nenhum resultado encontrado."
+        return {"status": "not_found", "message": str(motivo)}
     if resp.status_code >= 400:
         return {"status": "error", "message": f"Assertiva {resp.status_code}: {resp.text[:200]}"}
     try:

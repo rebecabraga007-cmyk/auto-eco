@@ -1859,8 +1859,13 @@ function renderAssertiva(j, modo) {
     auth_error: '🔒 Falha ao autenticar na Assertiva. Confira as credenciais.',
     no_access: '🚫 Sem permissão para este recurso na Assertiva (403).',
     invalid: '⚠️ Dados inválidos para a consulta.',
+    not_found: '🔍 Nenhum resultado encontrado.',
     error: '❌ Erro na consulta.',
   };
+  if (j.status === 'not_found') {
+    out.innerHTML = `<p class="msg">${esc(j.message || msgs.not_found)}</p>`;
+    return;
+  }
   if (j.status !== 'ok') {
     out.innerHTML = `<p class="msg error">${esc(msgs[j.status] || j.message || 'Falha.')}${j.message && msgs[j.status] ? ' — ' + esc(j.message) : ''}</p>`;
     return;
@@ -2405,7 +2410,7 @@ window.exportarDossie = async function(tipo, doc, btn, insight, familia) {
   const original = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = (insight || familia) ? '⏳ Gerando (pode levar +tempo)…' : '⏳ Gerando…'; }
   try {
-    const r = await fetch(`${API}/api/dossie/pdf?tipo=${tipo}&doc=${doc}${insight ? '&insight=true' : ''}${familia ? '&familia=true' : ''}`);
+    const r = await fetch(`${API}/api/dossie/pdf?tipo=${tipo}&doc=${doc}${insight ? '&insight=true&web=true' : ''}${familia ? '&familia=true' : ''}`);
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));
       alert(j.message || 'Falha ao gerar o dossiê.');

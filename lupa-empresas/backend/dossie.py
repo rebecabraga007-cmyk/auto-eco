@@ -13,12 +13,16 @@ import io
 import re
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.pdfmetrics import registerFontFamily
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
@@ -28,6 +32,10 @@ import brasilapi
 import mkbuscas
 
 _MAX_CONFIRMACOES = 5
+BASE_DIR = Path(__file__).resolve().parent
+DOSSIE_TEMPLATE_DIR = BASE_DIR / "templates" / "dossie"
+DOSSIE_LAYOUT_MODEL_PDF = DOSSIE_TEMPLATE_DIR / "modelo-dossie-websearch.pdf"
+DOSSIE_LAYOUT_SPEC = DOSSIE_TEMPLATE_DIR / "modelo-dossie-websearch.md"
 AZUL = colors.HexColor("#0F2E4A")
 TERRACOTA = colors.HexColor("#A85A2C")
 TERRACOTA_SOFT = colors.HexColor("#FBEFE7")
@@ -37,6 +45,28 @@ CINZA = colors.HexColor("#55595F")
 CINZA_CLARO = colors.HexColor("#DBD4C6")
 PAPEL = colors.HexColor("#F1EEE7")
 AMBAR = colors.HexColor("#8C6A16")
+PDF_FONT = "DossieSans"
+PDF_FONT_BOLD = "DossieSans-Bold"
+
+
+def _pdf_fonts() -> tuple[str, str]:
+    candidatos = [
+        (Path("C:/Windows/Fonts/DejaVuSans.ttf"), Path("C:/Windows/Fonts/DejaVuSans-Bold.ttf")),
+        (Path("C:/Windows/Fonts/arial.ttf"), Path("C:/Windows/Fonts/arialbd.ttf")),
+    ]
+    for regular, bold in candidatos:
+        if not regular.exists() or not bold.exists():
+            continue
+        try:
+            if PDF_FONT not in pdfmetrics.getRegisteredFontNames():
+                pdfmetrics.registerFont(TTFont(PDF_FONT, str(regular)))
+            if PDF_FONT_BOLD not in pdfmetrics.getRegisteredFontNames():
+                pdfmetrics.registerFont(TTFont(PDF_FONT_BOLD, str(bold)))
+            registerFontFamily(PDF_FONT, normal=PDF_FONT, bold=PDF_FONT_BOLD, italic=PDF_FONT, boldItalic=PDF_FONT_BOLD)
+            return PDF_FONT, PDF_FONT_BOLD
+        except Exception:
+            continue
+    return "Helvetica", "Helvetica-Bold"
 
 
 def only_digits(s: str) -> str:
@@ -378,6 +408,18 @@ async def montar_cpf(cpf: str, incluir_familia: bool = False) -> dict[str, Any]:
     tem_vacinacao = bool(mk_data.get("imunoBiologicos"))
     lista_docs = mk_data.get("listaDocumentos") if isinstance(mk_data.get("listaDocumentos"), dict) else {}
     cns_lista = lista_docs.get("CNS") or []
+    uf_nascimento = (
+        db.get("ufNascimento") or db.get("uf_nascimento") or db.get("estadoNascimento")
+        or db.get("naturalidadeUf") or as_cad.get("ufNascimento") or ""
+    )
+    antecedentes = await infosimples.antecedentes_pf_emitir(
+        cpf=doc,
+        nome=db.get("nome") or as_cad.get("nome") or "",
+        nascimento=db.get("dataNascimento") or as_cad.get("dataNascimento") or "",
+        nome_mae=db.get("nomeMae") or as_cad.get("maeNome") or "",
+        nome_pai=db.get("nomePai") or "",
+        uf_nascimento=uf_nascimento,
+    )
 
     return {
         "tipo": "cpf",
@@ -436,9 +478,11 @@ async def montar_cpf(cpf: str, incluir_familia: bool = False) -> dict[str, Any]:
         "declaracao_imposto": imposto,
         "tem_vacinacao": tem_vacinacao,
         "incluiu_familia": incluir_familia,
+        "antecedentes_criminais_pf": antecedentes,
         "fontes": {
             "mk": mk_r.get("status", "unavailable"),
             "assertiva": as_r.get("status", "unavailable"),
+            "infosimples_antecedentes_pf": antecedentes.get("status", "unavailable"),
             "telefone": "ok" if confirmacoes else ("unavailable" if not mkbuscas.TEL_AUTH_VALUE else "sem números pra confirmar"),
         },
     }
@@ -521,27 +565,28 @@ async def _confirmar_telefones(telefones: list[dict[str, Any]], doc: str) -> lis
 # ────────────────────────────────────────────────────────────────
 
 def _styles():
+    font_regular, font_bold = _pdf_fonts()
     ss = getSampleStyleSheet()
     if "DTopo" not in ss:
-        ss.add(ParagraphStyle("DTopo", parent=ss["Normal"], fontName="Helvetica", fontSize=8.5,
+        ss.add(ParagraphStyle("DTopo", parent=ss["Normal"], fontName=font_regular, fontSize=8.5,
                                textColor=CINZA, spaceAfter=0))
         ss.add(ParagraphStyle("DTopoDireita", parent=ss["DTopo"], alignment=2))
         ss.add(ParagraphStyle("DNome", parent=ss["Title"], textColor=colors.HexColor("#1A1D21"),
-                               fontSize=22, leading=26, spaceBefore=10, spaceAfter=4, alignment=0))
-        ss.add(ParagraphStyle("DSub", parent=ss["Normal"], textColor=CINZA, fontSize=10, spaceAfter=10))
+                               fontName=font_bold, fontSize=22, leading=26, spaceBefore=10, spaceAfter=4, alignment=0))
+        ss.add(ParagraphStyle("DSub", parent=ss["Normal"], fontName=font_regular, textColor=CINZA, fontSize=10, spaceAfter=10))
         ss.add(ParagraphStyle("DSecao", parent=ss["Heading2"], textColor=AZUL, fontSize=13,
-                               spaceBefore=16, spaceAfter=8))
+                               fontName=font_bold, spaceBefore=16, spaceAfter=8))
         ss.add(ParagraphStyle("DSubsecao", parent=ss["Heading3"], textColor=colors.HexColor("#1A1D21"),
-                               fontSize=11, spaceBefore=12, spaceAfter=6))
-        ss.add(ParagraphStyle("DCampo", parent=ss["Normal"], fontSize=9.5, leading=14))
-        ss.add(ParagraphStyle("DCampoLabel", parent=ss["DCampo"], fontName="Helvetica-Bold", textColor=CINZA, fontSize=8))
-        ss.add(ParagraphStyle("DNota", parent=ss["Normal"], fontSize=8.5, textColor=CINZA, leading=12))
-        ss.add(ParagraphStyle("DCardLabel", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=7.5,
+                               fontName=font_bold, fontSize=11, spaceBefore=12, spaceAfter=6))
+        ss.add(ParagraphStyle("DCampo", parent=ss["Normal"], fontName=font_regular, fontSize=9.5, leading=14))
+        ss.add(ParagraphStyle("DCampoLabel", parent=ss["DCampo"], fontName=font_bold, textColor=CINZA, fontSize=8))
+        ss.add(ParagraphStyle("DNota", parent=ss["Normal"], fontName=font_regular, fontSize=8.5, textColor=CINZA, leading=12))
+        ss.add(ParagraphStyle("DCardLabel", parent=ss["Normal"], fontName=font_bold, fontSize=7.5,
                                textColor=CINZA, spaceAfter=3))
-        ss.add(ParagraphStyle("DCardValor", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=14,
+        ss.add(ParagraphStyle("DCardValor", parent=ss["Normal"], fontName=font_bold, fontSize=14,
                                leading=17, textColor=colors.HexColor("#1A1D21"), spaceAfter=3))
-        ss.add(ParagraphStyle("DCardSub", parent=ss["Normal"], fontSize=8, textColor=CINZA, leading=11))
-        ss.add(ParagraphStyle("DPill", parent=ss["Normal"], fontSize=8.5, textColor=AZUL, alignment=1))
+        ss.add(ParagraphStyle("DCardSub", parent=ss["Normal"], fontName=font_regular, fontSize=8, textColor=CINZA, leading=11))
+        ss.add(ParagraphStyle("DPill", parent=ss["Normal"], fontName=font_regular, fontSize=8.5, textColor=AZUL, alignment=1))
     return ss
 
 
@@ -729,6 +774,101 @@ def _parece_comercial(email: str) -> bool:
     return bool(local) and bool(dominio_nome) and (local.lower() == dominio_nome or local.lower() in dominio_nome)
 
 
+def _antecedentes_linhas(a: dict[str, Any]) -> list[tuple[str, str]]:
+    cert = a.get("certidao") or {}
+    negativo = cert.get("conseguiu_emitir_certidao_negativa")
+    if negativo is True:
+        status = "Certidao negativa emitida"
+    elif negativo is False:
+        status = "Nao foi possivel emitir certidao negativa"
+    else:
+        status = a.get("status", "")
+    return [
+        ("Status da consulta", status),
+        ("Mensagem", cert.get("mensagem") or a.get("message") or ""),
+        ("Numero", cert.get("numero") or ""),
+        ("Codigo da certidao", cert.get("certidao_codigo") or ""),
+        ("Emissao", cert.get("emissao_datahora") or cert.get("emissao_data") or ""),
+        ("Validade", cert.get("validade_data") or ""),
+    ]
+
+
+def _json_resumido(v: Any, max_chars: int = 1700) -> str:
+    import json
+
+    try:
+        txt = json.dumps(v, ensure_ascii=False, indent=2, default=str)
+    except Exception:
+        txt = str(v)
+    if len(txt) > max_chars:
+        txt = txt[:max_chars] + "\n..."
+    return txt.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>")
+
+
+def _web_achados_linhas(w: dict[str, Any]) -> list[list[str]]:
+    linhas: list[list[str]] = []
+
+    def add_achados(pessoa: str, relacao: str, achados: list[dict[str, Any]]) -> None:
+        for a in achados or []:
+            if not isinstance(a, dict):
+                continue
+            linhas.append([
+                pessoa,
+                relacao,
+                _clip_pdf_text(a.get("tipo", ""), 60),
+                _clip_pdf_text(a.get("descricao", ""), 260),
+                _clip_pdf_text(a.get("fonte", "") or a.get("url", ""), 120),
+                _clip_pdf_text(a.get("confianca", ""), 40),
+            ])
+
+    principal = w.get("principal") or {}
+    if isinstance(principal, dict):
+        add_achados(principal.get("nome") or "Pessoa principal", "principal", principal.get("achados") or [])
+
+    for fam in w.get("familiares", []) or []:
+        if isinstance(fam, dict):
+            add_achados(
+                fam.get("nome") or "Familiar",
+                fam.get("parentesco") or "familiar",
+                fam.get("achados") or fam.get("achados_nao_judiciais") or [],
+            )
+    return linhas
+
+
+def _web_fontes_linhas(w: dict[str, Any]) -> list[list[str]]:
+    linhas: list[list[str]] = []
+    for f in w.get("fontes", []) or []:
+        if not isinstance(f, dict):
+            continue
+        linhas.append([
+            _clip_pdf_text(f.get("titulo") or f.get("nome") or f.get("fonte") or "Fonte", 100),
+            _clip_pdf_text(f.get("url") or "", 180),
+            _clip_pdf_text(f.get("observacao") or f.get("fonte") or "", 120),
+        ])
+    return linhas
+
+
+def _clip_pdf_text(v: Any, max_chars: int = 1200) -> str:
+    txt = "" if v is None else str(v)
+    txt = re.sub(r"\s+", " ", txt).strip()
+    if len(txt) <= max_chars:
+        return txt
+    return txt[:max_chars].rsplit(" ", 1)[0] + "..."
+
+
+def _web_resumo_pdf(v: Any) -> str:
+    txt = _clip_pdf_text(v, 1200)
+    bruto = txt.lstrip().startswith(("{", "[")) or (
+        txt.count('"url"') >= 2 or txt.count('"snippets"') >= 1 or txt.count('"source"') >= 3
+    )
+    if bruto:
+        return (
+            "A web search retornou dados brutos ou resposta extensa demais para exibição direta. "
+            "Abaixo ficam apenas os achados classificados, fontes citadas e limitações que puderam ser estruturados."
+        )
+    return txt
+
+
 def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
     styles = _styles()
     buf = io.BytesIO()
@@ -886,7 +1026,7 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
         flow.append(Paragraph("Do mais recente para o mais antigo.", styles["DCampo"]))
         for i, e in enumerate(d["enderecos"][:10]):
             linha = Table([[Paragraph(_endereco_txt(e), styles["DCampo"]),
-                             Paragraph("mais recente" if i == 0 else "", ParagraphStyle("tag", parent=styles["DCampo"], textColor=VERDE, fontName="Helvetica-Bold", alignment=2))]],
+                             Paragraph("mais recente" if i == 0 else "", ParagraphStyle("tag", parent=styles["DCampo"], textColor=VERDE, fontName=_pdf_fonts()[1], alignment=2))]],
                           colWidths=[None, 30 * mm])
             linha.setStyle(TableStyle([("BOTTOMPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 8),
                                         ("LINEBELOW", (0, 0), (-1, -1), 0.4, CINZA_CLARO), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
@@ -1046,6 +1186,53 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
                 ParagraphStyle("DAvisoFam", parent=styles["DNota"], textColor=TERRACOTA, spaceAfter=8),
             ))
             flow.append(Paragraph(_texto(insight_fam["texto"]), styles["DCampo"]))
+
+    antecedentes = d.get("antecedentes_criminais_pf") or {}
+    if antecedentes:
+        flow.append(PageBreak())
+        flow.append(Paragraph("Antecedentes criminais - Policia Federal", styles["DSecao"]))
+        flow.append(Paragraph(
+            "Consulta publica de emissao da Certidao de Antecedentes Criminais da PF via Infosimples.",
+            styles["DNota"],
+        ))
+        flow.append(_tabela_kv([(k, v) for k, v in _antecedentes_linhas(antecedentes) if v]))
+        flow.append(Paragraph("JSON retornado", styles["DSubsecao"]))
+        flow.append(Paragraph(_json_resumido(antecedentes.get("raw") or antecedentes), styles["DNota"]))
+
+    achados_web = d.get("achados_web") or {}
+    if achados_web:
+        flow.append(PageBreak())
+        flow.append(Paragraph("Processos judiciais e registros públicos correlatos", styles["DSecao"]))
+        flow.append(Paragraph(
+            "Pesquisa web executada pela Mistral com a ferramenta web_search. A ausência de achados em web aberta "
+            "não equivale a certidão negativa judicial, e achados sobre familiares são apenas contexto indireto.",
+            styles["DNota"],
+        ))
+        meta = [
+            ("Status", achados_web.get("status", "")),
+            ("Ferramenta", achados_web.get("ferramenta", "")),
+            ("Modelo", achados_web.get("modelo", "")),
+            ("Consultado em", achados_web.get("consultado_em", "")),
+        ]
+        flow.append(_tabela_kv([(k, v) for k, v in meta if v]))
+        if achados_web.get("message"):
+            flow.append(Paragraph(_texto(achados_web["message"]), styles["DNota"]))
+        if achados_web.get("resumo"):
+            flow.append(Paragraph("Resumo da pesquisa", styles["DSubsecao"]))
+            flow.append(Paragraph(_texto(_web_resumo_pdf(achados_web["resumo"])), styles["DCampo"]))
+        linhas_web = _web_achados_linhas(achados_web)
+        if linhas_web:
+            flow.append(Paragraph("Achados classificados", styles["DSubsecao"]))
+            flow.append(_tabela_dados(["Pessoa", "Relação", "Tipo", "Descrição", "Fonte", "Confiança"], linhas_web[:12],
+                                      col_widths=[28 * mm, 22 * mm, 22 * mm, None, 34 * mm, 22 * mm]))
+        fontes_web = _web_fontes_linhas(achados_web)
+        if fontes_web:
+            flow.append(Paragraph("Fontes citadas", styles["DSubsecao"]))
+            flow.append(_tabela_dados(["Título", "URL", "Observação"], fontes_web[:12],
+                                      col_widths=[42 * mm, None, 35 * mm]))
+        if achados_web.get("limitacoes"):
+            flow.append(Paragraph("Limitações", styles["DSubsecao"]))
+            flow.append(Paragraph(_texto("; ".join(str(x) for x in achados_web.get("limitacoes", []))), styles["DNota"]))
 
     insight = d.get("insight_ia")
     if insight and not insight.get("erro"):
