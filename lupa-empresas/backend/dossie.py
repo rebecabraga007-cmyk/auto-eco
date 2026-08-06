@@ -29,6 +29,7 @@ from reportlab.platypus import (
 
 import assertiva
 import brasilapi
+import infosimples
 import mkbuscas
 
 _MAX_CONFIRMACOES = 5
