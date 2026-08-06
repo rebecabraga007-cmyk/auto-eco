@@ -41,6 +41,7 @@ import linkedin_scraper
 import mkbuscas
 import serasa
 import dossie
+import mistral
 
 # Base local de CPF (JBR_PF) — modulo compartilhado em ../../jbr_base.
 _JBR = os.path.join(
@@ -296,15 +297,19 @@ async def company(cnpj: str):
 
 
 @app.get("/api/dossie/pdf")
-async def dossie_pdf(tipo: str, doc: str):
+async def dossie_pdf(tipo: str, doc: str, insight: bool = False):
     """Dossiê em PDF: junta Mk Buscas + Assertiva + confirmação de telefone
-    (CPF) ou Receita Federal + Assertiva + confirmação de telefone (CNPJ)."""
+    (CPF) ou Receita Federal + Assertiva + confirmação de telefone (CNPJ).
+    insight=true chama a Mistral pra gerar resumo de vida + perfil psicológico
+    inferido (ver aviso no próprio PDF — é inferência, não avaliação clínica)."""
     doc_digits = re.sub(r"\D", "", doc or "")
     try:
         if tipo == "cpf":
             if len(doc_digits) != 11:
                 return JSONResponse(status_code=400, content={"status": "error", "message": "CPF inválido."})
             dados = await dossie.montar_cpf(doc_digits)
+            if insight and mistral.enabled():
+                dados["insight_ia"] = await mistral.gerar_insight_pessoa(dados)
             pdf_bytes = dossie.gerar_pdf_cpf(dados)
             nome_arquivo = f"dossie-cpf-{doc_digits}.pdf"
         elif tipo == "cnpj":

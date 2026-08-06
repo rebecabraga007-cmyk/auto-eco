@@ -98,13 +98,28 @@ def _fmt_data_iso(s: str) -> str:
     return f"{m.group(3)}/{m.group(2)}/{m.group(1)}" if m else s
 
 
+_MOJIBAKE = [
+    (r"\bat\?(?=\s)", "até"), (r"\bN\?O\b", "NÃO"), (r"\bn\?o\b", "não"), (r"informa\?\?o", "informação"),
+    (r"descri\?\?o", "descrição"), (r"m\?vel", "móvel"), (r"m\?dio", "médio"), (r"Contato feito h\? ", "Contato feito há "),
+    (r"MOBILI\?RIA", "MOBILIÁRIA"), (r"m\?dia", "média"), (r"situa\?\?o", "situação"), (r"pol\?tica", "política"),
+]
+
+
+def _reparar_mojibake(s: str) -> str:
+    """A própria API da Mk às vezes já devolve '?' no lugar de acento (perda
+    na origem, não é bug de encoding nosso) — corrige os padrões mais comuns."""
+    for pat, rep in _MOJIBAKE:
+        s = re.sub(pat, rep, s, flags=re.IGNORECASE)
+    return s
+
+
 def _texto(v: Any, vazio: str = "—") -> str:
     """Garante string simples pro PDF — nunca deixa um dict/lista bruto quebrar o Paragraph."""
     if v is None or v == "":
         return vazio
     if isinstance(v, (dict, list)):
         return vazio
-    return str(v)
+    return _reparar_mojibake(str(v))
 
 
 # ────────────────────────────────────────────────────────────────
@@ -182,6 +197,8 @@ async def montar_cpf(cpf: str) -> dict[str, Any]:
     empresas_vinc = mkbuscas._extract_companies(mk_data)
     participacoes = as_resp.get("participacoesEmpresas") or as_resp.get("participacoesSocietarias") or []
     hist_seg = as_resp.get("historicoConsultasPorSegmento") or {}
+    historico_profissional = [h for h in (as_resp.get("possivelHistoricoProfissional") or []) if isinstance(h, dict)]
+    registros_profissionais = [r for r in (as_resp.get("registrosProfissionais") or []) if isinstance(r, dict)]
     comentarios = [c for c in (as_resp.get("comentarios") or []) if c]
     imposto = [i for i in (mk_data.get("DadosImposto") or []) if i]
     siape = mk_data.get("servidor_siape") or {}
@@ -219,6 +236,8 @@ async def montar_cpf(cpf: str) -> dict[str, Any]:
         "empregos": empregos,
         "empresas_vinculadas": empresas_vinc,
         "participacoes": participacoes,
+        "historico_profissional": historico_profissional,
+        "registros_profissionais": registros_profissionais,
         "telefones": telefones,
         "confirmacoes": confirmacoes,
         "enderecos": enderecos_completos,
@@ -321,7 +340,7 @@ def _styles():
                                textColor=CINZA, spaceAfter=0))
         ss.add(ParagraphStyle("DTopoDireita", parent=ss["DTopo"], alignment=2))
         ss.add(ParagraphStyle("DNome", parent=ss["Title"], textColor=colors.HexColor("#1A1D21"),
-                               fontSize=22, spaceBefore=10, spaceAfter=4, alignment=0))
+                               fontSize=22, leading=26, spaceBefore=10, spaceAfter=4, alignment=0))
         ss.add(ParagraphStyle("DSub", parent=ss["Normal"], textColor=CINZA, fontSize=10, spaceAfter=10))
         ss.add(ParagraphStyle("DSecao", parent=ss["Heading2"], textColor=AZUL, fontSize=13,
                                spaceBefore=16, spaceAfter=8))
@@ -332,8 +351,8 @@ def _styles():
         ss.add(ParagraphStyle("DNota", parent=ss["Normal"], fontSize=8.5, textColor=CINZA, leading=12))
         ss.add(ParagraphStyle("DCardLabel", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=7.5,
                                textColor=CINZA, spaceAfter=3))
-        ss.add(ParagraphStyle("DCardValor", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=15,
-                               textColor=colors.HexColor("#1A1D21"), spaceAfter=2))
+        ss.add(ParagraphStyle("DCardValor", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=14,
+                               leading=17, textColor=colors.HexColor("#1A1D21"), spaceAfter=3))
         ss.add(ParagraphStyle("DCardSub", parent=ss["Normal"], fontSize=8, textColor=CINZA, leading=11))
         ss.add(ParagraphStyle("DPill", parent=ss["Normal"], fontSize=8.5, textColor=AZUL, alignment=1))
     return ss
@@ -491,6 +510,17 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
     ]
     flow.append(_tabela_kv([(k, v) for k, v in kv_trab if v]))
 
+    if d.get("registros_profissionais"):
+        flow.append(Paragraph("Registros profissionais (conselhos de classe)", styles["DSubsecao"]))
+        flow.append(_tabela_dados(["Profissão", "Registro", "UF"],
+                                   [[r.get("profissao", ""), f"{r.get('sigla', '')} {r.get('numeroInscricao', '')}".strip(), r.get("uf", "") or ""] for r in d["registros_profissionais"][:10]]))
+
+    if d.get("historico_profissional"):
+        flow.append(Paragraph("Histórico de vínculos profissionais (Assertiva)", styles["DSubsecao"]))
+        flow.append(_tabela_dados(["Cargo", "Empresa", "Setor", "Desde"],
+                                   [[h.get("cboDescricao", ""), h.get("razaoSocial", ""), h.get("setor", ""), h.get("dataRegistro", "")] for h in d["historico_profissional"][:10]],
+                                   col_widths=[35 * mm, None, 40 * mm, 22 * mm]))
+
     if d.get("parentes"):
         flow.append(Paragraph("Família e vínculos", styles["DSubsecao"]))
         flow.append(_tabela_dados(["Nome", "Parentesco", "CPF"],
@@ -556,6 +586,23 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
         flow.append(Paragraph("Anotações", styles["DSubsecao"]))
         for c in d["comentarios"][:5]:
             flow.append(Paragraph(f"“{_texto(c)}”", styles["DNota"]))
+
+    insight = d.get("insight_ia")
+    if insight and not insight.get("erro"):
+        flow.append(PageBreak())
+        flow.append(Paragraph("Insight gerado por IA", styles["DSecao"]))
+        flow.append(Paragraph(
+            "Texto gerado automaticamente (Mistral AI) a partir dos dados deste dossiê. O \"perfil\" abaixo é uma "
+            "INFERÊNCIA ESTATÍSTICA a partir de padrão de consumo/renda/emprego — não é uma avaliação psicológica "
+            "clínica, pode conter erro, e não deve ser a única base de nenhuma decisão sobre esta pessoa.",
+            ParagraphStyle("DAviso", parent=styles["DNota"], textColor=TERRACOTA, spaceAfter=10),
+        ))
+        if insight.get("resumo_vida"):
+            flow.append(Paragraph("Resumo da vida da pessoa", styles["DSubsecao"]))
+            flow.append(Paragraph(_texto(insight["resumo_vida"]), styles["DCampo"]))
+        if insight.get("perfil_psicologico"):
+            flow.append(Paragraph("Perfil psicológico inferido", styles["DSubsecao"]))
+            flow.append(Paragraph(_texto(insight["perfil_psicologico"]), styles["DCampo"]))
 
     flow.append(Spacer(1, 16))
     flow.append(Paragraph(

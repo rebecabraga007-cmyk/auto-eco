@@ -2401,11 +2401,11 @@ document.getElementById('inicio-precisa')?.addEventListener('click', e => {
 });
 
 // ── Dossiê PDF (Mk + Assertiva + confirmação de telefone, CPF ou CNPJ) ──
-window.exportarDossie = async function(tipo, doc, btn) {
+window.exportarDossie = async function(tipo, doc, btn, insight) {
   const original = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Gerando…'; }
+  if (btn) { btn.disabled = true; btn.textContent = insight ? '⏳ Gerando (com IA, pode levar +tempo)…' : '⏳ Gerando…'; }
   try {
-    const r = await fetch(`${API}/api/dossie/pdf?tipo=${tipo}&doc=${doc}`);
+    const r = await fetch(`${API}/api/dossie/pdf?tipo=${tipo}&doc=${doc}${insight ? '&insight=true' : ''}`);
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));
       alert(j.message || 'Falha ao gerar o dossiê.');
@@ -2480,14 +2480,18 @@ function toast_inicio(msg) {
   const input = document.getElementById('doss-q');
   const btn = document.getElementById('doss-btn');
   const status = document.getElementById('doss-status');
+  const insightRow = document.getElementById('doss-insight-row');
+  const insightChk = document.getElementById('doss-insight');
   if (!input || !btn) return;
   let modo = 'cpf';
+  if (insightRow) insightRow.hidden = false;
 
   btns.forEach(b => b.addEventListener('click', () => {
     modo = b.dataset.modo;
     btns.forEach(x => x.classList.toggle('active', x === b));
     input.placeholder = modo === 'cpf' ? '000.000.000-00' : '00.000.000/0000-00';
     input.value = '';
+    if (insightRow) insightRow.hidden = modo !== 'cpf';
   }));
 
   input.addEventListener('input', () => {
@@ -2499,7 +2503,8 @@ function toast_inicio(msg) {
     if (modo === 'cpf' && doc.length !== 11) { status.textContent = 'CPF inválido — precisa ter 11 dígitos.'; return; }
     if (modo === 'cnpj' && doc.length !== 14) { status.textContent = 'CNPJ inválido — precisa ter 14 dígitos.'; return; }
     status.textContent = '';
-    const ok = await exportarDossie(modo, doc, btn);
+    const comInsight = modo === 'cpf' && insightChk && insightChk.checked;
+    const ok = await exportarDossie(modo, doc, btn, comInsight);
     status.textContent = ok ? '✅ Dossiê gerado e baixado.' : '';
   });
 })();
