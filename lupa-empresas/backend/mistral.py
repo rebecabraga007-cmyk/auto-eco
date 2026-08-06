@@ -66,7 +66,8 @@ def _resumo_dados_para_prompt(d: dict[str, Any]) -> str:
         f"Estado civil: {d.get('estado_civil', '')}",
         f"Renda estimada: R$ {d.get('renda', '')} (faixa: {d.get('faixa_renda', '')})",
         f"Score de crédito: {d.get('score', '')} ({d.get('score_faixa', '')})",
-        f"Perfil de consumo (Mosaic): {d.get('mosaic', '')} — {d.get('mosaic_classe', '')}",
+        f"Perfil de consumo (Mosaic, classificação principal): {d.get('mosaic', '')} — {d.get('mosaic_classe', '')}",
+        f"Perfil de consumo (Mosaic novo, foco em trajetória/geração): {d.get('mosaic_novo', '')} — {d.get('mosaic_novo_classe', '')}",
         f"Profissão / CBO: {d.get('profissao', '')}",
         f"Emprego atual na base: {', '.join(e.get('razaoSocial') or e.get('nome', '') for e in d.get('empregos', [])) or 'nenhum'}",
         f"Participação em empresas: {', '.join(d.get('empresas_vinculadas', [])) or 'nenhuma'}",
@@ -91,16 +92,15 @@ async def gerar_insight_pessoa(d: dict[str, Any]) -> dict[str, str]:
 DADOS:
 {contexto}
 
-Gere DUAS seções em português do Brasil. Cada frase deve trazer uma ideia NOVA — nunca repita a mesma ressalva ("é inferência", "pode sugerir", "não é confirmado") mais de uma vez por seção; diga a ressalva geral só uma vez, no início ou no fim, e no resto do texto vá direto ao ponto.
+Gere DUAS seções em português do Brasil, num texto corrido e natural (não em lista de tópicos, não repita a mesma ressalva de incerteza mais de uma vez por seção).
 
-1) RESUMO (3-5 frases): resumo objetivo e neutro do que se sabe sobre a vida dessa pessoa (trabalho, renda, situação familiar, estabilidade) — só fatos, sem opinião. SE houver dados de família na lista acima (nome + situação/renda/score de parentes), use-os aqui: diga quem são e o que se sabe sobre eles, não só "tem N parentes".
+1) RESUMO (3-5 frases): resumo objetivo e neutro do que se sabe sobre a vida dessa pessoa (trabalho, renda, situação familiar, estabilidade) — só fatos, sem opinião. Se houver parentes com dados na lista acima, cite quem são e o que se sabe deles (não só "tem N parentes").
 
-2) PERFIL (5-8 frases): leitura interpretativa do padrão de consumo/trabalho/estilo de vida — cada frase abordando um ângulo DIFERENTE (não repita a mesma observação reformulada). Cubra, sem repetir a ressalva em cada uma:
-   - se a idade é compatível com o padrão de comportamento observado (ex.: histórico de empregos concentrado num período e nada depois — o que isso sugere sobre a trajetória?);
-   - UMA hipótese sobre temperamento/tolerância a risco/propensão a mudança, como hipótese fraca, sem repetir a hipótese de outro ângulo;
-   - contradições nos dados (ex.: score baixo mas mosaic de alto consumo) que valham destacar;
-   - SE houver dados de família enriquecidos: o que o contexto socioeconômico da família (renda/risco dos parentes) acrescenta ou contradiz sobre o perfil dela — isso é um ângulo obrigatório quando o dado existir, não pode ficar de fora.
-   Não use termos diagnósticos (transtorno, patologia, distúrbio) e não afirme nada como certeza.
+2) PERFIL (6-9 frases, texto corrido): leitura interpretativa do padrão de consumo/trabalho/estilo de vida — combine, sem virar lista: se a idade bate com a trajetória observada, uma hipótese fraca de temperamento/tolerância a risco, e contradições nos dados que valham destacar (ex.: score baixo com mosaic de alto consumo).
+
+   SE houver parentes com dados (idade, renda, score, setor de trabalho): dedique 2-3 frases à DINÂMICA FAMILIAR, no mesmo tom hipotético do resto — por exemplo, o que a diferença de idade entre ela e os filhos sugere sobre quando teve filhos; se a renda/score de um filho(a) adulto(a) sugere dependência financeira dos pais ou autonomia; se o setor de trabalho de um parente é compatível ou destoa do da pessoa; se o conjunto da família sugere rede de apoio forte ou dispersa. Trate isso como parte natural do perfil, não como um bloco separado.
+
+   Não use termos diagnósticos (transtorno, patologia, distúrbio) e não afirme nada como certeza — mas também não precisa repetir "isso é uma inferência" em cada frase; diga isso uma vez só.
 
 Responda EXATAMENTE neste formato, sem markdown:
 RESUMO: <texto>

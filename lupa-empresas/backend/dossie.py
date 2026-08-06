@@ -361,6 +361,8 @@ async def montar_cpf(cpf: str, incluir_familia: bool = False) -> dict[str, Any]:
         "mosaic": mosaic.get("descricaoMosaicSecundario") or mosaic.get("descricaoMosaicNovo") or mosaic.get("descricaoMosaic") or "",
         "mosaic_classe": mosaic.get("classeMosaicSecundario") or mosaic.get("classeMosaicNovo") or "",
         "mosaic_grupo_principal": mosaic.get("descricaoMosaic") or "",
+        "mosaic_novo": mosaic.get("descricaoMosaicNovo") or "",
+        "mosaic_novo_classe": mosaic.get("classeMosaicNovo") or "",
         "profissao": prof.get("cboDescricao") if prof.get("cboDescricao") and "sem descri" not in (prof.get("cboDescricao") or "").lower() else "",
         "cbo": prof.get("cbo") or "",
         "pis": prof.get("pis") or "",
