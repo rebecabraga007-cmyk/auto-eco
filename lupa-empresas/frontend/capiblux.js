@@ -548,6 +548,13 @@ function renderNome(exatos, q) {
     <div class="rank-bar">
       <button id="rank-btn-${prefix}" class="btn-secondary" onclick="calcularRanking('${prefix}')">Calcular ranking</button>
       <button id="rank-btn-agr-${prefix}" class="btn-secondary" title="Também consulta a Assertiva por CPF — mais completo, custa 2 consultas por pessoa" onclick="calcularRanking('${prefix}', true)">Ranking agressivo</button>
+      <label class="rank-qtd" title="Quantos candidatos puxar no ranking">
+        Puxar <input type="number" id="rank-qtd-${prefix}" value="20" min="1" max="200" style="width:56px">
+      </label>
+      <label class="rank-so-positivos" title="No ranking agressivo, não gasta consulta Assertiva com quem já teve 0% no ranking normal (Mk)">
+        <input type="checkbox" id="rank-so-positivos-${prefix}">
+        Agressivo: só quem teve % no Mk
+      </label>
       <span id="rank-note-${prefix}" class="rank-note"></span>
     </div>`;
 
@@ -876,9 +883,14 @@ window.calcularRanking = async function(prefix, agressivo) {
     return;
   }
   const container = document.getElementById('rpanel-' + prefix);
+  const qtdInput = document.getElementById('rank-qtd-' + prefix);
+  const maxCandidatos = Math.max(1, Math.min(200, parseInt(qtdInput && qtdInput.value, 10) || RANKING_MAX_CANDIDATOS));
+  const soPositivos = agressivo && document.getElementById('rank-so-positivos-' + prefix)?.checked;
   const cards = [...container.querySelectorAll('.card-person')];
-  const alvo = cards.slice(0, RANKING_MAX_CANDIDATOS);
-  const fonte = agressivo ? 'Mk Buscas + Assertiva (2 consultas pagas por CPF)' : 'Mk Buscas (1 consulta paga por CPF)';
+  const alvo = cards.slice(0, maxCandidatos);
+  const fonte = agressivo
+    ? (soPositivos ? 'Mk Buscas + Assertiva só pra quem teve % no Mk' : 'Mk Buscas + Assertiva (2 consultas pagas por CPF)')
+    : 'Mk Buscas (1 consulta paga por CPF)';
 
   // Limpa qualquer dado de Assertiva de uma rodada ANTERIOR pra esses candidatos —
   // a Assertiva só deve aparecer se ESSE clique for "Ranking agressivo". Sem isso,
@@ -893,11 +905,12 @@ window.calcularRanking = async function(prefix, agressivo) {
       if (antigo) antigo.remove();
     }
   });
-  if (cards.length > RANKING_MAX_CANDIDATOS) {
-    note.innerHTML = `Calculando pros ${RANKING_MAX_CANDIDATOS} primeiros de ${cards.length} — ${fonte}.`;
+  if (cards.length > maxCandidatos) {
+    note.innerHTML = `Calculando pros ${maxCandidatos} primeiros de ${cards.length} — ${fonte}.`;
   }
   btn.disabled = true; if (btnAgr) btnAgr.disabled = true;
   let feitos = 0;
+  let pulados = 0;
   const resultados = [];
   for (const card of alvo) {
     const cpf = card.dataset.cpf;
@@ -906,7 +919,12 @@ window.calcularRanking = async function(prefix, agressivo) {
     try {
       const mk = await fetch(`${API}/api/person/${cpf}/mk`).then(r => r.json());
       let extra = null;
-      if (agressivo) {
+      // Score só com Mk primeiro — se "só quem teve % no Mk" estiver marcado e a
+      // pessoa deu 0% (ou nulo), pula a consulta Assertiva pra ela e economiza.
+      const scoreMkSomente = calcularScorePessoa(mk, pistas, null).score;
+      const pulaAssertiva = soPositivos && !(scoreMkSomente > 0);
+      if (pulaAssertiva) pulados++;
+      if (agressivo && !pulaAssertiva) {
         window._assertivaPorCpf = window._assertivaPorCpf || {};
         try {
           const asResp = await fetch(`${API}/api/assertiva/cpf?cpf=${cpf}&finalidade=5`);
@@ -958,7 +976,8 @@ window.calcularRanking = async function(prefix, agressivo) {
       porque.innerHTML = (motivos || []).map(m => `<div>${esc(m)}</div>`).join('');
     }
   });
-  note.textContent = `Ranking (${fonte}) calculado para ${alvo.length} candidato(s). Ordenado por % de chance.`;
+  const notaPulados = pulados ? ` (${pulados} pulado(s) por terem 0% no Mk — não gastou Assertiva com eles)` : '';
+  note.textContent = `Ranking (${fonte}) calculado para ${alvo.length} candidato(s)${notaPulados}. Ordenado por % de chance.`;
   btn.disabled = false; if (btnAgr) btnAgr.disabled = false;
 };
 
