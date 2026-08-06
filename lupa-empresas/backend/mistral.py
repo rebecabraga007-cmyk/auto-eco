@@ -34,33 +34,6 @@ def _fmt_historico(itens: list[dict[str, Any]]) -> str:
     return "; ".join(linhas)
 
 
-def _fmt_familia(parentes: list[dict[str, Any]]) -> str:
-    """Resumo por parente, incluindo o enriquecimento da Mk quando a busca de
-    família (opt-in) rodou — sem isso, o insight só sabia "tem N parentes",
-    nunca dizia nada real sobre eles."""
-    linhas = []
-    for p in parentes or []:
-        nome, grau = p.get("nome", ""), (p.get("grau") or "").split("(")[0].strip()
-        r = p.get("resumo")
-        if r:
-            detalhe = ", ".join(x for x in [
-                f"situação {r['situacao_cpf'].lower()}" if r.get("situacao_cpf") else "",
-                f"renda R$ {r['renda']}" if r.get("renda") else "",
-                f"risco {r['score_faixa'].lower()}" if r.get("score_faixa") else "",
-                f"profissão {r['profissao']}" if r.get("profissao") else "",
-                f"vínculo com {', '.join(r['empresas_vinculadas'])}" if r.get("empresas_vinculadas") else "",
-            ] if x)
-            linhas.append(f"{nome} ({grau}): {detalhe or 'sem dados adicionais'}")
-        else:
-            linhas.append(f"{nome} ({grau})")
-    return "; ".join(linhas)
-
-
-def _fmt_participacoes_mk(itens: list[dict[str, Any]]) -> str:
-    linhas = [f"{p['relacao']} em {p['cnpj']} ({p['desde']}–{p['ate']})" for p in (itens or [])]
-    return "; ".join(linhas) or "nenhuma"
-
-
 def _resumo_dados_para_prompt(d: dict[str, Any]) -> str:
     """Reduz o dict do dossiê a um texto compacto pro prompt (sem mandar o
     JSON inteiro — só o que é relevante pro insight)."""
@@ -71,18 +44,16 @@ def _resumo_dados_para_prompt(d: dict[str, Any]) -> str:
         f"Estado civil: {d.get('estado_civil', '')}",
         f"Renda estimada: R$ {d.get('renda', '')} (faixa: {d.get('faixa_renda', '')})",
         f"Score de crédito: {d.get('score', '')} ({d.get('score_faixa', '')})",
-        f"Perfil de consumo (Mosaic, classificação principal): {d.get('mosaic', '')} — {d.get('mosaic_classe', '')}",
-        f"Perfil de consumo (Mosaic novo, foco em trajetória/geração): {d.get('mosaic_novo', '')} — {d.get('mosaic_novo_classe', '')}",
+        f"Perfil de consumo (Mosaic): {d.get('mosaic', '')} — {d.get('mosaic_classe', '')}",
         f"Profissão / CBO: {d.get('profissao', '')}",
         f"Emprego atual na base: {', '.join(e.get('razaoSocial') or e.get('nome', '') for e in d.get('empregos', [])) or 'nenhum'}",
         f"Participação em empresas: {', '.join(d.get('empresas_vinculadas', [])) or 'nenhuma'}",
-        f"Participação societária (Mk, CNPJ/relação/período): {_fmt_participacoes_mk(d.get('participacoes_mk', []))}",
         f"Histórico profissional (Assertiva): {_fmt_historico(d.get('historico_profissional', []))}",
         f"Benefícios sociais recebidos: {'; '.join(b.get('beneficio', '') for b in d.get('beneficios', [])) or 'nenhum'}",
         f"Nº de endereços já registrados: {len(d.get('enderecos', []))}",
         f"Cidades: {', '.join(sorted(set(e.get('cidade', '') for e in d.get('enderecos', []) if e.get('cidade'))))}",
         f"É PPE (politicamente exposta): {'sim' if d.get('pep') else 'não'}",
-        f"Família (nome, parentesco, e dados dela quando disponíveis): {_fmt_familia(d.get('parentes', []))}",
+        f"Nº de parentes na base: {len(d.get('parentes', []))}",
     ]
     return "\n".join(p for p in partes if p.split(": ", 1)[-1] not in ("", "nenhum", "nenhuma", "não"))
 
