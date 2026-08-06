@@ -311,6 +311,7 @@ async def dossie_pdf(tipo: str, doc: str, insight: bool = False, familia: bool =
                 return JSONResponse(status_code=400, content={"status": "error", "message": "CPF inválido."})
             dados = await dossie.montar_cpf(doc_digits, incluir_familia=familia)
             if insight and mistral.enabled():
+                dados["achados_web"] = await mistral.web_search_dossie(dados)
                 dados["insight_ia"] = await mistral.gerar_insight_pessoa(dados)
                 if familia and any(p.get("resumo") for p in dados.get("parentes", [])):
                     dados["insight_familia"] = await mistral.gerar_hipoteses_familia(dados)

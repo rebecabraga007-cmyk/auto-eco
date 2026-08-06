@@ -10,18 +10,31 @@ explícito (aviso). Decisão do usuário, ciente do risco (LGPD / perfilamento
 automatizado), manter esse disclaimer sempre visível.
 """
 import os
+import json
+from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 
 API_URL = "https://api.mistral.ai/v1/chat/completions"
+CONVERSATIONS_URL = "https://api.mistral.ai/v1/conversations"
 API_KEY = os.environ.get("MISTRAL_API_KEY", "").strip()
 MODEL = os.environ.get("MISTRAL_MODEL", "mistral-small-latest").strip()
+WEB_SEARCH_TOOL = os.environ.get("MISTRAL_WEB_SEARCH_TOOL", "web_search").strip() or "web_search"
+WEB_SEARCH_ENABLED = os.environ.get("MISTRAL_WEB_SEARCH_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
 _TIMEOUT = httpx.Timeout(30.0)
+_BACKEND_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _BACKEND_DIR.parents[1]
+AGENTE_MD_PATH = Path(os.environ.get("MISTRAL_AGENT_MD", str(_REPO_ROOT / "agente.md")))
 
 
 def enabled() -> bool:
     return bool(API_KEY)
+
+
+def web_search_enabled() -> bool:
+    return enabled() and WEB_SEARCH_ENABLED
 
 
 def _fmt_historico(itens: list[dict[str, Any]]) -> str:
@@ -32,6 +45,201 @@ def _fmt_historico(itens: list[dict[str, Any]]) -> str:
         data = h.get("dataRegistro", "")
         linhas.append(f"{cargo} em {empresa} ({data})")
     return "; ".join(linhas)
+
+
+def _load_agente_md() -> str:
+    """Carrega as instruções locais do agente para pesquisa web do dossiê."""
+    try:
+        return AGENTE_MD_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _resumo_web_para_prompt(d: dict[str, Any]) -> str:
+    """Extrai achados web/processuais quando algum coletor os anexar ao dossiê."""
+    chaves = (
+        "web_search",
+        "pesquisa_web",
+        "achados_web",
+        "processos_web",
+        "processos_judiciais",
+        "registros_publicos_web",
+    )
+    achados: dict[str, Any] = {}
+    for chave in chaves:
+        valor = d.get(chave)
+        if valor:
+            achados[chave] = valor
+    if not achados:
+        return ""
+    return json.dumps(achados, ensure_ascii=False, indent=2, default=str)[:7000]
+
+
+def _nomes_parentes(d: dict[str, Any], limit: int = 8) -> list[str]:
+    nomes = []
+    for p in d.get("parentes", []) or []:
+        nome = (p.get("nome") or "").strip()
+        if nome and nome not in nomes:
+            nomes.append(nome)
+        if len(nomes) >= limit:
+            break
+    return nomes
+
+
+def _web_search_prompt(d: dict[str, Any]) -> str:
+    agente = _load_agente_md()
+    contexto = _resumo_dados_para_prompt(d)
+    parentes = "\n".join(f"- {n}" for n in _nomes_parentes(d)) or "- nenhum familiar listado"
+    cidades = ", ".join(sorted(set(e.get("cidade", "") for e in d.get("enderecos", []) if e.get("cidade")))) or "não informado"
+    return f"""Você deve fazer web search pública para complementar um dossiê de pessoa física no Brasil.
+
+INSTRUÇÕES DO AGENTE:
+{agente}
+
+DADOS DA PESSOA PRINCIPAL:
+{contexto}
+
+Cidades/endereço de contexto: {cidades}
+
+FAMILIARES A PESQUISAR COMO CONTEXTO INDIRETO:
+{parentes}
+
+Tarefas:
+1. Pesquise o nome completo da pessoa principal com termos como processos, eproc, TJ, TRF, TRT, diário oficial, Jusbrasil e Escavador.
+2. Pesquise familiares listados apenas como contexto indireto.
+3. Separe achados judiciais/processuais de registros não judiciais.
+4. Cite fontes/URLs retornadas pelo web_search.
+5. Se nada relevante for encontrado sobre a pessoa principal, declare isso com cautela.
+
+Responda somente em JSON válido, sem markdown, neste formato:
+{{
+  "status": "ok",
+  "resumo": "",
+  "principal": {{
+    "nome": "{d.get('nome', '')}",
+    "processos_encontrados": false,
+    "achados": [
+      {{"tipo": "", "descricao": "", "fonte": "", "url": "", "confianca": "forte|provavel|incerto"}}
+    ]
+  }},
+  "familiares": [
+    {{
+      "nome": "",
+      "parentesco": "",
+      "processos_encontrados": false,
+      "achados": [
+        {{"tipo": "", "descricao": "", "fonte": "", "url": "", "confianca": "forte|provavel|incerto"}}
+      ]
+    }}
+  ],
+  "fontes": [
+    {{"titulo": "", "url": "", "fonte": "", "observacao": ""}}
+  ],
+  "limitacoes": ["Ausência de achados em web aberta não equivale a certidão negativa judicial."],
+  "insight_complementar": ""
+}}"""
+
+
+def _conversation_text_and_refs(payload: dict[str, Any]) -> tuple[str, list[dict[str, str]]]:
+    textos: list[str] = []
+    refs: list[dict[str, str]] = []
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, dict):
+            typ = obj.get("type")
+            if typ == "text" and obj.get("text"):
+                textos.append(str(obj["text"]))
+            elif typ == "tool_reference":
+                refs.append({
+                    "titulo": str(obj.get("title") or ""),
+                    "url": str(obj.get("url") or ""),
+                    "fonte": str(obj.get("source") or obj.get("tool") or ""),
+                })
+            elif obj.get("type") == "message.output" and isinstance(obj.get("content"), str):
+                textos.append(obj["content"])
+            for value in obj.values():
+                walk(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                walk(item)
+        elif isinstance(obj, str):
+            # Fallback para respostas simples de SDK/API.
+            if len(obj) > 20 and ("{" in obj or "RESUMO" in obj.upper()):
+                textos.append(obj)
+
+    for entry in payload.get("outputs") or payload.get("entries") or []:
+        walk(entry)
+    if not textos:
+        walk(payload)
+
+    texto = "\n".join(dict.fromkeys(t.strip() for t in textos if t.strip()))
+    fontes = []
+    seen = set()
+    for ref in refs:
+        key = (ref.get("url"), ref.get("titulo"))
+        if key in seen:
+            continue
+        seen.add(key)
+        fontes.append(ref)
+    return texto, fontes
+
+
+def _parse_json_object(texto: str) -> dict[str, Any]:
+    try:
+        return json.loads(texto)
+    except Exception:
+        pass
+    ini = texto.find("{")
+    fim = texto.rfind("}")
+    if ini >= 0 and fim > ini:
+        try:
+            return json.loads(texto[ini:fim + 1])
+        except Exception:
+            pass
+    return {}
+
+
+async def web_search_dossie(d: dict[str, Any]) -> dict[str, Any]:
+    """Executa web_search da Mistral via Conversations API e devolve achados estruturados."""
+    if not web_search_enabled():
+        return {"status": "unavailable", "message": "Mistral web_search não configurado."}
+
+    prompt = _web_search_prompt(d)
+    payload = {
+        "model": MODEL,
+        "inputs": [{"role": "user", "content": prompt}],
+        "tools": [{"type": WEB_SEARCH_TOOL}],
+        "store": False,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.post(
+                CONVERSATIONS_URL,
+                headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+                json=payload,
+            )
+    except Exception as exc:
+        return {"status": "error", "message": f"Falha ao chamar Mistral web_search: {str(exc)[:150]}"}
+
+    if resp.status_code >= 400:
+        return {"status": "error", "message": f"Mistral web_search {resp.status_code}: {resp.text[:300]}"}
+
+    raw = resp.json()
+    texto, refs = _conversation_text_and_refs(raw)
+    data = _parse_json_object(texto)
+    if not data:
+        data = {"status": "ok", "resumo": texto, "fontes": []}
+    data.setdefault("status", "ok")
+    data.setdefault("fontes", [])
+    if refs:
+        existentes = {(f.get("url"), f.get("titulo")) for f in data.get("fontes", []) if isinstance(f, dict)}
+        for ref in refs:
+            if (ref.get("url"), ref.get("titulo")) not in existentes:
+                data["fontes"].append(ref)
+    data["ferramenta"] = WEB_SEARCH_TOOL
+    data["modelo"] = MODEL
+    data["consultado_em"] = datetime.now(timezone.utc).isoformat()
+    return data
 
 
 def _resumo_dados_para_prompt(d: dict[str, Any]) -> str:
@@ -64,10 +272,21 @@ async def gerar_insight_pessoa(d: dict[str, Any]) -> dict[str, str]:
         return {"erro": "MISTRAL_API_KEY não configurada."}
 
     contexto = _resumo_dados_para_prompt(d)
+    agente = _load_agente_md()
+    achados_web = _resumo_web_para_prompt(d)
+    bloco_agente = f"\n\nINSTRUÇÕES DO AGENTE PARA WEB SEARCH:\n{agente}" if agente else ""
+    bloco_web = (
+        f"\n\nACHADOS WEB / PROCESSUAIS JÁ COLETADOS:\n{achados_web}"
+        if achados_web
+        else "\n\nACHADOS WEB / PROCESSUAIS JÁ COLETADOS: nenhum achado foi anexado ao JSON."
+    )
     prompt = f"""Você está analisando dados públicos/de data broker (Mk Buscas + Assertiva) sobre uma pessoa, pra um dossiê de prospecção comercial no Brasil. Use SÓ os dados abaixo — não invente fato novo.
+
+Quando houver achados web/processuais no JSON, aplique as instruções do agente. Preserve o insight da pessoa principal: achados sobre familiares servem apenas como contexto complementar, nunca como conclusão direta sobre a pessoa consultada. Se não houver achados web, diga somente o que os dados internos sustentam.{bloco_agente}
 
 DADOS:
 {contexto}
+{bloco_web}
 
 Gere DUAS seções, cada uma com 2-4 frases, em português do Brasil:
 
@@ -88,7 +307,7 @@ PERFIL: <texto>"""
                     "model": MODEL,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.4,
-                    "max_tokens": 500,
+                    "max_tokens": 900,
                 },
             )
     except Exception as exc:
