@@ -36,6 +36,7 @@ VERDE_SOFT = colors.HexColor("#E9F3ED")
 CINZA = colors.HexColor("#55595F")
 CINZA_CLARO = colors.HexColor("#DBD4C6")
 PAPEL = colors.HexColor("#F1EEE7")
+AMBAR = colors.HexColor("#8C6A16")
 
 
 def only_digits(s: str) -> str:
@@ -102,6 +103,11 @@ _MOJIBAKE = [
     (r"\bat\?(?=\s)", "até"), (r"\bN\?O\b", "NÃO"), (r"\bn\?o\b", "não"), (r"informa\?\?o", "informação"),
     (r"descri\?\?o", "descrição"), (r"m\?vel", "móvel"), (r"m\?dio", "médio"), (r"Contato feito h\? ", "Contato feito há "),
     (r"MOBILI\?RIA", "MOBILIÁRIA"), (r"m\?dia", "média"), (r"situa\?\?o", "situação"), (r"pol\?tica", "política"),
+    # A Mk também manda alguns valores sem acento nenhum (não é "?", é ausência mesmo) —
+    # cobre só o vocabulário fixo (enums) que aparece com frequência no dossiê.
+    (r"\botimo\b", "Ótimo"), (r"\bmedia\b", "média"), (r"\bmedio\b", "médio"),
+    (r"\bflorianopolis\b", "Florianópolis"), (r"\bmaceio\b", "Maceió"), (r"\bgoncalves\b", "Gonçalves"),
+    (r"\bmae\b", "Mãe"), (r"\birma\b", "Irmã"),
 ]
 
 
@@ -122,11 +128,127 @@ def _texto(v: Any, vazio: str = "—") -> str:
     return _reparar_mojibake(str(v))
 
 
+def _fmt_inteiro(s: Any) -> str:
+    """'1630' -> '1.630' (separador de milhar, pt-BR)."""
+    d = only_digits(str(s or ""))
+    return f"{int(d):,}".replace(",", ".") if d else ""
+
+
+def _fmt_moeda(s: Any) -> str:
+    """'1714,12' -> '1.714,12'."""
+    s = str(s or "").strip()
+    if not s:
+        return ""
+    inteiro, _, dec = s.replace(".", "").partition(",")
+    return _fmt_inteiro(inteiro) + (f",{dec}" if dec else "")
+
+
+def _fmt_preco(s: Any) -> str:
+    """'31.85' (a Mk manda com ponto decimal) -> '31,85'."""
+    s = str(s or "").strip()
+    if "." in s and "," not in s:
+        inteiro, dec = s.rsplit(".", 1)
+        return f"{inteiro},{dec}"
+    return s
+
+
+def _fmt_faixa(s: str) -> str:
+    """'De R$ 1630 at? R$ 4082' -> 'R$ 1.630–4.082'."""
+    m = re.search(r"R\$\s*([\d.,]+).*?R\$\s*([\d.,]+)", s or "")
+    if not m:
+        return _reparar_mojibake(s or "")
+    return f"R$ {_fmt_inteiro(m.group(1))}–{_fmt_inteiro(m.group(2))}"
+
+
+_TIPO_LOGRADOURO = {
+    "R": "R.", "AV": "Av.", "TRAV": "Trav.", "AL": "Al.", "ALA": "Al.", "PC": "Pç.",
+    "CJ": "Cj.", "ESTR": "Estr.", "ROD": "Rod.", "VL": "Vl.", "QD": "Qd.", "LT": "Lt.",
+}
+
+
+def _titlecase(s: str) -> str:
+    """ALL CAPS -> Title Case, mantendo conectores (de/da/do/dos/das/e) minúsculos
+    e algarismos romanos (I, II, III) maiúsculos."""
+    conectores = {"de", "da", "do", "dos", "das", "e"}
+    palavras = (s or "").strip().lower().split()
+    out = []
+    for i, p in enumerate(palavras):
+        if p in conectores and i > 0:
+            out.append(p)
+        elif re.fullmatch(r"[ivx]+", p):
+            out.append(p.upper())
+        else:
+            out.append(p.capitalize())
+    return " ".join(out)
+
+
+def _tel_tipo(raw_tipo: str) -> str:
+    t = (raw_tipo or "").upper()
+    if "MOVEL" in t or "M" + chr(0xd3) + "VEL" in t or "CELULAR" in t:
+        return "Celular"
+    if "RESIDENCIAL" in t or "FIXO" in t:
+        return "Fixo"
+    if "COMERCIAL" in t:
+        return "Comercial"
+    return ""
+
+
 # ────────────────────────────────────────────────────────────────
 # Coleta de dados — CPF (Mk Buscas + Assertiva + intelgrax-tel)
 # ────────────────────────────────────────────────────────────────
 
-async def montar_cpf(cpf: str) -> dict[str, Any]:
+def _telefones_assertiva_com_tipo(as_resp: dict[str, Any]):
+    """Telefones/telefonesAdicionados da Assertiva, com TIPO (Celular/Fixo)
+    conhecido quando o bloco vem separado em {fixos, moveis} — a Assertiva
+    às vezes já classifica, e isso é melhor que adivinhar pelo formato do número."""
+    for chave in ("telefones", "telefonesAdicionados"):
+        bloco = as_resp.get(chave)
+        if isinstance(bloco, dict):
+            for tipo, lista in (("Celular", bloco.get("moveis") or []), ("Fixo", bloco.get("fixos") or [])):
+                for t in lista:
+                    num = str(t.get("numero") or t.get("telefone") or "")
+                    if num:
+                        yield num, str(t.get("ddd") or ""), tipo, t
+        elif isinstance(bloco, list):
+            for t in bloco:
+                num = str(t.get("numero") or t.get("telefone") or "")
+                if num:
+                    yield num, str(t.get("ddd") or ""), "", t
+
+
+_MAX_PARENTES_ENRIQUECIDOS = 4
+
+
+async def _enriquecer_familia(parentes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Consulta Mk Buscas pra cada parente com CPF conhecido (até
+    _MAX_PARENTES_ENRIQUECIDOS, pra não estourar custo) e anexa um resumo
+    básico — usado só quando o usuário liga "Incluir família" (opt-in, cada
+    parente é 1+ consulta paga extra)."""
+    out = []
+    consultados = 0
+    for p in parentes:
+        p = dict(p)
+        cpf_p = only_digits(p.get("cpf", ""))
+        if cpf_p and len(cpf_p) == 11 and consultados < _MAX_PARENTES_ENRIQUECIDOS and mkbuscas.enabled():
+            consultados += 1
+            r = await mkbuscas.consulta_cpf(cpf_p)
+            if r.get("status") == "ok":
+                d = r["data"]
+                db_p = d.get("DadosBasicos") or {}
+                de_p = d.get("DadosEconomicos") or {}
+                sit_p = db_p.get("situacaoCadastral") if isinstance(db_p.get("situacaoCadastral"), dict) else {}
+                p["resumo"] = {
+                    "situacao_cpf": sit_p.get("descricaoSituacaoCadastral", ""),
+                    "renda": (de_p.get("renda") or ""),
+                    "score_faixa": ((de_p.get("score") or {}).get("scoreCSBAFaixaRisco") or ""),
+                    "profissao": ((d.get("profissao") or {}).get("cboDescricao") or ""),
+                    "empresas_vinculadas": mkbuscas._extract_companies(d),
+                }
+        out.append(p)
+    return out
+
+
+async def montar_cpf(cpf: str, incluir_familia: bool = False) -> dict[str, Any]:
     doc = only_digits(cpf)
     mk_r = await mkbuscas.consulta_cpf(doc) if mkbuscas.enabled() else {"status": "unavailable"}
     as_r = await assertiva.consulta_cpf(doc) if assertiva.enabled() else {"status": "unavailable"}
@@ -145,15 +267,15 @@ async def montar_cpf(cpf: str) -> dict[str, Any]:
     mosaic = de.get("serasaMosaic") if isinstance(de.get("serasaMosaic"), dict) else {}
     flags = mk_data.get("flags") if isinstance(mk_data.get("flags"), dict) else {}
 
-    telefones: list[dict[str, Any]] = list(mkbuscas._extract_phones(mk_data))
-    for t in _lista_assertiva(as_resp.get("telefones")) + _lista_assertiva(as_resp.get("telefonesAdicionados")):
-        num = str(t.get("numero") or t.get("telefone") or "")
-        if num:
-            telefones.append({
-                "telefone": num, "ddd": str(t.get("ddd") or ""), "fonte": "Assertiva",
-                "operadora": t.get("operadora", ""), "ultimo_contato": t.get("ultimoContato", ""),
-                "whatsapp": (t.get("aplicativos") or {}).get("whatsApp") if isinstance(t.get("aplicativos"), dict) else None,
-            })
+    telefones: list[dict[str, Any]] = [
+        {**t, "tipo": _tel_tipo(t.get("tipo", ""))} for t in mkbuscas._extract_phones(mk_data)
+    ]
+    for num, ddd, tipo, resto in _telefones_assertiva_com_tipo(as_resp):
+        telefones.append({
+            "telefone": num, "ddd": ddd, "fonte": "Assertiva", "tipo": tipo,
+            "operadora": resto.get("operadora", ""), "ultimo_contato": resto.get("ultimoContato", ""),
+            "whatsapp": (resto.get("aplicativos") or {}).get("whatsApp") if isinstance(resto.get("aplicativos"), dict) else None,
+        })
 
     def _tel_digits(t: dict[str, Any]) -> str:
         raw = only_digits((t.get("ddd", "") or "") + (t.get("telefone", "") or t.get("number", "") or ""))
@@ -180,6 +302,8 @@ async def montar_cpf(cpf: str) -> dict[str, Any]:
         {"nome": p.get("nomeParente", ""), "grau": p.get("grauParentesco", ""), "cpf": p.get("cpfParente", "")}
         for p in (mk_data.get("parentes") or []) if isinstance(p, dict) and p.get("nomeParente")
     ]
+    if incluir_familia:
+        parentes = await _enriquecer_familia(parentes)
     vizinhos = [
         {"nome": v.get("nome", ""), "idade": v.get("idade", ""), "nome_mae": v.get("nomeMae", "")}
         for v in (mk_data.get("vizinhos") or []) if isinstance(v, dict) and v.get("nome")
@@ -203,6 +327,11 @@ async def montar_cpf(cpf: str) -> dict[str, Any]:
     imposto = [i for i in (mk_data.get("DadosImposto") or []) if i]
     siape = mk_data.get("servidor_siape") or {}
     eh_servidor = bool(siape.get("ID_Servidor")) or bool(flags.get("__servidor_publico_siape__"))
+    compras = [c for c in (mk_data.get("comprasId") or []) if isinstance(c, dict) and c.get("produto")]
+    perfil_consumo = mk_data.get("perfilConsumo") if isinstance(mk_data.get("perfilConsumo"), dict) else {}
+    tem_vacinacao = bool(mk_data.get("imunoBiologicos"))
+    lista_docs = mk_data.get("listaDocumentos") if isinstance(mk_data.get("listaDocumentos"), dict) else {}
+    cns_lista = lista_docs.get("CNS") or []
 
     return {
         "tipo": "cpf",
@@ -225,13 +354,20 @@ async def montar_cpf(cpf: str) -> dict[str, Any]:
         "pep": bool(as_cad.get("ppe")) or bool(flags.get("__pessoa_exposta_politicamente__")),
         "renda": de.get("renda") or "",
         "faixa_renda": poder.get("faixaPoderAquisitivo") or "",
+        "poder_aquisitivo": poder.get("poderAquisitivoDescricao") or "",
         "score": score.get("scoreCSBA") or "",
         "score_faixa": score.get("scoreCSBAFaixaRisco") or "",
-        "mosaic": mosaic.get("descricaoMosaicNovo") or mosaic.get("descricaoMosaic") or "",
-        "mosaic_classe": mosaic.get("classeMosaicNovo") or "",
+        "score_csb_ausente": not score.get("scoreCSB"),
+        "mosaic": mosaic.get("descricaoMosaicSecundario") or mosaic.get("descricaoMosaicNovo") or mosaic.get("descricaoMosaic") or "",
+        "mosaic_classe": mosaic.get("classeMosaicSecundario") or mosaic.get("classeMosaicNovo") or "",
+        "mosaic_grupo_principal": mosaic.get("descricaoMosaic") or "",
         "profissao": prof.get("cboDescricao") if prof.get("cboDescricao") and "sem descri" not in (prof.get("cboDescricao") or "").lower() else "",
         "cbo": prof.get("cbo") or "",
         "pis": prof.get("pis") or "",
+        "rg": db.get("registroGeral") if isinstance(db.get("registroGeral"), str) else (mk_data.get("registroGeral") or ""),
+        "cns": (cns_lista[0] if cns_lista else "") or db.get("cns") or "",
+        "compras": compras,
+        "perfil_consumo": perfil_consumo,
         "eh_servidor_publico": eh_servidor,
         "empregos": empregos,
         "empresas_vinculadas": empresas_vinc,
@@ -249,6 +385,8 @@ async def montar_cpf(cpf: str) -> dict[str, Any]:
         "historico_consultas": hist_seg,
         "comentarios": comentarios,
         "declaracao_imposto": imposto,
+        "tem_vacinacao": tem_vacinacao,
+        "incluiu_familia": incluir_familia,
         "fontes": {
             "mk": mk_r.get("status", "unavailable"),
             "assertiva": as_r.get("status", "unavailable"),
@@ -424,7 +562,7 @@ def _cards(cards: list[tuple[str, str, str]]) -> Table:
     for label, valor, sub in cards:
         conteudo = [Paragraph(label.upper(), styles["DCardLabel"]), Paragraph(_texto(valor), styles["DCardValor"])]
         if sub:
-            conteudo.append(Paragraph(sub, styles["DCardSub"]))
+            conteudo.append(Paragraph(_texto(sub), styles["DCardSub"]))
         cel.append(conteudo)
     t = Table([cel], colWidths=[None] * len(cards))
     t.setStyle(TableStyle([
@@ -438,19 +576,88 @@ def _cards(cards: list[tuple[str, str, str]]) -> Table:
 
 
 def _endereco_txt(e: dict[str, Any]) -> str:
-    partes = [e.get("tipoLogradouro", ""), e.get("logradouro", "")]
+    tipo = _TIPO_LOGRADOURO.get((e.get("tipoLogradouro") or "").upper(), (e.get("tipoLogradouro") or "").title())
+    partes = [tipo, _titlecase(e.get("logradouro", ""))]
     linha1 = " ".join(p for p in partes if p).strip()
     if e.get("logradouroNumero"):
         linha1 += f", {e['logradouroNumero']}"
     if e.get("complemento"):
-        linha1 += f" · {e['complemento']}"
+        linha1 += f" · {_titlecase(e['complemento'])}"
     if e.get("bairro"):
-        linha1 += f" — {e['bairro']}"
-    linha2 = ", ".join(p for p in [e.get("cidade", ""), e.get("uf", "")] if p)
+        linha1 += f" — {_titlecase(e['bairro'])}"
+    linha2 = ", ".join(p for p in [_titlecase(e.get("cidade", "")), e.get("uf", "")] if p)
     if e.get("cep"):
         cep = only_digits(str(e["cep"])).zfill(8)
         linha2 += f" · CEP {cep[:5]}-{cep[5:]}"
-    return "<br/>".join(p for p in [linha1, linha2] if p) or "—"
+    return _reparar_mojibake("<br/>".join(p for p in [linha1, linha2] if p) or "—")
+
+
+def _callout(titulo: str, texto: str) -> Table:
+    styles = _styles()
+    t = Table([[Paragraph(f"<b>{titulo}</b><br/>{texto}", styles["DCampo"])]], colWidths=[None])
+    t.setStyle(TableStyle([
+        ("LINEBEFORE", (0, 0), (0, 0), 2.5, TERRACOTA),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    return t
+
+
+def _header_pagina(titulo: str, numero: int, total: int = 4) -> Table:
+    styles = _styles()
+    st_titulo = ParagraphStyle("hpTitulo", parent=styles["DTopo"], fontName="Helvetica-Bold", fontSize=9)
+    esquerda = Paragraph(titulo.upper(), st_titulo)
+    direita = Paragraph(f"página {numero} de {total}", styles["DTopoDireita"])
+    t = Table([[esquerda, direita]], colWidths=[None, None])
+    t.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.4, CINZA_CLARO),
+    ]))
+    return t
+
+
+def _barra(pct: float, largura: float = 32 * mm, altura: float = 3.2):
+    from reportlab.graphics.shapes import Drawing, Rect
+    dw = Drawing(largura, altura)
+    dw.add(Rect(0, 0, largura, altura, fillColor=CINZA_CLARO, strokeColor=None))
+    dw.add(Rect(0, 0, largura * max(0, min(pct, 100)) / 100.0, altura, fillColor=AZUL, strokeColor=None))
+    return dw
+
+
+_LABELS_PCT = {
+    "financiamento_veiculo": "Financiamento de veículo", "compra_internet": "Compra pela internet",
+    "credito_pessoal": "Crédito pessoal", "casa_propria": "Casa própria", "investimentos": "Investimentos",
+    "turismo": "Turismo", "multiplos_cartoes": "Múltiplos cartões", "cartao_prime": "Cartão prime",
+    "tv_cabo": "TV por assinatura", "banda_larga": "Banda larga", "seguro_automotivo": "Seguro automotivo",
+    "seguro_saude": "Seguro saúde", "seguro_vida": "Seguro vida", "seguro_residencial": "Seguro residencial",
+    "consignado": "Crédito consignado", "previdencia_privada": "Previdência privada",
+    "resgate_milhas": "Resgate de milhas", "cacador_descontos": "Caçador de descontos", "fitness": "Fitness",
+    "cinefilo": "Cinéfilo", "transporte_publico": "Transporte público", "jogos_online": "Jogos online",
+    "video_game": "Videogame", "early_adopters": "Early adopter", "credito_mobiliario": "Crédito imobiliário",
+    "celular_pre_pago": "Celular pré-pago", "celular_pos_pago": "Celular pós-pago", "luxo": "Produtos de luxo",
+}
+_LABELS_BOOL = {
+    "credito_pessoal_pre_aprovado": "Crédito pessoal pré-aprovado",
+    "credito_imobiliario_pre_aprovado": "Crédito imobiliário pré-aprovado",
+    "financiamento_de_veiculo_pre_aprovado": "Financiamento de veículo pré-aprovado",
+    "classe_media": "Classe média", "debito_autmatico": "Débito automático", "possui_luxo": "Produtos de luxo",
+    "possui_investimentos": "Investimentos", "possui_cartao_de_credito": "Cartão de crédito",
+    "possui_multiplos_cartoes": "Múltiplos cartões", "possui_conta_alto_padrao": "Conta de alto padrão",
+    "possui_cartao_black": "Cartão black", "possui_cartao_prime": "Cartão prime",
+    "possui_celular_pre_pago": "Celular pré-pago", "possui_celular_pos_pago": "Celular pós-pago",
+    "possui_milhas_acumuladas": "Milhas acumuladas", "possui_casa_propria": "Casa própria",
+    "possui_descontos": "Caçador de descontos", "possui_contas_correntes": "Contas correntes",
+    "possui_seguro_automotivo": "Seguro automotivo", "possui_previdencia_privada": "Previdência privada",
+    "possui_internet_banking": "Internet banking", "possui_token_instalado": "Token de segurança instalado",
+    "realizou_viagens": "Já viajou",
+}
+
+
+def _parece_comercial(email: str) -> bool:
+    local, _, dominio = (email or "").partition("@")
+    dominio_nome = dominio.split(".")[0].lower()
+    return bool(local) and bool(dominio_nome) and (local.lower() == dominio_nome or local.lower() in dominio_nome)
 
 
 def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
@@ -458,13 +665,22 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=16 * mm, bottomMargin=16 * mm,
                              leftMargin=18 * mm, rightMargin=18 * mm)
-    flow = [_cabecalho("PESSOA", d)]
+
+    # ── Página 1 — identificação ──────────────────────────────────
+    esquerda = Paragraph("CAPIBLU · DOSSIÊ DE PESSOA", styles["DTopo"])
+    direita = Paragraph("consulta de CPF", styles["DTopoDireita"])
+    cab = Table([[esquerda, direita]], colWidths=[None, None])
+    cab.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6), ("LINEBELOW", (0, 0), (-1, -1), 0.75, AZUL),
+    ]))
+    flow = [cab]
 
     idade_txt = f"{d['idade']} anos" if d.get("idade") else ""
     nasc_txt = f"nascida em {d['nascimento']}" if d.get("nascimento") else ""
-    nasc_local = f" em {d['municipio_nascimento']}" if d.get("municipio_nascimento") else ""
-    subtitulo = " · ".join(p for p in [d["doc"], idade_txt, (nasc_txt + nasc_local).strip(), d.get("sexo", "")] if p)
-    flow.append(Paragraph(d["nome"] or "Nome não encontrado", styles["DNome"]))
+    nasc_local = f" em {_titlecase(d['municipio_nascimento'])}" if d.get("municipio_nascimento") else ""
+    subtitulo = " · ".join(p for p in [d["doc"], idade_txt, (nasc_txt + nasc_local).strip(), (d.get("sexo") or "").lower()] if p)
+    flow.append(Paragraph(_titlecase(d["nome"]) or "Nome não encontrado", styles["DNome"]))
     flow.append(Paragraph(subtitulo, styles["DSub"]))
 
     pills = []
@@ -474,94 +690,95 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
     if d.get("obito"):
         sem_obito = d["obito"] not in ("SIM",)
         pills.append(_pill("Sem indício de óbito" if sem_obito else "Óbito registrado", VERDE_SOFT if sem_obito else TERRACOTA_SOFT, VERDE if sem_obito else TERRACOTA))
-    pills.append(_pill("É PPE (pessoa politicamente exposta)" if d.get("pep") else "Não é PPE", TERRACOTA_SOFT if d.get("pep") else colors.HexColor("#E8EDF1"), TERRACOTA if d.get("pep") else AZUL))
+    pills.append(_pill("É PPE" if d.get("pep") else "Não é PPE", TERRACOTA_SOFT if d.get("pep") else colors.HexColor("#E8EDF1"), TERRACOTA if d.get("pep") else AZUL))
     flow.append(_linha_pills(pills))
     flow.append(Spacer(1, 10))
 
     cards = []
     if d.get("renda"):
-        cards.append(("Renda estimada", f"R$ {d['renda']}", f"Faixa {d['faixa_renda']}." if d.get("faixa_renda") else ""))
+        sub_renda = ""
+        if d.get("faixa_renda"):
+            sub_renda = f"Faixa {_fmt_faixa(d['faixa_renda'])}"
+            if d.get("poder_aquisitivo"):
+                sub_renda += f", poder aquisitivo {d['poder_aquisitivo'].lower()}"
+            sub_renda += ". Estimativa, não é salário confirmado."
+        cards.append(("Renda estimada", f"R$ {_fmt_moeda(d['renda'])}", sub_renda))
     if d.get("score"):
-        cards.append(("Score de crédito", f"{d['score']}  {d.get('score_faixa', '').lower()}", ""))
+        risco = {"medio": "médio"}.get((d.get("score_faixa") or "").lower(), (d.get("score_faixa") or "").lower())
+        cor_risco = VERDE if "baixo" in risco else (TERRACOTA if "alto" in risco else AMBAR)
+        cor_hex = "#" + cor_risco.hexval()[2:]
+        valor_html = f"{d['score']}  <font size='8.5' color='{cor_hex}'>risco {risco}</font>" if risco else str(d["score"])
+        sub_score = "Uma segunda base não devolveu score para este CPF." if d.get("score_csb_ausente") else ""
+        cards.append(("Score de crédito", valor_html, sub_score))
     if d.get("mosaic"):
-        cards.append(("Perfil de consumo", d["mosaic"], d.get("mosaic_classe", "")))
+        sub_mosaic = f'Grupo principal "{d["mosaic_grupo_principal"]}"; classificação de mercado, não é renda confirmada.' if d.get("mosaic_grupo_principal") else "Classificação de mercado, não é renda confirmada."
+        cards.append(("Perfil de consumo", d["mosaic"], sub_mosaic))
     if cards:
         flow.append(_cards(cards))
         flow.append(Spacer(1, 12))
 
     kv = [
-        ("Nome da mãe / do pai", " / ".join(p for p in [d.get("nome_mae", ""), d.get("nome_pai", "")] if p)),
-        ("Estado civil / nacionalidade", " · ".join(p for p in [d.get("estado_civil", ""), d.get("nacionalidade", "")] if p)),
-        ("Escolaridade", d.get("escolaridade", "")),
-        ("Situação cadastral", (f"{d['situacao_cpf']}" + (f" — confirmada em {d['situacao_cpf_data']}" if d.get("situacao_cpf_data") else "")) if d.get("situacao_cpf") else ""),
-        ("Benefícios sociais", "; ".join(f"{b.get('beneficio', '')} ({b.get('totalRecebido', '')})" for b in d.get("beneficios", [])) or "Nenhum registrado."),
+        ("Nome da mãe", _titlecase(d.get("nome_mae", ""))),
+        ("Situação cadastral", (f"{d['situacao_cpf'].capitalize()}" + (f" — confirmada em {d['situacao_cpf_data']}" if d.get("situacao_cpf_data") else "")) if d.get("situacao_cpf") else ""),
+        ("Escolaridade", _texto(d.get("escolaridade", "")).capitalize() if d.get("escolaridade") else ""),
+        ("Benefícios sociais", "; ".join(f"{b.get('beneficio', '')} ({b.get('totalRecebido', '')})" for b in d.get("beneficios", [])) or "Nenhum registrado (auxílio emergencial, Bolsa Família, BPC, INSS)."),
     ]
     flow.append(_tabela_kv([(k, v) for k, v in kv if v]))
+    flow.append(Spacer(1, 14))
+    flow.append(_callout(
+        "Como ler este documento",
+        "Reúne dados públicos e de mercado sobre a pessoa acima, para fins de prospecção comercial "
+        "(legítimo interesse, LGPD). Estimativas de renda e consumo são probabilísticas — não confirme "
+        "decisões só com elas.",
+    ))
 
+    # ── Página 2 — como falar com ela ─────────────────────────────
     flow.append(PageBreak())
-    flow.append(Paragraph("Trabalho, família e contato", styles["DSecao"]))
-
-    flow.append(Paragraph("Trabalho e renda formal", styles["DSubsecao"]))
-    kv_trab = [
-        ("Profissão", f"{d['profissao']} (CBO {d['cbo']})" if d.get("profissao") else ""),
-        ("Emprego atual", ", ".join(e.get("razaoSocial") or e.get("nomeEmpresa") or e.get("nome", "") for e in d.get("empregos", [])) or ""),
-        ("PIS/PASEP", str(d["pis"]) if d.get("pis") else ""),
-        ("Participação em empresas", "; ".join(d.get("empresas_vinculadas", [])) or ("Nenhuma. " + ("É servidora pública (SIAPE)." if d.get("eh_servidor_publico") else "Não é servidora pública."))),
-    ]
-    flow.append(_tabela_kv([(k, v) for k, v in kv_trab if v]))
-
-    if d.get("registros_profissionais"):
-        flow.append(Paragraph("Registros profissionais (conselhos de classe)", styles["DSubsecao"]))
-        flow.append(_tabela_dados(["Profissão", "Registro", "UF"],
-                                   [[r.get("profissao", ""), f"{r.get('sigla', '')} {r.get('numeroInscricao', '')}".strip(), r.get("uf", "") or ""] for r in d["registros_profissionais"][:10]]))
-
-    if d.get("historico_profissional"):
-        flow.append(Paragraph("Histórico de vínculos profissionais (Assertiva)", styles["DSubsecao"]))
-        flow.append(_tabela_dados(["Cargo", "Empresa", "Setor", "Desde"],
-                                   [[h.get("cboDescricao", ""), h.get("razaoSocial", ""), h.get("setor", ""), h.get("dataRegistro", "")] for h in d["historico_profissional"][:10]],
-                                   col_widths=[35 * mm, None, 40 * mm, 22 * mm]))
-
-    if d.get("parentes"):
-        flow.append(Paragraph("Família e vínculos", styles["DSubsecao"]))
-        flow.append(_tabela_dados(["Nome", "Parentesco", "CPF"],
-                                   [[p["nome"], p.get("grau", ""), _fmt_cpf(p["cpf"]) if p.get("cpf") else ""] for p in d["parentes"][:12]],
-                                   col_widths=[None, 45 * mm, 35 * mm]))
-
-    if d.get("redes_sociais"):
-        flow.append(Paragraph("Redes sociais associadas ao CPF", styles["DSubsecao"]))
-        rs_pills = [_pill(f"{r.get('rede', r.get('tipo', ''))} · {r.get('usuario', r.get('perfil', ''))}") for r in d["redes_sociais"][:8]]
-        flow.append(_linha_pills(rs_pills))
-
-    if d.get("emails"):
-        flow.append(Paragraph(f"E-mails encontrados — {len(d['emails'])}", styles["DSubsecao"]))
-        flow.append(_tabela_dados(["E-mail", "Qualidade", "Prioridade"],
-                                   [[e.get("email", ""), e.get("qualidade", ""), e.get("prioridade", "")] for e in d["emails"][:10]]))
+    flow.append(_header_pagina("Como falar com ela", 2))
 
     if d.get("telefones"):
-        flow.append(Paragraph(f"Telefones — {len(d['telefones'])} encontrado{'s' if len(d['telefones']) != 1 else ''}", styles["DSubsecao"]))
+        n = len(d["telefones"])
+        flow.append(Paragraph(f"Telefones — {n} encontrado{'s' if n != 1 else ''}", styles["DSubsecao"]))
+        melhor = next((c for c in d.get("confirmacoes", []) if c.get("atrelado") and (c.get("total") or 99) <= 2), None)
+        if melhor:
+            flow.append(Paragraph(f"O celular abaixo aparece só ligado a ela em busca reversa.", styles["DCampo"]))
         linhas_tel = []
         for t in d["telefones"][:15]:
             pert = t.get("_pertence")
             if pert and pert.get("atrelado") is True:
-                confirmado = "✅ Confirmado"
+                total_p = pert.get("total") or 1
+                confirmado = "Confirmado — só ela aparece" if total_p <= 1 else f"Confirmado (aparece {total_p}x)"
             elif pert and pert.get("atrelado") is False:
-                confirmado = "❌ Não confirmado"
+                confirmado = "não é dela"
             else:
-                confirmado = "—"
-            ult = t.get("ultimo_contato", "")
-            linhas_tel.append([_fmt_tel(t), t.get("operadora", "") or t.get("fonte", ""), ult, confirmado])
-        flow.append(_tabela_dados(["Telefone", "Operadora", "Último contato", "É dela mesmo?"], linhas_tel,
-                                   col_widths=[35 * mm, 30 * mm, None, 35 * mm]))
+                confirmado = "não conferido"
+            linhas_tel.append([_fmt_tel(t), t.get("tipo") or "—", confirmado])
+        flow.append(_tabela_dados(["Telefone", "Tipo", "É dela mesmo?"], linhas_tel, col_widths=[35 * mm, 30 * mm, None]))
 
-    flow.append(PageBreak())
-    flow.append(Paragraph("Renda formal e histórico", styles["DSecao"]))
-
-    if d.get("declaracao_imposto"):
-        flow.append(Paragraph("Declaração de imposto de renda", styles["DSubsecao"]))
-        flow.append(Paragraph(f"{len(d['declaracao_imposto'])} declaração(ões) encontrada(s) na base.", styles["DCampo"]))
+    if d.get("emails"):
+        n = len(d["emails"])
+        flow.append(Paragraph(f"E-mails — {n} encontrado{'s' if n != 1 else ''}", styles["DSubsecao"]))
+        comercial = next((e for e in d["emails"] if _parece_comercial(e.get("email", ""))), None)
+        if comercial:
+            local_com = comercial["email"].split("@")[0]
+            flow.append(Paragraph(f'Um deles ("{local_com}") sugere um negócio próprio ou envolvimento comercial.', styles["DCampo"]))
+        linhas_email = []
+        for e in d["emails"][:10]:
+            pessoal = (e.get("emailPessoal") or "").upper()
+            if pessoal == "SIM":
+                eh_pessoal = "Sim"
+            elif _parece_comercial(e.get("email", "")):
+                eh_pessoal = "Não — parece comercial"
+            else:
+                eh_pessoal = "Não" if pessoal == "NAO" or pessoal == "N" + chr(0xd3) else "—"
+            qualidade = " · ".join(p for p in [_texto(e.get("qualidade", ""), "").capitalize(), (e.get("prioridade") or "").lower()] if p and p != "—")
+            linhas_email.append([e.get("email", ""), qualidade, eh_pessoal])
+        flow.append(_tabela_dados(["E-mail", "Qualidade", "É pessoal?"], linhas_email))
 
     if d.get("enderecos"):
-        flow.append(Paragraph(f"Onde já morou — {len(d['enderecos'])} endereço{'s' if len(d['enderecos']) != 1 else ''}", styles["DSubsecao"]))
+        n = len(d["enderecos"])
+        flow.append(Paragraph(f"Onde ela já morou — {n} endereço{'s' if n != 1 else ''}", styles["DSubsecao"]))
+        flow.append(Paragraph("Do mais recente para o mais antigo.", styles["DCampo"]))
         for i, e in enumerate(d["enderecos"][:10]):
             linha = Table([[Paragraph(_endereco_txt(e), styles["DCampo"]),
                              Paragraph("mais recente" if i == 0 else "", ParagraphStyle("tag", parent=styles["DCampo"], textColor=VERDE, fontName="Helvetica-Bold", alignment=2))]],
@@ -570,22 +787,141 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
                                         ("LINEBELOW", (0, 0), (-1, -1), 0.4, CINZA_CLARO), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
             flow.append(linha)
 
-    hist = d.get("historico_consultas") or {}
-    if hist.get("quantidadeTotal"):
-        segs = ", ".join(s.get("segmento", "") for s in hist.get("segmentos", []) if isinstance(s, dict)) or "não detalhados"
-        flow.append(Paragraph("Histórico de consultas por outros clientes", styles["DSubsecao"]))
-        flow.append(Paragraph(f"{hist['quantidadeTotal']} consulta(s) recente(s), nos segmentos {segs}.", styles["DCampo"]))
+    # ── Página 3 — perfil de consumo ──────────────────────────────
+    flow.append(PageBreak())
+    flow.append(_header_pagina("Perfil de consumo", 3))
+
+    pc = d.get("perfil_consumo") or {}
+    tem = [_LABELS_BOOL[k] for k, v in pc.items() if k in _LABELS_BOOL and v is True]
+    nao_tem = [_LABELS_BOOL[k] for k, v in pc.items() if k in _LABELS_BOOL and v is False]
+    if tem or nao_tem:
+        flow.append(Paragraph("O que ela provavelmente tem e usa", styles["DSubsecao"]))
+        flow.append(Paragraph("Sinalizadores de mercado, não confirmação bancária.", styles["DCampo"]))
+        col_tem = [Paragraph("<b>PROVAVELMENTE TEM</b>", styles["DCardLabel"]), Paragraph(" · ".join(tem) or "—", styles["DCampo"])]
+        col_nao = [Paragraph("<b>PROVAVELMENTE NÃO TEM</b>", styles["DCardLabel"]), Paragraph(" · ".join(nao_tem) or "—", styles["DCampo"])]
+        tb = Table([[col_tem, col_nao]], colWidths=[None, None])
+        tb.setStyle(TableStyle([
+            ("BOX", (0, 0), (-1, -1), 0.6, CINZA_CLARO), ("INNERGRID", (0, 0), (-1, -1), 0.6, CINZA_CLARO),
+            ("TOPPADDING", (0, 0), (-1, -1), 10), ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+            ("LEFTPADDING", (0, 0), (-1, -1), 12), ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        flow.append(tb)
+        flow.append(Spacer(1, 12))
+
+    pcts = []
+    for k, v in pc.items():
+        if isinstance(v, str):
+            m = re.search(r"(\d+)%", v)
+            if m:
+                pcts.append((_LABELS_PCT.get(k, k.replace("_", " ").capitalize()), int(m.group(1))))
+    pcts.sort(key=lambda x: -x[1])
+    if pcts:
+        pct_style = ParagraphStyle("pct", parent=styles["DCampo"], fontSize=9, wordWrap=None)
+        flow.append(Paragraph(f"Chance de interesse em cada oferta (top {min(len(pcts), 8)} de {len(pcts)})", styles["DSubsecao"]))
+        linhas_bar = []
+        top = pcts[:8]
+        pares = list(zip(top[0::2], top[1::2] + [None]))
+        for (lbl1, pct1), par2 in pares:
+            row = [Paragraph(lbl1, styles["DCampo"]), _barra(pct1), Paragraph(f"{pct1}%", pct_style)]
+            if par2:
+                lbl2, pct2 = par2
+                row += [Paragraph(lbl2, styles["DCampo"]), _barra(pct2), Paragraph(f"{pct2}%", pct_style)]
+            else:
+                row += ["", "", ""]
+            linhas_bar.append(row)
+        tb = Table(linhas_bar, colWidths=[40 * mm, 30 * mm, 13 * mm, 40 * mm, 30 * mm, 13 * mm])
+        tb.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        flow.append(tb)
+
+    if d.get("compras"):
+        flow.append(Paragraph("Compras recentes identificadas", styles["DSubsecao"]))
+        flow.append(Paragraph("Sinalizador de mercado, a partir de bases de e-commerce/varejo.", styles["DCampo"]))
+        linhas_compra = [[_texto(c.get("produto", "")), c.get("quantidade", ""), f"R$ {_fmt_preco(c.get('preco', ''))}"] for c in d["compras"][:8]]
+        flow.append(_tabela_dados(["Produto", "Qtd.", "Preço"], linhas_compra, col_widths=[None, 20 * mm, 25 * mm]))
+
+    # ── Página 4 — família, vizinhos e metodologia ────────────────
+    flow.append(PageBreak())
+    flow.append(_header_pagina("Família, vizinhos e metodologia", 4))
+
+    if d.get("parentes"):
+        flow.append(Paragraph("Família próxima", styles["DSubsecao"]))
+        linhas_fam = [[_titlecase(p["nome"]), re.sub(r"\(\w+\)$", "", p.get("grau", "")).strip().capitalize() or "—", _fmt_cpf(p["cpf"]) if p.get("cpf") else "não informado"] for p in d["parentes"][:12]]
+        flow.append(_tabela_dados(["Nome", "Parentesco", "CPF"], linhas_fam, col_widths=[None, 40 * mm, 35 * mm]))
+        if d.get("incluiu_familia") and any(p.get("resumo") for p in d["parentes"]):
+            flow.append(Spacer(1, 6))
+            for p in d["parentes"][:_MAX_PARENTES_ENRIQUECIDOS]:
+                r = p.get("resumo")
+                if not r:
+                    continue
+                partes = [
+                    f"situação {r['situacao_cpf'].lower()}" if r.get("situacao_cpf") else "",
+                    f"renda R$ {_fmt_moeda(r['renda'])}" if r.get("renda") else "",
+                    f"risco {r['score_faixa'].lower()}" if r.get("score_faixa") else "",
+                    f"profissão: {r['profissao']}" if r.get("profissao") else "",
+                ]
+                resumo_txt = ", ".join(x for x in partes if x)
+                if resumo_txt:
+                    grau_limpo = re.sub(r"\(\w+\)$", "", p.get("grau", "")).strip().lower()
+                    flow.append(Paragraph(f"<b>{_titlecase(p['nome'])} ({grau_limpo}):</b> {resumo_txt}.", styles["DCampo"]))
 
     if d.get("vizinhos"):
-        flow.append(Paragraph(f"Pessoas que moram perto dela — {len(d['vizinhos'])} encontrada(s)", styles["DSubsecao"]))
+        total_viz = len(d["vizinhos"])
+        mostrar = d["vizinhos"][:4]
+        flow.append(Paragraph("Pessoas que moram perto dela", styles["DSubsecao"]))
+        flow.append(Paragraph(f"Mostrando {len(mostrar)} de {total_viz} encontrados.", styles["DCampo"]))
         flow.append(_tabela_dados(["Nome", "Idade", "Nome da mãe"],
-                                   [[v["nome"], str(v.get("idade", "")), v.get("nome_mae", "")] for v in d["vizinhos"][:10]],
+                                   [[_titlecase(v["nome"]), str(v.get("idade", "")), _titlecase(v.get("nome_mae", ""))] for v in mostrar],
                                    col_widths=[None, 20 * mm, None]))
 
     if d.get("comentarios"):
         flow.append(Paragraph("Anotações", styles["DSubsecao"]))
         for c in d["comentarios"][:5]:
             flow.append(Paragraph(f"“{_texto(c)}”", styles["DNota"]))
+
+    metodologia = [("Consulta", "CPF · finalidade legítimo interesse (prospecção comercial, LGPD)")]
+
+    imposto = d.get("declaracao_imposto") or []
+    sem_decl = [i.get("ano", "") for i in imposto if "NAO CONSTA" in (i.get("status", "") or "").upper()]
+    if sem_decl and len(sem_decl) == len(imposto):
+        metodologia.append(("Declaração de IR", f"Sem declaração na Receita para {' e '.join(sorted(set(sem_decl)))}."))
+    elif imposto:
+        metodologia.append(("Declaração de IR", f"{len(imposto)} registro(s) de declaração encontrado(s) na base."))
+
+    melhor_conf = next((c for c in d.get("confirmacoes", []) if c.get("status") == "ok"), None)
+    if melhor_conf:
+        if melhor_conf.get("atrelado"):
+            total_c = melhor_conf.get("total") or 1
+            nome_bate = melhor_conf.get("nome") or d.get("nome", "")
+            txt = f"{_fmt_tel({'telefone': melhor_conf['telefone']})} aparece {total_c}x, sempre para {_titlecase(nome_bate)}" + (" — sem duplicidade com outra pessoa." if total_c <= 2 else ".")
+        else:
+            txt = f"{_fmt_tel({'telefone': melhor_conf['telefone']})} não aparece atrelado a este CPF na base de telefone reverso."
+        metodologia.append(("Telefone reverso", txt))
+
+    flow.append(Paragraph("De onde vêm esses dados", styles["DSubsecao"]))
+    flow.append(_tabela_kv(metodologia))
+
+    faltantes = []
+    if not d.get("rg"):
+        faltantes.append("RG")
+    if not d.get("cns"):
+        faltantes.append("CNS")
+    if not d.get("estado_civil"):
+        faltantes.append("estado civil")
+    if not d.get("profissao"):
+        faltantes.append("profissão")
+    if not d.get("empregos"):
+        faltantes.append("emprego")
+    if not d.get("tem_vacinacao"):
+        faltantes.append("vacinação")
+    aviso_faltantes = f" Sem {', '.join(faltantes[:-1])}{' e ' if len(faltantes) > 1 else ''}{faltantes[-1] if faltantes else ''} registrados nas bases consultadas." if faltantes else ""
+    flow.append(Spacer(1, 10))
+    flow.append(_callout(
+        "Antes de usar este documento",
+        "Dados de renda, score e consumo são estimativas de mercado, não confirmação bancária." + aviso_faltantes,
+    ))
 
     insight = d.get("insight_ia")
     if insight and not insight.get("erro"):

@@ -2401,11 +2401,11 @@ document.getElementById('inicio-precisa')?.addEventListener('click', e => {
 });
 
 // ── Dossiê PDF (Mk + Assertiva + confirmação de telefone, CPF ou CNPJ) ──
-window.exportarDossie = async function(tipo, doc, btn, insight) {
+window.exportarDossie = async function(tipo, doc, btn, insight, familia) {
   const original = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = insight ? '⏳ Gerando (com IA, pode levar +tempo)…' : '⏳ Gerando…'; }
+  if (btn) { btn.disabled = true; btn.textContent = (insight || familia) ? '⏳ Gerando (pode levar +tempo)…' : '⏳ Gerando…'; }
   try {
-    const r = await fetch(`${API}/api/dossie/pdf?tipo=${tipo}&doc=${doc}${insight ? '&insight=true' : ''}`);
+    const r = await fetch(`${API}/api/dossie/pdf?tipo=${tipo}&doc=${doc}${insight ? '&insight=true' : ''}${familia ? '&familia=true' : ''}`);
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));
       alert(j.message || 'Falha ao gerar o dossiê.');
@@ -2482,9 +2482,12 @@ function toast_inicio(msg) {
   const status = document.getElementById('doss-status');
   const insightRow = document.getElementById('doss-insight-row');
   const insightChk = document.getElementById('doss-insight');
+  const familiaRow = document.getElementById('doss-familia-row');
+  const familiaChk = document.getElementById('doss-familia');
   if (!input || !btn) return;
   let modo = 'cpf';
   if (insightRow) insightRow.hidden = false;
+  if (familiaRow) familiaRow.hidden = false;
 
   btns.forEach(b => b.addEventListener('click', () => {
     modo = b.dataset.modo;
@@ -2492,6 +2495,7 @@ function toast_inicio(msg) {
     input.placeholder = modo === 'cpf' ? '000.000.000-00' : '00.000.000/0000-00';
     input.value = '';
     if (insightRow) insightRow.hidden = modo !== 'cpf';
+    if (familiaRow) familiaRow.hidden = modo !== 'cpf';
   }));
 
   input.addEventListener('input', () => {
@@ -2504,7 +2508,8 @@ function toast_inicio(msg) {
     if (modo === 'cnpj' && doc.length !== 14) { status.textContent = 'CNPJ inválido — precisa ter 14 dígitos.'; return; }
     status.textContent = '';
     const comInsight = modo === 'cpf' && insightChk && insightChk.checked;
-    const ok = await exportarDossie(modo, doc, btn, comInsight);
+    const comFamilia = modo === 'cpf' && familiaChk && familiaChk.checked;
+    const ok = await exportarDossie(modo, doc, btn, comInsight, comFamilia);
     status.textContent = ok ? '✅ Dossiê gerado e baixado.' : '';
   });
 })();

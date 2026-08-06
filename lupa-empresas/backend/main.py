@@ -297,17 +297,19 @@ async def company(cnpj: str):
 
 
 @app.get("/api/dossie/pdf")
-async def dossie_pdf(tipo: str, doc: str, insight: bool = False):
+async def dossie_pdf(tipo: str, doc: str, insight: bool = False, familia: bool = False):
     """Dossiê em PDF: junta Mk Buscas + Assertiva + confirmação de telefone
     (CPF) ou Receita Federal + Assertiva + confirmação de telefone (CNPJ).
     insight=true chama a Mistral pra gerar resumo de vida + perfil psicológico
-    inferido (ver aviso no próprio PDF — é inferência, não avaliação clínica)."""
+    inferido (ver aviso no próprio PDF — é inferência, não avaliação clínica).
+    familia=true consulta Mk/Assertiva pra cada parente encontrado (custo extra
+    por parente — opt-in)."""
     doc_digits = re.sub(r"\D", "", doc or "")
     try:
         if tipo == "cpf":
             if len(doc_digits) != 11:
                 return JSONResponse(status_code=400, content={"status": "error", "message": "CPF inválido."})
-            dados = await dossie.montar_cpf(doc_digits)
+            dados = await dossie.montar_cpf(doc_digits, incluir_familia=familia)
             if insight and mistral.enabled():
                 dados["insight_ia"] = await mistral.gerar_insight_pessoa(dados)
             pdf_bytes = dossie.gerar_pdf_cpf(dados)

@@ -69,11 +69,15 @@ async def gerar_insight_pessoa(d: dict[str, Any]) -> dict[str, str]:
 DADOS:
 {contexto}
 
-Gere DUAS seções, cada uma com 2-4 frases, em português do Brasil:
+Gere DUAS seções em português do Brasil:
 
-1) RESUMO: um resumo objetivo e neutro do que se sabe sobre a vida dessa pessoa (trabalho, renda, situação familiar, estabilidade) — só fatos, sem opinião.
+1) RESUMO (3-5 frases): resumo objetivo e neutro do que se sabe sobre a vida dessa pessoa (trabalho, renda, situação familiar, estabilidade) — só fatos, sem opinião.
 
-2) PERFIL: uma leitura interpretativa do padrão de consumo/trabalho/estilo de vida (o que o Mosaic, a renda, o histórico profissional e os hábitos sugerem sobre comportamento/perfil dela). Deixe claro que é uma INFERÊNCIA a partir de dados estatísticos de consumo, não uma avaliação psicológica clínica.
+2) PERFIL (5-8 frases): leitura interpretativa MAIS PROFUNDA do padrão de consumo/trabalho/estilo de vida. Além do que o Mosaic/renda/histórico sugerem sobre comportamento, analise explicitamente:
+   - se a idade é compatível com o padrão de comportamento observado (ex.: alguém de 49 anos com histórico de empregos de 2010-2015 e nenhum registro depois — o que isso sugere sobre a trajetória?);
+   - hipóteses sobre temperamento/impulsividade (ex.: estabilidade financeira, tolerância a risco, propensão a mudança) — SEMPRE como hipótese fraca ("pode sugerir", "é compatível com"), nunca como afirmação de fato ou traço fixo de personalidade;
+   - qualquer contradição ou tensão nos dados (ex.: score baixo mas mosaic de alto consumo) que valha destacar.
+   Todo esse parágrafo é INFERÊNCIA ESTATÍSTICA a partir de dados de consumo — não é avaliação psicológica clínica, não use termos diagnósticos (transtorno, patologia, distúrbio) e não afirme nada como certeza.
 
 Responda EXATAMENTE neste formato, sem markdown:
 RESUMO: <texto>
@@ -88,7 +92,7 @@ PERFIL: <texto>"""
                     "model": MODEL,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.4,
-                    "max_tokens": 500,
+                    "max_tokens": 800,
                 },
             )
     except Exception as exc:
