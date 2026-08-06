@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+httpx
+bcrypt
+PyJWT
+python-dotenv
+python-multipart

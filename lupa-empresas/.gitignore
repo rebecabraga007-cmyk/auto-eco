@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+capiblu_auth.db
+backend/capiblu_auth.db
+
+# CapiBLU deploy secrets
+deploy/secrets.ps1
+deploy/config.yml
+deploy/*.pem
+cloudflared.exe
+.cloudflared/

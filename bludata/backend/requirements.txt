@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+httpx
+beautifulsoup4
+lxml
+aiofiles
+sqlalchemy
+aiosqlite
+python-jose[cryptography]
+pydantic
+requests
+fake-useragent
