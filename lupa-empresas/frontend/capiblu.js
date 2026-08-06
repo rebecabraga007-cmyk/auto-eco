@@ -2405,7 +2405,7 @@ window.exportarDossie = async function(tipo, doc, btn, insight, familia) {
   const original = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = (insight || familia) ? '⏳ Gerando (pode levar +tempo)…' : '⏳ Gerando…'; }
   try {
-    const r = await fetch(`${API}/api/dossie/pdf?tipo=${tipo}&doc=${doc}${insight ? '&insight=true' : ''}${familia ? '&familia=true' : ''}`);
+    const r = await fetch(`${API}/api/dossie/pdf?tipo=${tipo}&doc=${doc}${insight ? '&insight=true&web=true' : ''}${familia ? '&familia=true' : ''}`);
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));
       alert(j.message || 'Falha ao gerar o dossiê.');
