@@ -219,6 +219,25 @@ def _telefones_assertiva_com_tipo(as_resp: dict[str, Any]):
 _MAX_PARENTES_ENRIQUECIDOS = 4
 
 
+def _fmt_risco(bruto: str) -> str:
+    """scoreCSBAFaixaRisco vem ora só a palavra ("MEDIO"), ora a frase inteira
+    ("BAIXISSIMO RISCO") — sem tirar o "risco" embutido, o texto duplicava a
+    palavra ("risco baixissimo risco")."""
+    limpo = re.sub(r"\s*risco\s*$", "", (bruto or "").lower()).strip()
+    return {"medio": "médio", "baixissimo": "baixíssimo"}.get(limpo, limpo)
+
+
+def _calcular_idade(nascimento: str) -> int | None:
+    """'10/03/1995' -> idade em anos, a partir de hoje. None se não der pra calcular."""
+    m = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", nascimento or "")
+    if not m:
+        return None
+    dia, mes, ano = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    hoje = datetime.now()
+    idade = hoje.year - ano - ((hoje.month, hoje.day) < (mes, dia))
+    return idade if 0 <= idade <= 130 else None
+
+
 async def _enriquecer_familia(parentes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Consulta Mk Buscas pra cada parente com CPF conhecido (até
     _MAX_PARENTES_ENRIQUECIDOS, pra não estourar custo) e anexa um resumo
@@ -237,12 +256,19 @@ async def _enriquecer_familia(parentes: list[dict[str, Any]]) -> list[dict[str, 
                 db_p = d.get("DadosBasicos") or {}
                 de_p = d.get("DadosEconomicos") or {}
                 sit_p = db_p.get("situacaoCadastral") if isinstance(db_p.get("situacaoCadastral"), dict) else {}
+                nasc_p = db_p.get("dataNascimento") or ""
                 p["resumo"] = {
+                    # idade/nascimento REAIS (vindos da Mk) — sem isso, um insight
+                    # de IA que precise da idade acaba inventando um número.
+                    "nascimento": nasc_p,
+                    "idade": _calcular_idade(nasc_p),
+                    "sexo": (db_p.get("sexo") or "").replace(" - ", "/"),
                     "situacao_cpf": sit_p.get("descricaoSituacaoCadastral", ""),
                     "renda": (de_p.get("renda") or ""),
-                    "score_faixa": ((de_p.get("score") or {}).get("scoreCSBAFaixaRisco") or ""),
+                    "score_faixa": _fmt_risco((de_p.get("score") or {}).get("scoreCSBAFaixaRisco") or ""),
                     "profissao": ((d.get("profissao") or {}).get("cboDescricao") or ""),
                     "empresas_vinculadas": mkbuscas._extract_companies(d),
+                    "cidades": sorted(set(e.get("cidade", "") for e in mkbuscas._extract_cities(d) if e.get("cidade"))),
                 }
         out.append(p)
     return out
@@ -530,7 +556,7 @@ def _linha_pills(pills: list[Table]) -> Table:
 
 def _cabecalho(tipo_doc: str, d: dict[str, Any]) -> Table:
     styles = _styles()
-    esquerda = Paragraph(f"CAPIBLU · DOSSIÊ DE {tipo_doc}", styles["DTopo"])
+    esquerda = Paragraph(f"DOSSIÊ DE {tipo_doc}", styles["DTopo"])
     direita = Paragraph(f"{d['gerado_em']} · protocolo {d['protocolo']}", styles["DTopoDireita"])
     t = Table([[esquerda, direita]], colWidths=[None, None])
     t.setStyle(TableStyle([
@@ -697,9 +723,11 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=16 * mm, bottomMargin=16 * mm,
                              leftMargin=18 * mm, rightMargin=18 * mm)
+    tem_vida_familiar = bool(d.get("incluiu_familia")) and any(p.get("resumo") for p in d.get("parentes", []))
+    total_paginas = 5 if tem_vida_familiar else 4
 
     # ── Página 1 — identificação ──────────────────────────────────
-    esquerda = Paragraph("CAPIBLU · DOSSIÊ DE PESSOA", styles["DTopo"])
+    esquerda = Paragraph("DOSSIÊ DE PESSOA", styles["DTopo"])
     direita = Paragraph("consulta de CPF", styles["DTopoDireita"])
     cab = Table([[esquerda, direita]], colWidths=[None, None])
     cab.setStyle(TableStyle([
@@ -740,8 +768,7 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
         # scoreCSBAFaixaRisco vem ora só a palavra ("MEDIO"), ora a frase inteira
         # ("BAIXISSIMO RISCO") — sem tirar o "risco" que já vem embutido, o card
         # duplicava a palavra ("risco baixissimo risco").
-        risco_bruto = re.sub(r"\s*risco\s*$", "", (d.get("score_faixa") or "").lower()).strip()
-        risco = {"medio": "médio", "baixissimo": "baixíssimo"}.get(risco_bruto, risco_bruto)
+        risco = _fmt_risco(d.get("score_faixa") or "")
         cor_risco = VERDE if "baixo" in risco else (TERRACOTA if "alto" in risco else AMBAR)
         cor_hex = "#" + cor_risco.hexval()[2:]
         valor_html = f"{d['score']}  <font size='8.5' color='{cor_hex}'>risco {risco}</font>" if risco else str(d["score"])
@@ -772,7 +799,7 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
 
     # ── Página 2 — como falar com ela ─────────────────────────────
     flow.append(PageBreak())
-    flow.append(_header_pagina("Como falar com ela", 2))
+    flow.append(_header_pagina("Como falar com ela", 2, total_paginas))
 
     kv_trab = [
         ("Profissão", f"{d['profissao']} (CBO {d['cbo']})" if d.get("profissao") else ""),
@@ -788,7 +815,7 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
         flow.append(_tabela_kv(kv_trab_filtrado))
 
     if d.get("participacoes_mk"):
-        flow.append(Paragraph("Participação societária (Mk)", styles["DSubsecao"]))
+        flow.append(Paragraph("Participação societária", styles["DSubsecao"]))
         flow.append(_tabela_dados(["CNPJ", "Relação", "Desde", "Até"],
                                    [[p["cnpj"], p["relacao"], p["desde"], p["ate"]] for p in d["participacoes_mk"][:10]]))
 
@@ -798,7 +825,7 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
                                    [[r.get("profissao", ""), f"{r.get('sigla', '')} {r.get('numeroInscricao', '')}".strip(), r.get("uf", "") or ""] for r in d["registros_profissionais"][:10]]))
 
     if d.get("historico_profissional"):
-        flow.append(Paragraph("Histórico de vínculos profissionais (Assertiva)", styles["DSubsecao"]))
+        flow.append(Paragraph("Histórico de vínculos profissionais", styles["DSubsecao"]))
         flow.append(_tabela_dados(["Cargo", "Empresa", "Setor", "Desde"],
                                    [[h.get("cboDescricao", ""), h.get("razaoSocial", ""), h.get("setor", ""), h.get("dataRegistro", "")] for h in d["historico_profissional"][:10]],
                                    col_widths=[35 * mm, None, 40 * mm, 22 * mm]))
@@ -856,7 +883,7 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
 
     # ── Página 3 — perfil de consumo ──────────────────────────────
     flow.append(PageBreak())
-    flow.append(_header_pagina("Perfil de consumo", 3))
+    flow.append(_header_pagina("Perfil de consumo", 3, total_paginas))
 
     pc = d.get("perfil_consumo") or {}
     tem = [_LABELS_BOOL[k] for k, v in pc.items() if k in _LABELS_BOOL and v is True]
@@ -911,28 +938,14 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
 
     # ── Página 4 — família, vizinhos e metodologia ────────────────
     flow.append(PageBreak())
-    flow.append(_header_pagina("Família, vizinhos e metodologia", 4))
+    flow.append(_header_pagina("Família, vizinhos e metodologia", 4, total_paginas))
 
     if d.get("parentes"):
         flow.append(Paragraph("Família próxima", styles["DSubsecao"]))
         linhas_fam = [[_titlecase(p["nome"]), re.sub(r"\(\w+\)$", "", p.get("grau", "")).strip().capitalize() or "—", _fmt_cpf(p["cpf"]) if p.get("cpf") else "não informado"] for p in d["parentes"][:12]]
         flow.append(_tabela_dados(["Nome", "Parentesco", "CPF"], linhas_fam, col_widths=[None, 40 * mm, 35 * mm]))
-        if d.get("incluiu_familia") and any(p.get("resumo") for p in d["parentes"]):
-            flow.append(Spacer(1, 6))
-            for p in d["parentes"][:_MAX_PARENTES_ENRIQUECIDOS]:
-                r = p.get("resumo")
-                if not r:
-                    continue
-                partes = [
-                    f"situação {r['situacao_cpf'].lower()}" if r.get("situacao_cpf") else "",
-                    f"renda R$ {_fmt_moeda(r['renda'])}" if r.get("renda") else "",
-                    f"risco {r['score_faixa'].lower()}" if r.get("score_faixa") else "",
-                    f"profissão: {r['profissao']}" if r.get("profissao") else "",
-                ]
-                resumo_txt = ", ".join(x for x in partes if x)
-                if resumo_txt:
-                    grau_limpo = re.sub(r"\(\w+\)$", "", p.get("grau", "")).strip().lower()
-                    flow.append(Paragraph(f"<b>{_titlecase(p['nome'])} ({grau_limpo}):</b> {resumo_txt}.", styles["DCampo"]))
+        if tem_vida_familiar:
+            flow.append(Paragraph("Dados detalhados de cada parente estão na página \"Vida familiar\", ao final.", styles["DNota"]))
 
     if d.get("vizinhos"):
         total_viz = len(d["vizinhos"])
@@ -990,12 +1003,45 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
         "Dados de renda, score e consumo são estimativas de mercado, não confirmação bancária." + aviso_faltantes,
     ))
 
+    if tem_vida_familiar:
+        flow.append(PageBreak())
+        flow.append(_header_pagina("Vida familiar", 5, total_paginas))
+        flow.append(Paragraph("O que se sabe sobre cada parente", styles["DSubsecao"]))
+        flow.append(Paragraph("Dados reais consultados pra cada parente com CPF conhecido — mesma fonte usada pra ela.", styles["DCampo"]))
+        linhas_fam2 = []
+        for p in d["parentes"][:_MAX_PARENTES_ENRIQUECIDOS]:
+            r = p.get("resumo")
+            if not r:
+                continue
+            grau_limpo = re.sub(r"\(\w+\)$", "", p.get("grau", "")).strip().capitalize()
+            linhas_fam2.append([
+                _titlecase(p["nome"]), grau_limpo or "—",
+                str(r["idade"]) if r.get("idade") is not None else "—",
+                r.get("situacao_cpf", "").capitalize() or "—",
+                f"R$ {_fmt_moeda(r['renda'])}" if r.get("renda") else "—",
+                (r.get("score_faixa") or "—").capitalize(),
+            ])
+        if linhas_fam2:
+            flow.append(_tabela_dados(["Nome", "Parentesco", "Idade", "Situação", "Renda", "Risco"], linhas_fam2,
+                                       col_widths=[None, 28 * mm, 16 * mm, 22 * mm, 26 * mm, 26 * mm]))
+
+        insight_fam = d.get("insight_familia")
+        if insight_fam and not insight_fam.get("erro") and insight_fam.get("texto"):
+            flow.append(Spacer(1, 10))
+            flow.append(Paragraph("Hipóteses sobre as relações familiares", styles["DSubsecao"]))
+            flow.append(Paragraph(
+                "Gerado por IA SÓ com os dados reais da tabela acima — leitura hipotética das relações, "
+                "não fato confirmado.",
+                ParagraphStyle("DAvisoFam", parent=styles["DNota"], textColor=TERRACOTA, spaceAfter=8),
+            ))
+            flow.append(Paragraph(_texto(insight_fam["texto"]), styles["DCampo"]))
+
     insight = d.get("insight_ia")
     if insight and not insight.get("erro"):
         flow.append(PageBreak())
         flow.append(Paragraph("Insight gerado por IA", styles["DSecao"]))
         flow.append(Paragraph(
-            "Texto gerado automaticamente (Mistral AI) a partir dos dados deste dossiê. O \"perfil\" abaixo é uma "
+            "Texto gerado automaticamente por IA a partir dos dados deste dossiê. O \"perfil\" abaixo é uma "
             "INFERÊNCIA ESTATÍSTICA a partir de padrão de consumo/renda/emprego — não é uma avaliação psicológica "
             "clínica, pode conter erro, e não deve ser a única base de nenhuma decisão sobre esta pessoa.",
             ParagraphStyle("DAviso", parent=styles["DNota"], textColor=TERRACOTA, spaceAfter=10),
@@ -1007,12 +1053,6 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
             flow.append(Paragraph("Perfil psicológico inferido", styles["DSubsecao"]))
             flow.append(Paragraph(_texto(insight["perfil_psicologico"]), styles["DCampo"]))
 
-    flow.append(Spacer(1, 16))
-    flow.append(Paragraph(
-        f"Fontes: Mk Buscas ({d['fontes']['mk']}) · Assertiva ({d['fontes']['assertiva']}) · "
-        f"confirmação de telefone / intelgrax-tel ({d['fontes']['telefone']})",
-        styles["DNota"],
-    ))
     doc.build(flow)
     return buf.getvalue()
 
@@ -1062,7 +1102,7 @@ def gerar_pdf_cnpj(d: dict[str, Any]) -> bytes:
 
     if d.get("telefones"):
         flow.append(Paragraph(f"Telefones — {len(d['telefones'])} encontrado(s)", styles["DSubsecao"]))
-        flow.append(_tabela_dados(["Telefone", "Fonte"], [[t.get("telefone", ""), t.get("fonte", "")] for t in d["telefones"][:15]]))
+        flow.append(_tabela_dados(["Telefone"], [[t.get("telefone", "")] for t in d["telefones"][:15]]))
 
     if d.get("confirmacoes"):
         flow.append(Paragraph("Confirmação de telefone (pertence a este CNPJ?)", styles["DSubsecao"]))
@@ -1073,14 +1113,9 @@ def gerar_pdf_cnpj(d: dict[str, Any]) -> bytes:
         flow.append(_tabela_dados(["Telefone", "Pertence?", "Nº de vínculos"], linhas))
 
     if d.get("participacoes_assertiva"):
-        flow.append(Paragraph("Outras participações societárias (Assertiva)", styles["DSubsecao"]))
+        flow.append(Paragraph("Outras participações societárias", styles["DSubsecao"]))
         flow.append(_tabela_dados(["Cargo", "Razão social"],
                                    [[p.get("cargo", ""), p.get("razaoSocial", "")] for p in d["participacoes_assertiva"][:15]]))
 
-    flow.append(Spacer(1, 16))
-    flow.append(Paragraph(
-        f"Fontes: Receita Federal ({d['fontes']['receita']}) · Assertiva ({d['fontes']['assertiva']})",
-        styles["DNota"],
-    ))
     doc.build(flow)
     return buf.getvalue()

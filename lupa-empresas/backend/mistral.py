@@ -141,3 +141,73 @@ PERFIL: <texto>"""
         # Modelo não seguiu o formato — devolve tudo em "resumo" pra não perder o conteúdo.
         resumo = texto
     return {"resumo_vida": resumo, "perfil_psicologico": perfil}
+
+
+def _fmt_familia_grounded(pessoa_nome: str, parentes: list[dict[str, Any]]) -> str:
+    """Monta o contexto pra hipoteses de dinamica familiar - só os campos REAIS
+    coletados (idade veio de dataNascimento real, não estimada). Sem isso no
+    contexto, o modelo inventa idade/renda que não existem (já aconteceu)."""
+    linhas = [f"Pessoa principal: {pessoa_nome}"]
+    for p in parentes or []:
+        r = p.get("resumo")
+        if not r:
+            continue
+        grau = (p.get("grau") or "").split("(")[0].strip().lower()
+        campos = [
+            f"idade {r['idade']}" if r.get("idade") is not None else "idade desconhecida",
+            f"situação CPF {r['situacao_cpf'].lower()}" if r.get("situacao_cpf") else "",
+            f"renda R$ {r['renda']}" if r.get("renda") else "renda desconhecida",
+            f"risco de crédito {r['score_faixa'].lower()}" if r.get("score_faixa") else "",
+            f"profissão {r['profissao']}" if r.get("profissao") else "",
+            f"cidades: {', '.join(r['cidades'])}" if r.get("cidades") else "",
+        ]
+        linhas.append(f"- {p.get('nome', '')} ({grau}): " + ", ".join(c for c in campos if c))
+    return "\n".join(linhas)
+
+
+async def gerar_hipoteses_familia(d: dict[str, Any]) -> dict[str, str]:
+    """Hipóteses sobre a dinâmica familiar, SÓ com dado real coletado (idade,
+    renda, score, profissão de cada parente) — proibido inventar qualquer
+    número/fato que não esteja listado no contexto."""
+    if not enabled():
+        return {"erro": "MISTRAL_API_KEY não configurada."}
+
+    contexto = _fmt_familia_grounded(d.get("nome", ""), d.get("parentes", []))
+    if contexto.count("\n") < 1:
+        return {"erro": "Sem parentes com dados suficientes pra gerar hipótese."}
+
+    prompt = f"""Você tem os dados REAIS abaixo sobre uma pessoa e seus parentes (Mk Buscas), pra um dossiê de prospecção comercial no Brasil.
+
+REGRA MAIS IMPORTANTE: use SÓ os números/fatos que estão escritos abaixo. Se um campo diz "idade desconhecida" ou "renda desconhecida", NÃO invente um valor pra ele — trabalhe só com o que tem. Nunca cite uma idade, renda ou dado que não esteja explicitamente no texto abaixo.
+
+DADOS:
+{contexto}
+
+Escreva 3-5 frases em português do Brasil com hipóteses sobre a DINÂMICA FAMILIAR — o que a diferença de idade, renda e situação financeira entre os parentes pode sugerir (ex.: dependência financeira, autonomia, rede de apoio, proximidade geográfica). Tom hipotético o tempo todo ("pode sugerir", "é compatível com"), nunca certeza, sem termos diagnósticos. Se faltar dado pra alguma hipótese, simplesmente não a faça — não compense inventando.
+
+Responda só com o texto das hipóteses, sem título, sem markdown."""
+
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.post(
+                API_URL,
+                headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+                json={
+                    "model": MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,
+                    "max_tokens": 400,
+                },
+            )
+    except Exception as exc:
+        return {"erro": f"Falha ao chamar Mistral: {str(exc)[:150]}"}
+
+    if resp.status_code >= 400:
+        return {"erro": f"Mistral {resp.status_code}: {resp.text[:200]}"}
+
+    try:
+        texto = resp.json()["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return {"erro": "Resposta inesperada da Mistral."}
+
+    return {"texto": texto}
