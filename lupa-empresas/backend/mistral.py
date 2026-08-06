@@ -98,15 +98,11 @@ async def gerar_insight_pessoa(d: dict[str, Any]) -> dict[str, str]:
 DADOS:
 {contexto}
 
-Gere DUAS seções em português do Brasil, num texto corrido e natural (não em lista de tópicos, não repita a mesma ressalva de incerteza mais de uma vez por seção).
+Gere DUAS seções, cada uma com 2-4 frases, em português do Brasil:
 
-1) RESUMO (3-5 frases): resumo objetivo e neutro do que se sabe sobre a vida dessa pessoa (trabalho, renda, situação familiar, estabilidade) — só fatos, sem opinião. Se houver parentes com dados na lista acima, cite quem são e o que se sabe deles (não só "tem N parentes").
+1) RESUMO: um resumo objetivo e neutro do que se sabe sobre a vida dessa pessoa (trabalho, renda, situação familiar, estabilidade) — só fatos, sem opinião.
 
-2) PERFIL (6-9 frases, texto corrido): leitura interpretativa do padrão de consumo/trabalho/estilo de vida — combine, sem virar lista: se a idade bate com a trajetória observada, uma hipótese fraca de temperamento/tolerância a risco, e contradições nos dados que valham destacar (ex.: score baixo com mosaic de alto consumo).
-
-   SE houver parentes com dados (idade, renda, score, setor de trabalho): dedique 2-3 frases à DINÂMICA FAMILIAR, no mesmo tom hipotético do resto — por exemplo, o que a diferença de idade entre ela e os filhos sugere sobre quando teve filhos; se a renda/score de um filho(a) adulto(a) sugere dependência financeira dos pais ou autonomia; se o setor de trabalho de um parente é compatível ou destoa do da pessoa; se o conjunto da família sugere rede de apoio forte ou dispersa. Trate isso como parte natural do perfil, não como um bloco separado.
-
-   Não use termos diagnósticos (transtorno, patologia, distúrbio) e não afirme nada como certeza — mas também não precisa repetir "isso é uma inferência" em cada frase; diga isso uma vez só.
+2) PERFIL: uma leitura interpretativa do padrão de consumo/trabalho/estilo de vida (o que o Mosaic, a renda, o histórico profissional e os hábitos sugerem sobre comportamento/perfil dela). Deixe claro que é uma INFERÊNCIA a partir de dados estatísticos de consumo, não uma avaliação psicológica clínica.
 
 Responda EXATAMENTE neste formato, sem markdown:
 RESUMO: <texto>
@@ -121,7 +117,7 @@ PERFIL: <texto>"""
                     "model": MODEL,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.4,
-                    "max_tokens": 800,
+                    "max_tokens": 500,
                 },
             )
     except Exception as exc:
