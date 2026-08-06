@@ -1175,6 +1175,10 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
         if achados_web.get("limitacoes"):
             flow.append(Paragraph("Limitações", styles["DSubsecao"]))
             flow.append(Paragraph(_texto("; ".join(str(x) for x in achados_web.get("limitacoes", []))), styles["DNota"]))
+        conclusao = achados_web.get("conclusao_operacional") or achados_web.get("insight_complementar")
+        if conclusao:
+            flow.append(Paragraph("Conclusão operacional", styles["DSubsecao"]))
+            flow.append(Paragraph(_texto(_clip_pdf_text(conclusao, 900)), styles["DCampo"]))
 
     insight = d.get("insight_ia")
     if insight and not insight.get("erro"):
