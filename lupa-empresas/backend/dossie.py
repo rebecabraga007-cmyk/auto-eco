@@ -269,6 +269,17 @@ async def _enriquecer_familia(parentes: list[dict[str, Any]]) -> list[dict[str, 
                     "profissao": ((d.get("profissao") or {}).get("cboDescricao") or ""),
                     "empresas_vinculadas": mkbuscas._extract_companies(d),
                     "cidades": sorted(set(e.get("cidade", "") for e in mkbuscas._extract_cities(d) if e.get("cidade"))),
+                    # campos extras — antes só pegávamos um subconjunto pequeno,
+                    # mas o JSON da Mk pra cada parente traz muito mais (igual à
+                    # pessoa principal): escolaridade, benefícios, mosaic, compras.
+                    "estado_civil": db_p.get("estadoCivil") or "",
+                    "escolaridade": db_p.get("escolaridade") or "",
+                    "mosaic": ((de_p.get("serasaMosaic") or {}).get("descricaoMosaicSecundario")
+                               or (de_p.get("serasaMosaic") or {}).get("descricaoMosaicNovo") or ""),
+                    "beneficios": [b.get("beneficio", "") for b in (d.get("beneficios") or [])
+                                   if isinstance(b, dict) and (b.get("totalParcelasRecebidas") or 0) > 0],
+                    "n_enderecos": len(d.get("enderecos") or []),
+                    "compras": [c.get("produto", "") for c in (d.get("comprasId") or [])[:5] if isinstance(c, dict) and c.get("produto")],
                 }
         out.append(p)
     return out

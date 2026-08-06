@@ -114,25 +114,49 @@ PERFIL: <texto>"""
     return {"resumo_vida": resumo, "perfil_psicologico": perfil}
 
 
-def _fmt_familia_grounded(pessoa_nome: str, parentes: list[dict[str, Any]]) -> str:
+def _fmt_pessoa_para_comparar(nome: str, idade, renda, score_faixa, profissao, cidades,
+                               estado_civil="", escolaridade="", mosaic="", beneficios=None, compras=None) -> str:
+    """Mesmo formato pra pessoa principal E pra cada parente — sem isso os dois
+    lados não ficam comparáveis (a pessoa principal só entrava como um nome
+    solto, sem nenhum dado dela, e o modelo não conseguia comparar nada)."""
+    campos = [
+        f"idade {idade}" if idade is not None else "idade desconhecida",
+        f"renda R$ {renda}" if renda else "renda desconhecida",
+        f"risco de crédito {score_faixa.lower()}" if score_faixa else "",
+        f"profissão {profissao}" if profissao else "",
+        f"estado civil {estado_civil.lower()}" if estado_civil else "",
+        f"escolaridade {escolaridade.lower()}" if escolaridade else "",
+        f"perfil de consumo {mosaic}" if mosaic else "",
+        f"cidades: {', '.join(cidades)}" if cidades else "",
+        f"benefícios sociais: {', '.join(beneficios)}" if beneficios else "",
+        f"compras recentes: {', '.join(compras[:3])}" if compras else "",
+    ]
+    return f"{nome}: " + ", ".join(c for c in campos if c)
+
+
+def _fmt_familia_grounded(d: dict[str, Any]) -> str:
     """Monta o contexto pra hipoteses de dinamica familiar - só os campos REAIS
-    coletados (idade veio de dataNascimento real, não estimada). Sem isso no
-    contexto, o modelo inventa idade/renda que não existem (já aconteceu)."""
-    linhas = [f"Pessoa principal: {pessoa_nome}"]
-    for p in parentes or []:
+    coletados (idade veio de dataNascimento real, não estimada), E com os
+    dados da PRÓPRIA pessoa principal no mesmo formato dos parentes — sem
+    isso o modelo não tinha nada dela pra comparar."""
+    linhas = [
+        "Pessoa principal — " + _fmt_pessoa_para_comparar(
+            d.get("nome", ""), d.get("idade"), d.get("renda"), d.get("score_faixa"),
+            d.get("profissao"), sorted(set(e.get("cidade", "") for e in d.get("enderecos", []) if e.get("cidade"))),
+            d.get("estado_civil", ""), d.get("escolaridade", ""), d.get("mosaic", ""),
+        )
+    ]
+    for p in d.get("parentes", []) or []:
         r = p.get("resumo")
         if not r:
             continue
         grau = (p.get("grau") or "").split("(")[0].strip().lower()
-        campos = [
-            f"idade {r['idade']}" if r.get("idade") is not None else "idade desconhecida",
-            f"situação CPF {r['situacao_cpf'].lower()}" if r.get("situacao_cpf") else "",
-            f"renda R$ {r['renda']}" if r.get("renda") else "renda desconhecida",
-            f"risco de crédito {r['score_faixa'].lower()}" if r.get("score_faixa") else "",
-            f"profissão {r['profissao']}" if r.get("profissao") else "",
-            f"cidades: {', '.join(r['cidades'])}" if r.get("cidades") else "",
-        ]
-        linhas.append(f"- {p.get('nome', '')} ({grau}): " + ", ".join(c for c in campos if c))
+        linha = _fmt_pessoa_para_comparar(
+            p.get("nome", ""), r.get("idade"), r.get("renda"), r.get("score_faixa"), r.get("profissao"),
+            r.get("cidades"), r.get("estado_civil", ""), r.get("escolaridade", ""), r.get("mosaic", ""),
+            r.get("beneficios"), r.get("compras"),
+        )
+        linhas.append(f"{grau.capitalize()} — {linha}")
     return "\n".join(linhas)
 
 
@@ -143,18 +167,20 @@ async def gerar_hipoteses_familia(d: dict[str, Any]) -> dict[str, str]:
     if not enabled():
         return {"erro": "MISTRAL_API_KEY não configurada."}
 
-    contexto = _fmt_familia_grounded(d.get("nome", ""), d.get("parentes", []))
+    contexto = _fmt_familia_grounded(d)
     if contexto.count("\n") < 1:
         return {"erro": "Sem parentes com dados suficientes pra gerar hipótese."}
 
-    prompt = f"""Você tem os dados REAIS abaixo sobre uma pessoa e seus parentes (Mk Buscas), pra um dossiê de prospecção comercial no Brasil.
+    prompt = f"""Você tem os dados REAIS abaixo sobre uma pessoa (marcada "Pessoa principal") e seus parentes, pra um dossiê de prospecção comercial no Brasil.
 
-REGRA MAIS IMPORTANTE: use SÓ os números/fatos que estão escritos abaixo. Se um campo diz "idade desconhecida" ou "renda desconhecida", NÃO invente um valor pra ele — trabalhe só com o que tem. Nunca cite uma idade, renda ou dado que não esteja explicitamente no texto abaixo.
+REGRAS MAIS IMPORTANTES:
+1. Use SÓ os números/fatos que estão escritos abaixo. Se um campo diz "idade desconhecida" ou "renda desconhecida", NÃO invente um valor pra ele — trabalhe só com o que tem. Nunca cite uma idade, renda ou dado que não esteja explicitamente no texto abaixo.
+2. Cada parente vem com o GRAU DE PARENTESCO escrito antes do nome (ex.: "Filha — NOME", "Irmã — NOME"). Respeite esse grau à risca — NUNCA chame uma filha de irmã, ou vice-versa, mesmo que a idade pareça sugerir outra coisa.
 
 DADOS:
 {contexto}
 
-Escreva 3-5 frases em português do Brasil com hipóteses sobre a DINÂMICA FAMILIAR — o que a diferença de idade, renda e situação financeira entre os parentes pode sugerir (ex.: dependência financeira, autonomia, rede de apoio, proximidade geográfica). Tom hipotético o tempo todo ("pode sugerir", "é compatível com"), nunca certeza, sem termos diagnósticos. Se faltar dado pra alguma hipótese, simplesmente não a faça — não compense inventando.
+Escreva 4-6 frases em português do Brasil com hipóteses sobre a DINÂMICA FAMILIAR. Faça SEMPRE a comparação de mão dupla — não fale só dos parentes entre si, compare cada parente COM a pessoa principal (diferença de idade, quem tem renda/risco melhor ou pior que ela, se a escolaridade/profissão é parecida ou destoa) — e também entre os parentes, quando fizer sentido. Cubra: o que a diferença de idade sugere sobre gerações/quando teve os filhos; quem tem melhor situação financeira (pessoa principal ou parente) e o que isso pode indicar sobre dependência ou autonomia; se moram perto (rede de apoio) ou longe; qualquer padrão de consumo ou benefício social que se destaque. Tom hipotético o tempo todo ("pode sugerir", "é compatível com"), nunca certeza, sem termos diagnósticos, e não exagere a intensidade de um dado (ex.: não transforme "alto risco" em "altíssimo risco"). Se faltar dado pra alguma hipótese, simplesmente não a faça — não compense inventando.
 
 Responda só com o texto das hipóteses, sem título, sem markdown."""
 
