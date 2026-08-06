@@ -816,10 +816,10 @@ def _web_achados_linhas(w: dict[str, Any]) -> list[list[str]]:
             linhas.append([
                 pessoa,
                 relacao,
-                a.get("tipo", ""),
-                a.get("descricao", ""),
-                a.get("fonte", "") or a.get("url", ""),
-                a.get("confianca", ""),
+                _clip_pdf_text(a.get("tipo", ""), 60),
+                _clip_pdf_text(a.get("descricao", ""), 260),
+                _clip_pdf_text(a.get("fonte", "") or a.get("url", ""), 120),
+                _clip_pdf_text(a.get("confianca", ""), 40),
             ])
 
     principal = w.get("principal") or {}
@@ -842,11 +842,32 @@ def _web_fontes_linhas(w: dict[str, Any]) -> list[list[str]]:
         if not isinstance(f, dict):
             continue
         linhas.append([
-            f.get("titulo") or f.get("nome") or f.get("fonte") or "Fonte",
-            f.get("url") or "",
-            f.get("observacao") or f.get("fonte") or "",
+            _clip_pdf_text(f.get("titulo") or f.get("nome") or f.get("fonte") or "Fonte", 100),
+            _clip_pdf_text(f.get("url") or "", 180),
+            _clip_pdf_text(f.get("observacao") or f.get("fonte") or "", 120),
         ])
     return linhas
+
+
+def _clip_pdf_text(v: Any, max_chars: int = 1200) -> str:
+    txt = "" if v is None else str(v)
+    txt = re.sub(r"\s+", " ", txt).strip()
+    if len(txt) <= max_chars:
+        return txt
+    return txt[:max_chars].rsplit(" ", 1)[0] + "..."
+
+
+def _web_resumo_pdf(v: Any) -> str:
+    txt = _clip_pdf_text(v, 1200)
+    bruto = txt.lstrip().startswith(("{", "[")) or (
+        txt.count('"url"') >= 2 or txt.count('"snippets"') >= 1 or txt.count('"source"') >= 3
+    )
+    if bruto:
+        return (
+            "A web search retornou dados brutos ou resposta extensa demais para exibição direta. "
+            "Abaixo ficam apenas os achados classificados, fontes citadas e limitações que puderam ser estruturados."
+        )
+    return txt
 
 
 def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
@@ -1199,7 +1220,7 @@ def gerar_pdf_cpf(d: dict[str, Any]) -> bytes:
             flow.append(Paragraph(_texto(achados_web["message"]), styles["DNota"]))
         if achados_web.get("resumo"):
             flow.append(Paragraph("Resumo da pesquisa", styles["DSubsecao"]))
-            flow.append(Paragraph(_texto(achados_web["resumo"]), styles["DCampo"]))
+            flow.append(Paragraph(_texto(_web_resumo_pdf(achados_web["resumo"])), styles["DCampo"]))
         linhas_web = _web_achados_linhas(achados_web)
         if linhas_web:
             flow.append(Paragraph("Achados classificados", styles["DSubsecao"]))

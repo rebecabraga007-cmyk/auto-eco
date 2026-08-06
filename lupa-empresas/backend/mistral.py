@@ -140,11 +140,18 @@ Responda somente em JSON válido, sem markdown, neste formato:
 }}"""
 
 
+def _clip_text(texto: str, max_chars: int = 2400) -> str:
+    texto = (texto or "").strip()
+    if len(texto) <= max_chars:
+        return texto
+    return texto[:max_chars].rsplit(" ", 1)[0] + "..."
+
+
 def _conversation_text_and_refs(payload: dict[str, Any]) -> tuple[str, list[dict[str, str]]]:
     textos: list[str] = []
     refs: list[dict[str, str]] = []
 
-    def walk(obj: Any) -> None:
+    def collect_content(obj: Any) -> None:
         if isinstance(obj, dict):
             typ = obj.get("type")
             if typ == "text" and obj.get("text"):
@@ -155,24 +162,33 @@ def _conversation_text_and_refs(payload: dict[str, Any]) -> tuple[str, list[dict
                     "url": str(obj.get("url") or ""),
                     "fonte": str(obj.get("source") or obj.get("tool") or ""),
                 })
-            elif obj.get("type") == "message.output" and isinstance(obj.get("content"), str):
+            elif isinstance(obj.get("content"), str):
                 textos.append(obj["content"])
-            for value in obj.values():
-                walk(value)
+            elif "content" in obj:
+                collect_content(obj["content"])
         elif isinstance(obj, list):
             for item in obj:
-                walk(item)
+                collect_content(item)
         elif isinstance(obj, str):
-            # Fallback para respostas simples de SDK/API.
-            if len(obj) > 20 and ("{" in obj or "RESUMO" in obj.upper()):
-                textos.append(obj)
+            textos.append(obj)
 
     for entry in payload.get("outputs") or payload.get("entries") or []:
-        walk(entry)
+        if not isinstance(entry, dict):
+            continue
+        entry_type = str(entry.get("type") or "")
+        role = str(entry.get("role") or entry.get("agent") or "")
+        if "tool" in entry_type and entry_type != "tool_reference":
+            continue
+        if entry_type in {"message.output", "message", "assistant_message"} or role == "assistant":
+            collect_content(entry.get("content", entry))
+        elif entry_type == "tool_reference":
+            collect_content(entry)
     if not textos:
-        walk(payload)
+        fallback = payload.get("output_text") or payload.get("text") or payload.get("content") or ""
+        if isinstance(fallback, str):
+            textos.append(fallback)
 
-    texto = "\n".join(dict.fromkeys(t.strip() for t in textos if t.strip()))
+    texto = "\n".join(dict.fromkeys(_clip_text(t.strip(), 3000) for t in textos if t.strip()))
     fontes = []
     seen = set()
     for ref in refs:
@@ -228,8 +244,10 @@ async def web_search_dossie(d: dict[str, Any]) -> dict[str, Any]:
     texto, refs = _conversation_text_and_refs(raw)
     data = _parse_json_object(texto)
     if not data:
-        data = {"status": "ok", "resumo": texto, "fontes": []}
+        data = {"status": "ok", "resumo": _clip_text(texto, 1200), "fontes": []}
     data.setdefault("status", "ok")
+    if data.get("resumo"):
+        data["resumo"] = _clip_text(str(data["resumo"]), 1200)
     data.setdefault("fontes", [])
     if refs:
         existentes = {(f.get("url"), f.get("titulo")) for f in data.get("fontes", []) if isinstance(f, dict)}
