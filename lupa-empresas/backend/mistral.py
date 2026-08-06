@@ -110,11 +110,14 @@ Tarefas:
 3. Separe achados judiciais/processuais de registros não judiciais.
 4. Cite fontes/URLs retornadas pelo web_search.
 5. Se nada relevante for encontrado sobre a pessoa principal, declare isso com cautela.
+6. Não inclua JSON bruto de ferramenta, snippets longos, metadados, favicons, thumbnails, base64, listas não analisadas nem resultados de homônimos.
+7. Limite a resposta final a no máximo 6 achados classificados e 8 fontes citadas.
 
 Responda somente em JSON válido, sem markdown, neste formato:
 {{
   "status": "ok",
   "resumo": "",
+  "conclusao_operacional": "",
   "principal": {{
     "nome": "{d.get('nome', '')}",
     "processos_encontrados": false,
@@ -245,15 +248,32 @@ async def web_search_dossie(d: dict[str, Any]) -> dict[str, Any]:
     data = _parse_json_object(texto)
     if not data:
         data = {"status": "ok", "resumo": _clip_text(texto, 1200), "fontes": []}
+    if "principal" not in data and isinstance(data.get("pessoa_principal"), dict):
+        data["principal"] = data.pop("pessoa_principal")
     data.setdefault("status", "ok")
     if data.get("resumo"):
         data["resumo"] = _clip_text(str(data["resumo"]), 1200)
+    if data.get("conclusao_operacional"):
+        data["conclusao_operacional"] = _clip_text(str(data["conclusao_operacional"]), 900)
     data.setdefault("fontes", [])
+    if isinstance(data.get("fontes"), list):
+        for fonte in data["fontes"]:
+            if isinstance(fonte, dict) and "titulo" not in fonte and fonte.get("nome"):
+                fonte["titulo"] = fonte.get("nome")
+        data["fontes"] = [f for f in data["fontes"] if isinstance(f, dict)][:8]
+    if isinstance(data.get("principal"), dict) and isinstance(data["principal"].get("achados"), list):
+        data["principal"]["achados"] = [a for a in data["principal"]["achados"] if isinstance(a, dict)][:6]
+    if isinstance(data.get("familiares"), list):
+        for fam in data["familiares"]:
+            if isinstance(fam, dict) and isinstance(fam.get("achados"), list):
+                fam["achados"] = [a for a in fam["achados"] if isinstance(a, dict)][:6]
     if refs:
         existentes = {(f.get("url"), f.get("titulo")) for f in data.get("fontes", []) if isinstance(f, dict)}
         for ref in refs:
             if (ref.get("url"), ref.get("titulo")) not in existentes:
                 data["fontes"].append(ref)
+    if isinstance(data.get("fontes"), list):
+        data["fontes"] = data["fontes"][:8]
     data["ferramenta"] = WEB_SEARCH_TOOL
     data["modelo"] = MODEL
     data["consultado_em"] = datetime.now(timezone.utc).isoformat()
