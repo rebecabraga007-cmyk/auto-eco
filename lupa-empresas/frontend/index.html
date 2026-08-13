@@ -686,6 +686,17 @@
     </div>
 
     <div class="search-panel">
+      <h3 style="margin:0 0 12px;font-size:1.05rem">Consultas por usuário (limite diário: 100)</h3>
+      <div class="en-step">
+        <label>Usuário
+          <select id="adm-cons-user" class="filter-select"><option value="">Todos (não-admin)</option></select>
+        </label>
+        <button id="adm-cons-atualizar" class="btn-secondary">🔄 Atualizar</button>
+      </div>
+      <div id="adm-cons-resultado"></div>
+    </div>
+
+    <div class="search-panel">
       <h3 style="margin:0 0 12px;font-size:1.05rem">Histórico de navegação</h3>
       <div class="en-step">
         <label>De <input id="adm-nav-desde" type="date" class="filter-num"></label>
@@ -750,7 +761,7 @@
     <div id="gc-err" class="login-err"></div>
 
     <div class="prosp-table-scroll"><table class="prosp-table" id="users-table">
-      <thead><tr><th>Nome</th><th>E-mail</th><th>Role</th><th>Grupo</th><th>Status</th><th>Ações</th></tr></thead>
+      <thead><tr><th>Nome</th><th>E-mail</th><th>Role</th><th>Grupo</th><th>Status</th><th>Limite/dia</th><th>Ações</th></tr></thead>
       <tbody></tbody>
     </table></div>
   </div>

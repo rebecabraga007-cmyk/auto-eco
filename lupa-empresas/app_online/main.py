@@ -84,6 +84,13 @@ async def _auth_guard(request: Request, call_next):
 # Rotas de auth/admin são tratadas AQUI (router acima). O resto de /api é PROXEADO.
 _LOCAL_PREFIXES = ("/api/auth/", "/api/admin/")
 
+# Rotas que efetivamente gastam Assertiva/MK — só essas contam pro limite diário.
+_CONSULTA_PREFIXES = (
+    "/api/person", "/api/phone", "/api/assertiva", "/api/company",
+    "/api/dossie", "/api/companies/search", "/api/prospeccao/pessoas",
+    "/api/enrich/upload", "/api/enrich/run", "/api/enrich/export",
+)
+
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def proxy(path: str, request: Request):
@@ -101,6 +108,14 @@ async def proxy(path: str, request: Request):
         headers["X-User-Email"] = user.get("email", "")
         headers["X-User-Role"] = user.get("role", "")
         headers["X-User-Grupo"] = user.get("grupo_id") or ""
+        if user.get("role") != "admin" and any(full.startswith(p) for p in _CONSULTA_PREFIXES):
+            limite = _auth.limite_efetivo(user)
+            consumo = _auth.consumo_hoje(user["id"])
+            if consumo >= limite:
+                return JSONResponse(
+                    {"detail": f"Limite diário de {limite} consultas atingido. Fale com um admin para aumentar."},
+                    status_code=429)
+            _auth.registrar_consumo(user["id"])
     body = await request.body()
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:

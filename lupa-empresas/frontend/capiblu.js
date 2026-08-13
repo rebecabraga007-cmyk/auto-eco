@@ -2355,9 +2355,55 @@ function useRenderMap(colunas) {
   document.getElementById('adm-custo-ate').value = fmtISO(hoje);
   document.getElementById('adm-nav-atualizar').addEventListener('click', admNavCarregar);
   document.getElementById('adm-custo-atualizar').addEventListener('click', admCustoCarregar);
+  document.getElementById('adm-cons-atualizar').addEventListener('click', admConsultasCarregar);
+  document.getElementById('adm-cons-user').addEventListener('change', admConsultasCarregar);
 })();
 
-function admCarregar() { admNavCarregar(); admCustoCarregar(); }
+function admCarregar() { admConsultasCarregar(); admNavCarregar(); admCustoCarregar(); }
+
+function admConsultasCarregar() {
+  const box = document.getElementById('adm-cons-resultado'); if (!box) return;
+  const sel = document.getElementById('adm-cons-user');
+  const userFiltro = sel.value;
+  box.innerHTML = '<p class="msg">Carregando…</p>';
+  fetch(`${API}/api/admin/consumo`).then(r => r.json()).then(async j => {
+    if (!j.consumo) { box.innerHTML = `<p class="msg error">${esc(j.detail || 'Falha ao carregar.')}</p>`; return; }
+    if (sel.dataset.pop !== '1') {
+      sel.insertAdjacentHTML('beforeend', j.consumo.map(u => `<option value="${esc(u.email)}">${esc(u.nome || u.email)}</option>`).join(''));
+      sel.dataset.pop = '1';
+      sel.value = userFiltro;
+    }
+    const lista = userFiltro ? j.consumo.filter(u => u.email === userFiltro) : j.consumo;
+    const linhasResumo = lista.map(u => {
+      const pct = u.limite_diario ? Math.min(100, Math.round(100 * u.consumo_hoje / u.limite_diario)) : 0;
+      const cor = pct >= 100 ? 'var(--red,#c0392b)' : (pct >= 80 ? 'var(--amber,#c98a1a)' : 'inherit');
+      return `<tr>
+        <td>${esc(u.nome || '')}</td><td class="mono">${esc(u.email)}</td>
+        <td style="color:${cor}"><b>${u.consumo_hoje}</b> / ${u.limite_diario}${pct >= 100 ? ' ⛔' : ''}</td>
+      </tr>`;
+    }).join('');
+    let historicoHtml = '';
+    if (userFiltro) {
+      const jh = await fetch(`${API}/api/navlog?user=${encodeURIComponent(userFiltro)}`).then(r => r.json()).catch(() => null);
+      if (jh && jh.status === 'ok') {
+        const buscas = (jh.entradas || []).filter(e => e.tipo).slice(0, 200);
+        const fmtData = ts => new Date(ts * 1000).toLocaleString('pt-BR');
+        historicoHtml = `
+          <h4 style="margin:16px 0 8px;font-size:.92rem">O que ${esc(userFiltro)} pesquisou (últimas ${buscas.length})</h4>
+          ${buscas.length
+            ? `<div class="prosp-table-scroll"><table class="prosp-table"><thead><tr><th>Quando</th><th>Tipo</th><th>Pesquisou</th></tr></thead><tbody>${
+                buscas.map(e => `<tr><td class="mono">${fmtData(e.ts)}</td><td>${esc(e.tipo)}</td><td>${esc(e.query || '')}</td></tr>`).join('')
+              }</tbody></table></div>`
+            : '<p class="msg">Nenhuma pesquisa registrada.</p>'}`;
+      }
+    }
+    box.innerHTML = `
+      ${lista.length
+        ? `<table class="prosp-table"><thead><tr><th>Nome</th><th>E-mail</th><th>Consultas hoje</th></tr></thead><tbody>${linhasResumo}</tbody></table>`
+        : '<p class="msg">Nenhum usuário não-admin cadastrado.</p>'}
+      ${historicoHtml}`;
+  }).catch(e => { box.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`; });
+}
 
 function admNavCarregar() {
   const box = document.getElementById('adm-nav-resultado'); if (!box) return;

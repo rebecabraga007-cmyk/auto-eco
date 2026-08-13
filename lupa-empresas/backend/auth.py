@@ -27,6 +27,8 @@ _TOKEN_TTL = int(os.environ.get("JWT_TTL_SECONDS", str(60 * 60 * 12)))  # 12h
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _UNSET = object()  # sentinela p/ distinguir "não mandou o campo" de "mandou vazio/None"
 
+LIMITE_DIARIO_DEFAULT = int(os.environ.get("LIMITE_DIARIO_DEFAULT", "100"))
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS users (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,6 +46,12 @@ CREATE TABLE IF NOT EXISTS grupos (
   nome     TEXT UNIQUE NOT NULL,
   criado_em INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS consumo_diario (
+  user_id  INTEGER NOT NULL,
+  dia      TEXT NOT NULL,
+  contador INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, dia)
+);
 """
 
 
@@ -52,6 +60,14 @@ def _migrar_grupo_id(con) -> None:
     cols = [r["name"] for r in con.execute("PRAGMA table_info(users)").fetchall()]
     if "grupo_id" not in cols:
         con.execute("ALTER TABLE users ADD COLUMN grupo_id TEXT")
+        con.commit()
+
+
+def _migrar_limite_diario(con) -> None:
+    """Adiciona users.limite_diario se ainda não existir. NULL = usa LIMITE_DIARIO_DEFAULT."""
+    cols = [r["name"] for r in con.execute("PRAGMA table_info(users)").fetchall()]
+    if "limite_diario" not in cols:
+        con.execute("ALTER TABLE users ADD COLUMN limite_diario INTEGER")
         con.commit()
 
 
@@ -91,7 +107,8 @@ def _row_to_user(r: sqlite3.Row) -> dict:
     return {"id": r["id"], "email": r["email"], "nome": r["nome"],
             "role": r["role"], "ativo": bool(r["ativo"]),
             "criado_em": r["criado_em"], "ultimo_login": r["ultimo_login"],
-            "grupo_id": r["grupo_id"] if "grupo_id" in cols else None}
+            "grupo_id": r["grupo_id"] if "grupo_id" in cols else None,
+            "limite_diario": r["limite_diario"] if "limite_diario" in cols else None}
 
 
 def init() -> None:
@@ -100,6 +117,7 @@ def init() -> None:
     con.executescript(_DDL)
     con.commit()
     _migrar_grupo_id(con)
+    _migrar_limite_diario(con)
     n = con.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
     if n == 0:
         email = (os.environ.get("ADMIN_EMAIL") or "rebeca@blusalesgroup.com.br").strip().lower()
@@ -178,21 +196,30 @@ def create_user(email: str, nome: str, senha: str, role: str = "user", grupo_id:
     return _row_to_user(r)
 
 
-def update_user(uid: int, *, nome=None, role=None, ativo=None, grupo_id=_UNSET) -> dict:
+def update_user(uid: int, *, nome=None, role=None, ativo=None, grupo_id=_UNSET, limite_diario=_UNSET) -> dict:
     con = _conn()
     r = con.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
     if not r:
         con.close(); raise ValueError("Usuário não encontrado.")
     if role is not None and role not in ("admin", "user"):
         con.close(); raise ValueError("Role inválida.")
-    if grupo_id is _UNSET:
-        con.execute("UPDATE users SET nome=COALESCE(?,nome), role=COALESCE(?,role), ativo=COALESCE(?,ativo) WHERE id=?",
-                    (nome, role, (None if ativo is None else int(bool(ativo))), uid))
+    gid = None if grupo_id is _UNSET else (grupo_id or None)
+    if limite_diario is _UNSET:
+        lim = None
+        set_limite = False
     else:
-        # grupo_id explicitamente enviado (mesmo "" pra remover do grupo) — não é COALESCE.
-        gid = grupo_id or None
-        con.execute("UPDATE users SET nome=COALESCE(?,nome), role=COALESCE(?,role), ativo=COALESCE(?,ativo), grupo_id=? WHERE id=?",
-                    (nome, role, (None if ativo is None else int(bool(ativo))), gid, uid))
+        set_limite = True
+        lim = None if limite_diario in (None, "") else int(limite_diario)
+        if lim is not None and lim < 0:
+            con.close(); raise ValueError("Limite diário não pode ser negativo.")
+    sets = ["nome=COALESCE(?,nome)", "role=COALESCE(?,role)", "ativo=COALESCE(?,ativo)"]
+    params = [nome, role, (None if ativo is None else int(bool(ativo)))]
+    if grupo_id is not _UNSET:
+        sets.append("grupo_id=?"); params.append(gid)
+    if set_limite:
+        sets.append("limite_diario=?"); params.append(lim)
+    params.append(uid)
+    con.execute(f"UPDATE users SET {', '.join(sets)} WHERE id=?", params)
     con.commit()
     r = con.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
     con.close()
@@ -241,6 +268,61 @@ def delete_user(uid: int) -> None:
     con = _conn()
     con.execute("DELETE FROM users WHERE id=?", (uid,))
     con.commit(); con.close()
+
+
+# ---- Limite diário de consultas (não-admin) ----
+
+def _hoje() -> str:
+    return time.strftime("%Y-%m-%d")
+
+
+def limite_efetivo(user: dict) -> int:
+    v = user.get("limite_diario")
+    return int(v) if v is not None else LIMITE_DIARIO_DEFAULT
+
+
+def consumo_hoje(uid: int) -> int:
+    con = _conn()
+    r = con.execute("SELECT contador FROM consumo_diario WHERE user_id=? AND dia=?", (uid, _hoje())).fetchone()
+    con.close()
+    return r["contador"] if r else 0
+
+
+def registrar_consumo(uid: int) -> int:
+    """Incrementa o contador de consultas do dia do usuário e retorna o novo total."""
+    dia = _hoje()
+    con = _conn()
+    con.execute(
+        "INSERT INTO consumo_diario (user_id, dia, contador) VALUES (?,?,1) "
+        "ON CONFLICT(user_id, dia) DO UPDATE SET contador = contador + 1",
+        (uid, dia),
+    )
+    con.commit()
+    r = con.execute("SELECT contador FROM consumo_diario WHERE user_id=? AND dia=?", (uid, dia)).fetchone()
+    con.close()
+    return r["contador"] if r else 0
+
+
+def consumo_por_usuario(excluir_admin: bool = True) -> list[dict]:
+    """Consumo de hoje + limite efetivo de cada usuário — usado no widget admin."""
+    dia = _hoje()
+    con = _conn()
+    q = "SELECT id, email, nome, role, limite_diario FROM users"
+    if excluir_admin:
+        q += " WHERE role != 'admin'"
+    q += " ORDER BY email"
+    rows = con.execute(q).fetchall()
+    out = []
+    for r in rows:
+        c = con.execute("SELECT contador FROM consumo_diario WHERE user_id=? AND dia=?", (r["id"], dia)).fetchone()
+        out.append({
+            "id": r["id"], "email": r["email"], "nome": r["nome"],
+            "limite_diario": r["limite_diario"] if r["limite_diario"] is not None else LIMITE_DIARIO_DEFAULT,
+            "limite_diario_custom": r["limite_diario"],
+            "consumo_hoje": c["contador"] if c else 0,
+        })
+    con.close()
+    return out
 
 
 # ---- Dependências FastAPI ----
@@ -379,10 +461,18 @@ async def admin_update(uid: int, payload: dict = Body(default={}),
     try:
         u = update_user(uid, nome=payload.get("nome"), role=payload.get("role"),
                         ativo=payload.get("ativo"),
-                        grupo_id=(payload.get("grupo_id") if "grupo_id" in payload else _UNSET))
+                        grupo_id=(payload.get("grupo_id") if "grupo_id" in payload else _UNSET),
+                        limite_diario=(payload.get("limite_diario") if "limite_diario" in payload else _UNSET))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"user": u}
+
+
+@router.get("/api/admin/consumo")
+async def admin_consumo(admin: dict = Depends(require_admin)):
+    """Consultas de hoje por usuário (só não-admin — um admin não vê outro admin)."""
+    return {"consumo": consumo_por_usuario(excluir_admin=True), "dia": _hoje(),
+            "limite_default": LIMITE_DIARIO_DEFAULT}
 
 
 @router.get("/api/admin/grupos")

@@ -221,6 +221,11 @@
           <td>${u.role === 'admin' ? '<b>admin</b>' : 'user'}</td>
           <td><select class="user-grupo-sel" data-cur="${esc(u.grupo_id || '')}">${gruposOpts}</select></td>
           <td>${u.ativo ? '🟢 ativo' : '⚪ inativo'}</td>
+          <td>${u.role === 'admin' ? '<span class="pf-advanced-hint">—</span>' :
+              `<input type="number" min="0" class="filter-num user-limite-input" style="width:64px"
+                data-cur="${u.limite_diario_custom != null ? u.limite_diario_custom : ''}"
+                title="Limite diário de consultas (vazio = padrão de ${esc(String(u.limite_diario))})"
+                placeholder="${esc(String(u.limite_diario))}">`}</td>
           <td class="user-actions">
             <button data-act="toggle">${u.ativo ? 'Desativar' : 'Ativar'}</button>
             <button data-act="role">${u.role === 'admin' ? '→ user' : '→ admin'}</button>
@@ -229,7 +234,8 @@
           </td>
         </tr>`).join('');
       tb.querySelectorAll('.user-grupo-sel').forEach(sel => { sel.value = sel.dataset.cur; });
-    } catch (e) { tb.innerHTML = '<tr><td colspan="6">Erro ao carregar.</td></tr>'; }
+      tb.querySelectorAll('.user-limite-input').forEach(inp => { inp.value = inp.dataset.cur; });
+    } catch (e) { tb.innerHTML = '<tr><td colspan="7">Erro ao carregar.</td></tr>'; }
   }
 
   function wireUsersModal() {
@@ -299,6 +305,16 @@
       const id = sel.closest('tr').dataset.id;
       await fetch(`/api/admin/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ grupo_id: sel.value }) });
     });
+    document.querySelector('#users-table tbody').addEventListener('blur', async e => {
+      const inp = e.target.closest('.user-limite-input'); if (!inp) return;
+      const id = inp.closest('tr').dataset.id;
+      const v = inp.value.trim();
+      if (v === (inp.dataset.cur || '')) return;
+      const limite_diario = v === '' ? null : Math.max(0, parseInt(v, 10) || 0);
+      const r = await fetch(`/api/admin/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limite_diario }) });
+      if (!r.ok) { alert((await r.json()).detail || 'Falha ao salvar limite.'); loadUsers(); return; }
+      inp.dataset.cur = v === '' ? '' : String(limite_diario);
+    }, true);
   }
 
   function wirePassModal() {

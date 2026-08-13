@@ -29,6 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import assertiva
+import auth
 import brasilapi
 import casadosdados
 import config_store
@@ -1526,6 +1527,16 @@ async def navlog_listar(request: Request, desde: str = "", ate: str = "", user: 
     except ValueError:
         return {"status": "error", "message": "Datas inválidas (use YYYY-MM-DD)."}
     res = navlog.listar(desde_ts, ate_ts, user)
+    # Um admin não pode ver as pesquisas de outro admin — filtra qualquer email de role admin.
+    try:
+        emails_admin = {u["email"] for u in auth.list_users() if u.get("role") == "admin"}
+    except Exception:
+        emails_admin = set()
+    if emails_admin:
+        res["entradas"] = [e for e in res["entradas"] if e.get("user") not in emails_admin]
+        res["usuarios"] = [u for u in res["usuarios"] if u not in emails_admin]
+        res["por_usuario"] = {u: n for u, n in res["por_usuario"].items() if u not in emails_admin}
+        res["total"] = sum(res["por_usuario"].values())
     res["status"] = "ok"
     return res
 
