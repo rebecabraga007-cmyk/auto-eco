@@ -2357,9 +2357,40 @@ function useRenderMap(colunas) {
   document.getElementById('adm-custo-atualizar').addEventListener('click', admCustoCarregar);
   document.getElementById('adm-cons-atualizar').addEventListener('click', admConsultasCarregar);
   document.getElementById('adm-cons-user').addEventListener('change', admConsultasCarregar);
+  document.getElementById('adm-custou-desde').value = fmtISO(trintaDiasAtras);
+  document.getElementById('adm-custou-ate').value = fmtISO(hoje);
+  document.getElementById('adm-custou-atualizar').addEventListener('click', admCustoUsuarioCarregar);
+  document.getElementById('adm-custou-user').addEventListener('change', admCustoUsuarioCarregar);
 })();
 
-function admCarregar() { admConsultasCarregar(); admNavCarregar(); admCustoCarregar(); }
+function admCarregar() { admConsultasCarregar(); admCustoUsuarioCarregar(); admNavCarregar(); admCustoCarregar(); }
+
+function admCustoUsuarioCarregar() {
+  const box = document.getElementById('adm-custou-resultado'); if (!box) return;
+  const desde = document.getElementById('adm-custou-desde').value;
+  const ate = document.getElementById('adm-custou-ate').value;
+  const sel = document.getElementById('adm-custou-user');
+  const user = sel.value;
+  box.innerHTML = '<p class="msg">Carregando…</p>';
+  fetch(`${API}/api/custos/usuario?desde=${desde}&ate=${ate}&user=${encodeURIComponent(user)}`).then(r => r.json()).then(j => {
+    if (j.status !== 'ok') { box.innerHTML = `<p class="msg error">${esc(j.message || j.detail || 'Falha ao carregar.')}</p>`; return; }
+    const fmtR$ = v => 'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 });
+    if (sel.dataset.pop !== '1') {
+      sel.insertAdjacentHTML('beforeend', (j.usuarios || []).map(u => `<option value="${esc(u.user)}">${esc(u.user)}</option>`).join(''));
+      sel.dataset.pop = '1';
+      sel.value = user;
+    }
+    const linhas = (j.usuarios || []).map(u => `
+      <tr><td class="mono">${esc(u.user)}</td><td>${u.n_consultas}</td><td>${fmtR$(u.custo_total)}</td></tr>`).join('');
+    box.innerHTML = `
+      <div class="prosp-build-row" style="margin-bottom:10px">
+        <span><strong>Total no período:</strong> ${fmtR$(j.total_geral)} (${j.total_consultas} consulta(s))</span>
+      </div>
+      ${j.usuarios && j.usuarios.length
+        ? `<table class="prosp-table"><thead><tr><th>Usuário</th><th>Consultas</th><th>Custo</th></tr></thead><tbody>${linhas}</tbody></table>`
+        : '<p class="msg">Nenhuma consulta Assertiva no período selecionado.</p>'}`;
+  }).catch(e => { box.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`; });
+}
 
 function admConsultasCarregar() {
   const box = document.getElementById('adm-cons-resultado'); if (!box) return;

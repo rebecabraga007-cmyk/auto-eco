@@ -697,6 +697,19 @@
     </div>
 
     <div class="search-panel">
+      <h3 style="margin:0 0 12px;font-size:1.05rem">Custo Assertiva por usuário (R$ 0,119/consulta)</h3>
+      <div class="en-step">
+        <label>De <input id="adm-custou-desde" type="date" class="filter-num"></label>
+        <label>Até <input id="adm-custou-ate" type="date" class="filter-num"></label>
+        <label>Usuário
+          <select id="adm-custou-user" class="filter-select"><option value="">Todos (não-admin)</option></select>
+        </label>
+        <button id="adm-custou-atualizar" class="btn-secondary">🔄 Atualizar</button>
+      </div>
+      <div id="adm-custou-resultado"></div>
+    </div>
+
+    <div class="search-panel">
       <h3 style="margin:0 0 12px;font-size:1.05rem">Histórico de navegação</h3>
       <div class="en-step">
         <label>De <input id="adm-nav-desde" type="date" class="filter-num"></label>

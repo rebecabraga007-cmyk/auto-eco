@@ -10,6 +10,7 @@ Armazenamento: JSONL append-only (uma linha por consulta), no mesmo
 diretório de dados usado por config_store/modelos (C:\\capiblu_data ou o
 diretório do backend em dev).
 """
+import contextvars
 import json
 import os
 import threading
@@ -113,3 +114,94 @@ def resumo(desde_ts: float = None, ate_ts: float = None) -> dict:
     return {"modelos": modelos, "total_geral": total_geral, "total_consultas": total_consultas,
             "custo_interno": custo_interno, "custo_externo": custo_externo,
             "custo_sem_modelo": custo_sem_modelo, "custo_por_consulta": CUSTO_POR_CONSULTA}
+
+
+# ---------------------------------------------------------------------------
+# Custo por USUÁRIO (todas as chamadas reais à Assertiva, não só as do
+# enriquecimento por planilha). Registrado no único ponto por onde toda
+# chamada à Assertiva passa (assertiva._get) — cobre CPF/CNPJ/telefone/e-mail/
+# nome, tanto Busca Assertiva direta quanto usos internos (dossiê, prospecção).
+#
+# Armazenamento separado (capiblu_custos_usuario.jsonl) do log por-modelo
+# acima, pra não contar a mesma chamada duas vezes nos dois widgets.
+# ---------------------------------------------------------------------------
+
+_user_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("assertiva_user_email", default="")
+
+
+def set_current_user(email: str) -> None:
+    """Chamado pelo middleware do backend a cada request, com o e-mail vindo
+    do header X-User-Email (que só o app-online/proxy envia)."""
+    _user_ctx.set((email or "").strip().lower())
+
+
+def _path_usuario() -> str:
+    base = r"C:\capiblu_data" if os.path.isdir(r"C:\capiblu_data") else os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, "capiblu_custos_usuario.jsonl")
+
+
+def log_chamada_assertiva(endpoint: str = "") -> None:
+    """Registra 1 chamada real (billable) à API Assertiva, atribuída ao usuário
+    da request atual (via contextvar) — chamado de dentro de assertiva._get()."""
+    rec = {"ts": time.time(), "user": _user_ctx.get() or "desconhecido",
+           "endpoint": endpoint or "", "valor": CUSTO_POR_CONSULTA}
+    linha = json.dumps(rec, ensure_ascii=False)
+    with _LOCK:
+        try:
+            with open(_path_usuario(), "a", encoding="utf-8") as fh:
+                fh.write(linha + "\n")
+        except Exception:
+            pass
+
+
+def _ler_tudo_usuario() -> list[dict]:
+    p = _path_usuario()
+    if not os.path.exists(p):
+        return []
+    out = []
+    try:
+        with open(p, encoding="utf-8") as fh:
+            for linha in fh:
+                linha = linha.strip()
+                if not linha:
+                    continue
+                try:
+                    out.append(json.loads(linha))
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return out
+
+
+def resumo_por_usuario(desde_ts: float = None, ate_ts: float = None, excluir_emails: set = None) -> dict:
+    """Custo total de chamadas Assertiva por usuário, no intervalo [desde_ts, ate_ts].
+
+    excluir_emails: emails a remover do resultado (usado pra tirar admins,
+    já que um admin não deve ver o consumo de outro admin no painel).
+    """
+    regs = _ler_tudo_usuario()
+    if desde_ts is not None:
+        regs = [r for r in regs if r.get("ts", 0) >= desde_ts]
+    if ate_ts is not None:
+        regs = [r for r in regs if r.get("ts", 0) <= ate_ts]
+    excluir = excluir_emails or set()
+
+    por_usuario: dict[str, dict] = {}
+    for r in regs:
+        u = r.get("user") or "desconhecido"
+        if u in excluir:
+            continue
+        if u not in por_usuario:
+            por_usuario[u] = {"user": u, "n_consultas": 0, "custo_total": 0.0}
+        por_usuario[u]["n_consultas"] += 1
+        por_usuario[u]["custo_total"] += r.get("valor", CUSTO_POR_CONSULTA)
+
+    usuarios = sorted(por_usuario.values(), key=lambda u: -u["custo_total"])
+    for u in usuarios:
+        u["custo_total"] = round(u["custo_total"], 3)
+
+    total_geral = round(sum(u["custo_total"] for u in usuarios), 3)
+    total_consultas = sum(u["n_consultas"] for u in usuarios)
+    return {"usuarios": usuarios, "total_geral": total_geral, "total_consultas": total_consultas,
+            "custo_por_consulta": CUSTO_POR_CONSULTA}

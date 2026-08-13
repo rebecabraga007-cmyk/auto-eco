@@ -27,6 +27,8 @@ from typing import Any
 
 import httpx
 
+import custos
+
 BASE_URL = os.environ.get(
     "ASSERTIVA_BASE_URL", "https://api.assertivasolucoes.com.br"
 ).strip().rstrip("/")
@@ -108,6 +110,9 @@ async def _get(path: str, params: dict) -> dict[str, Any]:
             resp = await _do(token)
     except Exception as exc:
         return {"status": "error", "message": f"Erro de conexão: {str(exc)[:160]}"}
+
+    # Chamada real chegou à Assertiva (independente do resultado) → é billable.
+    custos.log_chamada_assertiva(endpoint=path)
 
     if resp.status_code == 403:
         return {"status": "no_access",

@@ -103,6 +103,7 @@ async def _proxy_guard(request, call_next):
         return await call_next(request)
     if _PROXY_SECRET and request.headers.get("x-proxy-secret", "") != _PROXY_SECRET:
         return JSONResponse({"detail": "Acesso negado (segredo de proxy)."}, status_code=401)
+    custos.set_current_user(request.headers.get("x-user-email", ""))
     return await call_next(request)
 
 
@@ -1094,6 +1095,36 @@ async def custos_assertiva(desde: str = "", ate: str = ""):
     res["status"] = "ok"
     res["cliente_id"] = custos.CLIENTE_ID
     res["cliente_nome"] = custos.CLIENTE_NOME
+    return res
+
+
+@app.get("/api/custos/usuario")
+async def custos_por_usuario(request: Request, desde: str = "", ate: str = "", user: str = ""):
+    """Custo de chamadas Assertiva por usuário, no intervalo [desde, ate] — só admin.
+
+    Um admin não vê o custo de outro admin (mesma regra do /api/navlog).
+    """
+    if not _is_admin(request):
+        return JSONResponse({"detail": "Requer admin."}, status_code=403)
+    import datetime as _dt
+    desde_ts = None
+    ate_ts = None
+    try:
+        if desde:
+            desde_ts = _dt.datetime.strptime(desde, "%Y-%m-%d").timestamp()
+        if ate:
+            ate_ts = _dt.datetime.strptime(ate, "%Y-%m-%d").timestamp() + 86400 - 1
+    except ValueError:
+        return {"status": "error", "message": "Datas inválidas (use YYYY-MM-DD)."}
+    try:
+        emails_admin = {u["email"] for u in auth.list_users() if u.get("role") == "admin"}
+    except Exception:
+        emails_admin = set()
+    res = custos.resumo_por_usuario(desde_ts, ate_ts, excluir_emails=emails_admin)
+    if user:
+        alvo = user.strip().lower()
+        res["usuarios"] = [u for u in res["usuarios"] if u["user"] == alvo]
+    res["status"] = "ok"
     return res
 
 
