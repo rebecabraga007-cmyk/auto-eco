@@ -34,7 +34,7 @@ import brasilapi
 import casadosdados
 import config_store
 import custos
-import decisores
+import decisores as decisor_lib
 import donodozap
 import meetime
 import navlog
@@ -420,19 +420,25 @@ async def company_vinculos(cnpj: str, refresh: bool = False):
         qsa = []
         dados["qsa_status"] = "indisponivel"
 
-    resultado_qsa = decisores.anexar_qsa(vinculos, qsa)
-    decisores.normalizar(vinculos)
-    decisores.ordenar(vinculos)
+    resultado_qsa = decisor_lib.anexar_qsa(vinculos, qsa)
+    decisor_lib.normalizar(vinculos)
+    decisor_lib.ordenar(vinculos)
 
     dados["socios_qsa"] = len(qsa)
     dados["socios_fora_da_folha"] = resultado_qsa["adicionados"]
     dados["total"] = len(vinculos)
     dados["ativos"] = sum(1 for v in vinculos if v.get("ativo"))
     dados["desligados"] = len(vinculos) - dados["ativos"]
-    dados["hierarquia"] = decisores.resumo(vinculos)
+    dados["hierarquia"] = decisor_lib.resumo(vinculos)
     if vinculos:
         dados["status"] = "ok"
     return dados
+
+
+@app.get("/api/person/{cpf}/vinculos")
+async def person_vinculos(cpf: str, refresh: bool = False):
+    """Onde a pessoa trabalha (ou trabalhou), pela RAIS — o inverso do CNPJ."""
+    return await rais.vinculos_cpf(cpf, refresh=refresh)
 
 
 @app.get("/api/company/{cnpj}/decisores")
@@ -459,7 +465,7 @@ async def company_decisores(cnpj: str, conexoes: bool = False):
                 "decisores": []}
 
     resposta = ((r.get("data") or {}).get("resposta") or {})
-    lista = decisores.da_assertiva(resposta.get("possiveisDecisores") or [])
+    lista = decisor_lib.da_assertiva(resposta.get("possiveisDecisores") or [])
     lista.sort(key=lambda p: (p["nivel"] or 9, p["nome"]))
 
     saida = {
@@ -538,7 +544,7 @@ async def company_vinculos_cargos(cnpj: str):
         return {"status": "error", "message": f"Falha no LinkedIn: {str(exc)[:150]}", "cargos": []}
 
     vinculos = [dict(v) for v in (dados.get("vinculos") or [])]
-    casados = decisores.anexar_cargos_linkedin(vinculos, scraped.get("employees") or [])
+    casados = decisor_lib.anexar_cargos_linkedin(vinculos, scraped.get("employees") or [])
     cargos = [{"cpf": v.get("cpf"), "nome": v.get("nome"), "cargo": v.get("cargo"),
                "fonte_cargo": v.get("fonte_cargo"), "nivel": v.get("nivel"),
                "rotulo": v.get("rotulo"), "area": v.get("area")}
@@ -712,12 +718,33 @@ def _resolve_modelo(modelo_id: str) -> str:
     return modelo_id
 
 
+def _filtra_decisores(lista: list[dict], cargos: str, maximo: int) -> list[dict]:
+    """Filtra a lista de decisores por cargo/nível e corta no máximo pedido.
+
+    `cargos` é uma lista separada por vírgula que aceita as duas linguagens:
+    número de nível ("1,2") ou pedaço do nome do cargo ("diretor,gerente").
+    Vazio = todos. A ordem final é por nível (decisor mais alto primeiro).
+    """
+    escolhidos = [c.strip().lower() for c in (cargos or "").split(",") if c.strip()]
+    if escolhidos:
+        niveis = {int(c) for c in escolhidos if c.isdigit()}
+        termos = [c for c in escolhidos if not c.isdigit()]
+        lista = [p for p in lista
+                 if (p.get("nivel") in niveis)
+                 or any(t in (p.get("cargo") or "").lower() for t in termos)]
+    lista = sorted(lista, key=lambda p: (p.get("nivel") or 9, p.get("nome") or ""))
+    return lista[:maximo] if maximo and maximo > 0 else lista
+
+
 @app.get("/api/company/{cnpj}/leads")
 async def company_leads(cnpj: str, decisores: bool = False,
                         modo_tel: str = "celular", max_tel: int = 3,
                         fonte_tel: str = "mk",
                         socios_modo: str = "todos", max_socios: int = 0,
-                        modelo_id: str = ""):
+                        modelo_id: str = "",
+                        decisores_fonte: str = "assertiva",
+                        decisores_cargos: str = "",
+                        max_decisores: int = 3):
     """Enriquece UMA empresa com contatos (socios do QSA + telefones).
 
     Retorna {status, empresa:{...}, contatos:[{tipo, nome, cargo, cpf, telefones[]}]}.
@@ -728,7 +755,14 @@ async def company_leads(cnpj: str, decisores: bool = False,
     max_socios: 0 = sem limite; N = no maximo N socios (apos ordenar por qualificacao).
     modelo_id: modelo salvo (ou custos.CLIENTE_ID p/ planilha externa) — usado
     só pra atribuir o custo das consultas Assertiva desta montagem.
-    Se decisores=true, tenta anexar decisores do LinkedIn (lento, best-effort).
+
+    Se decisores=true, anexa tambem quem manda na empresa sem ser socio:
+    decisores_fonte: 'assertiva' (padrao — cargo real, rapido, 2 consultas por
+      empresa) | 'linkedin' (lento e frequentemente bloqueado).
+    decisores_cargos: filtro por nivel ("1,2") ou por nome de cargo
+      ("diretor,gerente"); vazio = todos.
+    max_decisores: teto por empresa (padrao 3). Importa no custo: cada decisor
+      trazido ainda gasta uma consulta de telefone.
     """
     # Base local (RFB) primeiro — instantânea e traz o QSA. Fallback: BrasilAPI.
     data = None
@@ -815,7 +849,36 @@ async def company_leads(cnpj: str, decisores: bool = False,
             "telefones": _tel_payload(tels),
         })
 
-    if decisores and _cpf_ready():
+    if decisores and decisores_fonte == "assertiva" and assertiva.enabled():
+        try:
+            r_dec = await assertiva.possiveis_decisores(brasilapi.only_digits(cnpj))
+            brutos = ((r_dec.get("data") or {}).get("resposta") or {}).get("possiveisDecisores") or []
+            escolhidos = _filtra_decisores(decisor_lib.da_assertiva(brutos),
+                                           decisores_cargos, max_decisores)
+            # CPFs que já entraram como sócio não viram contato duplicado.
+            ja_tem = {c.get("cpf") for c in contatos if c.get("cpf")}
+            escolhidos = [p for p in escolhidos if p.get("cpf") and p["cpf"] not in ja_tem]
+            tels_dec = await asyncio.gather(*[
+                _phones_for_cpf(p["cpf"], modo_tel, max_tel, fonte_tel,
+                                modelo_id=modelo_id, modelo_nome=modelo_nome, cnpj=cnpj)
+                for p in escolhidos
+            ])
+            for p, tels in zip(escolhidos, tels_dec):
+                contatos.append({
+                    "tipo": "decisor",
+                    "nome": p.get("nome") or "",
+                    "cargo": p.get("cargo") or "",
+                    "nivel": p.get("nivel") or 0,
+                    "area": p.get("area") or "",
+                    "fonte_cargo": "Assertiva",
+                    "cpf": p["cpf"],
+                    "cpf_status": "resolved",
+                    "telefones": _tel_payload(tels),
+                })
+        except Exception:
+            pass
+
+    elif decisores and decisores_fonte == "linkedin" and _cpf_ready():
         try:
             emp_res = await linkedin_scraper.scrape_employees(
                 brasilapi.only_digits(cnpj), empresa["nome_fantasia"] or empresa["razao_social"],

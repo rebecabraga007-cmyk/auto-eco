@@ -43,6 +43,9 @@ import httpx
 
 BASE_URL = os.environ.get("FDX_BASE_URL", "https://api.fdxapis.us/api.php").strip()
 TOKEN = (os.environ.get("FDX_TOKEN") or "").strip()
+# O gateway vende por módulo: a consulta por CPF (rais_pf) tem token próprio,
+# diferente do de CNPJ (rais_pj). Sem FDX_TOKEN_PF, cai no token de CNPJ.
+TOKEN_PF = (os.environ.get("FDX_TOKEN_PF") or TOKEN).strip()
 
 _TIMEOUT = httpx.Timeout(90.0)   # 1,5 MB de resposta em ~2s; folga pra empresa grande
 _CACHE_TTL = 6 * 3600            # a RAIS é anual — cache longo não perde nada
@@ -116,8 +119,14 @@ def _tempo_casa(meses: int | None) -> str:
     return f"{resto} m{'eses' if resto != 1 else 'ês'}"
 
 
-def _normalizar(registros: list[dict], referencia: str | None) -> list[dict]:
-    """Deduplica as cópias ISO/BR e devolve um vínculo por (CPF, admissão)."""
+def _normalizar(registros: list[dict], referencia: str | None,
+                chave_extra: str | None = None) -> list[dict]:
+    """Deduplica as cópias ISO/BR e devolve um vínculo por (pessoa, admissão).
+
+    chave_extra='CNPJ' inverte a leitura: em vez de uma linha por pessoa (busca
+    por empresa), vira uma linha por EMPRESA (busca por CPF) — a mesma pessoa
+    pode ter tido dois contratos no mesmo lugar, em datas diferentes.
+    """
     por_chave: dict[tuple[str, str], dict] = {}
 
     for reg in registros:
@@ -125,9 +134,10 @@ def _normalizar(registros: list[dict], referencia: str | None) -> list[dict]:
             continue
         cpf = only_digits(reg.get("CPF"))
         admissao = _parse_data(reg.get("DATA_ADMISSAO"))
-        if not cpf or not admissao:
+        principal = only_digits(reg.get(chave_extra)) if chave_extra else cpf
+        if not principal or not admissao:
             continue
-        chave = (cpf, admissao)
+        chave = (principal, admissao)
         bruto_desl = reg.get("DATA_DESLIGAMENTO")
         desligamento = _parse_data(bruto_desl)
         parcial = None if desligamento else _parse_dia_mes(bruto_desl)
@@ -137,6 +147,8 @@ def _normalizar(registros: list[dict], referencia: str | None) -> list[dict]:
             por_chave[chave] = {
                 "cpf": cpf,
                 "nome": (reg.get("NOME") or "").strip(),
+                "razao_social": (reg.get("RAZAO_SOCIAL") or "").strip(),
+                "_extra": principal if chave_extra else "",
                 "admissao": admissao,
                 "desligamento": desligamento,
                 "desligamento_parcial": parcial,
@@ -151,6 +163,8 @@ def _normalizar(registros: list[dict], referencia: str | None) -> list[dict]:
             atual["desligamento_parcial"] = parcial
         if not atual["nome"]:
             atual["nome"] = (reg.get("NOME") or "").strip()
+        if not atual["razao_social"]:
+            atual["razao_social"] = (reg.get("RAZAO_SOCIAL") or "").strip()
         if not atual["faixa_renda"]:
             atual["faixa_renda"] = reg.get("FAIXA_RENDA") or ""
 
@@ -198,6 +212,122 @@ def _por_ano(vinculos: list[dict]) -> list[dict]:
     return sorted(anos.values(), key=lambda x: x["ano"])
 
 
+async def _chamar(param: str, doc: str, token: str,
+                  nome_env: str) -> tuple[list | None, dict | None]:
+    """Chama o gateway e devolve (registros, None) ou (None, erro_padronizado).
+
+    param: 'raispj' (por CNPJ) ou 'rais_pf' (por CPF) — módulos diferentes,
+    cada um com seu token.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(BASE_URL, params={"token": token, param: doc})
+    except httpx.HTTPError as exc:
+        # str(exc) do httpx inclui a URL chamada — e a URL leva o token. Nunca
+        # devolver isso pra tela: só o tipo do erro.
+        return None, {"status": "error", "vinculos": [],
+                      "message": f"Não consegui falar com a base RAIS ({type(exc).__name__})."}
+
+    if resp.status_code in (401, 403):
+        # O gateway responde 401 tanto pra token errado quanto pra token vencido.
+        motivo = ""
+        try:
+            motivo = str((resp.json() or {}).get("response") or "")
+        except Exception:
+            pass
+        return None, {"status": "unavailable", "vinculos": [],
+                      "message": ("Acesso à base RAIS recusado"
+                                  + (f" ({motivo})" if motivo else "")
+                                  + f". Renove o {nome_env} no .env do serviço de dados.")}
+    if resp.status_code >= 400:
+        return None, {"status": "error", "vinculos": [],
+                      "message": f"A base RAIS respondeu {resp.status_code}."}
+
+    try:
+        payload = resp.json()
+    except ValueError:
+        return None, {"status": "error", "vinculos": [],
+                      "message": "A base RAIS respondeu em formato inesperado."}
+
+    corpo = payload.get("response") if isinstance(payload, dict) else None
+    if not (isinstance(payload, dict) and payload.get("status")) or not isinstance(corpo, list):
+        motivo = str(corpo or "").strip()
+        if motivo.lower().startswith("not exist"):
+            return None, {"status": "not_found", "vinculos": [], "total": 0,
+                          "ativos": 0, "desligados": 0,
+                          "message": "Nenhum vínculo declarado na RAIS."}
+        if "token" in motivo.lower():
+            return None, {"status": "unavailable", "vinculos": [],
+                          "message": f"Token da base RAIS recusado (verifique {nome_env})."}
+        return None, {"status": "error", "vinculos": [],
+                      "message": motivo or "A base RAIS não retornou dados."}
+    return corpo, None
+
+
+async def vinculos_cpf(cpf: str, refresh: bool = False) -> dict[str, Any]:
+    """Onde a pessoa trabalha (ou trabalhou), pela RAIS — o inverso do CNPJ.
+
+    Retorna {status, cpf, nome, referencia, total, ativos, desligados,
+             vinculos:[{cnpj, razao_social, admissao, desligamento, ...}]}.
+    """
+    doc = only_digits(cpf)
+    if len(doc) != 11:
+        return {"status": "error", "message": "CPF inválido — precisa ter 11 dígitos.",
+                "cpf": cpf, "vinculos": []}
+    if not (TOKEN_PF and BASE_URL):
+        return {"status": "unavailable",
+                "message": "Vínculos por CPF não configurados (defina FDX_TOKEN_PF no .env).",
+                "cpf": doc, "vinculos": []}
+
+    chave = "pf:" + doc
+    if not refresh:
+        em_cache = _cache.get(chave)
+        if em_cache and (time.time() - em_cache[0]) < _CACHE_TTL:
+            resultado = dict(em_cache[1])
+            resultado["_from_cache"] = True
+            return resultado
+
+    corpo, erro = await _chamar("rais_pf", doc, TOKEN_PF, "FDX_TOKEN_PF")
+    if erro is not None:
+        erro["cpf"] = doc
+        if erro["status"] == "not_found":
+            erro["message"] = "Nenhum vínculo declarado na RAIS para este CPF."
+        return erro
+
+    nome = ""
+    referencia = None
+    for reg in corpo:
+        if isinstance(reg, dict):
+            nome = nome or (reg.get("NOME") or "").strip()
+            entrega = _parse_data(reg.get("DATA_ENTREGA"))
+            if entrega and (referencia is None or entrega > referencia):
+                referencia = entrega
+
+    # Mesmo dedup do CNPJ, mas a chave aqui é a EMPRESA: uma pessoa pode ter
+    # tido dois contratos na mesma empresa, em datas diferentes.
+    vinculos = _normalizar(corpo, referencia, chave_extra="CNPJ")
+    for v in vinculos:
+        v["cnpj"] = v.pop("_extra", "")
+    ativos = sum(1 for v in vinculos if v["ativo"])
+
+    resultado = {
+        "status": "ok" if vinculos else "not_found",
+        "cpf": doc,
+        "nome": nome,
+        "referencia": referencia or "",
+        "referencia_br": _br(referencia),
+        "total": len(vinculos),
+        "ativos": ativos,
+        "desligados": len(vinculos) - ativos,
+        "registros_brutos": len(corpo),
+        "vinculos": vinculos,
+    }
+    if not vinculos:
+        resultado["message"] = "A base respondeu, mas sem nenhum vínculo aproveitável."
+    _cache[chave] = (time.time(), resultado)
+    return resultado
+
+
 async def vinculos_cnpj(cnpj: str, refresh: bool = False) -> dict[str, Any]:
     """Vínculos empregatícios declarados na RAIS para um CNPJ.
 
@@ -221,53 +351,12 @@ async def vinculos_cnpj(cnpj: str, refresh: bool = False) -> dict[str, Any]:
             resultado["_from_cache"] = True
             return resultado
 
-    try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.get(BASE_URL, params={"token": TOKEN, "raispj": doc})
-    except httpx.HTTPError as exc:
-        # str(exc) do httpx inclui a URL chamada — e a URL leva o token. Nunca
-        # devolver isso pra tela: só o tipo do erro.
-        return {"status": "error",
-                "message": f"Não consegui falar com a base RAIS ({type(exc).__name__}).",
-                "cnpj": doc, "vinculos": []}
-
-    if resp.status_code in (401, 403):
-        # O gateway responde 401 tanto pra token errado quanto pra token vencido.
-        motivo = ""
-        try:
-            motivo = str((resp.json() or {}).get("response") or "")
-        except Exception:
-            pass
-        return {"status": "unavailable",
-                "message": ("Acesso à base RAIS recusado"
-                            + (f" ({motivo})" if motivo else "")
-                            + ". Renove o FDX_TOKEN no .env do serviço de dados."),
-                "cnpj": doc, "vinculos": []}
-    if resp.status_code >= 400:
-        return {"status": "error",
-                "message": f"A base RAIS respondeu {resp.status_code}.",
-                "cnpj": doc, "vinculos": []}
-
-    try:
-        payload = resp.json()
-    except ValueError:
-        return {"status": "error", "message": "A base RAIS respondeu em formato inesperado.",
-                "cnpj": doc, "vinculos": []}
-
-    corpo = payload.get("response") if isinstance(payload, dict) else None
-
-    if not (isinstance(payload, dict) and payload.get("status")) or not isinstance(corpo, list):
-        motivo = str(corpo or "").strip()
-        if motivo.lower().startswith("not exist"):
-            return {"status": "not_found",
-                    "message": "Nenhum vínculo declarado na RAIS para este CNPJ.",
-                    "cnpj": doc, "vinculos": [], "total": 0, "ativos": 0, "desligados": 0}
-        if "token" in motivo.lower():
-            return {"status": "unavailable",
-                    "message": "Token da base RAIS recusado (verifique FDX_TOKEN).",
-                    "cnpj": doc, "vinculos": []}
-        return {"status": "error", "message": motivo or "A base RAIS não retornou dados.",
-                "cnpj": doc, "vinculos": []}
+    corpo, erro = await _chamar("raispj", doc, TOKEN, "FDX_TOKEN")
+    if erro is not None:
+        erro["cnpj"] = doc
+        if erro["status"] == "not_found":
+            erro["message"] = "Nenhum vínculo declarado na RAIS para este CNPJ."
+        return erro
 
     razao = ""
     referencia = None

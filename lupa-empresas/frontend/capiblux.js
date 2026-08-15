@@ -1180,9 +1180,33 @@ function renderProspList() {
             <option value="__cliente__">🧑‍💼 Cliente (planilha externa)</option>
           </select>
         </label>
-        <label class="toggle-wrap"><input id="pf-decisores" type="checkbox" /><span>Incluir decisores (LinkedIn) <span class="pf-advanced-hint" style="display:inline">— mais lento, pode ser bloqueado</span></span></label>
         <button id="pf-dedup" class="btn-secondary" title="Remove das ${emp.length} empresas as que já estão na Meetime (CNPJ + nome)">Remover quem já está na Meetime</button>
         <button id="pf-montar" class="btn-primary">Montar lista de contatos</button>
+      </div>
+
+      <div class="pf-decisores-box">
+        <label class="toggle-wrap"><input id="pf-decisores" type="checkbox" /><span><strong>Incluir decisores</strong> — quem manda na empresa sem estar no quadro de sócios</span></label>
+        <div class="prosp-build-row" id="pf-dec-opcoes" hidden>
+          <label>Fonte
+            <select id="pf-decfonte" class="filter-select" title="A Assertiva traz o cargo real e é rápida; o LinkedIn é lento e costuma vir vazio">
+              <option value="assertiva" selected>Assertiva (cargo real)</option>
+              <option value="linkedin">LinkedIn (lento)</option>
+            </select>
+          </label>
+          <label>máx decisores/empresa
+            <input id="pf-maxdec" type="number" min="1" max="20" value="3" class="filter-num" title="Cada decisor trazido ainda gasta uma consulta de telefone" />
+          </label>
+          <div class="filter-row" id="pf-cargos" style="margin:0">
+            <span class="filter-label">Cargos:</span>
+            <button type="button" class="pf-cargo active" data-c="">Todos</button>
+            <button type="button" class="pf-cargo" data-c="administrador">Administrador</button>
+            <button type="button" class="pf-cargo" data-c="representante">Representante legal</button>
+            <button type="button" class="pf-cargo" data-c="diretor">Diretor</button>
+            <button type="button" class="pf-cargo" data-c="gerente">Gerente</button>
+            <button type="button" class="pf-cargo" data-c="coordenador">Coordenador</button>
+          </div>
+        </div>
+        <p class="pf-advanced-hint" id="pf-dec-custo" hidden></p>
       </div>
       <div id="pf-dedup-note" class="prosp-dedup-note"></div>
       <p class="prosp-warn">Buscar os telefones leva alguns minutos e consome consulta (${prospState.fonte === 'local' ? 'base local da Receita' : 'Casa dos Dados'}). A lista pronta pode ser exportada em planilha, no seu modelo de colunas. A validação por telefone reverso é um passo separado, sobre a lista pronta.</p>
@@ -1203,6 +1227,54 @@ function renderProspList() {
   document.getElementById('pf-montar').addEventListener('click', prospMontar);
   document.getElementById('pf-dedup').addEventListener('click', prospDedupMeetime);
   popularSelectModelo(document.getElementById('pf-modelo'));
+  initDecisoresBox();
+}
+
+// Bloco "Incluir decisores": mostra as opções só quando ligado, e avisa o custo
+// antes de a usuária clicar em montar (cada decisor gasta consulta de telefone).
+function initDecisoresBox() {
+  const chk = document.getElementById('pf-decisores');
+  const opcoes = document.getElementById('pf-dec-opcoes');
+  const aviso = document.getElementById('pf-dec-custo');
+  if (!chk) return;
+
+  const atualizar = () => {
+    const ligado = chk.checked;
+    opcoes.hidden = !ligado;
+    aviso.hidden = !ligado;
+    if (!ligado) return;
+    const fonte = document.getElementById('pf-decfonte').value;
+    const n = parseInt(document.getElementById('pf-maxdec').value) || 0;
+    const empresas = parseInt(document.getElementById('pf-qtd').value) || 0;
+    aviso.textContent = fonte === 'assertiva'
+      ? `≈ ${empresas * (2 + n)} consultas Assertiva: ${empresas} × (2 pela empresa + até ${n} telefone${n === 1 ? '' : 's'} de decisor).`
+      : 'O LinkedIn não gasta consulta Assertiva, mas é lento e costuma voltar vazio — a Assertiva rende muito mais.';
+  };
+
+  chk.addEventListener('change', atualizar);
+  ['pf-decfonte', 'pf-maxdec', 'pf-qtd'].forEach(id => {
+    document.getElementById(id)?.addEventListener('input', atualizar);
+    document.getElementById(id)?.addEventListener('change', atualizar);
+  });
+
+  // Chips de cargo: "Todos" é exclusivo; os demais somam.
+  document.querySelectorAll('#pf-cargos .pf-cargo').forEach(b => b.addEventListener('click', () => {
+    const todos = document.querySelector('#pf-cargos .pf-cargo[data-c=""]');
+    if (!b.dataset.c) {
+      document.querySelectorAll('#pf-cargos .pf-cargo').forEach(x => x.classList.remove('active'));
+      todos.classList.add('active');
+    } else {
+      b.classList.toggle('active');
+      todos.classList.toggle('active',
+        !document.querySelector('#pf-cargos .pf-cargo.active[data-c]:not([data-c=""])'));
+    }
+  }));
+  atualizar();
+}
+
+function cargosSelecionados() {
+  return [...document.querySelectorAll('#pf-cargos .pf-cargo.active')]
+    .map(b => b.dataset.c).filter(Boolean).join(',');
 }
 
 // Preenche um <select> com "— nenhum —", "🧑‍💼 Cliente" + modelos salvos (usado
@@ -1344,6 +1416,9 @@ async function prospMontar() {
   const sociosModo = document.getElementById('pf-sociosmodo')?.value || 'todos';
   const maxSocios = parseInt(document.getElementById('pf-maxsocios')?.value) || 0;
   const modeloId = document.getElementById('pf-modelo')?.value || '';
+  const decFonte = document.getElementById('pf-decfonte')?.value || 'assertiva';
+  const maxDec = parseInt(document.getElementById('pf-maxdec')?.value) || 3;
+  const decCargos = cargosSelecionados();
   const alvo = prospState.empresas.slice(0, qtd);
   const wrap = document.getElementById('prosp-table-wrap');
   prospState.building = true;
@@ -1354,7 +1429,8 @@ async function prospMontar() {
 
   // Monta em paralelo com pool de concorrência (era 1 a 1 => lento).
   // Decisores (LinkedIn) é pesado → menos concorrência para não sobrecarregar/bloquear.
-  const CONC = decisores ? 2 : 6;
+  // Só o LinkedIn precisa de concorrência baixa (scraping); a Assertiva aguenta.
+  const CONC = (decisores && decFonte === 'linkedin') ? 2 : 6;
   const results = new Array(alvo.length);
   const leadsRaw = new Array(alvo.length);
   let completed = 0, next = 0;
@@ -1367,7 +1443,7 @@ async function prospMontar() {
     while (next < alvo.length) {
       const i = next++;
       try {
-        const r = await fetch(`${API}/api/company/${onlyDigits(alvo[i].cnpj)}/leads?decisores=${decisores}&modo_tel=${modoTel}&max_tel=${maxTel}&fonte_tel=${fonteTel}&socios_modo=${sociosModo}&max_socios=${maxSocios}&modelo_id=${encodeURIComponent(modeloId)}`).then(x => x.json());
+        const r = await fetch(`${API}/api/company/${onlyDigits(alvo[i].cnpj)}/leads?decisores=${decisores}&modo_tel=${modoTel}&max_tel=${maxTel}&fonte_tel=${fonteTel}&socios_modo=${sociosModo}&max_socios=${maxSocios}&modelo_id=${encodeURIComponent(modeloId)}&decisores_fonte=${decFonte}&decisores_cargos=${encodeURIComponent(decCargos)}&max_decisores=${maxDec}`).then(x => x.json());
         if (r.status === 'ok') {
           results[i] = leadsToRows(r.empresa, r.contatos);
           leadsRaw[i] = { empresa: r.empresa, contatos: r.contatos };
@@ -1422,15 +1498,27 @@ function leadsToRows(empresa, contatos) {
 
 function renderProspTable() {
   const wrap = document.getElementById('prosp-table-wrap');
-  const rows = prospState.rows;
-  if (!rows.length) {
+  const todas = prospState.rows;
+  if (!todas.length) {
     wrap.innerHTML = `<p class="msg" style="padding:16px">Nenhum contato encontrado nas empresas selecionadas.</p>`;
     return;
   }
+  // Filtro por tipo de contato. Exportação e validação continuam sobre a lista
+  // inteira — o filtro é só pra olhar, não recorta o que vai pra planilha.
+  const tipo = prospState.tipoContato || 'todos';
+  const rows = tipo === 'todos' ? todas : todas.filter(r =>
+    tipo === 'decisor' ? r.contato_tipo === 'Decisor' : r.contato_tipo === 'Sócio');
+  const nSocios = todas.filter(r => r.contato_tipo === 'Sócio').length;
+  const nDecisores = todas.filter(r => r.contato_tipo === 'Decisor').length;
   const comTel = rows.filter(r => r.telefone_raw).length;
   wrap.innerHTML = `
     <div class="prosp-toolbar">
       <span class="prosp-count">${rows.length} contatos · ${comTel} com telefone</span>
+      <div class="filter-row" id="pf-tipo" style="margin:0">
+        <button type="button" class="pf-cargo${tipo === 'todos' ? ' active' : ''}" data-t="todos">Todos <span class="res-tab-count">${todas.length}</span></button>
+        <button type="button" class="pf-cargo${tipo === 'socio' ? ' active' : ''}" data-t="socio">Sócios <span class="res-tab-count">${nSocios}</span></button>
+        <button type="button" class="pf-cargo${tipo === 'decisor' ? ' active' : ''}" data-t="decisor">Decisores <span class="res-tab-count">${nDecisores}</span></button>
+      </div>
       <div class="prosp-toolbar-btns">
         <button id="pf-validar" class="btn-secondary" ${comTel ? '' : 'disabled'}>✅ Validar telefones (telefone reverso)</button>
         <select id="pf-layout" class="filter-select" title="Layout da planilha">
@@ -1448,12 +1536,16 @@ function renderProspTable() {
           <th>Razão Social</th><th>CNPJ</th><th>UF</th><th>Tipo</th><th>Contato</th>
           <th>Cargo</th><th>CPF</th><th>Telefone</th><th>Validado</th><th>Nome / Vínculo</th>
         </tr></thead>
-        <tbody>${rows.map((r, i) => prospRowHtml(r, i)).join('')}</tbody>
+        <tbody>${rows.map(r => prospRowHtml(r, todas.indexOf(r))).join('')}</tbody>
       </table>
     </div>`;
   document.getElementById('pf-validar').addEventListener('click', prospValidar);
   document.getElementById('pf-export').addEventListener('click', prospExportar);
   document.getElementById('pf-modelo').addEventListener('click', abrirUseModelo);
+  document.querySelectorAll('#pf-tipo .pf-cargo').forEach(b => b.addEventListener('click', () => {
+    prospState.tipoContato = b.dataset.t;
+    renderProspTable();
+  }));
 }
 
 function valBadge(v) {
@@ -2698,7 +2790,9 @@ const VIN_NIVEIS = {
   3: { rotulo: 'Influencia e veta', curto: 'Nível 3', cor: 'var(--green)', fundo: 'var(--green-soft)' },
 };
 
-if (vinQ) vinQ.addEventListener('input', e => { e.target.value = fmtCnpj(e.target.value); });
+if (vinQ) vinQ.addEventListener('input', e => {
+  e.target.value = vinState.modo === 'cpf' ? fmtCpf(e.target.value) : fmtCnpj(e.target.value);
+});
 
 async function vinBuscar() {
   const cnpj = onlyDigits(vinQ.value);
@@ -3080,9 +3174,13 @@ async function vinExportar() {
   }
 }
 
+function vinBuscarConformeModo() {
+  return vinState.modo === 'cpf' ? vinBuscarCpf() : vinBuscar();
+}
+
 if (vinBtn) {
-  vinBtn.addEventListener('click', vinBuscar);
-  vinQ.addEventListener('keydown', e => e.key === 'Enter' && vinBuscar());
+  vinBtn.addEventListener('click', vinBuscarConformeModo);
+  vinQ.addEventListener('keydown', e => e.key === 'Enter' && vinBuscarConformeModo());
   document.querySelectorAll('.chip-vin').forEach(c => c.addEventListener('click', () => {
     vinQ.value = fmtCnpj(c.dataset.val);
     vinBuscar();
@@ -3377,3 +3475,131 @@ if (eaBtn) {
     eaBuscar();
   }));
 }
+
+// ── Aba Vínculo empregatício: modo por CPF (o inverso do CNPJ) ────────
+// Por empresa a pergunta é "quem trabalha aqui"; por pessoa é "onde essa
+// pessoa trabalhou". Mesma base RAIS, mesmo endpoint invertido.
+vinState.modo = 'cnpj';
+
+function vinTrocarModo(modo) {
+  vinState.modo = modo;
+  vinState.dados = null;
+  vinState.dadosCpf = null;
+  document.querySelectorAll('#vin-modos .as-modo').forEach(b =>
+    b.classList.toggle('active', b.dataset.m === modo));
+  const porCnpj = modo === 'cnpj';
+  document.getElementById('vin-titulo').textContent =
+    porCnpj ? 'Quem trabalha nessa empresa?' : 'Onde essa pessoa trabalhou?';
+  document.getElementById('vin-sub').textContent = porCnpj
+    ? 'Cole o CNPJ e eu trago o quadro de funcionários que a empresa declarou na RAIS — nome, CPF e data de admissão de cada um. Clique em qualquer pessoa para puxar telefone e endereço dela.'
+    : 'Cole o CPF e eu trago as empresas que declararam essa pessoa na RAIS, com data de admissão e tempo de casa em cada uma.';
+  document.getElementById('vin-icone').textContent = porCnpj ? '🏢' : '🪪';
+  const campo = document.getElementById('vin-q');
+  campo.value = '';
+  campo.placeholder = porCnpj ? 'CNPJ (00.000.000/0001-00)' : 'CPF (000.000.000-00)';
+  campo.maxLength = porCnpj ? 18 : 14;
+  document.getElementById('vin-btn').textContent = porCnpj ? 'Ver funcionários' : 'Ver vínculos';
+  document.getElementById('vin-results').innerHTML = '';
+  document.querySelectorAll('.chip-vin').forEach(c => { c.hidden = !porCnpj; });
+}
+
+async function vinBuscarCpf() {
+  const cpf = onlyDigits(vinQ.value);
+  if (cpf.length !== 11) {
+    vinRes.innerHTML = `<p class="msg error">CPF inválido — precisa ter 11 dígitos.</p>`;
+    return;
+  }
+  vinBtn.disabled = true;
+  vinRes.innerHTML = spinner();
+  try {
+    const d = await fetch(`${API}/api/person/${cpf}/vinculos`).then(r => r.json());
+    vinState.dadosCpf = d;
+    vinRenderCpf();
+    logBusca('Vínculos por CPF', fmtCpf(cpf), `${d.total || 0} vínculo(s)`);
+  } catch (e) {
+    vinRes.innerHTML = `<p class="msg error">Erro ao consultar: ${esc(e.message)}</p>`;
+  } finally {
+    vinBtn.disabled = false;
+  }
+}
+
+function vinRenderCpf() {
+  const d = vinState.dadosCpf;
+  if (!d) return;
+  if (d.status === 'unavailable') {
+    vinRes.innerHTML = `<p class="msg">ℹ️ ${esc(d.message || 'Consulta por CPF não configurada.')}</p>`;
+    return;
+  }
+  if (d.status === 'not_found') {
+    vinRes.innerHTML = `<p class="msg">Nenhum vínculo declarado na RAIS para esse CPF.
+      <br><span style="font-size:.85rem;color:var(--gray-500)">Autônomo, sócio sem carteira assinada ou quem nunca teve emprego formal não aparece na RAIS.</span></p>`;
+    return;
+  }
+  if (d.status !== 'ok') {
+    vinRes.innerHTML = `<p class="msg error">${esc(d.message || 'Falha ao consultar os vínculos.')}</p>`;
+    return;
+  }
+
+  const linhas = d.vinculos.map(v => `
+    <tr>
+      <td>
+        <div class="prosp-co-name">${esc(v.razao_social || '—')}</div>
+        <div class="prosp-co-meta mono">${esc(fmtCnpj(v.cnpj))}</div>
+      </td>
+      <td>${esc(v.admissao_br || '—')}</td>
+      <td>${v.ativo
+        ? '<span class="badge badge-ativa">Ainda lá</span>'
+        : `<span class="badge badge-neutra">Saiu em ${esc(v.desligamento_br || '—')}</span>`}</td>
+      <td>${esc(v.tempo_casa || '—')}</td>
+      <td><button class="btn-secondary" onclick="vinVerEmpresa('${esc(v.cnpj)}')">Quem mais trabalha lá →</button></td>
+    </tr>`).join('');
+
+  vinRes.innerHTML = `
+    <div class="results-head">
+      <h2>${esc(d.nome || fmtCpf(d.cpf))}</h2>
+      <span class="results-head-note">Fonte: RAIS · entregue em ${esc(d.referencia_br || '—')}</span>
+    </div>
+    <div class="metric-grid" style="margin-bottom:16px">
+      <div class="metric-cell">
+        <div class="metric-label">Vínculos declarados</div>
+        <div class="metric-value">${d.total}</div>
+        <div class="metric-sub">empresas que declararam essa pessoa</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">Ainda na empresa</div>
+        <div class="metric-value" style="color:var(--green)">${d.ativos}</div>
+        <div class="metric-sub">sem desligamento até ${esc(d.referencia_br || '—')}</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">Já saiu</div>
+        <div class="metric-value" style="color:var(--gray-500)">${d.desligados}</div>
+        <div class="metric-sub">com desligamento declarado</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">CPF</div>
+        <div class="metric-value mono" style="font-size:1.05rem">${esc(fmtCpf(d.cpf))}</div>
+        <div class="metric-sub">${esc(d.nome || '')}</div>
+      </div>
+    </div>
+    <table class="data-table">
+      <thead><tr><th>Empresa</th><th>Admissão</th><th>Situação</th><th>Tempo de casa</th><th></th></tr></thead>
+      <tbody>${linhas}</tbody>
+    </table>
+    <div class="dica">
+      <div class="dica-title">O que essa lista mostra</div>
+      <div class="dica-body">Só emprego formal declarado na RAIS até ${esc(d.referencia_br || '—')}. Sócio que não é empregado da própria empresa, autônomo e PJ não aparecem aqui — para esses, a aba <strong>Empresa Assertiva</strong> e o quadro de sócios da Receita contam mais.</div>
+    </div>`;
+}
+
+window.vinVerEmpresa = function(cnpj) {
+  vinTrocarModo('cnpj');
+  document.getElementById('vin-q').value = fmtCnpj(cnpj);
+  vinBuscar();
+};
+
+(function initVinModos() {
+  const modos = document.getElementById('vin-modos');
+  if (!modos) return;
+  modos.querySelectorAll('.as-modo').forEach(b =>
+    b.addEventListener('click', () => vinTrocarModo(b.dataset.m)));
+})();

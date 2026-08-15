@@ -808,3 +808,18 @@ body.locked { overflow: hidden; }
 
 .chip-ea { background: var(--gray-100); border: 1px solid var(--gray-200); color: var(--gray-700); border-radius: 999px; padding: 5px 14px; font-size: .82rem; cursor: pointer; transition: all .12s; }
 .chip-ea:hover { border-color: var(--terracota); color: var(--terracota); background: var(--terracota-soft); }
+
+/* ── Prospecção: bloco "Incluir decisores" + chips de cargo ── */
+.pf-decisores-box {
+  border: 1px solid var(--gray-200); border-radius: var(--radius-sm);
+  background: var(--gray-50); padding: 12px 14px; margin-top: 12px;
+}
+.pf-decisores-box .prosp-build-row { margin-top: 10px; }
+.pf-cargo {
+  background: var(--white); border: 1px solid var(--gray-200); color: var(--gray-700);
+  border-radius: 999px; padding: 4px 12px; font-size: .8rem; font-weight: 600;
+  cursor: pointer; transition: all .12s; display: inline-flex; align-items: center; gap: 5px;
+}
+.pf-cargo:hover { border-color: var(--terracota); color: var(--terracota); }
+.pf-cargo.active { background: var(--terracota); border-color: var(--terracota); color: #fff; }
+.pf-cargo.active .res-tab-count { background: rgba(255,255,255,.25); color: #fff; }

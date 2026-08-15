@@ -32,7 +32,7 @@
     <div class="nav-group-label">Achar alguém</div>
     <button class="nav-btn" data-tab="empresa">Uma empresa<span class="nav-btn-sub">por CNPJ ou nome</span></button>
     <button class="nav-btn" data-tab="empassertiva">Empresa Assertiva<span class="nav-btn-sub">cadastro + quem decide</span></button>
-    <button class="nav-btn" data-tab="vinculos">Quem trabalha lá<span class="nav-btn-sub">funcionários de um CNPJ</span></button>
+    <button class="nav-btn" data-tab="vinculos">Vínculo empregatício<span class="nav-btn-sub">por empresa ou por pessoa</span></button>
     <button class="nav-btn" data-tab="pessoa">Uma pessoa<span class="nav-btn-sub">por CPF, com dados completos</span></button>
     <button class="nav-btn" data-tab="nome">Uma pessoa pelo nome<span class="nav-btn-sub">quando não sei o CPF</span></button>
     <button class="nav-btn" data-tab="telefone">De quem é este telefone<span class="nav-btn-sub">descobrir o dono do número</span></button>
@@ -171,14 +171,18 @@
   <!-- ══ MÓDULO VÍNCULOS (RAIS) ══ -->
   <section id="tab-vinculos" class="tab-section">
     <div class="module-header">
-      <div class="module-overline">Achar alguém · quem trabalha lá</div>
-      <h2 class="module-title">Quem trabalha nessa empresa?</h2>
-      <p class="module-sub">Cole o CNPJ e eu trago o quadro de funcionários que a empresa declarou na RAIS — nome, CPF e data de admissão de cada um. Clique em qualquer pessoa para puxar telefone e endereço dela.</p>
+      <div class="module-overline">Achar alguém · vínculo empregatício</div>
+      <h2 class="module-title" id="vin-titulo">Quem trabalha nessa empresa?</h2>
+      <p class="module-sub" id="vin-sub">Cole o CNPJ e eu trago o quadro de funcionários que a empresa declarou na RAIS — nome, CPF e data de admissão de cada um. Clique em qualquer pessoa para puxar telefone e endereço dela.</p>
     </div>
     <div class="search-panel">
+      <div class="as-modo-btns" id="vin-modos">
+        <button type="button" class="as-modo active" data-m="cnpj">🏢 Por empresa (CNPJ)</button>
+        <button type="button" class="as-modo" data-m="cpf">🪪 Por pessoa (CPF)</button>
+      </div>
       <div class="search-row">
         <div class="input-wrap">
-          <span class="input-icon">🏢</span>
+          <span class="input-icon" id="vin-icone">🏢</span>
           <input id="vin-q" type="text" placeholder="CNPJ (00.000.000/0001-00)" maxlength="18" autocomplete="off" />
         </div>
         <button id="vin-btn" class="btn-primary">Ver funcionários</button>
