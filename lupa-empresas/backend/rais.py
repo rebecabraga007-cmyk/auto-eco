@@ -224,11 +224,32 @@ async def vinculos_cnpj(cnpj: str, refresh: bool = False) -> dict[str, Any]:
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.get(BASE_URL, params={"token": TOKEN, "raispj": doc})
-            resp.raise_for_status()
-            payload = resp.json()
     except httpx.HTTPError as exc:
-        return {"status": "error", "message": f"Falha ao consultar a base RAIS: {str(exc)[:150]}",
+        # str(exc) do httpx inclui a URL chamada — e a URL leva o token. Nunca
+        # devolver isso pra tela: só o tipo do erro.
+        return {"status": "error",
+                "message": f"Não consegui falar com a base RAIS ({type(exc).__name__}).",
                 "cnpj": doc, "vinculos": []}
+
+    if resp.status_code in (401, 403):
+        # O gateway responde 401 tanto pra token errado quanto pra token vencido.
+        motivo = ""
+        try:
+            motivo = str((resp.json() or {}).get("response") or "")
+        except Exception:
+            pass
+        return {"status": "unavailable",
+                "message": ("Acesso à base RAIS recusado"
+                            + (f" ({motivo})" if motivo else "")
+                            + ". Renove o FDX_TOKEN no .env do serviço de dados."),
+                "cnpj": doc, "vinculos": []}
+    if resp.status_code >= 400:
+        return {"status": "error",
+                "message": f"A base RAIS respondeu {resp.status_code}.",
+                "cnpj": doc, "vinculos": []}
+
+    try:
+        payload = resp.json()
     except ValueError:
         return {"status": "error", "message": "A base RAIS respondeu em formato inesperado.",
                 "cnpj": doc, "vinculos": []}

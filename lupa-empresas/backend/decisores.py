@@ -41,6 +41,7 @@ NIVEL_1 = [
     r"\bceo\b|\bc\.e\.o\b|chief executive",
     r"\bfundador[a]?\b|\bfounder\b|co[ -]founder",
     r"\badministrador[a]?\b",
+    r"\brepresentante legal\b|representante_legal",
     r"country manager|general manager",
 ]
 
@@ -89,7 +90,9 @@ AREAS = [
     ("RH", r"\brh\b|recursos humanos|gente|people|\bchro\b|talento|chief people"),
     ("Operações", r"opera[c]|\bcoo\b|industrial|produ[c][a]o|log[i]stica|suprimentos|compras|comprador"
                   r"|supply|chief operating"),
-    ("Jurídico", r"jur[i]dic|\blegal\b|compliance"),
+    # "legal" sozinho pegaria "Representante legal", que é cargo de gestão e não
+    # de área jurídica — só conta em construções tipo "head of legal".
+    ("Jurídico", r"jur[i]dic|compliance|advogad|(head|diretor|gerente) of legal|legal counsel"),
 ]
 
 _ROTULOS = {1: "Decide sozinho", 2: "Decide na área", 3: "Influencia e veta"}
@@ -229,6 +232,66 @@ def anexar_cargos_linkedin(vinculos: list[dict], employees: list[dict]) -> int:
             alvo.update({k: cls[k] for k in ("nivel", "rotulo", "area")})
             casados += 1
     return casados
+
+
+def _limpar_cargo(cargo: str) -> str:
+    """'REPRESENTANTE_LEGAL' -> 'Representante legal'."""
+    txt = str(cargo or "").replace("_", " ").strip()
+    return txt.capitalize() if txt.isupper() else txt
+
+
+def da_assertiva(lista: list[dict]) -> list[dict]:
+    """Converte possiveisDecisores da Assertiva em linhas padrão, já classificadas."""
+    out = []
+    for p in lista or []:
+        if not isinstance(p, dict):
+            continue
+        cargo = _limpar_cargo(p.get("cargo"))
+        cls = classificar(cargo)
+        out.append({
+            "cpf": re.sub(r"\D", "", p.get("cpf") or ""),
+            "nome": (p.get("nome") or "").strip(),
+            "cargo": cargo,
+            "fonte_cargo": "Assertiva",
+            "nascimento": p.get("dataNascimento") or "",
+            **{k: cls[k] for k in ("nivel", "rotulo", "area")},
+        })
+    return out
+
+
+def anexar_decisores_assertiva(vinculos: list[dict], lista: list[dict]) -> dict:
+    """Cruza os decisores da Assertiva com a lista da RAIS, por CPF exato.
+
+    Quem não está na RAIS entra como linha nova: costuma ser gente que foi
+    contratada depois da última RAIS entregue (na Google Brasil foram 183 de
+    602). Não sobrescreve cargo vindo da Receita, que é registro oficial.
+
+    Devolve {marcados, adicionados}.
+    """
+    por_cpf = {v["cpf"]: v for v in vinculos if v.get("cpf")}
+    marcados = adicionados = 0
+
+    for p in da_assertiva(lista):
+        if not p["cpf"]:
+            continue
+        alvo = por_cpf.get(p["cpf"])
+        if alvo is not None:
+            if alvo.get("fonte_cargo") == "Receita Federal (QSA)":
+                continue
+            alvo.update({k: p[k] for k in ("cargo", "fonte_cargo", "nivel", "rotulo", "area")})
+            alvo["nascimento"] = alvo.get("nascimento") or p["nascimento"]
+            marcados += 1
+            continue
+        vinculos.append({
+            **p,
+            "admissao": "", "admissao_br": "", "desligamento": None,
+            "desligamento_parcial": None, "desligamento_br": "", "ativo": True,
+            "meses": None, "tempo_casa": "", "faixa_renda": "", "situacao": "",
+            "socio": False, "na_rais": False,
+        })
+        adicionados += 1
+
+    return {"marcados": marcados, "adicionados": adicionados}
 
 
 def normalizar(vinculos: list[dict]) -> None:

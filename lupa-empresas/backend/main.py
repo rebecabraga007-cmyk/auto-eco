@@ -435,6 +435,82 @@ async def company_vinculos(cnpj: str, refresh: bool = False):
     return dados
 
 
+@app.get("/api/company/{cnpj}/decisores")
+async def company_decisores(cnpj: str, conexoes: bool = False):
+    """Possíveis decisores do CNPJ pela Assertiva, já classificados por nível.
+
+    CUSTA 2 consultas Assertiva na primeira vez (a de CNPJ, que gera o
+    protocolo, e a de decisores). Com conexoes=true, mais 1 — a de conexões
+    traz telefone e flag de WhatsApp de sócios e decisores.
+    """
+    doc = re.sub(r"\D", "", cnpj or "")
+    if len(doc) != 14:
+        return {"status": "error", "message": "CNPJ inválido — precisa ter 14 dígitos.",
+                "decisores": []}
+    if not assertiva.enabled():
+        return {"status": "unavailable",
+                "message": "Assertiva não configurada (ASSERTIVA_CLIENT_ID/SECRET no .env).",
+                "decisores": []}
+
+    r = await assertiva.possiveis_decisores(doc)
+    if r.get("status") != "ok":
+        return {"status": r.get("status", "error"),
+                "message": r.get("message", "Falha ao consultar a Assertiva."),
+                "decisores": []}
+
+    resposta = ((r.get("data") or {}).get("resposta") or {})
+    lista = decisores.da_assertiva(resposta.get("possiveisDecisores") or [])
+    lista.sort(key=lambda p: (p["nivel"] or 9, p["nome"]))
+
+    saida = {
+        "status": "ok",
+        "cnpj": doc,
+        "total": len(lista),
+        "por_nivel": {
+            "nivel_1": sum(1 for p in lista if p["nivel"] == 1),
+            "nivel_2": sum(1 for p in lista if p["nivel"] == 2),
+            "nivel_3": sum(1 for p in lista if p["nivel"] == 3),
+            "sem_nivel": sum(1 for p in lista if not p["nivel"]),
+        },
+        "decisores": lista,
+    }
+
+    # Dados cadastrais da própria consulta de CNPJ (já paga) — sem chamada extra.
+    base = await assertiva.consulta_cnpj(doc)
+    if base.get("status") == "ok":
+        dc = (((base.get("data") or {}).get("resposta") or {}).get("dadosCadastrais") or {})
+        saida["cadastro_assertiva"] = {
+            "razao_social": dc.get("razaoSocial") or dc.get("nomeFantasia") or "",
+            "quantidade_funcionarios": dc.get("quantidadeFuncionarios"),
+            "porte": dc.get("porteEmpresa") or "",
+            "idade_empresa": dc.get("idadeEmpresa"),
+            "situacao": (dc.get("situacaoCadastral") or {}).get("descricao")
+                        if isinstance(dc.get("situacaoCadastral"), dict) else dc.get("situacaoCadastral"),
+        }
+        saida["socios_assertiva"] = ((base.get("data") or {}).get("resposta") or {}).get("socios") or []
+
+    if conexoes:
+        c = await assertiva.conexoes(doc, "CNPJ")
+        if c.get("status") == "ok":
+            corpo = (c.get("data") or {}).get("resposta")
+            saida["conexoes"] = corpo if isinstance(corpo, list) else []
+        else:
+            saida["conexoes_erro"] = c.get("message", "")
+
+    return saida
+
+
+@app.get("/api/company/{cnpj}/vinculos/assertiva")
+async def company_vinculos_assertiva(cnpj: str):
+    """Decisores da Assertiva prontos pra cruzar com a lista da RAIS que já
+    está na tela: devolve só nome/CPF/cargo/nível, sem refazer a RAIS."""
+    r = await company_decisores(cnpj)
+    if r.get("status") != "ok":
+        return r
+    return {"status": "ok", "cnpj": r["cnpj"], "total": r["total"],
+            "por_nivel": r["por_nivel"], "decisores": r["decisores"]}
+
+
 @app.get("/api/company/{cnpj}/vinculos/cargos")
 async def company_vinculos_cargos(cnpj: str):
     """Cargos do LinkedIn para cruzar com a lista da RAIS (lento e pago — opt-in).

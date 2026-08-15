@@ -31,6 +31,7 @@
 
     <div class="nav-group-label">Achar alguém</div>
     <button class="nav-btn" data-tab="empresa">Uma empresa<span class="nav-btn-sub">por CNPJ ou nome</span></button>
+    <button class="nav-btn" data-tab="empassertiva">Empresa Assertiva<span class="nav-btn-sub">cadastro + quem decide</span></button>
     <button class="nav-btn" data-tab="vinculos">Quem trabalha lá<span class="nav-btn-sub">funcionários de um CNPJ</span></button>
     <button class="nav-btn" data-tab="pessoa">Uma pessoa<span class="nav-btn-sub">por CPF, com dados completos</span></button>
     <button class="nav-btn" data-tab="nome">Uma pessoa pelo nome<span class="nav-btn-sub">quando não sei o CPF</span></button>
@@ -133,6 +134,38 @@
       </div>
     </div>
     <div id="emp-results" class="results-area"></div>
+  </section>
+
+  <!-- ══ MÓDULO EMPRESA ASSERTIVA ══ -->
+  <section id="tab-empassertiva" class="tab-section">
+    <div class="module-header">
+      <div class="module-overline">Achar alguém · empresa pela Assertiva</div>
+      <h2 class="module-title">A empresa e quem manda nela</h2>
+      <p class="module-sub">Cole o CNPJ: trago o cadastro pela Receita Federal (BrasilAPI) e, pela Assertiva, a lista de possíveis decisores — nome, CPF e cargo de cada gerente, diretor e administrador.</p>
+    </div>
+    <div class="search-panel">
+      <div class="search-row">
+        <div class="input-wrap">
+          <span class="input-icon">🎯</span>
+          <input id="ea-q" type="text" placeholder="CNPJ (00.000.000/0001-00)" maxlength="18" autocomplete="off" />
+        </div>
+        <button id="ea-btn" class="btn-primary">Consultar</button>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Exemplos:</span>
+        <button class="chip-ea" data-val="06990590000123">Google Brasil</button>
+        <button class="chip-ea" data-val="47960950000121">Magazine Luiza</button>
+        <button class="chip-ea" data-val="27865757000102">Globo</button>
+      </div>
+      <div class="filter-row">
+        <label class="toggle-row" style="gap:8px">
+          <input type="checkbox" id="ea-conexoes" />
+          <span>Trazer também telefone dos decisores (conexões — mais 1 consulta)</span>
+        </label>
+      </div>
+      <div class="prosp-dedup-note">Custa 2 consultas Assertiva por empresa (cadastro + decisores), ou 3 com os telefones.</div>
+    </div>
+    <div id="ea-results" class="results-area"></div>
   </section>
 
   <!-- ══ MÓDULO VÍNCULOS (RAIS) ══ -->

@@ -2809,6 +2809,7 @@ function vinRender() {
           <span class="input-icon">🔎</span>
           <input id="vin-filtro-nome" type="text" placeholder="Filtrar por nome ou CPF…" value="${esc(vinState.busca)}" autocomplete="off" />
         </div>
+        <button id="vin-assertiva" class="btn-secondary" title="Puxa os possíveis decisores da Assertiva e cruza por CPF — 2 consultas Assertiva">🎯 Busca Assertiva</button>
         <button id="vin-cargos" class="btn-secondary" title="Consulta o LinkedIn da empresa e cruza por nome — lento e pago">🔗 Buscar cargos no LinkedIn</button>
         <button id="vin-export" class="btn-secondary">📊 Exportar XLSX</button>
       </div>
@@ -2843,6 +2844,7 @@ function vinRender() {
     vinRender();
   }));
 
+  document.getElementById('vin-assertiva').addEventListener('click', vinBuscarAssertiva);
   document.getElementById('vin-cargos').addEventListener('click', vinBuscarCargos);
 
   document.getElementById('vin-filtro-nome').addEventListener('input', e => {
@@ -2938,6 +2940,59 @@ function vinRenderPager(page, pages) {
   }));
 }
 
+// Cruza os possíveis decisores da Assertiva (gerente/diretor/administrador, com
+// CPF) na lista da RAIS. Cruzamento por CPF exato — quem não está na folha entra
+// como linha nova, porque costuma ser gente contratada depois da última RAIS.
+async function vinBuscarAssertiva() {
+  const btn = document.getElementById('vin-assertiva');
+  const status = document.getElementById('vin-cargos-status');
+  const d = vinState.dados;
+  if (!d) return;
+  btn.disabled = true;
+  status.hidden = false;
+  status.textContent = 'Consultando a Assertiva (cadastro + possíveis decisores)…';
+  try {
+    const r = await fetch(`${API}/api/company/${d.cnpj}/vinculos/assertiva`).then(x => x.json());
+    if (r.status !== 'ok') {
+      status.textContent = '⚠️ ' + (r.message || 'Não foi possível consultar a Assertiva.');
+      return;
+    }
+    const porCpf = {};
+    d.vinculos.forEach(v => { if (v.cpf) porCpf[v.cpf] = v; });
+    let marcados = 0, adicionados = 0;
+    (r.decisores || []).forEach(p => {
+      const alvo = porCpf[p.cpf];
+      if (alvo) {
+        // Cargo da Receita é registro oficial — não sobrescreve.
+        if (alvo.fonte_cargo === 'Receita Federal (QSA)') return;
+        Object.assign(alvo, { cargo: p.cargo, fonte_cargo: 'Assertiva', nivel: p.nivel, rotulo: p.rotulo, area: p.area });
+        marcados++;
+      } else if (p.cpf) {
+        d.vinculos.push({
+          cpf: p.cpf, nome: p.nome, cargo: p.cargo, fonte_cargo: 'Assertiva',
+          nivel: p.nivel, rotulo: p.rotulo, area: p.area, nascimento: p.nascimento,
+          admissao: '', admissao_br: '', desligamento: null, desligamento_br: '',
+          ativo: true, tempo_casa: '', socio: false, na_rais: false,
+        });
+        adicionados++;
+      }
+    });
+    d.total = d.vinculos.length;
+    d.ativos = d.vinculos.filter(v => v.ativo).length;
+    d.desligados = d.total - d.ativos;
+    d.hierarquia = vinRecontarHierarquia(d.vinculos);
+    vinState.page = 0;
+    vinRender();
+    const st = document.getElementById('vin-cargos-status');
+    st.hidden = false;
+    st.textContent = `✅ Assertiva: ${r.total} possível(is) decisor(es) — ${marcados} cruzado(s) por CPF com a folha da RAIS e ${adicionados} adicionado(s) (não estavam na última RAIS entregue).`;
+  } catch (e) {
+    status.textContent = '⚠️ Erro na consulta Assertiva: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function vinBuscarCargos() {
   const btn = document.getElementById('vin-cargos');
   const status = document.getElementById('vin-cargos-status');
@@ -3031,5 +3086,294 @@ if (vinBtn) {
   document.querySelectorAll('.chip-vin').forEach(c => c.addEventListener('click', () => {
     vinQ.value = fmtCnpj(c.dataset.val);
     vinBuscar();
+  }));
+}
+
+// ══════════════════════════════════════════════════════
+//  MÓDULO EMPRESA ASSERTIVA
+//  Cadastro da empresa (Receita/BrasilAPI) + possíveis decisores (Assertiva).
+//  Os decisores são GESTORES (gerente, diretor, administrador), não sócios.
+// ══════════════════════════════════════════════════════
+const eaQ   = document.getElementById('ea-q');
+const eaBtn = document.getElementById('ea-btn');
+const eaRes = document.getElementById('ea-results');
+
+const EA_PER_PAGE = 25;
+const eaState = { cnpj: '', empresa: null, dados: null, nivel: 'todos', busca: '', page: 0 };
+
+if (eaQ) eaQ.addEventListener('input', e => { e.target.value = fmtCnpj(e.target.value); });
+
+async function eaBuscar() {
+  const cnpj = onlyDigits(eaQ.value);
+  if (cnpj.length !== 14) {
+    eaRes.innerHTML = `<p class="msg error">CNPJ inválido — precisa ter 14 dígitos.</p>`;
+    return;
+  }
+  const comConexoes = document.getElementById('ea-conexoes')?.checked;
+  eaBtn.disabled = true;
+  eaRes.innerHTML = spinner();
+  Object.assign(eaState, { cnpj, empresa: null, dados: null, nivel: 'todos', busca: '', page: 0 });
+  try {
+    const [emp, dec] = await Promise.all([
+      fetch(`${API}/api/company/${cnpj}`).then(r => r.json()).catch(() => null),
+      fetch(`${API}/api/company/${cnpj}/decisores${comConexoes ? '?conexoes=true' : ''}`).then(r => r.json()),
+    ]);
+    eaState.empresa = (emp && emp.company) || null;
+    eaState.dados = dec;
+    eaRender();
+    logBusca('Empresa Assertiva', fmtCnpj(cnpj), `${dec.total || 0} decisor(es)`);
+  } catch (e) {
+    eaRes.innerHTML = `<p class="msg error">Erro ao consultar: ${esc(e.message)}</p>`;
+  } finally {
+    eaBtn.disabled = false;
+  }
+}
+
+function eaFiltrados() {
+  const lista = (eaState.dados && eaState.dados.decisores) || [];
+  const termo = normTexto(eaState.busca || '');
+  const digitos = onlyDigits(eaState.busca || '');
+  return lista.filter(p => {
+    if (['1', '2', '3'].includes(eaState.nivel) && String(p.nivel || 0) !== eaState.nivel) return false;
+    if (!termo) return true;
+    return normTexto(p.nome || '').includes(termo) || (digitos && (p.cpf || '').includes(digitos));
+  });
+}
+
+function eaRender() {
+  const d = eaState.dados;
+  if (!d) return;
+  if (d.status === 'unavailable' || d.status === 'no_access') {
+    eaRes.innerHTML = `<p class="msg">ℹ️ ${esc(d.message || 'Assertiva indisponível.')}</p>`;
+    return;
+  }
+  if (d.status !== 'ok') {
+    eaRes.innerHTML = `<p class="msg error">${esc(d.message || 'Falha na consulta Assertiva.')}</p>`;
+    return;
+  }
+
+  const emp = eaState.empresa || {};
+  const cad = d.cadastro_assertiva || {};
+  const n = d.por_nivel || {};
+  const lista = eaFiltrados();
+  const socios = d.socios_assertiva || [];
+  const conexoes = d.conexoes || [];
+
+  const razao = emp.razao_social || cad.razao_social || fmtCnpj(d.cnpj);
+  const cidade = [emp.municipio, emp.uf].filter(Boolean).join('/');
+
+  eaRes.innerHTML = `
+    <div class="results-head">
+      <h2>${esc(razao)}</h2>
+      <span class="results-head-note">Cadastro: Receita Federal · Decisores: Assertiva</span>
+    </div>
+
+    <div class="metric-grid" style="margin-bottom:16px">
+      <div class="metric-cell">
+        <div class="metric-label">Situação na Receita</div>
+        <div class="metric-value" style="font-size:1.05rem">${badgeSit(emp.descricao_situacao_cadastral || cad.situacao || '')}</div>
+        <div class="metric-sub">${esc(fmtCnpj(d.cnpj))}${cidade ? ' · ' + esc(cidade) : ''}</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">Funcionários declarados</div>
+        <div class="metric-value">${cad.quantidade_funcionarios != null ? cad.quantidade_funcionarios : '—'}</div>
+        <div class="metric-sub">${esc(cad.porte || emp.porte || '')}</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">Possíveis decisores</div>
+        <div class="metric-value" style="color:var(--terracota)">${d.total}</div>
+        <div class="metric-sub">gestores, não sócios</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">Idade da empresa</div>
+        <div class="metric-value">${cad.idade_empresa != null ? cad.idade_empresa + ' anos' : '—'}</div>
+        <div class="metric-sub">${emp.data_inicio_atividade ? 'desde ' + esc(emp.data_inicio_atividade) : ''}</div>
+      </div>
+    </div>
+
+    ${eaBlocoEmpresa(emp)}
+    ${eaBlocoSocios(socios)}
+    ${conexoes.length ? eaBlocoConexoes(conexoes) : ''}
+    ${d.conexoes_erro ? `<p class="msg" style="font-size:.85rem">Conexões indisponíveis: ${esc(d.conexoes_erro)}</p>` : ''}
+
+    <div class="search-panel" style="margin:18px 0 14px">
+      <div class="filter-row" id="ea-niveis" style="margin-bottom:10px">
+        <span class="filter-label">Hierarquia:</span>
+        <button class="vin-nivel${eaState.nivel === 'todos' ? ' active' : ''}" data-n="todos">Todos <span class="res-tab-count">${d.total}</span></button>
+        <button class="vin-nivel${eaState.nivel === '1' ? ' active' : ''}" data-n="1">1 · decide sozinho <span class="res-tab-count">${n.nivel_1 || 0}</span></button>
+        <button class="vin-nivel${eaState.nivel === '2' ? ' active' : ''}" data-n="2">2 · diretoria <span class="res-tab-count">${n.nivel_2 || 0}</span></button>
+        <button class="vin-nivel${eaState.nivel === '3' ? ' active' : ''}" data-n="3">3 · gerência <span class="res-tab-count">${n.nivel_3 || 0}</span></button>
+      </div>
+      <div class="search-row">
+        <div class="input-wrap">
+          <span class="input-icon">🔎</span>
+          <input id="ea-filtro-nome" type="text" placeholder="Filtrar por nome ou CPF…" value="${esc(eaState.busca)}" autocomplete="off" />
+        </div>
+        <button id="ea-export" class="btn-secondary">📊 Exportar XLSX</button>
+      </div>
+    </div>
+
+    <div id="ea-lista-head" class="results-head" style="margin-bottom:8px">
+      <h2 style="font-size:1rem">${lista.length} pessoa${lista.length === 1 ? '' : 's'} nesta lista</h2>
+      <span class="results-head-note">clique em alguém para puxar telefone e endereço</span>
+    </div>
+    <div id="ea-lista"></div>
+    <div id="ea-pager" class="prosp-pager"></div>
+
+    <div class="dica">
+      <div class="dica-title">"Possível decisor" quer dizer o quê</div>
+      <div class="dica-body">É gente com cargo de gestão que a Assertiva liga a este CNPJ — gerente, diretor, coordenador, administrador. <strong>Não são os sócios</strong>: no CNPJ da Google Brasil vieram 602 nomes e nenhum deles está no quadro societário da Receita. A Assertiva não diz de onde tira o cargo, então trate como pista forte de prospecção, não como prova de que a pessoa assina contrato.</div>
+    </div>`;
+
+  document.querySelectorAll('#ea-niveis .vin-nivel').forEach(b => b.addEventListener('click', () => {
+    eaState.nivel = b.dataset.n; eaState.page = 0; eaRender();
+  }));
+  document.getElementById('ea-filtro-nome').addEventListener('input', e => {
+    eaState.busca = e.target.value; eaState.page = 0;
+    eaRenderPagina();
+    const q = eaFiltrados().length;
+    document.querySelector('#ea-lista-head h2').textContent = `${q} pessoa${q === 1 ? '' : 's'} nesta lista`;
+  });
+  document.getElementById('ea-export').addEventListener('click', eaExportar);
+  eaRenderPagina();
+}
+
+function eaBlocoEmpresa(emp) {
+  if (!emp || !emp.cnpj) return '';
+  const linhas = [
+    ['Nome fantasia', emp.nome_fantasia],
+    ['Atividade principal', emp.cnae_fiscal_descricao],
+    ['Natureza jurídica', emp.natureza_juridica],
+    ['Capital social', emp.capital_social ? 'R$ ' + Number(emp.capital_social).toLocaleString('pt-BR') : ''],
+    ['Endereço', [emp.logradouro, emp.numero, emp.bairro, emp.municipio, emp.uf, emp.cep].filter(Boolean).join(', ')],
+    ['Telefone', emp.ddd_telefone_1 ? fmtPhone(emp.ddd_telefone_1) : ''],
+    ['E-mail', emp.email],
+  ].filter(([, v]) => v);
+  if (!linhas.length) return '';
+  return makeAccordion('🏢', 'Cadastro na Receita Federal', linhas.length,
+    `<div class="as-kv">${linhas.map(([k, v]) => `<div><span>${esc(k)}</span><strong>${esc(v)}</strong></div>`).join('')}</div>`);
+}
+
+function eaBlocoSocios(socios) {
+  if (!socios.length) return '';
+  const itens = socios.map(s => `<li>${esc(s.nomeOuRazaoSocial || '')} — <span class="mono">${esc(s.documento || '')}</span>${s.dataEntrada ? ' · desde ' + esc(s.dataEntrada) : ''}</li>`).join('');
+  return makeAccordion('👤', 'Sócios (quadro societário)', socios.length, `<ul class="as-ul">${itens}</ul>`);
+}
+
+function eaBlocoConexoes(conexoes) {
+  const itens = conexoes.map(c => {
+    const tel = c.telefone ? `${esc(c.telefone)}${c.whatsapp ? ' 💬' : ''}${c.naoPerturbe ? ' 🚫 não perturbe' : ''}` : '—';
+    return `<tr><td>${esc(c.nomeOuRazaoSocial || '')}</td><td>${esc(c.relacao || '')}</td>
+            <td class="mono">${esc(c.documento || '')}</td><td>${tel}</td></tr>`;
+  }).join('');
+  return makeAccordion('🔗', 'Conexões com telefone (Assertiva)', conexoes.length,
+    `<table class="data-table"><thead><tr><th>Nome</th><th>Relação</th><th>Documento</th><th>Telefone</th></tr></thead><tbody>${itens}</tbody></table>`);
+}
+
+function eaRenderPagina() {
+  const lista = eaFiltrados();
+  const pages = Math.max(1, Math.ceil(lista.length / EA_PER_PAGE));
+  const page = Math.min(eaState.page || 0, pages - 1);
+  eaState.page = page;
+  const el = document.getElementById('ea-lista');
+  if (!el) return;
+
+  if (!lista.length) {
+    el.innerHTML = `<p class="msg" style="padding:24px 0">Ninguém bate com esse filtro.</p>`;
+    document.getElementById('ea-pager').innerHTML = '';
+    return;
+  }
+
+  el.innerHTML = lista.slice(page * EA_PER_PAGE, page * EA_PER_PAGE + EA_PER_PAGE).map((p, k) => {
+    const id = 'ea-' + (page * EA_PER_PAGE + k);
+    const nv = VIN_NIVEIS[p.nivel];
+    const badgeNivel = nv
+      ? `<span class="vin-badge-nivel" style="background:${nv.fundo};color:${nv.cor}" title="${esc(nv.rotulo)}">${esc(nv.curto)} · ${esc(p.cargo || '')}${p.area ? ' · ' + esc(p.area) : ''}</span>`
+      : `<span class="vin-badge-nivel" style="background:var(--gray-100);color:var(--gray-700)">${esc(p.cargo || 'sem cargo')}</span>`;
+    const semCpf = !p.cpf;
+    return `
+    <div class="card-person" data-cpf="${esc(p.cpf)}">
+      <div class="card-person-header"${semCpf ? ' style="cursor:default"' : ` onclick="togglePerson('${id}', '${p.cpf}')"`}>
+        <div>
+          <div class="person-name">${esc(p.nome || '—')} ${badgeNivel}</div>
+          <div class="person-meta">${p.nascimento ? '🎂 ' + esc(p.nascimento) : ''}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="person-cpf">${semCpf ? 'sem CPF' : esc(fmtCpf(p.cpf))}</span>
+          ${semCpf ? '' : `<span class="person-chevron" id="chev-np-${id}">▼</span>`}
+        </div>
+      </div>
+      <div class="card-person-body" id="body-${id}">
+        <div id="mk-${id}" style="padding-top:12px"><p class="msg" style="padding:12px">Carregando dados Mk Buscas…</p></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  eaRenderPager(page, pages);
+}
+
+function eaRenderPager(page, pages) {
+  const el = document.getElementById('ea-pager');
+  if (!el) return;
+  if (pages <= 1) { el.innerHTML = ''; return; }
+  const nums = [];
+  for (let p = 0; p < pages; p++) {
+    if (p === 0 || p === pages - 1 || (p >= page - 2 && p <= page + 2)) nums.push(p);
+    else if (nums[nums.length - 1] !== '…') nums.push('…');
+  }
+  const btn = (label, p, opts = {}) =>
+    `<button class="prosp-page-btn${opts.active ? ' active' : ''}" ${opts.disabled ? 'disabled' : ''} data-p="${p}">${label}</button>`;
+  el.innerHTML = `<div class="prosp-pages">
+      ${btn('«', 0, { disabled: page === 0 })}
+      ${btn('‹', page - 1, { disabled: page === 0 })}
+      ${nums.map(n => n === '…' ? '<span class="prosp-page-dots">…</span>' : btn(n + 1, n, { active: n === page })).join('')}
+      ${btn('›', page + 1, { disabled: page >= pages - 1 })}
+      ${btn('»', pages - 1, { disabled: page >= pages - 1 })}
+    </div>`;
+  el.querySelectorAll('.prosp-page-btn').forEach(b => b.addEventListener('click', () => {
+    eaState.page = parseInt(b.dataset.p);
+    eaRenderPagina();
+    document.getElementById('ea-lista-head').scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }));
+}
+
+async function eaExportar() {
+  const btn = document.getElementById('ea-export');
+  const d = eaState.dados;
+  if (!d) return;
+  btn.disabled = true;
+  try {
+    // Mesmo XLSX da aba de vínculos — as colunas de cargo/nível já existem lá.
+    const linhas = eaFiltrados().map(p => ({ ...p, ativo: true, tempo_casa: '', admissao_br: '', desligamento_br: '' }));
+    const resp = await fetch(`${API}/api/vinculos/export`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cnpj: d.cnpj,
+        razao_social: (eaState.empresa && eaState.empresa.razao_social) || (d.cadastro_assertiva || {}).razao_social || '',
+        referencia_br: 'consulta Assertiva',
+        vinculos: linhas,
+      }),
+    });
+    if (!resp.ok) throw new Error('servidor respondeu ' + resp.status);
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `decisores-${d.cnpj}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert('Falha ao exportar: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+if (eaBtn) {
+  eaBtn.addEventListener('click', eaBuscar);
+  eaQ.addEventListener('keydown', e => e.key === 'Enter' && eaBuscar());
+  document.querySelectorAll('.chip-ea').forEach(c => c.addEventListener('click', () => {
+    eaQ.value = fmtCnpj(c.dataset.val);
+    eaBuscar();
   }));
 }

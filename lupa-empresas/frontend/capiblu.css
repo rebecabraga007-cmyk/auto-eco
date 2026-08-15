@@ -805,3 +805,6 @@ body.locked { overflow: hidden; }
 .inicio-precisa-n { font-family: "IBM Plex Mono", monospace; color: var(--terracota); font-weight: 700; width: 16px; }
 .inicio-precisa-txt { flex: 1; font-size: .92rem; color: var(--gray-900); font-weight: 500; }
 .inicio-precisa-go { font-size: .84rem; font-weight: 600; color: var(--blue-dark); }
+
+.chip-ea { background: var(--gray-100); border: 1px solid var(--gray-200); color: var(--gray-700); border-radius: 999px; padding: 5px 14px; font-size: .82rem; cursor: pointer; transition: all .12s; }
+.chip-ea:hover { border-color: var(--terracota); color: var(--terracota); background: var(--terracota-soft); }

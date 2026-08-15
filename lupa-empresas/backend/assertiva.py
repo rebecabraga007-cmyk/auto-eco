@@ -168,6 +168,72 @@ async def consulta_cnpj(cnpj: str, finalidade: int | None = None) -> dict[str, A
     return r
 
 
+async def possiveis_decisores(cnpj: str, finalidade: int | None = None) -> dict[str, Any]:
+    """Possíveis decisores de um CNPJ: nome, CPF, cargo e data de nascimento.
+
+    São GESTORES (gerente, diretor, coordenador), não sócios — no CNPJ da
+    Google Brasil vieram 602 pessoas, sendo 419 na folha da RAIS e nenhuma no
+    quadro societário da Receita.
+
+    O endpoint exige o `protocolo` de uma consulta de CNPJ anterior, então isso
+    custa DUAS chamadas na primeira vez (a de CNPJ fica em cache). Se a
+    Assertiva recusar um protocolo velho do cache, refaz a consulta de CNPJ uma
+    vez e tenta de novo.
+    """
+    d = only_digits(cnpj)
+    if len(d) != 14:
+        return {"status": "invalid", "message": "CNPJ inválido."}
+
+    key = f"decisores:{d}:{finalidade}"
+    if key in _cache:
+        return _cache[key]
+
+    async def _tentar(usar_cache: bool) -> tuple[dict, str]:
+        if not usar_cache:
+            _cache.pop(f"cnpj:{d}:{finalidade}", None)
+        base = await consulta_cnpj(d, finalidade)
+        if base.get("status") != "ok":
+            return base, ""
+        proto = ((base.get("data") or {}).get("cabecalho") or {}).get("protocolo") or ""
+        if not proto:
+            return {"status": "error",
+                    "message": "A consulta de CNPJ não devolveu protocolo."}, ""
+        return await _get("/localize/v3/possiveis-decisores",
+                          {"cnpj": d, "protocolo": proto}), proto
+
+    r, _ = await _tentar(usar_cache=True)
+    if r.get("status") in ("invalid", "error", "not_found"):
+        r, _ = await _tentar(usar_cache=False)
+
+    if r.get("status") == "ok":
+        _cache[key] = r
+    return r
+
+
+async def conexoes(documento: str, tipo: str = "CNPJ",
+                   finalidade: int | None = None, telefones: bool = True) -> dict[str, Any]:
+    """Conexões de um CPF/CNPJ. Para CNPJ: sócios, possíveis decisores e
+    empresas com participação — cada um com o telefone principal, tipo de linha
+    e as flags de WhatsApp e 'não perturbe'."""
+    d = only_digits(documento)
+    tipo = (tipo or "CNPJ").upper()
+    if tipo not in ("CPF", "CNPJ"):
+        return {"status": "invalid", "message": "tipo deve ser CPF ou CNPJ."}
+    if (tipo == "CNPJ" and len(d) != 14) or (tipo == "CPF" and len(d) != 11):
+        return {"status": "invalid", "message": f"{tipo} inválido."}
+
+    key = f"conexoes:{tipo}:{d}:{finalidade}"
+    if key in _cache:
+        return _cache[key]
+    params = {"documento": d, "tipo": tipo, "idFinalidade": finalidade or DEFAULT_FINALIDADE}
+    if telefones:
+        params["telefones"] = "true"
+    r = await _get("/localize-api/v1/base-cadastral/conexoes", params)
+    if r.get("status") == "ok":
+        _cache[key] = r
+    return r
+
+
 async def consulta_telefone(telefone: str, finalidade: int | None = None) -> dict[str, Any]:
     d = only_digits(telefone)
     if len(d) < 10 or len(d) > 11:
