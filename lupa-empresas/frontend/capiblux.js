@@ -2688,7 +2688,15 @@ const vinBtn = document.getElementById('vin-btn');
 const vinRes = document.getElementById('vin-results');
 
 const VIN_PER_PAGE = 25;
-const vinState = { cnpj: '', dados: null, filtro: 'todos', busca: '', page: 0 };
+const vinState = { cnpj: '', dados: null, filtro: 'todos', nivel: 'todos', busca: '', page: 0 };
+
+// Hierarquia: a RAIS não traz cargo. O nível vem do QSA da Receita (grátis,
+// cruzado por CPF) e, se a usuária pedir, do LinkedIn (lento e pago).
+const VIN_NIVEIS = {
+  1: { rotulo: 'Decide sozinho', curto: 'Nível 1', cor: 'var(--terracota)', fundo: 'var(--terracota-soft)' },
+  2: { rotulo: 'Decide na área', curto: 'Nível 2', cor: 'var(--blue-mid)', fundo: 'var(--blue-soft)' },
+  3: { rotulo: 'Influencia e veta', curto: 'Nível 3', cor: 'var(--green)', fundo: 'var(--green-soft)' },
+};
 
 if (vinQ) vinQ.addEventListener('input', e => { e.target.value = fmtCnpj(e.target.value); });
 
@@ -2700,7 +2708,7 @@ async function vinBuscar() {
   }
   vinBtn.disabled = true;
   vinRes.innerHTML = spinner();
-  Object.assign(vinState, { cnpj, dados: null, filtro: 'todos', busca: '', page: 0 });
+  Object.assign(vinState, { cnpj, dados: null, filtro: 'todos', nivel: 'todos', busca: '', page: 0 });
   try {
     const r = await fetch(`${API}/api/company/${cnpj}/vinculos`);
     const data = await r.json();
@@ -2722,6 +2730,10 @@ function vinFiltrados() {
   return d.vinculos.filter(v => {
     if (vinState.filtro === 'ativos' && !v.ativo) return false;
     if (vinState.filtro === 'desligados' && v.ativo) return false;
+    const n = v.nivel || 0;
+    if (vinState.nivel === 'decisores' && n === 0) return false;
+    if (vinState.nivel === 'sem' && n !== 0) return false;
+    if (['1', '2', '3'].includes(vinState.nivel) && String(n) !== vinState.nivel) return false;
     if (!termo) return true;
     const achouNome = normTexto(v.nome || '').includes(termo);
     const achouCpf = termoDigitos && (v.cpf || '').includes(termoDigitos);
@@ -2747,10 +2759,11 @@ function vinRender() {
   }
 
   const lista = vinFiltrados();
+  const h = d.hierarquia || {};
   vinRes.innerHTML = `
     <div class="results-head">
       <h2>${esc(d.razao_social || fmtCnpj(d.cnpj))}</h2>
-      <span class="results-head-note">Fonte: RAIS · entregue em ${esc(d.referencia_br || '—')}</span>
+      <span class="results-head-note">Fontes: RAIS (entregue em ${esc(d.referencia_br || '—')}) + quadro de sócios da Receita</span>
     </div>
     <div class="metric-grid" style="margin-bottom:16px">
       <div class="metric-cell">
@@ -2769,9 +2782,9 @@ function vinRender() {
         <div class="metric-sub">com desligamento declarado</div>
       </div>
       <div class="metric-cell">
-        <div class="metric-label">Contratações no ano</div>
-        <div class="metric-value">${d.admissoes_ano_base || 0}</div>
-        <div class="metric-sub">${d.ano_base ? 'admitidos em ' + esc(d.ano_base) : ''}</div>
+        <div class="metric-label">Quem decide</div>
+        <div class="metric-value" style="color:var(--terracota)">${h.decisores || 0}</div>
+        <div class="metric-sub">${d.socios_fora_da_folha ? esc(String(d.socios_fora_da_folha)) + ' fora da folha' : 'com cargo identificado'}</div>
       </div>
     </div>
 
@@ -2782,13 +2795,24 @@ function vinRender() {
     </div>
 
     <div class="search-panel" style="margin-bottom:14px">
+      <div class="filter-row" id="vin-niveis" style="margin-bottom:10px">
+        <span class="filter-label">Hierarquia:</span>
+        <button class="vin-nivel${vinState.nivel === 'todos' ? ' active' : ''}" data-n="todos">Todo mundo</button>
+        <button class="vin-nivel vin-nivel-dec${vinState.nivel === 'decisores' ? ' active' : ''}" data-n="decisores">👑 Só quem decide <span class="res-tab-count">${h.decisores || 0}</span></button>
+        <button class="vin-nivel${vinState.nivel === '1' ? ' active' : ''}" data-n="1">1 · dono e presidência <span class="res-tab-count">${h.nivel_1 || 0}</span></button>
+        <button class="vin-nivel${vinState.nivel === '2' ? ' active' : ''}" data-n="2">2 · diretoria <span class="res-tab-count">${h.nivel_2 || 0}</span></button>
+        <button class="vin-nivel${vinState.nivel === '3' ? ' active' : ''}" data-n="3">3 · gerência <span class="res-tab-count">${h.nivel_3 || 0}</span></button>
+        <button class="vin-nivel${vinState.nivel === 'sem' ? ' active' : ''}" data-n="sem">sem cargo conhecido <span class="res-tab-count">${h.sem_cargo || 0}</span></button>
+      </div>
       <div class="search-row">
         <div class="input-wrap">
           <span class="input-icon">🔎</span>
           <input id="vin-filtro-nome" type="text" placeholder="Filtrar por nome ou CPF…" value="${esc(vinState.busca)}" autocomplete="off" />
         </div>
+        <button id="vin-cargos" class="btn-secondary" title="Consulta o LinkedIn da empresa e cruza por nome — lento e pago">🔗 Buscar cargos no LinkedIn</button>
         <button id="vin-export" class="btn-secondary">📊 Exportar XLSX</button>
       </div>
+      <div id="vin-cargos-status" class="prosp-dedup-note" hidden></div>
     </div>
 
     <div id="vin-lista-head" class="results-head" style="margin-bottom:8px">
@@ -2801,6 +2825,10 @@ function vinRender() {
     <div class="dica">
       <div class="dica-title">O que essa lista é (e o que ela não é)</div>
       <div class="dica-body">É a RAIS: a declaração anual que a empresa entrega ao Ministério do Trabalho, com quem estava na folha. A última aqui foi entregue em ${esc(d.referencia_br || '—')} — quem entrou depois disso não aparece, e "ainda na empresa" quer dizer "estava lá naquela data". De quem já saiu, a base informa só o dia e o mês do desligamento, sem o ano.</div>
+    </div>
+    <div class="dica">
+      <div class="dica-title">De onde vem a hierarquia</div>
+      <div class="dica-body">A RAIS <strong>não traz cargo de ninguém</strong>. O nível de decisão vem do quadro de sócios da Receita Federal, cruzado por CPF — por isso só sócio e administrador aparecem classificados de cara${d.socios_fora_da_folha ? `, incluindo ${esc(String(d.socios_fora_da_folha))} que não está${d.socios_fora_da_folha === 1 ? '' : 'ão'} na folha mas mand${d.socios_fora_da_folha === 1 ? 'a' : 'am'} na empresa` : ''}. Para descobrir o cargo de funcionário que não é sócio, use "Buscar cargos no LinkedIn" — aí é consulta paga e o cruzamento é por nome, então confira antes de ligar.</div>
     </div>`;
 
   document.querySelectorAll('#vin-tabs .res-tab').forEach(b => b.addEventListener('click', () => {
@@ -2808,6 +2836,14 @@ function vinRender() {
     vinState.page = 0;
     vinRender();
   }));
+
+  document.querySelectorAll('#vin-niveis .vin-nivel').forEach(b => b.addEventListener('click', () => {
+    vinState.nivel = b.dataset.n;
+    vinState.page = 0;
+    vinRender();
+  }));
+
+  document.getElementById('vin-cargos').addEventListener('click', vinBuscarCargos);
 
   document.getElementById('vin-filtro-nome').addEventListener('input', e => {
     vinState.busca = e.target.value;
@@ -2841,21 +2877,30 @@ function vinRenderPagina() {
     const badge = v.ativo
       ? `<span class="badge badge-ativa">Ainda lá</span>`
       : `<span class="badge badge-neutra">Saiu em ${esc(v.desligamento_br || '—')}</span>`;
+    const nv = VIN_NIVEIS[v.nivel];
+    const badgeNivel = nv
+      ? `<span class="vin-badge-nivel" style="background:${nv.fundo};color:${nv.cor}" title="${esc(nv.rotulo)} · fonte: ${esc(v.fonte_cargo || '')}">${esc(nv.curto)} · ${esc(v.cargo || '')}${v.area ? ' · ' + esc(v.area) : ''}</span>`
+      : '';
+    const desde = vinDataBr(v.desde);
     const meta = [
-      `📅 admitido em ${esc(v.admissao_br || '—')}`,
+      v.na_rais === false
+        ? `📋 sócio fora da folha${desde ? ' · desde ' + esc(desde) : ''}`
+        : `📅 admitido em ${esc(v.admissao_br || '—')}`,
       v.tempo_casa ? `⏳ ${esc(v.tempo_casa)} de casa` : '',
     ].filter(Boolean).join(' · ');
+    // Sócio cujo CPF a base JBR não resolveu: não dá pra abrir a ficha da pessoa.
+    const semCpf = !v.cpf;
     return `
     <div class="card-person" data-cpf="${esc(v.cpf)}">
-      <div class="card-person-header" onclick="togglePerson('${id}', '${v.cpf}')">
+      <div class="card-person-header"${semCpf ? ' style="cursor:default"' : ` onclick="togglePerson('${id}', '${v.cpf}')"`}>
         <div>
-          <div class="person-name">${esc(v.nome || '—')}</div>
+          <div class="person-name">${esc(v.nome || '—')} ${badgeNivel}</div>
           <div class="person-meta">${meta}</div>
         </div>
         <div style="display:flex;align-items:center;gap:10px">
           ${badge}
-          <span class="person-cpf">${esc(fmtCpf(v.cpf))}</span>
-          <span class="person-chevron" id="chev-np-${id}">▼</span>
+          <span class="person-cpf">${semCpf ? 'CPF não resolvido' : esc(fmtCpf(v.cpf))}</span>
+          ${semCpf ? '' : `<span class="person-chevron" id="chev-np-${id}">▼</span>`}
         </div>
       </div>
       <div class="card-person-body" id="body-${id}">
@@ -2891,6 +2936,62 @@ function vinRenderPager(page, pages) {
     vinRenderPagina();
     document.getElementById('vin-lista-head').scrollIntoView({ block: 'start', behavior: 'smooth' });
   }));
+}
+
+async function vinBuscarCargos() {
+  const btn = document.getElementById('vin-cargos');
+  const status = document.getElementById('vin-cargos-status');
+  const d = vinState.dados;
+  if (!d) return;
+  btn.disabled = true;
+  status.hidden = false;
+  status.textContent = 'Procurando os perfis da empresa no LinkedIn… isso leva um tempo.';
+  try {
+    const r = await fetch(`${API}/api/company/${d.cnpj}/vinculos/cargos`);
+    const res = await r.json();
+    if (res.status !== 'ok') {
+      status.textContent = '⚠️ ' + (res.message || 'Não foi possível buscar cargos no LinkedIn.');
+      return;
+    }
+    // Aplica na lista que já está na tela, sem refazer a consulta da RAIS.
+    const porCpf = {};
+    (res.cargos || []).forEach(c => { if (c.cpf) porCpf[c.cpf] = c; });
+    let aplicados = 0;
+    d.vinculos.forEach(v => {
+      const c = porCpf[v.cpf];
+      if (!c || v.fonte_cargo === 'Receita Federal (QSA)') return;
+      Object.assign(v, { cargo: c.cargo, fonte_cargo: c.fonte_cargo, nivel: c.nivel, rotulo: c.rotulo, area: c.area });
+      aplicados++;
+    });
+    d.hierarquia = vinRecontarHierarquia(d.vinculos);
+    vinRender();
+    const st = document.getElementById('vin-cargos-status');
+    st.hidden = false;
+    st.textContent = aplicados
+      ? `✅ ${aplicados} cargo(s) do LinkedIn cruzado(s) por nome, de ${res.perfis_linkedin || 0} perfil(is) encontrado(s). Confira antes de usar — nome igual não é sempre a mesma pessoa.`
+      : `Nenhum dos ${res.perfis_linkedin || 0} perfil(is) do LinkedIn bateu com um nome da RAIS.${res.message ? ' ' + res.message : ''}`;
+  } catch (e) {
+    status.textContent = '⚠️ Erro ao buscar cargos: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// data_entrada_sociedade vem da Receita em ISO (2020-01-16) — na tela é BR.
+function vinDataBr(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : (iso || '');
+}
+
+function vinRecontarHierarquia(vinculos) {
+  const c = { nivel_1: 0, nivel_2: 0, nivel_3: 0, sem_cargo: 0, socios: 0, decisores: 0 };
+  vinculos.forEach(v => {
+    const n = v.nivel || 0;
+    c[n === 1 ? 'nivel_1' : n === 2 ? 'nivel_2' : n === 3 ? 'nivel_3' : 'sem_cargo']++;
+    if (v.socio) c.socios++;
+  });
+  c.decisores = c.nivel_1 + c.nivel_2 + c.nivel_3;
+  return c;
 }
 
 async function vinExportar() {

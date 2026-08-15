@@ -184,6 +184,23 @@ body {
 }
 .filter-label { font-size: .82rem; color: var(--gray-500); font-weight: 600; }
 
+/* ── Aba Vínculos: filtro de hierarquia + selo de nível de decisão ── */
+.vin-nivel {
+  background: var(--white); border: 1px solid var(--gray-200);
+  color: var(--gray-700); border-radius: var(--radius-sm); padding: 6px 12px;
+  font-size: .82rem; font-weight: 600; cursor: pointer; transition: all .12s;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.vin-nivel:hover { border-color: var(--blue-mid); color: var(--blue-mid); }
+.vin-nivel.active { background: var(--blue-mid); border-color: var(--blue-mid); color: #fff; }
+.vin-nivel.active .res-tab-count { background: rgba(255,255,255,.25); color: #fff; }
+.vin-nivel-dec.active { background: var(--terracota); border-color: var(--terracota); }
+.vin-badge-nivel {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-size: .72rem; font-weight: 700; vertical-align: middle;
+  letter-spacing: .01em; margin-left: 4px;
+}
+
 /* .chip-vin = mesmos exemplos, na aba Vínculos. Classe própria porque o listener
    global de .chip-ex dispara a busca de Empresa. */
 .chip-ex, .chip-vin {

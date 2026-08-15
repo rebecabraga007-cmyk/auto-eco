@@ -34,6 +34,7 @@ import brasilapi
 import casadosdados
 import config_store
 import custos
+import decisores
 import donodozap
 import meetime
 import navlog
@@ -396,12 +397,91 @@ async def employees(cnpj: str):
 
 @app.get("/api/company/{cnpj}/vinculos")
 async def company_vinculos(cnpj: str, refresh: bool = False):
-    """Quem trabalha (ou trabalhou) na empresa, pela RAIS: nome, CPF, admissão."""
-    return await rais.vinculos_cnpj(cnpj, refresh=refresh)
+    """Quem trabalha (ou trabalhou) na empresa, pela RAIS: nome, CPF, admissão.
+
+    A RAIS não traz cargo, então o nível de decisão (1/2/3) vem do quadro de
+    sócios da Receita — de graça e cruzado por CPF. Sócio que não está na folha
+    entra como linha extra: continua sendo quem decide. Para cargo de
+    funcionário não-sócio existe o /vinculos/cargos (LinkedIn, opt-in).
+    """
+    dados = await rais.vinculos_cnpj(cnpj, refresh=refresh)
+    if dados.get("status") not in ("ok", "not_found"):
+        return dados
+
+    vinculos = dados.get("vinculos") or []
+    dados["vinculos"] = vinculos
+    try:
+        empresa = await brasilapi.fetch_company(cnpj)
+        _enrich_qsa_cpf(empresa)          # resolve o CPF completo do sócio na base JBR
+        qsa = empresa.get("qsa") or []
+        dados["qsa_status"] = "ok"
+        dados["razao_social"] = dados.get("razao_social") or empresa.get("razao_social") or ""
+    except Exception:
+        qsa = []
+        dados["qsa_status"] = "indisponivel"
+
+    resultado_qsa = decisores.anexar_qsa(vinculos, qsa)
+    decisores.normalizar(vinculos)
+    decisores.ordenar(vinculos)
+
+    dados["socios_qsa"] = len(qsa)
+    dados["socios_fora_da_folha"] = resultado_qsa["adicionados"]
+    dados["total"] = len(vinculos)
+    dados["ativos"] = sum(1 for v in vinculos if v.get("ativo"))
+    dados["desligados"] = len(vinculos) - dados["ativos"]
+    dados["hierarquia"] = decisores.resumo(vinculos)
+    if vinculos:
+        dados["status"] = "ok"
+    return dados
+
+
+@app.get("/api/company/{cnpj}/vinculos/cargos")
+async def company_vinculos_cargos(cnpj: str):
+    """Cargos do LinkedIn para cruzar com a lista da RAIS (lento e pago — opt-in).
+
+    Devolve só o que casou por nome: {status, casados, cargos:[{cpf, cargo,
+    nivel, rotulo, area}]}. O front aplica na lista que já está na tela, sem
+    refazer a consulta da RAIS.
+    """
+    dados = await rais.vinculos_cnpj(cnpj)
+    if dados.get("status") != "ok":
+        return {"status": dados.get("status", "error"),
+                "message": dados.get("message", "Sem vínculos para cruzar."), "cargos": []}
+
+    try:
+        empresa = await brasilapi.fetch_company(cnpj)
+        nome = empresa.get("nome_fantasia") or empresa.get("razao_social") or ""
+        legal = empresa.get("razao_social") or ""
+    except Exception:
+        nome = legal = ""
+
+    try:
+        scraped = await linkedin_scraper.scrape_employees(
+            brasilapi.only_digits(cnpj), nome, legal)
+    except Exception as exc:
+        return {"status": "error", "message": f"Falha no LinkedIn: {str(exc)[:150]}", "cargos": []}
+
+    vinculos = [dict(v) for v in (dados.get("vinculos") or [])]
+    casados = decisores.anexar_cargos_linkedin(vinculos, scraped.get("employees") or [])
+    cargos = [{"cpf": v.get("cpf"), "nome": v.get("nome"), "cargo": v.get("cargo"),
+               "fonte_cargo": v.get("fonte_cargo"), "nivel": v.get("nivel"),
+               "rotulo": v.get("rotulo"), "area": v.get("area")}
+              for v in vinculos if v.get("fonte_cargo") == "LinkedIn"]
+    return {
+        "status": "ok",
+        "casados": casados,
+        "perfis_linkedin": len(scraped.get("employees") or []),
+        "message": scraped.get("message") or "",
+        "cargos": cargos,
+    }
 
 
 _VIN_COLS = [
     ("nome", "Nome"),
+    ("cargo", "Cargo"),
+    ("nivel_txt", "Nível de decisão"),
+    ("area", "Área"),
+    ("fonte_cargo", "Fonte do cargo"),
     ("cpf", "CPF"),
     ("situacao_txt", "Situação"),
     ("admissao_br", "Admissão"),
@@ -445,6 +525,8 @@ async def vinculos_export(payload: dict = Body(default={})):
             continue
         v = dict(v)
         v["situacao_txt"] = "Ainda na empresa" if v.get("ativo") else "Já saiu"
+        nivel = v.get("nivel") or 0
+        v["nivel_txt"] = f"{nivel} — {v.get('rotulo')}" if nivel else ""
         for c, (key, _) in enumerate(_VIN_COLS, start=1):
             ws.cell(row=r, column=c, value=v.get(key, ""))
 
