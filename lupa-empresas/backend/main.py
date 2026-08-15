@@ -435,6 +435,134 @@ async def company_vinculos(cnpj: str, refresh: bool = False):
     return dados
 
 
+def _juntar_relacoes(itens: list[dict]) -> list[dict]:
+    """Funde pessoas-de-referencia e conexões numa lista só, sem repetir gente.
+
+    As duas fontes se sobrepõem (um irmão pode vir nas duas), mas cada uma traz
+    algo que a outra não tem: referência dá o parentesco de mais gente,
+    conexões dá telefone com flag de WhatsApp. Cruzamento por documento.
+    """
+    por_doc: dict[str, dict] = {}
+    ordem: list[str] = []
+    for it in itens:
+        doc = re.sub(r"\D", "", it.get("documento") or "")
+        chave = doc or ("nome:" + (it.get("nome") or "").upper())
+        if chave not in por_doc:
+            por_doc[chave] = it
+            ordem.append(chave)
+            continue
+        atual = por_doc[chave]
+        for campo, valor in it.items():
+            if valor and not atual.get(campo):
+                atual[campo] = valor
+        fontes = set((atual.get("fonte") or "").split(" + ")) | {it.get("fonte")}
+        atual["fonte"] = " + ".join(sorted(f for f in fontes if f))
+    return [por_doc[k] for k in ordem]
+
+
+@app.get("/api/person/{cpf}/parentes")
+async def person_parentes(cpf: str, mae: bool = True):
+    """Busca Parentes: junta pessoas-de-referência + conexões de um CPF.
+
+    CUSTA 2 consultas Assertiva. Retorna {status, cpf, total, por_relacao,
+    parentes:[{nome, documento, relacao, tipo_relacao, telefone, whatsapp,
+    nao_perturbe, nascimento, fonte}]}.
+    """
+    doc = re.sub(r"\D", "", cpf or "")
+    if len(doc) != 11:
+        return {"status": "error", "message": "CPF inválido — precisa ter 11 dígitos.", "parentes": []}
+    if not assertiva.enabled():
+        return {"status": "unavailable", "message": "Assertiva não configurada.", "parentes": []}
+
+    ref, con = await asyncio.gather(
+        assertiva.pessoas_de_referencia(doc, retornar_mae=mae),
+        assertiva.conexoes(doc, tipo="CPF"),
+    )
+
+    itens: list[dict] = []
+    avisos = []
+
+    if ref.get("status") == "ok":
+        lista = (((ref.get("data") or {}).get("resposta") or {}).get("pessoasDeReferencia") or [])
+        for p in lista:
+            itens.append({
+                "nome": (p.get("nomeOuRazaoSocial") or "").strip(),
+                "documento": p.get("documento") or "",
+                "relacao": (p.get("relacao") or "").strip(),
+                "tipo_relacao": "Pessoas de referência",
+                "nascimento": p.get("dataNascimentoOuAbertura") or "",
+                "telefone": "", "whatsapp": None, "nao_perturbe": None,
+                "fonte": "Pessoas de referência",
+            })
+    elif ref.get("status") != "not_found":
+        avisos.append(f"Pessoas de referência: {ref.get('message', '')[:120]}")
+
+    if con.get("status") == "ok":
+        corpo = (con.get("data") or {}).get("resposta")
+        for c in (corpo if isinstance(corpo, list) else []):
+            if not isinstance(c, dict):
+                continue
+            itens.append({
+                "nome": (c.get("nomeOuRazaoSocial") or "").strip(),
+                "documento": c.get("documento") or "",
+                "relacao": (c.get("relacao") or "").strip(),
+                "tipo_relacao": (c.get("tipoRelacao") or "").strip(),
+                "nascimento": c.get("dataNascimento") or c.get("dataAbertura") or "",
+                "telefone": c.get("telefone") or "",
+                "tipo_telefone": c.get("tipoTelefone") or "",
+                "whatsapp": c.get("whatsapp"),
+                "nao_perturbe": c.get("naoPerturbe"),
+                "cargo": c.get("cargo") or "",
+                "fonte": "Conexões",
+            })
+    elif con.get("status") != "not_found":
+        avisos.append(f"Conexões: {con.get('message', '')[:120]}")
+
+    parentes = _juntar_relacoes(itens)
+    por_relacao: dict[str, int] = {}
+    for p in parentes:
+        rot = p.get("relacao") or p.get("tipo_relacao") or "Outros"
+        por_relacao[rot] = por_relacao.get(rot, 0) + 1
+
+    return {
+        "status": "ok" if parentes else "not_found",
+        "cpf": doc,
+        "total": len(parentes),
+        "com_telefone": sum(1 for p in parentes if p.get("telefone")),
+        "por_relacao": por_relacao,
+        "avisos": avisos,
+        "message": "" if parentes else "Nenhum parente ou conexão encontrada para este CPF.",
+        "parentes": parentes,
+    }
+
+
+@app.get("/api/company/{cnpj}/conexoes")
+async def company_conexoes(cnpj: str):
+    """Conexões de um CNPJ: sócios, possíveis decisores e empresas com
+    participação — cada um com telefone e flag de WhatsApp. 1 consulta."""
+    doc = re.sub(r"\D", "", cnpj or "")
+    if len(doc) != 14:
+        return {"status": "error", "message": "CNPJ inválido.", "conexoes": []}
+    if not assertiva.enabled():
+        return {"status": "unavailable", "message": "Assertiva não configurada.", "conexoes": []}
+
+    c = await assertiva.conexoes(doc, tipo="CNPJ")
+    if c.get("status") != "ok":
+        return {"status": c.get("status", "error"),
+                "message": c.get("message", "Falha ao consultar conexões."), "conexoes": []}
+
+    corpo = (c.get("data") or {}).get("resposta")
+    lista = [x for x in (corpo if isinstance(corpo, list) else []) if isinstance(x, dict)]
+    por_tipo: dict[str, int] = {}
+    for x in lista:
+        rot = (x.get("tipoRelacao") or "Outros").strip()
+        por_tipo[rot] = por_tipo.get(rot, 0) + 1
+    return {"status": "ok" if lista else "not_found", "cnpj": doc,
+            "total": len(lista), "por_tipo": por_tipo,
+            "com_telefone": sum(1 for x in lista if x.get("telefone")),
+            "conexoes": lista}
+
+
 @app.get("/api/person/{cpf}/vinculos")
 async def person_vinculos(cpf: str, refresh: bool = False):
     """Onde a pessoa trabalha (ou trabalhou), pela RAIS — o inverso do CNPJ."""
@@ -849,12 +977,26 @@ async def company_leads(cnpj: str, decisores: bool = False,
             "telefones": _tel_payload(tels),
         })
 
+    # Por que veio 0 decisor? Sem isto a tela mostra "Decisores 0" e a usuária
+    # não sabe se falhou, se não foi pedido ou se a base não tem ninguém —
+    # micro empresa quase nunca tem decisor na Assertiva (quem decide é o sócio).
+    info_dec = {"pedido": bool(decisores), "fonte": decisores_fonte,
+                "disponiveis": 0, "escolhidos": 0, "motivo": "", "mensagem": ""}
+
+    if decisores and decisores_fonte == "assertiva" and not assertiva.enabled():
+        info_dec["motivo"] = "sem_credencial"
+        info_dec["mensagem"] = "Assertiva não configurada."
+
     if decisores and decisores_fonte == "assertiva" and assertiva.enabled():
         try:
             r_dec = await assertiva.possiveis_decisores(brasilapi.only_digits(cnpj))
+            if r_dec.get("status") != "ok":
+                info_dec["motivo"] = r_dec.get("status") or "erro"
+                info_dec["mensagem"] = str(r_dec.get("message") or "")[:160]
             brutos = ((r_dec.get("data") or {}).get("resposta") or {}).get("possiveisDecisores") or []
-            escolhidos = _filtra_decisores(decisor_lib.da_assertiva(brutos),
-                                           decisores_cargos, max_decisores)
+            todos_dec = decisor_lib.da_assertiva(brutos)
+            info_dec["disponiveis"] = len(todos_dec)
+            escolhidos = _filtra_decisores(todos_dec, decisores_cargos, max_decisores)
             # CPFs que já entraram como sócio não viram contato duplicado.
             ja_tem = {c.get("cpf") for c in contatos if c.get("cpf")}
             escolhidos = [p for p in escolhidos if p.get("cpf") and p["cpf"] not in ja_tem]
@@ -875,8 +1017,16 @@ async def company_leads(cnpj: str, decisores: bool = False,
                     "cpf_status": "resolved",
                     "telefones": _tel_payload(tels),
                 })
-        except Exception:
-            pass
+            info_dec["escolhidos"] = len(escolhidos)
+            if not info_dec["motivo"]:
+                if info_dec["disponiveis"] and not escolhidos:
+                    # A Assertiva tinha gente, mas o filtro de cargo cortou tudo.
+                    info_dec["motivo"] = "filtrado"
+                else:
+                    info_dec["motivo"] = "ok"
+        except Exception as exc:
+            info_dec["motivo"] = "erro"
+            info_dec["mensagem"] = str(exc)[:160]
 
     elif decisores and decisores_fonte == "linkedin" and _cpf_ready():
         try:
@@ -909,7 +1059,8 @@ async def company_leads(cnpj: str, decisores: bool = False,
         except Exception:
             pass
 
-    return {"status": "ok", "empresa": empresa, "contatos": contatos}
+    return {"status": "ok", "empresa": empresa, "contatos": contatos,
+            "decisores_info": info_dec}
 
 
 # Colunas de EMPRESA no export enriquecido (padrão da planilha modelo Datastone).
@@ -1420,6 +1571,94 @@ async def custos_por_usuario(request: Request, desde: str = "", ate: str = "", u
         res["usuarios"] = [u for u in res["usuarios"] if u["user"] == alvo]
     res["status"] = "ok"
     return res
+
+
+@app.get("/api/custos/total")
+async def custos_total(request: Request, desde: str = "", ate: str = "", dias: int = 30):
+    """Relatório de uso TOTAL — só admin.
+
+    Confronta duas contagens que nunca batem por bons motivos:
+
+    1. O RELATÓRIO DA ASSERTIVA (/localize/v3/report/usage) — é o que ela
+       registra pra faturar. Reconsulta do mesmo documento não conta de novo, e
+       complementos (possíveis decisores, mais telefones) vêm como `subItems`
+       da consulta que os originou.
+    2. O NOSSO LOG interno — conta cada chamada HTTP que sai daqui, incluindo
+       reconsulta e rotas que não faturam (o próprio relatório, por exemplo).
+
+    O nosso número quase sempre vem MAIOR. O da Assertiva é o que chega na fatura.
+    """
+    if not _is_admin(request):
+        return JSONResponse({"detail": "Requer admin."}, status_code=403)
+
+    import datetime as _dt
+    hoje = _dt.date.today()
+    if not ate:
+        ate = hoje.isoformat()
+    if not desde:
+        desde = (hoje - _dt.timedelta(days=max(1, dias) - 1)).isoformat()
+    try:
+        desde_ts = _dt.datetime.strptime(desde, "%Y-%m-%d").timestamp()
+        ate_ts = _dt.datetime.strptime(ate, "%Y-%m-%d").timestamp() + 86400 - 1
+    except ValueError:
+        return {"status": "error", "message": "Datas inválidas (use YYYY-MM-DD)."}
+
+    # ── 1. contagem oficial da Assertiva ──
+    oficial = {"disponivel": False, "consultas": 0, "subitens": 0,
+               "por_funcionalidade": {}, "por_usuario": {}, "truncado": False}
+    if assertiva.enabled():
+        rel = await assertiva.relatorio_uso(desde=desde, ate=ate)
+        if rel.get("status") == "ok":
+            oficial["disponivel"] = True
+            oficial["truncado"] = bool(rel.get("truncado"))
+            for it in rel.get("itens") or []:
+                func = (it.get("functionality") or "—").strip()
+                oficial["consultas"] += 1
+                oficial["por_funcionalidade"][func] = oficial["por_funcionalidade"].get(func, 0) + 1
+                quem = (it.get("userName") or "—").strip()
+                oficial["por_usuario"][quem] = oficial["por_usuario"].get(quem, 0) + 1
+                for sub in it.get("subItems") or []:
+                    if not isinstance(sub, dict):
+                        continue
+                    sf = (sub.get("functionality") or "—").strip()
+                    oficial["subitens"] += 1
+                    oficial["por_funcionalidade"][sf] = oficial["por_funcionalidade"].get(sf, 0) + 1
+        else:
+            oficial["mensagem"] = rel.get("message", "")
+
+    # ── 2. nosso log interno ──
+    try:
+        emails_admin = {u["email"] for u in auth.list_users() if u.get("role") == "admin"}
+    except Exception:
+        emails_admin = set()
+    interno_user = custos.resumo_por_usuario(desde_ts, ate_ts, excluir_emails=set())
+    interno_modelo = custos.resumo(desde_ts, ate_ts)
+
+    custo_unit = custos.CUSTO_POR_CONSULTA
+    total_oficial = oficial["consultas"] + oficial["subitens"]
+
+    return {
+        "status": "ok",
+        "periodo": {"desde": desde, "ate": ate, "dias": (
+            _dt.date.fromisoformat(ate) - _dt.date.fromisoformat(desde)).days + 1},
+        "custo_por_consulta": custo_unit,
+        "assertiva": {
+            **oficial,
+            "total_registros": total_oficial,
+            "custo_estimado": round(total_oficial * custo_unit, 2),
+        },
+        "interno": {
+            "chamadas": interno_user["total_consultas"],
+            "custo_estimado": interno_user["total_geral"],
+            "por_usuario": interno_user["usuarios"],
+            "admins": sorted(emails_admin),
+        },
+        "modelos": interno_modelo,
+        "diferenca": {
+            "chamadas": interno_user["total_consultas"] - total_oficial,
+            "custo": round(interno_user["total_geral"] - total_oficial * custo_unit, 2),
+        },
+    }
 
 
 def _modelos_save(lst: list) -> None:

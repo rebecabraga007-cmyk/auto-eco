@@ -265,6 +265,7 @@ function renderPessoa(cpf, jbr, mk) {
     <div class="person-header-right">
       ${sitClara ? `<span class="badge ${sitGood ? 'badge-ativa' : sitBad ? 'badge-inativa' : 'badge-neutra'}">${esc(sitClara)}</span>` : ''}
       ${obitoMort ? `<span class="badge badge-inativa">Óbito registrado</span>` : ''}
+      <button class="btn-secondary" onclick="buscarParentes('${onlyDigits(cpf)}', this)" title="Junta pessoas de referência e conexões da Assertiva — 2 consultas">👨‍👩‍👧 Busca Parentes (Assertiva)</button>
       <button class="btn-secondary" onclick="exportarDossie('cpf','${onlyDigits(cpf)}', this)">📄 Exportar PDF</button>
       <span class="person-header-note">consultado agora</span>
     </div>
@@ -1211,10 +1212,20 @@ function renderProspList() {
       <div id="pf-dedup-note" class="prosp-dedup-note"></div>
       <p class="prosp-warn">Buscar os telefones leva alguns minutos e consome consulta (${prospState.fonte === 'local' ? 'base local da Receita' : 'Casa dos Dados'}). A lista pronta pode ser exportada em planilha, no seu modelo de colunas. A validação por telefone reverso é um passo separado, sobre a lista pronta.</p>
     </div>
+    <div class="prosp-selbar">
+      <span class="filter-label" id="pf-selcount">nenhuma empresa marcada</span>
+      <button type="button" class="btn-secondary" id="pf-sel-todas">☑️ Selecionar todas (${emp.length})</button>
+      <label class="prosp-selbar-n">selecionar as primeiras
+        <input type="number" id="pf-sel-n" min="1" max="${emp.length}" value="${Math.min(25, max)}" class="filter-num" />
+        <button type="button" class="btn-secondary" id="pf-sel-aplicar">Selecionar</button>
+      </label>
+      <button type="button" class="btn-secondary" id="pf-sel-limpar">Limpar seleção</button>
+    </div>
     <div class="prosp-table-scroll">
       <table class="prosp-table prosp-empresas-table prosp-ds-table">
         <thead><tr>
-          <th></th><th>Empresa e sócio</th><th>Cidade</th><th>O que a empresa faz</th><th>Situação</th>
+          <th><input type="checkbox" id="pf-sel-cabecalho" title="Marcar/desmarcar as desta página" /></th>
+          <th>Empresa e sócio</th><th>Cidade</th><th>O que a empresa faz</th><th>Situação</th>
         </tr></thead>
         <tbody id="prosp-emp-body"></tbody>
       </table>
@@ -1223,11 +1234,64 @@ function renderProspList() {
     <div id="prosp-table-wrap"></div>
   `;
   prospState.page = 0;
+  prospState.selecionadas = new Set();
   renderEmpPage();
   document.getElementById('pf-montar').addEventListener('click', prospMontar);
   document.getElementById('pf-dedup').addEventListener('click', prospDedupMeetime);
   popularSelectModelo(document.getElementById('pf-modelo'));
   initDecisoresBox();
+  initSelecaoEmpresas();
+}
+
+// Seleção de empresas: os checkboxes existiam mas ninguém lia — a montagem
+// sempre pegava as N primeiras. Agora a seleção manda, e continua valendo o
+// campo "Quantas empresas" quando nada estiver marcado.
+function initSelecaoEmpresas() {
+  const todas = document.getElementById('pf-sel-todas');
+  if (!todas) return;
+
+  todas.addEventListener('click', () => {
+    prospState.empresas.forEach((_, i) => prospState.selecionadas.add(i));
+    renderEmpPage();
+  });
+  document.getElementById('pf-sel-limpar').addEventListener('click', () => {
+    prospState.selecionadas.clear();
+    renderEmpPage();
+  });
+  document.getElementById('pf-sel-aplicar').addEventListener('click', () => {
+    const n = parseInt(document.getElementById('pf-sel-n').value) || 0;
+    prospState.selecionadas.clear();
+    prospState.empresas.slice(0, n).forEach((_, i) => prospState.selecionadas.add(i));
+    renderEmpPage();
+  });
+  document.getElementById('pf-sel-cabecalho').addEventListener('change', e => {
+    const perPage = prospState.perPage || PROSP_PER_PAGE;
+    const inicio = (prospState.page || 0) * perPage;
+    prospState.empresas.slice(inicio, inicio + perPage).forEach((_, k) => {
+      if (e.target.checked) prospState.selecionadas.add(inicio + k);
+      else prospState.selecionadas.delete(inicio + k);
+    });
+    renderEmpPage();
+  });
+}
+
+function atualizarContadorSelecao() {
+  const el = document.getElementById('pf-selcount');
+  if (!el) return;
+  const n = prospState.selecionadas ? prospState.selecionadas.size : 0;
+  el.textContent = n
+    ? `${n} empresa${n === 1 ? '' : 's'} marcada${n === 1 ? '' : 's'} — a montagem usa só essas`
+    : 'nenhuma empresa marcada — a montagem usa as primeiras do campo "Quantas empresas"';
+  const cab = document.getElementById('pf-sel-cabecalho');
+  if (cab) {
+    const perPage = prospState.perPage || PROSP_PER_PAGE;
+    const inicio = (prospState.page || 0) * perPage;
+    const daPagina = prospState.empresas.slice(inicio, inicio + perPage).map((_, k) => inicio + k);
+    cab.checked = daPagina.length > 0 && daPagina.every(i => prospState.selecionadas.has(i));
+  }
+  // Reflete no aviso de custo dos decisores.
+  const chk = document.getElementById('pf-decisores');
+  if (chk && chk.checked) chk.dispatchEvent(new Event('change'));
 }
 
 // Bloco "Incluir decisores": mostra as opções só quando ligado, e avisa o custo
@@ -1245,7 +1309,8 @@ function initDecisoresBox() {
     if (!ligado) return;
     const fonte = document.getElementById('pf-decfonte').value;
     const n = parseInt(document.getElementById('pf-maxdec').value) || 0;
-    const empresas = parseInt(document.getElementById('pf-qtd').value) || 0;
+    const marcadas = prospState.selecionadas ? prospState.selecionadas.size : 0;
+    const empresas = marcadas || parseInt(document.getElementById('pf-qtd').value) || 0;
     aviso.textContent = fonte === 'assertiva'
       ? `≈ ${empresas * (2 + n)} consultas Assertiva: ${empresas} × (2 pela empresa + até ${n} telefone${n === 1 ? '' : 's'} de decisor).`
       : 'O LinkedIn não gasta consulta Assertiva, mas é lento e costuma voltar vazio — a Assertiva rende muito mais.';
@@ -1337,7 +1402,7 @@ function renderEmpPage() {
     const porteLabel = porteBaixo.includes('micro') ? 'micro empresa' : porteBaixo.includes('pequeno') ? 'pequeno porte' : (e.porte || '');
     return `
       <tr>
-        <td><input type="checkbox" class="prosp-co-check" data-i="${i}" /></td>
+        <td><input type="checkbox" class="prosp-co-check" data-i="${i}"${prospState.selecionadas && prospState.selecionadas.has(i) ? ' checked' : ''} /></td>
         <td>
           <div class="prosp-co-name">${esc(nome)}</div>
           <div class="prosp-co-meta mono" title="${esc(fmtCnpj(e.cnpj))}">${esc(fmtCnpj(e.cnpj))}${porteLabel ? ' · ' + esc(porteLabel) : ''}</div>
@@ -1348,6 +1413,13 @@ function renderEmpPage() {
         <td>${badgeSit(e.situacao)}</td>
       </tr>`;
   }).join('');
+  body.querySelectorAll('.prosp-co-check').forEach(c => c.addEventListener('change', () => {
+    const i = parseInt(c.dataset.i);
+    if (c.checked) prospState.selecionadas.add(i);
+    else prospState.selecionadas.delete(i);
+    atualizarContadorSelecao();
+  }));
+  atualizarContadorSelecao();
   renderEmpPager(page, pages);
 }
 
@@ -1419,7 +1491,11 @@ async function prospMontar() {
   const decFonte = document.getElementById('pf-decfonte')?.value || 'assertiva';
   const maxDec = parseInt(document.getElementById('pf-maxdec')?.value) || 3;
   const decCargos = cargosSelecionados();
-  const alvo = prospState.empresas.slice(0, qtd);
+  // Marcou alguma? A seleção manda. Nada marcado = as N primeiras, como antes.
+  const marcadas = prospState.selecionadas && prospState.selecionadas.size
+    ? [...prospState.selecionadas].sort((a, b) => a - b).map(i => prospState.empresas[i]).filter(Boolean)
+    : null;
+  const alvo = marcadas || prospState.empresas.slice(0, qtd);
   const wrap = document.getElementById('prosp-table-wrap');
   prospState.building = true;
   prospState.rows = [];
@@ -1433,6 +1509,7 @@ async function prospMontar() {
   const CONC = (decisores && decFonte === 'linkedin') ? 2 : 6;
   const results = new Array(alvo.length);
   const leadsRaw = new Array(alvo.length);
+  const infoDec = new Array(alvo.length);
   let completed = 0, next = 0;
   const tick = () => {
     wrap.innerHTML = `<div class="prosp-progress"><span class="spinner"></span> Montando ${completed} de ${alvo.length} empresas…</div>`;
@@ -1447,6 +1524,7 @@ async function prospMontar() {
         if (r.status === 'ok') {
           results[i] = leadsToRows(r.empresa, r.contatos);
           leadsRaw[i] = { empresa: r.empresa, contatos: r.contatos };
+          if (r.decisores_info) infoDec[i] = r.decisores_info;
         } else { results[i] = []; }
       } catch (e) { results[i] = []; }
       completed++;
@@ -1457,9 +1535,44 @@ async function prospMontar() {
 
   prospState.rows = results.flat();
   prospState.leads = leadsRaw.filter(Boolean);
+  prospState.decisoresInfo = resumirDecisores(infoDec.filter(Boolean));
   prospState.building = false;
   btn.disabled = false;
   renderProspTable();
+}
+
+// Explica por que vieram (ou não vieram) decisores. Sem isso, "Decisores 0" na
+// tela pode ser tanto "não pedi" quanto "a Assertiva não tem" quanto "deu erro".
+function resumirDecisores(infos) {
+  if (!infos.length || !infos.some(i => i.pedido)) return null;
+  const conta = m => infos.filter(i => i.motivo === m).length;
+  const achados = infos.reduce((s, i) => s + (i.escolhidos || 0), 0);
+  const semNinguem = conta('not_found');
+  const filtrados = conta('filtrado');
+  const erros = conta('erro') + conta('unavailable') + conta('sem_credencial');
+  const exemploErro = (infos.find(i => i.mensagem && i.motivo !== 'not_found') || {}).mensagem || '';
+  return { empresas: infos.length, achados, semNinguem, filtrados, erros, exemploErro,
+           fonte: infos[0].fonte };
+}
+
+function notaDecisores() {
+  const d = prospState.decisoresInfo;
+  if (!d) return '';
+  if (d.achados) {
+    const extras = [
+      d.semNinguem ? `${d.semNinguem} empresa${d.semNinguem === 1 ? '' : 's'} sem decisor na base` : '',
+      d.filtrados ? `${d.filtrados} com decisor fora dos cargos escolhidos` : '',
+      d.erros ? `${d.erros} com falha na consulta` : '',
+    ].filter(Boolean).join(' · ');
+    return `<div class="prosp-dedup-note">🎯 ${d.achados} decisor(es) trazido(s) em ${d.empresas} empresa(s)${extras ? ' — ' + extras : ''}.</div>`;
+  }
+  if (d.filtrados && !d.semNinguem) {
+    return `<div class="prosp-dedup-note">🎯 Nenhum decisor na lista: a Assertiva tinha gente nessas empresas, mas <strong>nenhuma bateu com os cargos escolhidos</strong>. Marque "Todos" nos cargos e monte de novo.</div>`;
+  }
+  if (d.erros && !d.semNinguem) {
+    return `<div class="prosp-dedup-note">⚠️ A consulta de decisores falhou em ${d.erros} de ${d.empresas} empresa(s)${d.exemploErro ? ': ' + esc(d.exemploErro) : ''}.</div>`;
+  }
+  return `<div class="prosp-dedup-note">🎯 Nenhum decisor encontrado nas ${d.empresas} empresa${d.empresas === 1 ? '' : 's'}. A Assertiva respondeu <em>"não localizamos nenhum possível decisor"</em> — normal em micro e pequena empresa, onde quem decide é o próprio sócio, que já está na lista. A base de decisores cobre principalmente empresa média e grande.</div>`;
 }
 
 function catLabel(cat) {
@@ -1529,6 +1642,7 @@ function renderProspTable() {
         <button id="pf-export" class="btn-primary">⬇️ Exportar planilha (XLSX)</button>
       </div>
     </div>
+    ${notaDecisores()}
     <div id="pf-valprog"></div>
     <div class="prosp-table-scroll">
       <table class="prosp-table" id="pf-table">
@@ -1988,6 +2102,18 @@ function montarHtmlAssertiva(data, modo) {
     ${cab.protocolo ? `<span class="as-cab-proto">protocolo: ${esc(cab.protocolo)}</span>` : ''}
     ${data.alerta ? `<span class="tel-warn">⚠️ ${esc(data.alerta)}</span>` : ''}
   </div>`;
+
+  // Busca Parentes / Conexões — opt-in, porque cada uma gasta consulta.
+  const docConsultado = onlyDigits((cab.entrada || {}).cpf || (cab.entrada || {}).cnpj || '');
+  if (docConsultado.length === 11) {
+    html += `<div class="filter-row" style="margin-top:0">
+      <button class="btn-secondary" onclick="buscarParentes('${docConsultado}', this)" title="Pessoas de referência + conexões — 2 consultas Assertiva">👨‍👩‍👧 Busca Parentes (Assertiva)</button>
+    </div>`;
+  } else if (docConsultado.length === 14) {
+    html += `<div class="filter-row" style="margin-top:0">
+      <button class="btn-secondary" onclick="buscarConexoesEmpresa('${docConsultado}', this)" title="Sócios, decisores e empresas ligadas, com telefone — 1 consulta Assertiva">🔗 Buscar conexões (Assertiva)</button>
+    </div>`;
+  }
 
   // Chaves que já ganham um bloco dedicado abaixo — o resto é renderizado
   // automaticamente, pra nenhum dado do JSON ficar só no "Ver JSON completo".
@@ -2455,7 +2581,10 @@ function useRenderMap(colunas) {
   document.getElementById('adm-custou-user').addEventListener('change', admCustoUsuarioCarregar);
 })();
 
-function admCarregar() { admConsultasCarregar(); admCustoUsuarioCarregar(); admNavCarregar(); admCustoCarregar(); }
+function admCarregar() {
+  admCustoTotal(30);
+  admConsultasCarregar(); admCustoUsuarioCarregar(); admNavCarregar(); admCustoCarregar();
+}
 
 function admCustoUsuarioCarregar() {
   const box = document.getElementById('adm-custou-resultado'); if (!box) return;
@@ -3602,4 +3731,283 @@ window.vinVerEmpresa = function(cnpj) {
   if (!modos) return;
   modos.querySelectorAll('.as-modo').forEach(b =>
     b.addEventListener('click', () => vinTrocarModo(b.dataset.m)));
+})();
+
+// ══════════════════════════════════════════════════════
+//  BUSCA PARENTES (ASSERTIVA)
+//  Junta /localize/v3/pessoas-de-referencia (parentesco de mais gente) com
+//  /localize-api/v1/base-cadastral/conexoes (telefone + flag de WhatsApp).
+//  As duas se sobrepõem; o backend cruza por documento e funde.
+// ══════════════════════════════════════════════════════
+window.buscarParentes = async function(cpf, btn) {
+  const doc = onlyDigits(cpf);
+  const rotulo = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Buscando parentes…';
+
+  // A caixa nasce logo depois do bloco de resultado onde o botão está.
+  const raiz = btn.closest('.results-area, #as-results, .person-header')?.parentElement
+            || btn.closest('.results-area') || document.body;
+  let caixa = document.getElementById('parentes-' + doc);
+  if (!caixa) {
+    caixa = document.createElement('div');
+    caixa.id = 'parentes-' + doc;
+    caixa.style.marginTop = '14px';
+    raiz.appendChild(caixa);
+  }
+  caixa.innerHTML = spinner();
+
+  try {
+    const d = await fetch(`${API}/api/person/${doc}/parentes`).then(r => r.json());
+    caixa.innerHTML = htmlParentes(d);
+    logBusca('Busca Parentes', fmtCpf(doc), `${d.total || 0} conexão(ões)`);
+  } catch (e) {
+    caixa.innerHTML = `<p class="msg error">Erro ao buscar parentes: ${esc(e.message)}</p>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = rotulo;
+  }
+  caixa.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+};
+
+function htmlParentes(d) {
+  if (d.status === 'unavailable') return `<p class="msg">ℹ️ ${esc(d.message || 'Assertiva não configurada.')}</p>`;
+  if (d.status === 'not_found' || !d.total) {
+    return `<p class="msg">Nenhum parente ou conexão encontrada para esse CPF na Assertiva.
+      ${(d.avisos || []).length ? `<br><span style="font-size:.85rem;color:var(--gray-500)">${esc(d.avisos.join(' · '))}</span>` : ''}</p>`;
+  }
+  if (d.status !== 'ok') return `<p class="msg error">${esc(d.message || 'Falha na busca de parentes.')}</p>`;
+
+  const chips = Object.entries(d.por_relacao || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([rel, n]) => `<span class="source-pill" style="background:var(--terracota-soft);color:var(--terracota)">${esc(rel)}: ${n}</span>`)
+    .join(' ');
+
+  const linhas = (d.parentes || []).map(p => {
+    const doc = onlyDigits(p.documento || '');
+    const docFmt = doc.length === 11 ? fmtCpf(doc) : doc.length === 14 ? fmtCnpj(doc) : (p.documento || '');
+    const zap = p.whatsapp ? ' 💬' : '';
+    const np = p.nao_perturbe ? ' <span class="tel-warn" title="Cadastrado no Não Perturbe">🚫</span>' : '';
+    const acao = doc.length === 11
+      ? `<button class="btn-secondary" onclick="verPessoaPorCpf('${doc}')">Ver pessoa →</button>`
+      : (doc.length === 14 ? `<a class="btn-secondary" href="company.html?cnpj=${doc}" target="_blank">Ver empresa →</a>` : '');
+    return `<tr>
+      <td>${esc(p.relacao || p.tipo_relacao || '—')}</td>
+      <td>${esc(p.nome || '—')}</td>
+      <td class="mono">${esc(docFmt)}</td>
+      <td>${esc(p.nascimento || '')}</td>
+      <td class="mono">${p.telefone ? esc(p.telefone) + zap + np : '—'}</td>
+      <td style="font-size:.78rem;color:var(--gray-500)">${esc(p.fonte || '')}</td>
+      <td>${acao}</td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <div class="results-head" style="margin-bottom:8px">
+      <h2 style="font-size:1rem">👨‍👩‍👧 ${d.total} parente(s) e conexão(ões) — ${d.com_telefone} com telefone</h2>
+      <span class="results-head-note">Assertiva · pessoas de referência + conexões</span>
+    </div>
+    <div class="filter-row" style="margin-top:0">${chips}</div>
+    <table class="data-table">
+      <thead><tr><th>Relação</th><th>Nome</th><th>Documento</th><th>Nascimento</th><th>Telefone</th><th>Fonte</th><th></th></tr></thead>
+      <tbody>${linhas}</tbody>
+    </table>
+    ${(d.avisos || []).length ? `<p class="msg" style="font-size:.82rem">⚠️ ${esc(d.avisos.join(' · '))}</p>` : ''}
+    <div class="dica">
+      <div class="dica-title">De onde vem cada linha</div>
+      <div class="dica-body"><strong>Pessoas de referência</strong> traz o parentesco (mãe, pai, filho, irmão, cônjuge) e sócios. <strong>Conexões</strong> traz menos gente, mas com telefone, tipo de linha e as flags de WhatsApp e "não perturbe". Quem aparece nas duas vem fundido numa linha só.</div>
+    </div>`;
+}
+
+// Abre o CPF na aba "Uma pessoa" (reaproveita a busca que já existe).
+window.verPessoaPorCpf = function(cpf) {
+  document.querySelector('[data-tab="pessoa"]')?.click();
+  const campo = document.getElementById('cpf-q');
+  if (!campo) return;
+  campo.value = fmtCpf(cpf);
+  if (typeof searchCpf === 'function') searchCpf();
+};
+
+// ── Conexões de um CNPJ (mesmo endpoint, lado empresa) ──────────────
+window.buscarConexoesEmpresa = async function(cnpj, btn) {
+  const doc = onlyDigits(cnpj);
+  const rotulo = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Buscando conexões…';
+  let caixa = document.getElementById('conexoes-' + doc);
+  if (!caixa) {
+    caixa = document.createElement('div');
+    caixa.id = 'conexoes-' + doc;
+    caixa.style.marginTop = '14px';
+    (btn.closest('.results-area, #as-results') || btn.parentElement).appendChild(caixa);
+  }
+  caixa.innerHTML = spinner();
+  try {
+    const d = await fetch(`${API}/api/company/${doc}/conexoes`).then(r => r.json());
+    caixa.innerHTML = htmlConexoesEmpresa(d);
+    logBusca('Conexões CNPJ', fmtCnpj(doc), `${d.total || 0} conexão(ões)`);
+  } catch (e) {
+    caixa.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = rotulo;
+  }
+};
+
+function htmlConexoesEmpresa(d) {
+  if (d.status === 'unavailable') return `<p class="msg">ℹ️ ${esc(d.message || 'Assertiva não configurada.')}</p>`;
+  if (d.status === 'not_found' || !d.total) return `<p class="msg">Nenhuma conexão encontrada para esse CNPJ na Assertiva.</p>`;
+  if (d.status !== 'ok') return `<p class="msg error">${esc(d.message || 'Falha ao consultar conexões.')}</p>`;
+
+  const linhas = (d.conexoes || []).map(c => {
+    const doc = onlyDigits(c.documento || '');
+    const docFmt = doc.length === 11 ? fmtCpf(doc) : doc.length === 14 ? fmtCnpj(doc) : (c.documento || '');
+    const zap = c.whatsapp ? ' 💬' : '';
+    const np = c.naoPerturbe ? ' 🚫' : '';
+    return `<tr>
+      <td>${esc(c.relacao || c.tipoRelacao || '—')}</td>
+      <td>${esc(c.nomeOuRazaoSocial || '—')}</td>
+      <td class="mono">${esc(docFmt)}</td>
+      <td>${esc(c.cargo || '')}</td>
+      <td class="mono">${c.telefone ? esc(c.telefone) + zap + np : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  const chips = Object.entries(d.por_tipo || {})
+    .map(([t, n]) => `<span class="source-pill" style="background:var(--blue-soft);color:var(--blue-dark)">${esc(t)}: ${n}</span>`).join(' ');
+
+  return `
+    <div class="results-head" style="margin-bottom:8px">
+      <h2 style="font-size:1rem">🔗 ${d.total} conexão(ões) — ${d.com_telefone} com telefone</h2>
+      <span class="results-head-note">Assertiva · sócios, decisores e empresas ligadas</span>
+    </div>
+    <div class="filter-row" style="margin-top:0">${chips}</div>
+    <table class="data-table">
+      <thead><tr><th>Relação</th><th>Nome</th><th>Documento</th><th>Cargo</th><th>Telefone</th></tr></thead>
+      <tbody>${linhas}</tbody>
+    </table>`;
+}
+
+// ══════════════════════════════════════════════════════
+//  ADMIN · Relatório de uso TOTAL (Assertiva)
+//  Confronta o que a Assertiva registrou (o que vira fatura) com o que o
+//  CapiBLU logou. Os dois não batem por bons motivos — o widget explica.
+// ══════════════════════════════════════════════════════
+async function admCustoTotal(dias) {
+  const box = document.getElementById('adm-total-resultado');
+  if (!box) return;
+  const desde = document.getElementById('adm-total-desde').value;
+  const ate = document.getElementById('adm-total-ate').value;
+  const q = dias && !desde && !ate ? `dias=${dias}` :
+    `desde=${encodeURIComponent(desde || '')}&ate=${encodeURIComponent(ate || '')}`;
+  box.innerHTML = spinner();
+  try {
+    const d = await fetch(`${API}/api/custos/total?${q}`).then(r => r.json());
+    if (d.status !== 'ok') {
+      box.innerHTML = `<p class="msg error">${esc(d.detail || d.message || 'Falha ao carregar.')}</p>`;
+      return;
+    }
+    box.innerHTML = admTotalHtml(d);
+  } catch (e) {
+    box.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
+  }
+}
+
+function admTotalHtml(d) {
+  const a = d.assertiva || {};
+  const i = d.interno || {};
+  const brl = v => 'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const funcs = Object.entries(a.por_funcionalidade || {}).sort((x, y) => y[1] - x[1]);
+  const users = Object.entries(a.por_usuario || {}).sort((x, y) => y[1] - x[1]);
+  const totalUsers = users.reduce((s, [, n]) => s + n, 0) || 1;
+
+  // Fora do CapiBLU = o que a Assertiva registrou menos o que saiu daqui.
+  // Nunca negativo: cache nosso pode fazer o log local passar do oficial.
+  const fora = Math.max(0, (a.total_registros || 0) - (i.chamadas || 0));
+  const foraCusto = fora * (d.custo_por_consulta || 0);
+  const pctCapi = a.total_registros ? Math.round(((i.chamadas || 0) / a.total_registros) * 100) : 0;
+
+  return `
+    <div class="metric-grid" style="margin:12px 0 16px">
+      <div class="metric-cell">
+        <div class="metric-label">Consultas na Assertiva</div>
+        <div class="metric-value" style="color:var(--terracota)">${a.total_registros || 0}</div>
+        <div class="metric-sub">${a.consultas || 0} consultas + ${a.subitens || 0} complementos</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">Custo no período</div>
+        <div class="metric-value">${brl(a.custo_estimado)}</div>
+        <div class="metric-sub">a ${brl(d.custo_por_consulta)} por consulta</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">Gasto pelo CapiBLU</div>
+        <div class="metric-value" style="color:var(--green)">${brl(i.custo_estimado)}</div>
+        <div class="metric-sub">${i.chamadas || 0} chamadas — ${pctCapi}% do total</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">Gasto FORA do CapiBLU</div>
+        <div class="metric-value" style="color:var(--red)">${brl(foraCusto)}</div>
+        <div class="metric-sub">${fora} consulta(s) — ${100 - pctCapi}% · portal da Assertiva ou outra integração</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">Período</div>
+        <div class="metric-value" style="font-size:1.1rem">${esc(d.periodo.dias)} dias</div>
+        <div class="metric-sub">${esc(d.periodo.desde)} → ${esc(d.periodo.ate)}</div>
+      </div>
+    </div>
+
+    ${a.truncado ? `<p class="msg" style="font-size:.85rem">⚠️ O período tem mais registros do que uma leitura só alcança — os números acima são um piso, o real é maior.</p>` : ''}
+    ${!a.disponivel ? `<p class="msg error">Relatório da Assertiva indisponível: ${esc(a.mensagem || '')}</p>` : ''}
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px">
+      <div>
+        <h4 style="font-size:.9rem;margin:0 0 8px">Por tipo de consulta (Assertiva)</h4>
+        <table class="data-table">
+          <thead><tr><th>Funcionalidade</th><th>Consultas</th><th>Custo</th></tr></thead>
+          <tbody>${funcs.map(([f, n]) => `<tr><td>${esc(f)}</td><td>${n}</td><td class="mono">${brl(n * d.custo_por_consulta)}</td></tr>`).join('') || '<tr><td colspan="3" class="msg">Sem registros.</td></tr>'}</tbody>
+        </table>
+      </div>
+      <div>
+        <h4 style="font-size:.9rem;margin:0 0 8px">Quem consumiu (conta Assertiva)</h4>
+        <table class="data-table">
+          <thead><tr><th>Usuário na Assertiva</th><th>Consultas</th><th>%</th><th>Custo</th></tr></thead>
+          <tbody>${users.map(([u, n]) => `<tr><td>${esc(u)}</td><td>${n}</td><td>${Math.round((n / totalUsers) * 100)}%</td><td class="mono">${brl(n * d.custo_por_consulta)}</td></tr>`).join('') || '<tr><td colspan="4" class="msg">Sem registros.</td></tr>'}</tbody>
+        </table>
+        <p class="pf-advanced-hint" style="display:block;margin-top:6px">Este é o nome de usuário <strong>no portal da Assertiva</strong>, não o e-mail do CapiBLU. Quem aparece aqui com número alto e não aparece na tabela de baixo está consultando por fora.</p>
+      </div>
+    </div>
+
+    <h4 style="font-size:.9rem;margin:18px 0 8px">Quem consumiu (pelo CapiBLU)</h4>
+    <table class="data-table">
+      <thead><tr><th>Usuário do CapiBLU</th><th>Chamadas</th><th>Custo estimado</th></tr></thead>
+      <tbody>${(i.por_usuario || []).map(u => `<tr><td>${esc(u.user)}</td><td>${u.n_consultas}</td><td class="mono">${brl(u.custo_total)}</td></tr>`).join('') || '<tr><td colspan="3" class="msg">Sem registros.</td></tr>'}</tbody>
+    </table>
+
+    <div class="dica">
+      <div class="dica-title">Por que os dois números não batem</div>
+      <div class="dica-body">
+        A coluna da <strong>Assertiva</strong> é a contagem oficial dela — a que vira fatura. A do <strong>CapiBLU</strong> conta só o que sai desta plataforma.
+        A diferença de ${Math.abs(d.diferenca.chamadas)} consulta(s) (${brl(Math.abs(d.diferenca.custo))}) é consumo da conta Assertiva
+        <strong>fora do CapiBLU</strong> — portal web, planilha, outra integração — mais o efeito do cache
+        (quando repetimos um documento já consultado, não gastamos de novo e a Assertiva também não cobra).
+        Se um nome aparece na tabela da Assertiva e não na do CapiBLU, essa pessoa está consultando por fora.
+      </div>
+    </div>`;
+}
+
+(function initAdmTotal() {
+  const btn = document.getElementById('adm-total-atualizar');
+  if (!btn) return;
+  let diasAtual = 30;
+  btn.addEventListener('click', () => admCustoTotal(diasAtual));
+  document.querySelectorAll('.adm-per').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('.adm-per').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    diasAtual = parseInt(b.dataset.dias) || 30;
+    // Botão de período manda: limpa as datas manuais.
+    document.getElementById('adm-total-desde').value = '';
+    document.getElementById('adm-total-ate').value = '';
+    admCustoTotal(diasAtual);
+  }));
 })();

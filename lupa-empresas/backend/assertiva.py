@@ -45,6 +45,11 @@ _token: str = ""
 _token_exp: float = 0.0
 # Cache simples de consultas (evita gastar cota em repetição na mesma sessão).
 _cache: dict[str, dict[str, Any]] = {}
+# Relatório de uso: paginado e lento (30 dias = ~75 páginas, mais de 2 min).
+# Não é billable, mas precisa de cache próprio, com validade, pra não travar o
+# painel administrativo a cada abertura.
+_cache_relatorio: dict[str, tuple[float, dict]] = {}
+_TTL_RELATORIO = 15 * 60
 
 
 def only_digits(s: str) -> str:
@@ -205,6 +210,81 @@ async def possiveis_decisores(cnpj: str, finalidade: int | None = None) -> dict[
     if r.get("status") in ("invalid", "error", "not_found"):
         r, _ = await _tentar(usar_cache=False)
 
+    if r.get("status") == "ok":
+        _cache[key] = r
+    return r
+
+
+async def relatorio_uso(desde: str = "", ate: str = "", max_paginas: int = 120,
+                        por_pagina: int = 100) -> dict[str, Any]:
+    """Consultas que a Assertiva REGISTROU no período — a contagem que ela fatura.
+
+    Diferente do nosso log interno, que conta chamada HTTP: aqui reconsulta do
+    mesmo documento não aparece de novo, e complementos como "possíveis
+    decisores" vêm como `subItems` da consulta que os originou.
+
+    Percorre a paginação (a resposta traz totalPages) e devolve
+    {status, itens:[...], paginas, truncado}.
+    """
+    # 30 dias dão ~75 páginas e mais de 2 minutos de leitura. O relatório não é
+    # billable, mas é lento demais pra recarregar a cada abertura do painel.
+    chave = f"{desde}|{ate}|{por_pagina}"
+    em_cache = _cache_relatorio.get(chave)
+    if em_cache and (time.time() - em_cache[0]) < _TTL_RELATORIO:
+        return {**em_cache[1], "_from_cache": True}
+
+    itens: list[dict] = []
+    pagina, total_paginas = 0, 1
+    while pagina < min(total_paginas, max_paginas):
+        params = {"numPage": pagina, "numPageSize": por_pagina}
+        if desde:
+            params["startDate"] = desde
+        if ate:
+            params["endDate"] = ate
+        r = await _get("/localize/v3/report/usage", params)
+        if r.get("status") != "ok":
+            if itens:
+                break
+            return r
+        corpo = (r.get("data") or {}).get("resposta") or {}
+        try:
+            total_paginas = int(corpo.get("totalPages") or 1)
+        except Exception:
+            total_paginas = 1
+        itens.extend([x for x in (corpo.get("list") or []) if isinstance(x, dict)])
+        pagina += 1
+
+    resultado = {"status": "ok", "itens": itens, "paginas": pagina,
+                 "truncado": pagina < total_paginas}
+    _cache_relatorio[chave] = (time.time(), resultado)
+    return resultado
+
+
+async def pessoas_de_referencia(cpf: str, retornar_mae: bool = True,
+                                finalidade: int | None = None) -> dict[str, Any]:
+    """Parentes e sócios ligados a um CPF (mãe, pai, filhos, irmãos, cônjuge).
+
+    O `protocolo` é opcional aqui: se a consulta de CPF já estiver em cache,
+    mandamos o protocolo dela — a Assertiva trata como continuação da mesma
+    consulta em vez de uma nova.
+    """
+    d = only_digits(cpf)
+    if len(d) != 11:
+        return {"status": "invalid", "message": "CPF inválido."}
+
+    key = f"referencia:{d}:{retornar_mae}:{finalidade}"
+    if key in _cache:
+        return _cache[key]
+
+    params = {"cpf": d, "retornarMae": "true" if retornar_mae else "false",
+              "idFinalidade": finalidade or DEFAULT_FINALIDADE}
+    base = _cache.get(f"cpf:{d}:{finalidade}")
+    if base:
+        proto = ((base.get("data") or {}).get("cabecalho") or {}).get("protocolo")
+        if proto:
+            params["protocolo"] = proto
+
+    r = await _get("/localize/v3/pessoas-de-referencia", params)
     if r.get("status") == "ok":
         _cache[key] = r
     return r

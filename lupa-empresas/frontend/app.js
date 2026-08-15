@@ -122,6 +122,7 @@ async function loadCompany(cnpj, root) {
   }
 
   renderCompany(root, cnpj, data.company);
+  initConexoesBotao();
   autoLoadSocioPhones(data.company.qsa || []);
   // SOMENTE agora (pagina de detalhe carregada) dispara o scraping.
   loadEmployees(cnpj);
@@ -181,6 +182,14 @@ function renderCompany(root, cnpj, c) {
         ${esc(fmtCnpj(cnpj))}
         ${c.descricao_situacao_cadastral ? ` &middot; <span class="badge ${situacaoClass(c.descricao_situacao_cadastral)}">${esc(c.descricao_situacao_cadastral)}</span>` : ""}
       </p>
+
+      <p>
+        <button type="button" id="btn-conexoes" data-cnpj="${esc(cnpj)}"
+                title="Sócios, possíveis decisores e empresas ligadas — com telefone. 1 consulta Assertiva.">
+          🔗 Buscar conexões (Assertiva)
+        </button>
+      </p>
+      <div id="conexoes-box"></div>
 
       <h2>Dados da Empresa</h2>
       <div class="grid">
@@ -444,4 +453,57 @@ async function loadEmployees(cnpj) {
   } catch (err) {
     body.innerHTML = '<div class="warning">Erro ao buscar funcionarios no LinkedIn.</div>';
   }
+}
+
+// ── Conexões da empresa (Assertiva): sócios, possíveis decisores e empresas
+// ligadas, cada um com telefone e flag de WhatsApp. Custa 1 consulta, então é
+// opt-in por botão — nunca dispara sozinho ao abrir a página.
+function initConexoesBotao() {
+  const btn = document.getElementById("btn-conexoes");
+  if (!btn) return;
+  btn.addEventListener("click", () => carregarConexoes(btn.dataset.cnpj, btn));
+}
+
+async function carregarConexoes(cnpj, btn) {
+  const box = document.getElementById("conexoes-box");
+  const rotulo = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Buscando conexoes...";
+  box.innerHTML = '<div class="loading-inline"><span class="spinner"></span> Consultando a Assertiva...</div>';
+  try {
+    const d = await fetch(`${API}/api/company/${onlyDigits(cnpj)}/conexoes`).then((r) => r.json());
+    box.innerHTML = conexoesHtml(d);
+  } catch (e) {
+    box.innerHTML = `<div class="msg error">Erro ao buscar conexoes: ${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = rotulo;
+  }
+}
+
+function conexoesHtml(d) {
+  if (d.status === "unavailable") return `<div class="msg">${esc(d.message || "Assertiva nao configurada.")}</div>`;
+  if (d.status === "not_found" || !d.total) return '<div class="msg">Nenhuma conexao encontrada para este CNPJ.</div>';
+  if (d.status !== "ok") return `<div class="msg error">${esc(d.message || "Falha ao consultar conexoes.")}</div>`;
+
+  const linhas = (d.conexoes || []).map((c) => {
+    const doc = onlyDigits(c.documento || "");
+    const docFmt = doc.length === 11 ? fmtCpf(doc) : doc.length === 14 ? fmtCnpj(doc) : (c.documento || "");
+    const zap = c.whatsapp ? " (WhatsApp)" : "";
+    const np = c.naoPerturbe ? " (nao perturbe)" : "";
+    return `<tr>
+      <td>${esc(c.relacao || c.tipoRelacao || "-")}</td>
+      <td>${esc(c.nomeOuRazaoSocial || "-")}</td>
+      <td>${esc(docFmt)}</td>
+      <td>${esc(c.cargo || "")}</td>
+      <td>${c.telefone ? esc(c.telefone) + zap + np : "-"}</td>
+    </tr>`;
+  }).join("");
+
+  return `
+    <div class="subhead">Conexoes na Assertiva — ${d.total} (${d.com_telefone} com telefone)</div>
+    <table class="table">
+      <thead><tr><th>Relacao</th><th>Nome</th><th>Documento</th><th>Cargo</th><th>Telefone</th></tr></thead>
+      <tbody>${linhas}</tbody>
+    </table>`;
 }

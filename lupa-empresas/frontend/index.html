@@ -753,6 +753,20 @@
     </div>
 
     <div class="search-panel">
+      <h3 style="margin:0 0 12px;font-size:1.05rem">Relatório de uso TOTAL (Assertiva)</h3>
+      <div class="filter-row" style="margin-top:0">
+        <span class="filter-label">Período:</span>
+        <button type="button" class="pf-cargo adm-per" data-dias="7">7 dias</button>
+        <button type="button" class="pf-cargo adm-per active" data-dias="30">30 dias</button>
+        <button type="button" class="pf-cargo adm-per" data-dias="90">90 dias</button>
+        <label>De <input id="adm-total-desde" type="date" class="filter-num"></label>
+        <label>Até <input id="adm-total-ate" type="date" class="filter-num"></label>
+        <button id="adm-total-atualizar" class="btn-secondary">🔄 Atualizar</button>
+      </div>
+      <div id="adm-total-resultado"></div>
+    </div>
+
+    <div class="search-panel">
       <h3 style="margin:0 0 12px;font-size:1.05rem">Consultas por usuário (limite diário: 100)</h3>
       <div class="en-step">
         <label>Usuário
