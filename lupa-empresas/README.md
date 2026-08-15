@@ -42,6 +42,8 @@ Depois abra: **http://localhost:8010**
 | GET | `/api/search?q={termo}` | Busca por CNPJ exato (BrasilAPI) ou por nome (Casa dos Dados). **Nao faz scraping.** |
 | GET | `/api/company/{cnpj}` | Dados completos da empresa via BrasilAPI. **Nao faz scraping.** |
 | GET | `/api/company/{cnpj}/employees` | **Dispara o scraping do LinkedIn** e retorna funcionarios (nome + cargo + url). Cacheado por CNPJ. |
+| GET | `/api/company/{cnpj}/vinculos` | Vinculos empregaticios declarados na RAIS (nome + CPF + admissao + desligamento), via FDX APIs. Precisa de `FDX_TOKEN`. Cache de 6h; `?refresh=true` ignora o cache. |
+| POST | `/api/vinculos/export` | XLSX da lista de vinculos que esta na tela. Body: `{cnpj, razao_social, referencia_br, vinculos:[...]}`. |
 
 ## Limitacao da BrasilAPI (importante)
 

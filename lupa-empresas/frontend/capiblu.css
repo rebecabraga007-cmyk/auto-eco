@@ -184,12 +184,14 @@ body {
 }
 .filter-label { font-size: .82rem; color: var(--gray-500); font-weight: 600; }
 
-.chip-ex {
+/* .chip-vin = mesmos exemplos, na aba Vínculos. Classe própria porque o listener
+   global de .chip-ex dispara a busca de Empresa. */
+.chip-ex, .chip-vin {
   background: var(--gray-100); border: 1px solid var(--gray-200);
   color: var(--gray-700); border-radius: 999px; padding: 5px 14px;
   font-size: .82rem; cursor: pointer; transition: all .12s;
 }
-.chip-ex:hover { border-color: var(--blue-mid); color: var(--blue-mid); background: var(--blue-soft); }
+.chip-ex:hover, .chip-vin:hover { border-color: var(--blue-mid); color: var(--blue-mid); background: var(--blue-soft); }
 
 .filter-select {
   border: 1px solid var(--gray-200); border-radius: var(--radius-sm);

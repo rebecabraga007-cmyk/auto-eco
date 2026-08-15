@@ -2678,3 +2678,257 @@ function toast_inicio(msg) {
     status.textContent = ok ? '✅ Dossiê gerado e baixado.' : '';
   });
 })();
+
+// ══════════════════════════════════════════════════════
+//  MÓDULO VÍNCULOS EMPREGATÍCIOS (RAIS)
+//  Quem trabalha (ou trabalhou) num CNPJ — nome, CPF, admissão.
+// ══════════════════════════════════════════════════════
+const vinQ   = document.getElementById('vin-q');
+const vinBtn = document.getElementById('vin-btn');
+const vinRes = document.getElementById('vin-results');
+
+const VIN_PER_PAGE = 25;
+const vinState = { cnpj: '', dados: null, filtro: 'todos', busca: '', page: 0 };
+
+if (vinQ) vinQ.addEventListener('input', e => { e.target.value = fmtCnpj(e.target.value); });
+
+async function vinBuscar() {
+  const cnpj = onlyDigits(vinQ.value);
+  if (cnpj.length !== 14) {
+    vinRes.innerHTML = `<p class="msg error">CNPJ inválido — precisa ter 14 dígitos.</p>`;
+    return;
+  }
+  vinBtn.disabled = true;
+  vinRes.innerHTML = spinner();
+  Object.assign(vinState, { cnpj, dados: null, filtro: 'todos', busca: '', page: 0 });
+  try {
+    const r = await fetch(`${API}/api/company/${cnpj}/vinculos`);
+    const data = await r.json();
+    vinState.dados = data;
+    vinRender();
+    logBusca('Vínculos', fmtCnpj(cnpj), `${data.total || 0} pessoa(s)`);
+  } catch (e) {
+    vinRes.innerHTML = `<p class="msg error">Erro ao consultar: ${esc(e.message)}</p>`;
+  } finally {
+    vinBtn.disabled = false;
+  }
+}
+
+function vinFiltrados() {
+  const d = vinState.dados;
+  if (!d || !Array.isArray(d.vinculos)) return [];
+  const termo = normTexto(vinState.busca || '');
+  const termoDigitos = onlyDigits(vinState.busca || '');
+  return d.vinculos.filter(v => {
+    if (vinState.filtro === 'ativos' && !v.ativo) return false;
+    if (vinState.filtro === 'desligados' && v.ativo) return false;
+    if (!termo) return true;
+    const achouNome = normTexto(v.nome || '').includes(termo);
+    const achouCpf = termoDigitos && (v.cpf || '').includes(termoDigitos);
+    return achouNome || achouCpf;
+  });
+}
+
+function vinRender() {
+  const d = vinState.dados;
+  if (!d) return;
+  if (d.status === 'unavailable') {
+    vinRes.innerHTML = `<p class="msg">ℹ️ ${esc(d.message || 'Consulta de vínculos não configurada.')}</p>`;
+    return;
+  }
+  if (d.status === 'not_found') {
+    vinRes.innerHTML = `<p class="msg">Nenhum vínculo declarado na RAIS para o CNPJ ${esc(fmtCnpj(vinState.cnpj))}.
+      <br><span style="font-size:.85rem;color:var(--gray-500)">A base cobre o último ano entregue — empresa nova, MEI sem empregado ou quadro só de sócios não aparece aqui.</span></p>`;
+    return;
+  }
+  if (d.status !== 'ok') {
+    vinRes.innerHTML = `<p class="msg error">${esc(d.message || 'Falha ao consultar os vínculos.')}</p>`;
+    return;
+  }
+
+  const lista = vinFiltrados();
+  vinRes.innerHTML = `
+    <div class="results-head">
+      <h2>${esc(d.razao_social || fmtCnpj(d.cnpj))}</h2>
+      <span class="results-head-note">Fonte: RAIS · entregue em ${esc(d.referencia_br || '—')}</span>
+    </div>
+    <div class="metric-grid" style="margin-bottom:16px">
+      <div class="metric-cell">
+        <div class="metric-label">Pessoas declaradas</div>
+        <div class="metric-value">${d.total}</div>
+        <div class="metric-sub">na última RAIS entregue</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">Ainda na empresa</div>
+        <div class="metric-value" style="color:var(--green)">${d.ativos}</div>
+        <div class="metric-sub">sem desligamento até ${esc(d.referencia_br || '—')}</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">Já saíram</div>
+        <div class="metric-value" style="color:var(--gray-500)">${d.desligados}</div>
+        <div class="metric-sub">com desligamento declarado</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">Contratações no ano</div>
+        <div class="metric-value">${d.admissoes_ano_base || 0}</div>
+        <div class="metric-sub">${d.ano_base ? 'admitidos em ' + esc(d.ano_base) : ''}</div>
+      </div>
+    </div>
+
+    <div class="res-tabs" id="vin-tabs">
+      <button class="res-tab${vinState.filtro === 'todos' ? ' active' : ''}" data-f="todos">Todos <span class="res-tab-count">${d.total}</span></button>
+      <button class="res-tab${vinState.filtro === 'ativos' ? ' active' : ''}" data-f="ativos">Ainda lá <span class="res-tab-count">${d.ativos}</span></button>
+      <button class="res-tab${vinState.filtro === 'desligados' ? ' active' : ''}" data-f="desligados">Já saíram <span class="res-tab-count">${d.desligados}</span></button>
+    </div>
+
+    <div class="search-panel" style="margin-bottom:14px">
+      <div class="search-row">
+        <div class="input-wrap">
+          <span class="input-icon">🔎</span>
+          <input id="vin-filtro-nome" type="text" placeholder="Filtrar por nome ou CPF…" value="${esc(vinState.busca)}" autocomplete="off" />
+        </div>
+        <button id="vin-export" class="btn-secondary">📊 Exportar XLSX</button>
+      </div>
+    </div>
+
+    <div id="vin-lista-head" class="results-head" style="margin-bottom:8px">
+      <h2 style="font-size:1rem">${lista.length} pessoa${lista.length === 1 ? '' : 's'} nesta lista</h2>
+      <span class="results-head-note">clique em alguém para puxar telefone e endereço</span>
+    </div>
+    <div id="vin-lista"></div>
+    <div id="vin-pager" class="prosp-pager"></div>
+
+    <div class="dica">
+      <div class="dica-title">O que essa lista é (e o que ela não é)</div>
+      <div class="dica-body">É a RAIS: a declaração anual que a empresa entrega ao Ministério do Trabalho, com quem estava na folha. A última aqui foi entregue em ${esc(d.referencia_br || '—')} — quem entrou depois disso não aparece, e "ainda na empresa" quer dizer "estava lá naquela data". De quem já saiu, a base informa só o dia e o mês do desligamento, sem o ano.</div>
+    </div>`;
+
+  document.querySelectorAll('#vin-tabs .res-tab').forEach(b => b.addEventListener('click', () => {
+    vinState.filtro = b.dataset.f;
+    vinState.page = 0;
+    vinRender();
+  }));
+
+  document.getElementById('vin-filtro-nome').addEventListener('input', e => {
+    vinState.busca = e.target.value;
+    vinState.page = 0;
+    vinRenderPagina();
+    const n = vinFiltrados().length;
+    document.querySelector('#vin-lista-head h2').textContent = `${n} pessoa${n === 1 ? '' : 's'} nesta lista`;
+  });
+
+  document.getElementById('vin-export').addEventListener('click', vinExportar);
+  vinRenderPagina();
+}
+
+
+function vinRenderPagina() {
+  const lista = vinFiltrados();
+  const pages = Math.max(1, Math.ceil(lista.length / VIN_PER_PAGE));
+  const page = Math.min(vinState.page || 0, pages - 1);
+  vinState.page = page;
+  const el = document.getElementById('vin-lista');
+  if (!el) return;
+
+  if (!lista.length) {
+    el.innerHTML = `<p class="msg" style="padding:24px 0">Ninguém bate com esse filtro.</p>`;
+    document.getElementById('vin-pager').innerHTML = '';
+    return;
+  }
+
+  el.innerHTML = lista.slice(page * VIN_PER_PAGE, page * VIN_PER_PAGE + VIN_PER_PAGE).map((v, k) => {
+    const id = 'vin-' + (page * VIN_PER_PAGE + k);
+    const badge = v.ativo
+      ? `<span class="badge badge-ativa">Ainda lá</span>`
+      : `<span class="badge badge-neutra">Saiu em ${esc(v.desligamento_br || '—')}</span>`;
+    const meta = [
+      `📅 admitido em ${esc(v.admissao_br || '—')}`,
+      v.tempo_casa ? `⏳ ${esc(v.tempo_casa)} de casa` : '',
+    ].filter(Boolean).join(' · ');
+    return `
+    <div class="card-person" data-cpf="${esc(v.cpf)}">
+      <div class="card-person-header" onclick="togglePerson('${id}', '${v.cpf}')">
+        <div>
+          <div class="person-name">${esc(v.nome || '—')}</div>
+          <div class="person-meta">${meta}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          ${badge}
+          <span class="person-cpf">${esc(fmtCpf(v.cpf))}</span>
+          <span class="person-chevron" id="chev-np-${id}">▼</span>
+        </div>
+      </div>
+      <div class="card-person-body" id="body-${id}">
+        <div id="mk-${id}" style="padding-top:12px"><p class="msg" style="padding:12px">Carregando dados Mk Buscas…</p></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  vinRenderPager(page, pages);
+}
+
+function vinRenderPager(page, pages) {
+  const el = document.getElementById('vin-pager');
+  if (!el) return;
+  if (pages <= 1) { el.innerHTML = ''; return; }
+  const nums = [];
+  const win = 2;
+  for (let p = 0; p < pages; p++) {
+    if (p === 0 || p === pages - 1 || (p >= page - win && p <= page + win)) nums.push(p);
+    else if (nums[nums.length - 1] !== '…') nums.push('…');
+  }
+  const btn = (label, p, opts = {}) =>
+    `<button class="prosp-page-btn${opts.active ? ' active' : ''}" ${opts.disabled ? 'disabled' : ''} data-p="${p}">${label}</button>`;
+  el.innerHTML = `<div class="prosp-pages">
+      ${btn('«', 0, { disabled: page === 0 })}
+      ${btn('‹', page - 1, { disabled: page === 0 })}
+      ${nums.map(n => n === '…' ? '<span class="prosp-page-dots">…</span>' : btn(n + 1, n, { active: n === page })).join('')}
+      ${btn('›', page + 1, { disabled: page >= pages - 1 })}
+      ${btn('»', pages - 1, { disabled: page >= pages - 1 })}
+    </div>`;
+  el.querySelectorAll('.prosp-page-btn').forEach(b => b.addEventListener('click', () => {
+    vinState.page = parseInt(b.dataset.p);
+    vinRenderPagina();
+    document.getElementById('vin-lista-head').scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }));
+}
+
+async function vinExportar() {
+  const btn = document.getElementById('vin-export');
+  const d = vinState.dados;
+  if (!d) return;
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`${API}/api/vinculos/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cnpj: d.cnpj,
+        razao_social: d.razao_social,
+        referencia_br: d.referencia_br,
+        vinculos: vinFiltrados(),
+      }),
+    });
+    if (!resp.ok) throw new Error('servidor respondeu ' + resp.status);
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `vinculos-${d.cnpj}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert('Falha ao exportar: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+if (vinBtn) {
+  vinBtn.addEventListener('click', vinBuscar);
+  vinQ.addEventListener('keydown', e => e.key === 'Enter' && vinBuscar());
+  document.querySelectorAll('.chip-vin').forEach(c => c.addEventListener('click', () => {
+    vinQ.value = fmtCnpj(c.dataset.val);
+    vinBuscar();
+  }));
+}

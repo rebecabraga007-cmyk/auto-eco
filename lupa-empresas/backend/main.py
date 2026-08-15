@@ -40,6 +40,7 @@ import navlog
 import sheet_reader
 import linkedin_scraper
 import mkbuscas
+import rais
 import serasa
 import dossie
 import mistral
@@ -389,6 +390,78 @@ async def employees(cnpj: str):
                 emp["cpf_status"] = "ambiguous" if cands else "not_found"
                 emp["cpf_candidates"] = len(cands)
     return result
+
+
+# ---- Vínculos empregatícios (RAIS) ----
+
+@app.get("/api/company/{cnpj}/vinculos")
+async def company_vinculos(cnpj: str, refresh: bool = False):
+    """Quem trabalha (ou trabalhou) na empresa, pela RAIS: nome, CPF, admissão."""
+    return await rais.vinculos_cnpj(cnpj, refresh=refresh)
+
+
+_VIN_COLS = [
+    ("nome", "Nome"),
+    ("cpf", "CPF"),
+    ("situacao_txt", "Situação"),
+    ("admissao_br", "Admissão"),
+    ("desligamento_br", "Desligamento"),
+    ("tempo_casa", "Tempo de casa"),
+]
+
+
+@app.post("/api/vinculos/export")
+async def vinculos_export(payload: dict = Body(default={})):
+    """XLSX dos vínculos que estão na tela (já filtrados pelo front)."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    vinculos = payload.get("vinculos") or []
+    cnpj = re.sub(r"\D", "", str(payload.get("cnpj") or ""))
+    razao = str(payload.get("razao_social") or "")
+    referencia = str(payload.get("referencia_br") or "")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Vinculos"
+
+    ws["A1"] = f"Vínculos empregatícios — {razao or cnpj}"
+    ws["A1"].font = Font(bold=True, size=12)
+    ws["A2"] = (f"CNPJ {cnpj} · RAIS entregue em {referencia} · {len(vinculos)} pessoa(s) "
+                f"· gerado pelo CapiBLU")
+    ws["A2"].font = Font(size=9, color="666666")
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="0F2E4A")  # azul-noite do design system
+    for c, (_, label) in enumerate(_VIN_COLS, start=1):
+        cell = ws.cell(row=4, column=c, value=label)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for r, v in enumerate(vinculos, start=5):
+        if not isinstance(v, dict):
+            continue
+        v = dict(v)
+        v["situacao_txt"] = "Ainda na empresa" if v.get("ativo") else "Já saiu"
+        for c, (key, _) in enumerate(_VIN_COLS, start=1):
+            ws.cell(row=r, column=c, value=v.get(key, ""))
+
+    ws.freeze_panes = "A5"
+    ws.auto_filter.ref = f"A4:{get_column_letter(len(_VIN_COLS))}{max(5, 4 + len(vinculos))}"
+    for c, (key, label) in enumerate(_VIN_COLS, start=1):
+        largura = 34 if key == "nome" else max(14, len(label) + 4)
+        ws.column_dimensions[get_column_letter(c)].width = largura
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    nome_arquivo = f"vinculos-{cnpj or 'empresa'}.xlsx"
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nome_arquivo}"'},
+    )
 
 
 async def _phones_for_cpf(cpf: str, modo: str = "celular", max_tel: int = 3,
