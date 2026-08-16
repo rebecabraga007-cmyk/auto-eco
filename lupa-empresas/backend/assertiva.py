@@ -207,10 +207,16 @@ async def possiveis_decisores(cnpj: str, finalidade: int | None = None) -> dict[
                           {"cnpj": d, "protocolo": proto}), proto
 
     r, _ = await _tentar(usar_cache=True)
-    if r.get("status") in ("invalid", "error", "not_found"):
+    # Só vale repetir quando o PROTOCOLO foi recusado (protocolo velho do cache).
+    # "not_found" é resposta legítima — micro empresa quase nunca tem decisor —
+    # e repetir nesse caso DOBRAVA o custo: 2 consultas de CNPJ + 2 de decisores
+    # em toda empresa sem decisor, que é a maioria.
+    if r.get("status") in ("invalid", "error"):
         r, _ = await _tentar(usar_cache=False)
 
-    if r.get("status") == "ok":
+    # Cacheia inclusive o "não tem decisor": sem isso, cada nova montagem de
+    # lista consulta de novo a mesma empresa vazia.
+    if r.get("status") in ("ok", "not_found"):
         _cache[key] = r
     return r
 

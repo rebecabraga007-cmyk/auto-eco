@@ -2583,6 +2583,7 @@ function useRenderMap(colunas) {
 
 function admCarregar() {
   admCustoTotal(30);
+  admPrecosCarregar();
   admConsultasCarregar(); admCustoUsuarioCarregar(); admNavCarregar(); admCustoCarregar();
 }
 
@@ -3938,7 +3939,9 @@ function admTotalHtml(d) {
       <div class="metric-cell">
         <div class="metric-label">Custo no período</div>
         <div class="metric-value">${brl(a.custo_estimado)}</div>
-        <div class="metric-sub">a ${brl(d.custo_por_consulta)} por consulta</div>
+        <div class="metric-sub">${d.preco_medio && Math.abs(d.preco_medio - d.custo_por_consulta) > 0.0001
+          ? 'média de ' + brl(d.preco_medio) + ' por consulta (tabela de preços)'
+          : 'a ' + brl(d.custo_por_consulta) + ' por consulta — <b>tabela de preços não preenchida</b>'}</div>
       </div>
       <div class="metric-cell">
         <div class="metric-label">Gasto pelo CapiBLU</div>
@@ -3964,8 +3967,8 @@ function admTotalHtml(d) {
       <div>
         <h4 style="font-size:.9rem;margin:0 0 8px">Por tipo de consulta (Assertiva)</h4>
         <table class="data-table">
-          <thead><tr><th>Funcionalidade</th><th>Consultas</th><th>Custo</th></tr></thead>
-          <tbody>${funcs.map(([f, n]) => `<tr><td>${esc(f)}</td><td>${n}</td><td class="mono">${brl(n * d.custo_por_consulta)}</td></tr>`).join('') || '<tr><td colspan="3" class="msg">Sem registros.</td></tr>'}</tbody>
+          <thead><tr><th>Funcionalidade</th><th>Consultas</th><th>Custo</th><th>Preço</th></tr></thead>
+          <tbody>${funcs.map(([f, n]) => `<tr><td>${esc(f)}</td><td>${n}</td><td class="mono">${brl((a.custo_por_funcionalidade || {})[f])}</td><td class="mono" style="font-size:.75rem;color:var(--gray-500)">R$ ${Number((d.precos || {})[f] ?? d.custo_por_consulta).toLocaleString('pt-BR', {minimumFractionDigits: 3, maximumFractionDigits: 4})}/un</td></tr>`).join('') || '<tr><td colspan="4" class="msg">Sem registros.</td></tr>'}</tbody>
         </table>
       </div>
       <div>
@@ -4011,3 +4014,51 @@ function admTotalHtml(d) {
     admCustoTotal(diasAtual);
   }));
 })();
+
+// ── ADMIN · tabela de preço por tipo de consulta ────────────────────
+// A Assertiva não devolve preço em lugar nenhum da API; só o contrato diz.
+// Enquanto não preenchido, tudo é calculado pelo padrão (0,119) e o total do
+// relatório é estimativa.
+async function admPrecosCarregar() {
+  const box = document.getElementById('adm-precos-form');
+  if (!box) return;
+  box.innerHTML = '<p class="msg">Carregando…</p>';
+  try {
+    const d = await fetch(`${API}/api/custos/precos`).then(r => r.json());
+    if (d.status !== 'ok') {
+      box.innerHTML = `<p class="msg error">${esc(d.detail || d.message || 'Falha ao carregar.')}</p>`;
+      return;
+    }
+    const definidos = new Set(d.definidos || []);
+    box.innerHTML = `<div class="prosp-build-row">` + (d.funcionalidades || []).map(f => `
+      <label>${esc(f)}
+        <input type="number" step="0.001" min="0" class="filter-num adm-preco"
+               data-f="${esc(f)}" value="${d.precos[f] != null ? d.precos[f] : ''}"
+               placeholder="${d.padrao}" title="${definidos.has(f) ? 'preço definido por você' : 'usando o padrão'}" />
+        ${definidos.has(f) ? '' : `<span class="pf-advanced-hint" style="display:inline">padrão</span>`}
+      </label>`).join('') + `</div>`;
+  } catch (e) {
+    box.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
+  }
+}
+
+async function admPrecosSalvar() {
+  const status = document.getElementById('adm-precos-status');
+  const precos = {};
+  document.querySelectorAll('.adm-preco').forEach(i => { precos[i.dataset.f] = i.value; });
+  status.textContent = 'Salvando…';
+  try {
+    const r = await fetch(`${API}/api/custos/precos`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ precos }),
+    }).then(x => x.json());
+    if (r.status !== 'ok') { status.textContent = '⚠️ ' + (r.detail || r.message || 'falhou'); return; }
+    status.textContent = '✅ salvo — o relatório acima já usa esses valores';
+    admPrecosCarregar();
+    admCustoTotal(30);
+  } catch (e) {
+    status.textContent = '⚠️ ' + e.message;
+  }
+}
+
+document.getElementById('adm-precos-salvar')?.addEventListener('click', admPrecosSalvar);

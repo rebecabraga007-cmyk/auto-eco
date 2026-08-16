@@ -1603,6 +1603,8 @@ async def custos_total(request: Request, desde: str = "", ate: str = "", dias: i
     except ValueError:
         return {"status": "error", "message": "Datas inválidas (use YYYY-MM-DD)."}
 
+    tabela = custos.precos()
+
     # ── 1. contagem oficial da Assertiva ──
     oficial = {"disponivel": False, "consultas": 0, "subitens": 0,
                "por_funcionalidade": {}, "por_usuario": {}, "truncado": False}
@@ -1637,15 +1639,25 @@ async def custos_total(request: Request, desde: str = "", ate: str = "", dias: i
     custo_unit = custos.CUSTO_POR_CONSULTA
     total_oficial = oficial["consultas"] + oficial["subitens"]
 
+    # Custo por funcionalidade, cada uma com o seu preço da tabela.
+    custo_por_func = {f: round(n * custos.preco_de(f, tabela), 2)
+                      for f, n in oficial["por_funcionalidade"].items()}
+    custo_oficial = round(sum(custo_por_func.values()), 2)
+    # Preço médio efetivo — só pra explicar o total, não é preço de tabela.
+    medio = round(custo_oficial / total_oficial, 4) if total_oficial else custo_unit
+
     return {
         "status": "ok",
         "periodo": {"desde": desde, "ate": ate, "dias": (
             _dt.date.fromisoformat(ate) - _dt.date.fromisoformat(desde)).days + 1},
         "custo_por_consulta": custo_unit,
+        "precos": tabela,
+        "preco_medio": medio,
         "assertiva": {
             **oficial,
             "total_registros": total_oficial,
-            "custo_estimado": round(total_oficial * custo_unit, 2),
+            "custo_por_funcionalidade": custo_por_func,
+            "custo_estimado": custo_oficial,
         },
         "interno": {
             "chamadas": interno_user["total_consultas"],
@@ -1656,9 +1668,34 @@ async def custos_total(request: Request, desde: str = "", ate: str = "", dias: i
         "modelos": interno_modelo,
         "diferenca": {
             "chamadas": interno_user["total_consultas"] - total_oficial,
-            "custo": round(interno_user["total_geral"] - total_oficial * custo_unit, 2),
+            "custo": round(interno_user["total_geral"] - custo_oficial, 2),
         },
     }
+
+
+@app.get("/api/custos/precos")
+async def custos_precos_ler(request: Request):
+    """Tabela de preço por tipo de consulta — só admin."""
+    if not _is_admin(request):
+        return JSONResponse({"detail": "Requer admin."}, status_code=403)
+    import config_store
+    salvos = config_store.get("assertiva_precos") or {}
+    return {"status": "ok", "precos": custos.precos(),
+            "padrao": custos.CUSTO_POR_CONSULTA,
+            "definidos": sorted(salvos.keys()),
+            "funcionalidades": custos.FUNCIONALIDADES}
+
+
+@app.post("/api/custos/precos")
+async def custos_precos_salvar(request: Request, payload: dict = Body(default={})):
+    """Salva a tabela de preço. Body: {precos: {"CPF": 0.119, "CNPJ": 0.30, ...}}.
+
+    Campo vazio volta ao padrão. Os nomes são os do relatório da Assertiva.
+    """
+    if not _is_admin(request):
+        return JSONResponse({"detail": "Requer admin."}, status_code=403)
+    tabela = custos.salvar_precos(payload.get("precos") or {})
+    return {"status": "ok", "precos": tabela}
 
 
 def _modelos_save(lst: list) -> None:

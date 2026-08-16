@@ -18,6 +18,60 @@ import time
 
 CUSTO_POR_CONSULTA = float(os.environ.get("ASSERTIVA_CUSTO_POR_CONSULTA", "0.119"))
 
+# ---------------------------------------------------------------------------
+# Tabela de preço por TIPO de consulta.
+#
+# A Assertiva cobra preços diferentes por funcionalidade, e a API não expõe
+# nenhum campo de valor — só o contrato comercial diz quanto é cada uma. Até
+# alguém preencher os valores reais, tudo cai no CUSTO_POR_CONSULTA (0,119),
+# que é o preço conhecido do telefone por CPF. Por isso o total do painel é
+# ESTIMATIVA, não fatura.
+#
+# Os nomes são os que a própria Assertiva usa no relatório de uso
+# (functionality), pra bater 1:1 com o que ela contabiliza.
+# ---------------------------------------------------------------------------
+FUNCIONALIDADES = [
+    "CPF", "CNPJ", "Telefone", "E-mail", "Nome ou endereço",
+    "Possíveis decisores", "Pessoas de referência", "Mais telefones",
+    "Conexões API",
+]
+
+
+def precos() -> dict:
+    """Preço por funcionalidade. O que o admin salvar vence; o resto usa o padrão."""
+    import config_store
+    salvos = config_store.get("assertiva_precos") or {}
+    tabela = {f: CUSTO_POR_CONSULTA for f in FUNCIONALIDADES}
+    for nome, valor in salvos.items():
+        try:
+            tabela[nome] = float(valor)
+        except (TypeError, ValueError):
+            continue
+    return tabela
+
+
+def salvar_precos(novos: dict) -> dict:
+    """Guarda a tabela editada pelo admin. Valor vazio/invalido volta ao padrão."""
+    import config_store
+    limpos = {}
+    for nome, valor in (novos or {}).items():
+        if valor in (None, ""):
+            continue
+        try:
+            v = float(str(valor).replace(",", "."))
+        except (TypeError, ValueError):
+            continue
+        if v >= 0:
+            limpos[nome] = round(v, 4)
+    config_store.set_many({"assertiva_precos": limpos})
+    return precos()
+
+
+def preco_de(funcionalidade: str, tabela: dict | None = None) -> float:
+    """Preço de uma funcionalidade, com fallback pro valor padrão."""
+    t = tabela if tabela is not None else precos()
+    return t.get((funcionalidade or "").strip(), CUSTO_POR_CONSULTA)
+
 # Sentinela pra "planilha de cliente" — enriquecimento feito por fora dos modelos
 # próprios salvos (custo externo), mas ainda rastreado.
 CLIENTE_ID = "__cliente__"
