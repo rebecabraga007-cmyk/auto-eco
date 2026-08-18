@@ -645,6 +645,68 @@ async def company_decisores(cnpj: str, conexoes: bool = False):
     return saida
 
 
+@app.post("/api/prospeccao/cobertura-decisores")
+async def cobertura_decisores(payload: dict = Body(default={})):
+    """Mede quantas empresas da amostra têm decisor na Assertiva, SEM puxar telefone.
+
+    Serve pra decidir se vale montar a lista com decisores antes de gastar: o
+    caro não é descobrir se existe decisor (2 consultas por empresa), é puxar
+    telefone de cada um deles.
+
+    Body: {cnpjs: [...], cargos: "diretor,gerente"}.
+    Retorna a taxa de cobertura, a distribuição de cargos e a projeção de
+    quantas empresas precisariam ser testadas pra fechar uma meta.
+    """
+    cnpjs = [re.sub(r"\D", "", str(c or "")) for c in (payload.get("cnpjs") or [])]
+    cnpjs = [c for c in cnpjs if len(c) == 14][:60]
+    cargos = str(payload.get("cargos") or "")
+    if not cnpjs:
+        return {"status": "error", "message": "Nenhum CNPJ válido na amostra."}
+    if not assertiva.enabled():
+        return {"status": "unavailable", "message": "Assertiva não configurada."}
+
+    sem = asyncio.Semaphore(6)
+
+    async def testar(cnpj: str) -> dict:
+        async with sem:
+            r = await assertiva.possiveis_decisores(cnpj)
+        if r.get("status") != "ok":
+            return {"cnpj": cnpj, "tem": False, "total": 0, "no_cargo": 0,
+                    "motivo": r.get("status")}
+        brutos = ((r.get("data") or {}).get("resposta") or {}).get("possiveisDecisores") or []
+        todos = decisor_lib.da_assertiva(brutos)
+        no_cargo = _filtra_decisores(todos, cargos, 0) if cargos else todos
+        return {"cnpj": cnpj, "tem": bool(todos), "total": len(todos),
+                "no_cargo": len(no_cargo), "motivo": "ok",
+                "cargos": sorted({p["cargo"] for p in todos if p.get("cargo")})[:6]}
+
+    resultados = await asyncio.gather(*[testar(c) for c in cnpjs])
+
+    com_decisor = [r for r in resultados if r["tem"]]
+    com_cargo = [r for r in resultados if r["no_cargo"]]
+    dist: dict[str, int] = {}
+    for r in resultados:
+        for c in r.get("cargos") or []:
+            dist[c] = dist.get(c, 0) + 1
+
+    n = len(resultados)
+    taxa = len(com_decisor) / n if n else 0
+    taxa_cargo = len(com_cargo) / n if n else 0
+    return {
+        "status": "ok",
+        "testadas": n,
+        "com_decisor": len(com_decisor),
+        "com_o_cargo": len(com_cargo),
+        "taxa": round(taxa * 100, 1),
+        "taxa_cargo": round(taxa_cargo * 100, 1),
+        "media_decisores": round(sum(r["total"] for r in com_decisor) / len(com_decisor), 1)
+                           if com_decisor else 0,
+        "cargos_encontrados": dict(sorted(dist.items(), key=lambda x: -x[1])),
+        "consultas_gastas": n * 2,   # cadastro + decisores por empresa
+        "detalhe": resultados,
+    }
+
+
 @app.get("/api/company/{cnpj}/vinculos/assertiva")
 async def company_vinculos_assertiva(cnpj: str):
     """Decisores da Assertiva prontos pra cruzar com a lista da RAIS que já

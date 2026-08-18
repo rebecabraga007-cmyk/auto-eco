@@ -1208,9 +1208,23 @@ function renderProspList() {
               de acordo com a hierarquia <span class="pf-advanced-hint" style="display:inline">— nível 1 primeiro</span></span>
           </label>
           <label class="toggle-wrap" style="flex-basis:100%">
+            <input id="pf-continuar" type="checkbox" />
+            <span><strong>Continuar buscando</strong> até fechar a quantidade pedida com decisor
+              <span class="pf-advanced-hint" style="display:inline">— pega mais empresas na base no lugar das puladas; teto de</span>
+              <input id="pf-max-tentativas" type="number" min="1" max="2000" value="150" class="filter-num" style="width:74px" />
+              <span class="pf-advanced-hint" style="display:inline">tentativas</span>
+            </span>
+          </label>
+          <label class="toggle-wrap" style="flex-basis:100%">
             <input id="pf-apenas-cargo" type="checkbox" />
             <span>Filtrar <strong>APENAS decisores nesse cargo</strong> <span class="pf-advanced-hint" style="display:inline">— lista só com quem tem o cargo marcado, sem sócios; empresa sem ninguém no cargo sai da lista</span></span>
           </label>
+          <div class="filter-row" style="margin:0;flex-basis:100%">
+            <button type="button" id="pf-testar-cobertura" class="btn-secondary" title="Descobre em quantas empresas existe decisor, sem puxar telefone">🔬 Testar cobertura em</button>
+            <input id="pf-amostra" type="number" min="3" max="60" value="10" class="filter-num" style="width:70px" />
+            <span class="pf-advanced-hint" style="display:inline">empresas da lista — 2 consultas cada, sem telefone</span>
+          </div>
+          <div id="pf-cobertura" class="prosp-dedup-note" hidden></div>
           <div class="filter-row" id="pf-cargos" style="margin:0">
             <span class="filter-label">Cargos:</span>
             <button type="button" class="pf-cargo active" data-c="">Todos</button>
@@ -1326,6 +1340,14 @@ function initDecisoresBox() {
     const marcadas = prospState.selecionadas ? prospState.selecionadas.size : 0;
     const empresas = marcadas || parseInt(document.getElementById('pf-qtd').value) || 0;
     const pular = document.getElementById('pf-pular-sem-dec')?.checked;
+    const cont = document.getElementById('pf-continuar')?.checked;
+    const teto = parseInt(document.getElementById('pf-max-tentativas')?.value) || 0;
+    if (cont) {
+      aviso.textContent = `Com "continuar buscando", o gasto depende de quantas empresas precisam ser testadas: `
+        + `cada tentativa custa 2 consultas de cadastro, mais até ${n} de telefone quando a empresa é aproveitada. `
+        + `No pior caso do teto (${teto} tentativas): ~${teto * 2 + empresas * n} consultas.`;
+      return;
+    }
     aviso.textContent = fonte === 'assertiva'
       ? `≈ ${empresas * (2 + n)} consultas Assertiva: ${empresas} × (2 pela empresa + até ${n} telefone${n === 1 ? '' : 's'} de decisor).`
         + (pular ? ' Com "pular sem decisor", quem não tem decisor gasta só as 2 da empresa.' : '')
@@ -1341,7 +1363,8 @@ function initDecisoresBox() {
     atualizar();
   };
   estrito?.addEventListener('change', sincronizaEstrito);
-  ['pf-decfonte', 'pf-maxdec', 'pf-qtd'].forEach(id => {
+  document.getElementById('pf-testar-cobertura')?.addEventListener('click', testarCobertura);
+  ['pf-decfonte', 'pf-maxdec', 'pf-qtd', 'pf-continuar', 'pf-max-tentativas', 'pf-pular-sem-dec'].forEach(id => {
     document.getElementById(id)?.addEventListener('input', atualizar);
     document.getElementById(id)?.addEventListener('change', atualizar);
   });
@@ -1359,6 +1382,53 @@ function initDecisoresBox() {
     }
   }));
   atualizar();
+}
+
+// Teste de cobertura: mede em quantas empresas a Assertiva TEM decisor antes de
+// montar a lista. Custa 2 consultas por empresa e nao puxa telefone — é o passo
+// barato pra decidir se vale gastar o caro.
+async function testarCobertura() {
+  const btn = document.getElementById('pf-testar-cobertura');
+  const box = document.getElementById('pf-cobertura');
+  const n = parseInt(document.getElementById('pf-amostra').value) || 10;
+  const cargos = cargosSelecionados();
+
+  // Amostra: as marcadas, se houver; senão as primeiras da lista carregada.
+  const base = (prospState.selecionadas && prospState.selecionadas.size)
+    ? [...prospState.selecionadas].sort((a, b) => a - b).map(i => prospState.empresas[i])
+    : prospState.empresas;
+  const amostra = (base || []).filter(Boolean).slice(0, n);
+  if (!amostra.length) { alert('Busque empresas antes de testar a cobertura.'); return; }
+
+  btn.disabled = true;
+  box.hidden = false;
+  box.innerHTML = `<span class="spinner"></span> Testando ${amostra.length} empresa(s)…`;
+  try {
+    const r = await fetch(`${API}/api/prospeccao/cobertura-decisores`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cnpjs: amostra.map(e => onlyDigits(e.cnpj)), cargos }),
+    }).then(x => x.json());
+    if (r.status !== 'ok') {
+      box.innerHTML = `⚠️ ${esc(r.message || 'Falha no teste.')}`;
+      return;
+    }
+    const alvo = parseInt(document.getElementById('pf-qtd').value) || 25;
+    const taxa = cargos ? r.taxa_cargo : r.taxa;
+    const precisaria = taxa > 0 ? Math.ceil(alvo / (taxa / 100)) : null;
+    const dist = Object.entries(r.cargos_encontrados || {})
+      .map(([c, q]) => `${esc(c)} (${q})`).join(' · ');
+    box.innerHTML = `
+      🔬 <strong>${r.com_decisor} de ${r.testadas}</strong> empresa(s) têm decisor na base — <strong>${r.taxa}%</strong> de cobertura.
+      ${cargos ? `Com o filtro de cargo atual: <strong>${r.com_o_cargo} (${r.taxa_cargo}%)</strong>.` : ''}
+      ${r.media_decisores ? `Média de ${r.media_decisores} decisor(es) por empresa que tem.` : ''}
+      ${dist ? `<br>Cargos encontrados: ${dist}.` : ''}
+      ${precisaria ? `<br>📐 Para fechar <strong>${alvo}</strong> empresa(s) com decisor, a projeção é testar ~<strong>${precisaria}</strong> — ajuste o teto de tentativas por aí.` : `<br>⚠️ Nenhuma empresa da amostra tem decisor: montar com "pular sem decisor" ligado devolveria lista vazia.`}
+      <br><span class="pf-advanced-hint" style="display:inline">Custo deste teste: ${r.consultas_gastas} consultas de cadastro. Telefone não foi consultado.</span>`;
+  } catch (e) {
+    box.innerHTML = `⚠️ Erro: ${esc(e.message)}`;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function cargosSelecionados() {
@@ -1519,11 +1589,12 @@ async function prospMontar() {
   const apenasCargo = document.getElementById('pf-apenas-cargo')?.checked ? 'true' : 'false';
   const fallbackN = document.getElementById('pf-fallback-dec')?.checked
     ? (parseInt(document.getElementById('pf-fallback-n')?.value) || 3) : 0;
+  const continuar = document.getElementById('pf-continuar')?.checked;
+  const tetoTentativas = parseInt(document.getElementById('pf-max-tentativas')?.value) || 0;
   // Marcou alguma? A seleção manda. Nada marcado = as N primeiras, como antes.
   const marcadas = prospState.selecionadas && prospState.selecionadas.size
     ? [...prospState.selecionadas].sort((a, b) => a - b).map(i => prospState.empresas[i]).filter(Boolean)
     : null;
-  const alvo = marcadas || prospState.empresas.slice(0, qtd);
   const wrap = document.getElementById('prosp-table-wrap');
   prospState.building = true;
   prospState.rows = [];
@@ -1531,44 +1602,98 @@ async function prospMontar() {
   const btn = document.getElementById('pf-montar');
   btn.disabled = true;
 
-  // Monta em paralelo com pool de concorrência (era 1 a 1 => lento).
-  // Decisores (LinkedIn) é pesado → menos concorrência para não sobrecarregar/bloquear.
   // Só o LinkedIn precisa de concorrência baixa (scraping); a Assertiva aguenta.
   const CONC = (decisores && decFonte === 'linkedin') ? 2 : 6;
-  const results = new Array(alvo.length);
-  const leadsRaw = new Array(alvo.length);
-  const infoDec = new Array(alvo.length);
-  let completed = 0, next = 0;
+
+  // Alvo = quantas empresas APROVEITADAS a usuária quer. Sem "continuar",
+  // tenta exatamente essas e aceita a lista furada (comportamento antigo).
+  // Com "continuar", segue pegando candidatas — e pede páginas novas à base
+  // quando as carregadas acabam — até fechar o alvo ou bater o teto.
+  const alvoQtd = marcadas ? marcadas.length : qtd;
+  const fila = marcadas ? marcadas.slice() : prospState.empresas.slice();
+  const limite = continuar ? (tetoTentativas || alvoQtd * 6) : alvoQtd;
+
+  const rowsAcc = [], leadsAcc = [], infoAcc = [];
+  let ponteiro = 0, aceitas = 0, tentadas = 0, offsetBase = prospState.empresas.length;
   const tick = () => {
-    wrap.innerHTML = `<div class="prosp-progress"><span class="spinner"></span> Montando ${completed} de ${alvo.length} empresas…</div>`;
+    const extra = continuar
+      ? ` · ${aceitas} de ${alvoQtd} com decisor (teto de ${limite} tentativas)`
+      : '';
+    wrap.innerHTML = `<div class="prosp-progress"><span class="spinner"></span> Montando: ${tentadas} empresa(s) consultada(s)${extra}…</div>`;
   };
   tick();
 
-  async function worker() {
-    while (next < alvo.length) {
-      const i = next++;
-      try {
-        const r = await fetch(`${API}/api/company/${onlyDigits(alvo[i].cnpj)}/leads?decisores=${decisores}&modo_tel=${modoTel}&max_tel=${maxTel}&fonte_tel=${fonteTel}&socios_modo=${sociosModo}&max_socios=${maxSocios}&modelo_id=${encodeURIComponent(modeloId)}&decisores_fonte=${decFonte}&decisores_cargos=${encodeURIComponent(decCargos)}&max_decisores=${maxDec}&pular_sem_decisor=${pularSemDec}&fallback_hierarquia=${fallbackN}&apenas_cargo=${apenasCargo}`).then(x => x.json());
-        if (r.status === 'ok') {
-          if (r.decisores_info) infoDec[i] = r.decisores_info;
-          // Empresa sem decisor com o "pular" ligado: nao entra na lista.
-          if (r.decisores_info && r.decisores_info.pular) {
-            results[i] = [];
-          } else {
-            results[i] = leadsToRows(r.empresa, r.contatos);
-            leadsRaw[i] = { empresa: r.empresa, contatos: r.contatos };
-          }
-        } else { results[i] = []; }
-      } catch (e) { results[i] = []; }
-      completed++;
-      tick();
+  async function processa(emp) {
+    try {
+      const r = await fetch(`${API}/api/company/${onlyDigits(emp.cnpj)}/leads?decisores=${decisores}&modo_tel=${modoTel}&max_tel=${maxTel}&fonte_tel=${fonteTel}&socios_modo=${sociosModo}&max_socios=${maxSocios}&modelo_id=${encodeURIComponent(modeloId)}&decisores_fonte=${decFonte}&decisores_cargos=${encodeURIComponent(decCargos)}&max_decisores=${maxDec}&pular_sem_decisor=${pularSemDec}&fallback_hierarquia=${fallbackN}&apenas_cargo=${apenasCargo}`).then(x => x.json());
+      if (r.status !== 'ok') return { aceita: false };
+      if (r.decisores_info) infoAcc.push(r.decisores_info);
+      if (r.decisores_info && r.decisores_info.pular) return { aceita: false };
+      const linhas = leadsToRows(r.empresa, r.contatos);
+      rowsAcc.push(...linhas);
+      leadsAcc.push({ empresa: r.empresa, contatos: r.contatos });
+      return { aceita: true };
+    } catch (e) {
+      return { aceita: false };
     }
   }
-  await Promise.all(Array.from({ length: Math.min(CONC, alvo.length) }, worker));
 
-  prospState.rows = results.flat();
-  prospState.leads = leadsRaw.filter(Boolean);
-  prospState.decisoresInfo = resumirDecisores(infoDec.filter(Boolean));
+  // Pede mais empresas à base, continuando de onde a lista parou.
+  async function carregarMais() {
+    try {
+      const res = await fetch(`${API}/api/companies/search`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filtros: prospFiltros(), limite: 200, offset: offsetBase }),
+      }).then(r => r.json());
+      const novas = (res.empresas || []).filter(e =>
+        !prospState.empresas.some(x => onlyDigits(x.cnpj) === onlyDigits(e.cnpj)));
+      offsetBase += (res.empresas || []).length;
+      prospState.empresas.push(...novas);
+      return novas;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  while (aceitas < alvoQtd && tentadas < limite) {
+    // Lote do tamanho do que falta (com folga quando pode continuar).
+    const faltam = alvoQtd - aceitas;
+    const cabe = limite - tentadas;
+    const tamanho = Math.max(1, Math.min(cabe, continuar ? faltam + CONC : faltam));
+    const lote = fila.slice(ponteiro, ponteiro + tamanho);
+    ponteiro += lote.length;
+
+    if (!lote.length) {
+      if (!continuar) break;
+      const novas = await carregarMais();
+      if (!novas.length) break;              // a base acabou
+      fila.push(...novas);
+      continue;
+    }
+
+    let idx = 0;
+    await Promise.all(Array.from({ length: Math.min(CONC, lote.length) }, async () => {
+      while (idx < lote.length && (aceitas < alvoQtd || !continuar) && tentadas < limite) {
+        const emp = lote[idx++];
+        tentadas++;
+        const r = await processa(emp);
+        if (r.aceita) aceitas++;
+        tick();
+      }
+    }));
+  }
+
+  prospState.rows = rowsAcc;
+  prospState.leads = leadsAcc;
+  prospState.decisoresInfo = resumirDecisores(infoAcc);
+  if (prospState.decisoresInfo) {
+    prospState.decisoresInfo.aceitas = aceitas;
+    prospState.decisoresInfo.alvo = alvoQtd;
+    prospState.decisoresInfo.tentadas = tentadas;
+    prospState.decisoresInfo.continuou = !!continuar;
+    prospState.decisoresInfo.bateuTeto = continuar && aceitas < alvoQtd && tentadas >= limite;
+    prospState.decisoresInfo.baseAcabou = continuar && aceitas < alvoQtd && tentadas < limite;
+  }
   prospState.building = false;
   btn.disabled = false;
   renderProspTable();
@@ -1604,13 +1729,24 @@ function notaDecisores() {
       d.filtrados ? `${d.filtrados} com decisor fora dos cargos escolhidos` : '',
       d.erros ? `${d.erros} com falha na consulta` : '',
     ].filter(Boolean).join(' · ');
-    return `<div class="prosp-dedup-note">🎯 ${d.achados} decisor(es) trazido(s) em ${d.empresas} empresa(s)${extras ? ' — ' + extras : ''}.</div>`;
+    const cont = d.continuou
+      ? `<br>🔁 Busca continuada: <strong>${d.aceitas} de ${d.alvo}</strong> empresa(s) com decisor, testando ${d.tentadas}.`
+        + (d.bateuTeto ? ` Parou no teto de tentativas — aumente o teto pra continuar.` : '')
+        + (d.baseAcabou ? ` A base acabou: não há mais empresas com esses filtros.` : '')
+      : '';
+    return `<div class="prosp-dedup-note">🎯 ${d.achados} decisor(es) trazido(s) em ${d.empresas} empresa(s)${extras ? ' — ' + extras : ''}.${cont}</div>`;
   }
   if (d.filtrados && !d.semNinguem) {
     return `<div class="prosp-dedup-note">🎯 Nenhum decisor na lista: a Assertiva tinha gente nessas empresas, mas <strong>nenhuma bateu com os cargos escolhidos</strong>. Marque "Todos" nos cargos e monte de novo.</div>`;
   }
   if (d.erros && !d.semNinguem) {
     return `<div class="prosp-dedup-note">⚠️ A consulta de decisores falhou em ${d.erros} de ${d.empresas} empresa(s)${d.exemploErro ? ': ' + esc(d.exemploErro) : ''}.</div>`;
+  }
+  if (d.continuou && !d.achados) {
+    return `<div class="prosp-dedup-note">🔁 Busca continuada: testei <strong>${d.tentadas} empresa(s)</strong> e nenhuma tem decisor na base`
+      + (d.bateuTeto ? `, parando no teto de tentativas. ` : `. `)
+      + `Nesses filtros (micro empresas), a Assertiva praticamente não tem decisor — `
+      + `desmarque "pular empresas sem decisor" pra trazer os sócios, que nessas empresas são quem decide.</div>`;
   }
   if (d.puladas === d.empresas && d.puladas) {
     return `<div class="prosp-dedup-note">🎯 <strong>Todas as ${d.puladas} empresas foram puladas</strong> — nenhuma tem decisor na base da Assertiva, e a opção "pular empresas sem decisor" está ligada. Desmarque essa opção para trazer os sócios dessas empresas (em micro empresa, o sócio-administrador É o decisor).</div>`;
@@ -1656,7 +1792,10 @@ function renderProspTable() {
   const wrap = document.getElementById('prosp-table-wrap');
   const todas = prospState.rows;
   if (!todas.length) {
-    wrap.innerHTML = `<p class="msg" style="padding:16px">Nenhum contato encontrado nas empresas selecionadas.</p>`;
+    // Lista vazia sem explicação era o pior caso: a usuária não sabe se falhou,
+    // se pulou tudo ou se a base não tem ninguém. A nota conta o que houve.
+    wrap.innerHTML = `<p class="msg" style="padding:16px">Nenhum contato encontrado nas empresas consultadas.</p>`
+      + notaDecisores();
     return;
   }
   // Filtro por tipo de contato. Exportação e validação continuam sobre a lista
