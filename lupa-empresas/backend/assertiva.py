@@ -363,6 +363,19 @@ def _norm_tel(t: Any) -> dict[str, Any] | None:
         prio = int(t.get("priority")) if t.get("priority") is not None else None
     except (TypeError, ValueError):
         prio = None
+    # Sinais de ATUALIDADE que o Localize dá em cada número e que a gente
+    # ignorava: "ultimoContato" vem como texto ("Contato feito há 6 meses via
+    # ..."), hotphone/plus marcam linha com atividade recente, e "relacao"
+    # diz se o número é do próprio titular (Direto) ou de terceiro.
+    ultimo = str(t.get("ultimoContato") or "").strip()
+    meses = None
+    m = re.search(r"(\d+)\s*(dia|semana|m[eê]s|mes|ano)", ultimo, re.I)
+    if m:
+        n = int(m.group(1))
+        unidade = m.group(2).lower()
+        meses = 0 if unidade.startswith("dia") else \
+            round(n / 4) if unidade.startswith("semana") else \
+            n if unidade.startswith(("mes", "mês", "mê")) else n * 12
     return {
         "ddd": ddd,
         "number": full,
@@ -372,6 +385,12 @@ def _norm_tel(t: Any) -> dict[str, Any] | None:
         "priority": prio,
         "classification": t.get("classification"),
         "ranking": t.get("ranking") or t.get("classificacao") or "",
+        "ultimo_contato": ultimo,
+        "meses_sem_contato": meses,
+        "hotphone": bool(t.get("hotphone")) if t.get("hotphone") is not None else None,
+        "plus": bool(t.get("plus")) if t.get("plus") is not None else None,
+        "relacao": str(t.get("relacao") or ""),
+        "nao_perturbe": bool(t.get("naoPerturbe")) if t.get("naoPerturbe") is not None else None,
     }
 
 

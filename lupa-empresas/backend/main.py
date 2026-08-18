@@ -883,7 +883,10 @@ async def company_leads(cnpj: str, decisores: bool = False,
                         modelo_id: str = "",
                         decisores_fonte: str = "assertiva",
                         decisores_cargos: str = "",
-                        max_decisores: int = 3):
+                        max_decisores: int = 3,
+                        pular_sem_decisor: bool = False,
+                        fallback_hierarquia: int = 0,
+                        apenas_cargo: bool = False):
     """Enriquece UMA empresa com contatos (socios do QSA + telefones).
 
     Retorna {status, empresa:{...}, contatos:[{tipo, nome, cargo, cpf, telefones[]}]}.
@@ -902,6 +905,13 @@ async def company_leads(cnpj: str, decisores: bool = False,
       ("diretor,gerente"); vazio = todos.
     max_decisores: teto por empresa (padrao 3). Importa no custo: cada decisor
       trazido ainda gasta uma consulta de telefone.
+    pular_sem_decisor: descarta a empresa inteira quando a base nao tem nenhum
+      decisor pra ela (micro empresa quase sempre cai aqui). Nem os socios vem.
+    fallback_hierarquia: se o filtro de cargo nao casar com ninguem, traz ate N
+      decisores pela hierarquia (nivel 1 primeiro). 0 = desligado.
+    apenas_cargo: modo estrito — a lista fica SO com decisores do cargo pedido.
+      Sem socios, sem fallback, e empresa que nao tem ninguem naquele cargo sai
+      da lista. Serve pra campanha mirando um cargo especifico.
     """
     # Base local (RFB) primeiro — instantânea e traz o QSA. Fallback: BrasilAPI.
     data = None
@@ -992,7 +1002,8 @@ async def company_leads(cnpj: str, decisores: bool = False,
     # não sabe se falhou, se não foi pedido ou se a base não tem ninguém —
     # micro empresa quase nunca tem decisor na Assertiva (quem decide é o sócio).
     info_dec = {"pedido": bool(decisores), "fonte": decisores_fonte,
-                "disponiveis": 0, "escolhidos": 0, "motivo": "", "mensagem": ""}
+                "disponiveis": 0, "escolhidos": 0, "motivo": "", "mensagem": "",
+                "pular": False, "usou_fallback": False}
 
     if decisores and decisores_fonte == "assertiva" and not assertiva.enabled():
         info_dec["motivo"] = "sem_credencial"
@@ -1007,7 +1018,33 @@ async def company_leads(cnpj: str, decisores: bool = False,
             brutos = ((r_dec.get("data") or {}).get("resposta") or {}).get("possiveisDecisores") or []
             todos_dec = decisor_lib.da_assertiva(brutos)
             info_dec["disponiveis"] = len(todos_dec)
+
+            # "Pular empresas sem decisor na base": a empresa sai da lista
+            # inteira, sócios inclusive. Devolve cedo pra nem gastar telefone.
+            if pular_sem_decisor and not todos_dec:
+                info_dec["pular"] = True
+                info_dec["motivo"] = info_dec["motivo"] or "not_found"
+                return {"status": "ok", "empresa": empresa, "contatos": [],
+                        "decisores_info": info_dec}
+
             escolhidos = _filtra_decisores(todos_dec, decisores_cargos, max_decisores)
+
+            # Modo estrito: só quem tem o cargo pedido. Nada de fallback, nada
+            # de sócio, e empresa sem ninguém no cargo sai da lista.
+            if apenas_cargo:
+                info_dec["apenas_cargo"] = True
+                if not escolhidos:
+                    info_dec["pular"] = True
+                    info_dec["motivo"] = "sem_o_cargo"
+                    return {"status": "ok", "empresa": empresa, "contatos": [],
+                            "decisores_info": info_dec}
+                contatos = []          # descarta os sócios já montados
+
+            # Filtro de cargo não casou com ninguém, mas a base TEM gente:
+            # traz os de maior hierarquia em vez de devolver a empresa vazia.
+            if not apenas_cargo and not escolhidos and todos_dec and fallback_hierarquia > 0:
+                escolhidos = _filtra_decisores(todos_dec, "", fallback_hierarquia)
+                info_dec["usou_fallback"] = bool(escolhidos)
             # CPFs que já entraram como sócio não viram contato duplicado.
             ja_tem = {c.get("cpf") for c in contatos if c.get("cpf")}
             escolhidos = [p for p in escolhidos if p.get("cpf") and p["cpf"] not in ja_tem]
@@ -1030,7 +1067,9 @@ async def company_leads(cnpj: str, decisores: bool = False,
                 })
             info_dec["escolhidos"] = len(escolhidos)
             if not info_dec["motivo"]:
-                if info_dec["disponiveis"] and not escolhidos:
+                if info_dec["usou_fallback"]:
+                    info_dec["motivo"] = "fallback"
+                elif info_dec["disponiveis"] and not escolhidos:
                     # A Assertiva tinha gente, mas o filtro de cargo cortou tudo.
                     info_dec["motivo"] = "filtrado"
                 else:

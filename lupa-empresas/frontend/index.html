@@ -394,10 +394,14 @@
           <div class="pf-field">
             <label>Tamanho da empresa</label>
             <select id="pf-porte">
-              <option value="01,03">Pequenas (micro e MEI)</option>
-              <option value="05">Médias</option>
               <option value="" selected>Todas</option>
+              <option value="01">Microempresa</option>
+              <option value="03">Empresa de pequeno porte</option>
+              <option value="01,03">Micro e pequeno porte</option>
+              <option value="05">Demais — médias e grandes</option>
+              <option value="00">Porte não informado</option>
             </select>
+            <div class="pf-advanced-hint" style="margin:4px 0 0">A Receita só classifica em <strong>micro</strong>, <strong>pequeno porte</strong> e <strong>demais</strong> — não existe faixa "grande". Para chegar nas grandes, combine "Demais" com capital social mínimo nos filtros avançados.</div>
           </div>
 
           <div class="pf-divider"></div>

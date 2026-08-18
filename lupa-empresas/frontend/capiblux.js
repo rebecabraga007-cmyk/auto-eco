@@ -1197,6 +1197,20 @@ function renderProspList() {
           <label>máx decisores/empresa
             <input id="pf-maxdec" type="number" min="1" max="20" value="3" class="filter-num" title="Cada decisor trazido ainda gasta uma consulta de telefone" />
           </label>
+          <label class="toggle-wrap" style="flex-basis:100%">
+            <input id="pf-pular-sem-dec" type="checkbox" />
+            <span>Pular empresas que não possuem decisor na base <span class="pf-advanced-hint" style="display:inline">— a empresa sai da lista inteira, sócios inclusive</span></span>
+          </label>
+          <label class="toggle-wrap" style="flex-basis:100%">
+            <input id="pf-fallback-dec" type="checkbox" checked />
+            <span>Se não houver o cargo selecionado, trazer até
+              <input id="pf-fallback-n" type="number" min="1" max="10" value="3" class="filter-num" style="width:64px" />
+              de acordo com a hierarquia <span class="pf-advanced-hint" style="display:inline">— nível 1 primeiro</span></span>
+          </label>
+          <label class="toggle-wrap" style="flex-basis:100%">
+            <input id="pf-apenas-cargo" type="checkbox" />
+            <span>Filtrar <strong>APENAS decisores nesse cargo</strong> <span class="pf-advanced-hint" style="display:inline">— lista só com quem tem o cargo marcado, sem sócios; empresa sem ninguém no cargo sai da lista</span></span>
+          </label>
           <div class="filter-row" id="pf-cargos" style="margin:0">
             <span class="filter-label">Cargos:</span>
             <button type="button" class="pf-cargo active" data-c="">Todos</button>
@@ -1311,12 +1325,22 @@ function initDecisoresBox() {
     const n = parseInt(document.getElementById('pf-maxdec').value) || 0;
     const marcadas = prospState.selecionadas ? prospState.selecionadas.size : 0;
     const empresas = marcadas || parseInt(document.getElementById('pf-qtd').value) || 0;
+    const pular = document.getElementById('pf-pular-sem-dec')?.checked;
     aviso.textContent = fonte === 'assertiva'
       ? `≈ ${empresas * (2 + n)} consultas Assertiva: ${empresas} × (2 pela empresa + até ${n} telefone${n === 1 ? '' : 's'} de decisor).`
+        + (pular ? ' Com "pular sem decisor", quem não tem decisor gasta só as 2 da empresa.' : '')
       : 'O LinkedIn não gasta consulta Assertiva, mas é lento e costuma voltar vazio — a Assertiva rende muito mais.';
   };
 
   chk.addEventListener('change', atualizar);
+  const estrito = document.getElementById('pf-apenas-cargo');
+  const fb = document.getElementById('pf-fallback-dec');
+  const sincronizaEstrito = () => {
+    // As duas opções se contradizem: "apenas nesse cargo" nunca aceita substituto.
+    if (fb) { fb.disabled = estrito.checked; fb.closest('label').style.opacity = estrito.checked ? .45 : 1; }
+    atualizar();
+  };
+  estrito?.addEventListener('change', sincronizaEstrito);
   ['pf-decfonte', 'pf-maxdec', 'pf-qtd'].forEach(id => {
     document.getElementById(id)?.addEventListener('input', atualizar);
     document.getElementById(id)?.addEventListener('change', atualizar);
@@ -1491,6 +1515,10 @@ async function prospMontar() {
   const decFonte = document.getElementById('pf-decfonte')?.value || 'assertiva';
   const maxDec = parseInt(document.getElementById('pf-maxdec')?.value) || 3;
   const decCargos = cargosSelecionados();
+  const pularSemDec = document.getElementById('pf-pular-sem-dec')?.checked ? 'true' : 'false';
+  const apenasCargo = document.getElementById('pf-apenas-cargo')?.checked ? 'true' : 'false';
+  const fallbackN = document.getElementById('pf-fallback-dec')?.checked
+    ? (parseInt(document.getElementById('pf-fallback-n')?.value) || 3) : 0;
   // Marcou alguma? A seleção manda. Nada marcado = as N primeiras, como antes.
   const marcadas = prospState.selecionadas && prospState.selecionadas.size
     ? [...prospState.selecionadas].sort((a, b) => a - b).map(i => prospState.empresas[i]).filter(Boolean)
@@ -1520,11 +1548,16 @@ async function prospMontar() {
     while (next < alvo.length) {
       const i = next++;
       try {
-        const r = await fetch(`${API}/api/company/${onlyDigits(alvo[i].cnpj)}/leads?decisores=${decisores}&modo_tel=${modoTel}&max_tel=${maxTel}&fonte_tel=${fonteTel}&socios_modo=${sociosModo}&max_socios=${maxSocios}&modelo_id=${encodeURIComponent(modeloId)}&decisores_fonte=${decFonte}&decisores_cargos=${encodeURIComponent(decCargos)}&max_decisores=${maxDec}`).then(x => x.json());
+        const r = await fetch(`${API}/api/company/${onlyDigits(alvo[i].cnpj)}/leads?decisores=${decisores}&modo_tel=${modoTel}&max_tel=${maxTel}&fonte_tel=${fonteTel}&socios_modo=${sociosModo}&max_socios=${maxSocios}&modelo_id=${encodeURIComponent(modeloId)}&decisores_fonte=${decFonte}&decisores_cargos=${encodeURIComponent(decCargos)}&max_decisores=${maxDec}&pular_sem_decisor=${pularSemDec}&fallback_hierarquia=${fallbackN}&apenas_cargo=${apenasCargo}`).then(x => x.json());
         if (r.status === 'ok') {
-          results[i] = leadsToRows(r.empresa, r.contatos);
-          leadsRaw[i] = { empresa: r.empresa, contatos: r.contatos };
           if (r.decisores_info) infoDec[i] = r.decisores_info;
+          // Empresa sem decisor com o "pular" ligado: nao entra na lista.
+          if (r.decisores_info && r.decisores_info.pular) {
+            results[i] = [];
+          } else {
+            results[i] = leadsToRows(r.empresa, r.contatos);
+            leadsRaw[i] = { empresa: r.empresa, contatos: r.contatos };
+          }
         } else { results[i] = []; }
       } catch (e) { results[i] = []; }
       completed++;
@@ -1550,9 +1583,13 @@ function resumirDecisores(infos) {
   const semNinguem = conta('not_found');
   const filtrados = conta('filtrado');
   const erros = conta('erro') + conta('unavailable') + conta('sem_credencial');
+  const puladas = infos.filter(i => i.pular).length;
+  const semOCargo = infos.filter(i => i.motivo === 'sem_o_cargo').length;
+  const estritoLigado = infos.some(i => i.apenas_cargo);
+  const fallback = infos.filter(i => i.usou_fallback).length;
   const exemploErro = (infos.find(i => i.mensagem && i.motivo !== 'not_found') || {}).mensagem || '';
   return { empresas: infos.length, achados, semNinguem, filtrados, erros, exemploErro,
-           fonte: infos[0].fonte };
+           puladas, fallback, semOCargo, estritoLigado, fonte: infos[0].fonte };
 }
 
 function notaDecisores() {
@@ -1560,7 +1597,10 @@ function notaDecisores() {
   if (!d) return '';
   if (d.achados) {
     const extras = [
-      d.semNinguem ? `${d.semNinguem} empresa${d.semNinguem === 1 ? '' : 's'} sem decisor na base` : '',
+      d.semOCargo ? `<strong>${d.semOCargo} empresa${d.semOCargo === 1 ? '' : 's'}</strong> sem ninguém no cargo pedido (modo "apenas nesse cargo")` : '',
+      d.puladas ? `<strong>${d.puladas} empresa${d.puladas === 1 ? '' : 's'} pulada${d.puladas === 1 ? '' : 's'}</strong> por não ter decisor na base` : '',
+      d.fallback ? `${d.fallback} com decisor trazido pela hierarquia (o cargo escolhido não existia lá)` : '',
+      d.semNinguem && !d.puladas ? `${d.semNinguem} empresa${d.semNinguem === 1 ? '' : 's'} sem decisor na base` : '',
       d.filtrados ? `${d.filtrados} com decisor fora dos cargos escolhidos` : '',
       d.erros ? `${d.erros} com falha na consulta` : '',
     ].filter(Boolean).join(' · ');
@@ -1571,6 +1611,9 @@ function notaDecisores() {
   }
   if (d.erros && !d.semNinguem) {
     return `<div class="prosp-dedup-note">⚠️ A consulta de decisores falhou em ${d.erros} de ${d.empresas} empresa(s)${d.exemploErro ? ': ' + esc(d.exemploErro) : ''}.</div>`;
+  }
+  if (d.puladas === d.empresas && d.puladas) {
+    return `<div class="prosp-dedup-note">🎯 <strong>Todas as ${d.puladas} empresas foram puladas</strong> — nenhuma tem decisor na base da Assertiva, e a opção "pular empresas sem decisor" está ligada. Desmarque essa opção para trazer os sócios dessas empresas (em micro empresa, o sócio-administrador É o decisor).</div>`;
   }
   return `<div class="prosp-dedup-note">🎯 Nenhum decisor encontrado nas ${d.empresas} empresa${d.empresas === 1 ? '' : 's'}. A Assertiva respondeu <em>"não localizamos nenhum possível decisor"</em> — normal em micro e pequena empresa, onde quem decide é o próprio sócio, que já está na lista. A base de decisores cobre principalmente empresa média e grande.</div>`;
 }
@@ -1667,6 +1710,7 @@ function valBadge(v) {
   if (v === 'não') return `<span class="val-badge val-no">⚠️ não</span>`;
   if (v === 'bloq') return `<span class="val-badge val-nd" title="Chave sem acesso ao módulo de telefone reverso (intelgrax-tel)">🔒 sem acesso</span>`;
   if (v === 'sem_cpf') return `<span class="val-badge val-nd" title="Sócio sem CPF resolvido — não dá pra validar o vínculo">❓ sem CPF</span>`;
+  if (v === 'nao_testado') return `<span class="val-badge val-pend" title="Outro número da mesma pessoa já foi confirmado — este não precisou ser testado">↷ não testado</span>`;
   if (v === 'n/d') return `<span class="val-badge val-nd">❓ n/d</span>`;
   return '<span class="val-badge val-pend">—</span>';
 }
@@ -1690,29 +1734,59 @@ async function prospValidar() {
   const prog = document.getElementById('pf-valprog');
   btn.disabled = true; exp.disabled = true;
 
-  const idxs = prospState.rows.map((r, i) => i).filter(i => prospState.rows[i].telefone_raw);
-  let done = 0, semAcesso = false;
-  for (const i of idxs) {
+  // Valida POR PESSOA, não por linha: os telefones já vêm do mais recente pro
+  // mais antigo (atualidade da Assertiva), então tenta o primeiro e, se falhar,
+  // desce a lista dela até um confirmar. Achou, para — os seguintes não gastam
+  // consulta e ficam marcados como não testados.
+  const porPessoa = new Map();
+  prospState.rows.forEach((r, i) => {
+    if (!r.telefone_raw) return;
+    const chave = r.contato_cpf_raw || ('nome:' + r.contato_nome + '|' + r.cnpj);
+    if (!porPessoa.has(chave)) porPessoa.set(chave, []);
+    porPessoa.get(chave).push(i);
+  });
+
+  const pintar = i => {
     const r = prospState.rows[i];
-    prog.innerHTML = `<div class="prosp-progress"><span class="spinner"></span> Validando ${++done} de ${idxs.length} (telefone reverso)…</div>`;
-    if (!r.contato_cpf_raw) {
-      r.validado = 'sem_cpf'; r.nome_donodozap = '';
-    } else {
+    const vc = document.getElementById(`pf-val-${i}`); if (vc) vc.innerHTML = valBadge(r.validado);
+    const dc = document.getElementById(`pf-dz-${i}`); if (dc) dc.textContent = r.nome_donodozap;
+  };
+
+  let done = 0, semAcesso = false, trocas = 0;
+  const totalPessoas = porPessoa.size;
+  for (const [, idxsPessoa] of porPessoa) {
+    prog.innerHTML = `<div class="prosp-progress"><span class="spinner"></span> Validando pessoa ${++done} de ${totalPessoas} (telefone reverso)…</div>`;
+    let confirmou = false;
+    for (let ordem = 0; ordem < idxsPessoa.length; ordem++) {
+      const i = idxsPessoa[ordem];
+      const r = prospState.rows[i];
+      if (confirmou) { r.validado = 'nao_testado'; r.nome_donodozap = ''; pintar(i); continue; }
+      if (!r.contato_cpf_raw) { r.validado = 'sem_cpf'; r.nome_donodozap = ''; pintar(i); continue; }
       try {
         const v = await fetch(`${API}/api/phone/${r.telefone_raw}/pertence/${r.contato_cpf_raw}`).then(x => x.json());
         if (v.status === 'no_access') { r.validado = 'bloq'; r.nome_donodozap = ''; semAcesso = true; }
         else if (v.status !== 'ok') { r.validado = 'n/d'; r.nome_donodozap = ''; }
-        else if (v.atrelado) { r.validado = 'sim'; r.nome_donodozap = v.nome || ''; }
-        else { r.validado = 'não'; r.nome_donodozap = v.alerta_compartilhado ? `número compartilhado (${v.total} vínculos)` : ''; }
+        else if (v.atrelado) {
+          r.validado = 'sim'; r.nome_donodozap = v.nome || '';
+          confirmou = true;
+          if (ordem > 0) trocas++;   // precisou descer na lista até achar um bom
+        } else {
+          r.validado = 'não';
+          r.nome_donodozap = v.alerta_compartilhado ? `número compartilhado (${v.total} vínculos)` : '';
+        }
       } catch (e) { r.validado = 'n/d'; r.nome_donodozap = ''; }
+      pintar(i);
     }
-    const vc = document.getElementById(`pf-val-${i}`); if (vc) vc.innerHTML = valBadge(r.validado);
-    const dc = document.getElementById(`pf-dz-${i}`); if (dc) dc.textContent = r.nome_donodozap;
   }
+  prospState.trocasValidacao = trocas;
   if (semAcesso) {
     prog.innerHTML = `<div class="prosp-progress" style="color:#b45309">🔒 A chave da WorkAPI não tem acesso ao módulo de telefone reverso (intelgrax-tel) — peça pra habilitar. Os telefones vieram da Mk Buscas (já associados ao CPF); a coluna "Validado" ficou como 🔒 sem acesso.</div>`;
   } else {
-    prog.innerHTML = `<div class="prosp-progress prosp-done">✅ Validação concluída: ${prospState.rows.filter(r => r.validado === 'sim').length} telefone(s) confirmado(s).</div>`;
+    const ok = prospState.rows.filter(r => r.validado === 'sim').length;
+    const trocou = prospState.trocasValidacao || 0;
+    prog.innerHTML = `<div class="prosp-progress prosp-done">✅ Validação concluída: ${ok} telefone(s) confirmado(s)`
+      + (trocou ? ` — em ${trocou} caso(s) o primeiro número falhou e o confirmado foi o seguinte da lista da pessoa.` : '.')
+      + `</div>`;
   }
   prospState.validating = false;
   btn.disabled = false; exp.disabled = false;

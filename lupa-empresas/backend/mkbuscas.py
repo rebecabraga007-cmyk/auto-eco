@@ -223,12 +223,19 @@ def refine_phones(phones: list[dict[str, Any]], modo: str = "celular",
         classified = [c for c in classified if c["categoria"] in ("celular", "fixo")]
     # 'todos' mantém celular/fixo/celular_antigo
 
-    # Ordenação "maior chance de estar correto primeiro":
+    # Ordenação "mais recente e mais provável de atender primeiro":
     #  1) categoria (celular atual < fixo < celular antigo) — nosso rank de formato
-    #  2) WhatsApp presente (sinal forte de número ativo)
-    #  3) priority do provedor (Assertiva: 1 = melhor)
-    #  4) classification do provedor (1 = melhor)
+    #  2) ATUALIDADE: meses desde o último contato que a Assertiva registrou
+    #     (número usado há 1 mês vale mais que um de 3 anos atrás)
+    #  3) hotphone/plus — a Assertiva marca linha com atividade recente
+    #  4) relação "Direto" (número do próprio titular, não de terceiro)
+    #  5) WhatsApp presente (sinal de linha ativa)
+    #  6) priority e classification do provedor (1 = melhor)
     def _sort_key(c):
+        meses = c.get("meses_sem_contato")
+        recencia = meses if isinstance(meses, int) else 999   # sem informação vai pro fim
+        quente = 0 if (c.get("hotphone") or c.get("plus")) else 1
+        direto = 0 if str(c.get("relacao") or "").lower().startswith("direto") else 1
         wa = 0 if c.get("whatsapp") else 1
         try:
             prio = int(c.get("priority")) if c.get("priority") is not None else 98
@@ -238,7 +245,7 @@ def refine_phones(phones: list[dict[str, Any]], modo: str = "celular",
             clf = int(c.get("classification")) if c.get("classification") is not None else 98
         except (TypeError, ValueError):
             clf = 98
-        return (c["rank"], wa, prio, clf)
+        return (c["rank"], recencia, quente, direto, wa, prio, clf)
 
     # dedupe por dígitos, mantendo o de melhor ordenação
     seen, dedup = set(), []
