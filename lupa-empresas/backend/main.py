@@ -301,14 +301,25 @@ async def company(cnpj: str):
 
 
 @app.get("/api/dossie/pdf")
-async def dossie_pdf(tipo: str, doc: str, insight: bool = False, familia: bool = False, web: bool = False):
+async def dossie_pdf(request: Request, tipo: str, doc: str, insight: bool = False,
+                     familia: bool = False, web: bool = False):
     """Dossiê em PDF: junta Mk Buscas + Assertiva + confirmação de telefone
     (CPF) ou Receita Federal + Assertiva + confirmação de telefone (CNPJ).
     insight=true chama a Mistral pra gerar resumo de vida + perfil psicológico
     inferido (ver aviso no próprio PDF — é inferência, não avaliação clínica).
     familia=true consulta Mk/Assertiva pra cada parente encontrado (custo extra
     por parente — opt-in).
-    web=true executa a web_search da Mistral e inclui achados/fontes no PDF."""
+    web=true executa a web_search da Mistral e inclui achados/fontes no PDF.
+
+    SÓ ADMIN: o dossiê junta tudo o que a plataforma sabe de uma pessoa num
+    arquivo que sai da tela e passa a circular por fora. Esconder o botão no
+    front é conveniência; a recusa aqui é a trava.
+    """
+    if not _is_admin(request):
+        return JSONResponse(
+            status_code=403,
+            content={"status": "error",
+                     "message": "O dossiê é restrito a administradores."})
     doc_digits = re.sub(r"\D", "", doc or "")
     try:
         if tipo == "cpf":

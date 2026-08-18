@@ -168,7 +168,7 @@ function renderEmpresas(data) {
       </div>
       <div class="result-actions">
         ${badgeSit(sit)}
-        <button class="btn-secondary" onclick="event.preventDefault(); event.stopPropagation(); exportarDossie('cnpj','${onlyDigits(cnpj)}', this)">📄 PDF</button>
+        <button class="btn-secondary btn-dossie" onclick="event.preventDefault(); event.stopPropagation(); exportarDossie('cnpj','${onlyDigits(cnpj)}', this)">📄 PDF</button>
         <span class="result-link">Ver detalhes →</span>
       </div>
     </a>`;
@@ -266,7 +266,7 @@ function renderPessoa(cpf, jbr, mk) {
       ${sitClara ? `<span class="badge ${sitGood ? 'badge-ativa' : sitBad ? 'badge-inativa' : 'badge-neutra'}">${esc(sitClara)}</span>` : ''}
       ${obitoMort ? `<span class="badge badge-inativa">Óbito registrado</span>` : ''}
       <button class="btn-secondary" onclick="buscarParentes('${onlyDigits(cpf)}', this)" title="Junta pessoas de referência e conexões da Assertiva — 2 consultas">👨‍👩‍👧 Busca Parentes (Assertiva)</button>
-      <button class="btn-secondary" onclick="exportarDossie('cpf','${onlyDigits(cpf)}', this)">📄 Exportar PDF</button>
+      <button class="btn-secondary btn-dossie" onclick="exportarDossie('cpf','${onlyDigits(cpf)}', this)">📄 Exportar PDF</button>
       <span class="person-header-note">consultado agora</span>
     </div>
   </div>`;

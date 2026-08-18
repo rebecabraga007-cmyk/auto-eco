@@ -68,6 +68,14 @@
     const mc = document.getElementById('menu-config'); if (mc) mc.hidden = !isAdmin;
     const na = document.getElementById('nav-admin'); if (na) na.hidden = !isAdmin;
     const nal = document.getElementById('nav-admin-label'); if (nal) nal.hidden = !isAdmin;
+    // Dossiê é só de admin: some do menu e os botões de PDF espalhados pelas
+    // outras abas ficam escondidos por CSS (o backend também recusa, então
+    // esconder aqui é conveniência, não a trava de verdade).
+    const nd = document.querySelector('[data-tab="dossie"]'); if (nd) nd.hidden = !isAdmin;
+    document.body.classList.toggle('sem-dossie', !isAdmin);
+    if (!isAdmin && document.getElementById('tab-dossie')?.classList.contains('active')) {
+      document.querySelector('[data-tab="inicio"]')?.click();
+    }
     if (typeof inicioCarregar === 'function') inicioCarregar();
   }
 

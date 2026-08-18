@@ -832,3 +832,6 @@ body.locked { overflow: hidden; }
 }
 .prosp-selbar-n { display: inline-flex; align-items: center; gap: 6px; font-size: .82rem; color: var(--gray-700); }
 .prosp-selbar-n .filter-num { width: 74px; }
+
+/* Dossiê é exclusivo de admin: esconde os atalhos de PDF para os demais. */
+body.sem-dossie .btn-dossie { display: none !important; }
