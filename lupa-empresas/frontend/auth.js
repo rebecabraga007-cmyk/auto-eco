@@ -39,6 +39,7 @@
   document.addEventListener('DOMContentLoaded', init);
 
   async function init() {
+    vigiarSessao();
     wireLogin();
     wireMenu();
     wireUsersModal();
@@ -55,9 +56,30 @@
     }
   }
 
-  function showLogin() {
+  function showLogin(motivo) {
     document.getElementById('login-overlay').hidden = false;
     document.body.classList.add('locked');
+    // Login mudo parece queda de sistema. Se a sessão venceu, diga isso.
+    const err = document.getElementById('login-err');
+    if (err && motivo) err.textContent = motivo;
+  }
+
+  // Qualquer 401 com o app já carregado = sessão vencida. Mostra o login com
+  // explicação em vez de deixar a tela travada sem dizer nada.
+  function vigiarSessao() {
+    const original = window.fetch;
+    window.fetch = async function(...args) {
+      const resp = await original.apply(this, args);
+      try {
+        const url = String(args[0] || '');
+        if (resp.status === 401 && url.includes('/api/') && !url.includes('/api/auth/login')) {
+          if (document.getElementById('login-overlay')?.hidden) {
+            showLogin('Sua sessão expirou. Entre novamente para continuar.');
+          }
+        }
+      } catch (e) { /* nunca atrapalhar a chamada original */ }
+      return resp;
+    };
   }
   function showApp() {
     document.getElementById('login-overlay').hidden = true;

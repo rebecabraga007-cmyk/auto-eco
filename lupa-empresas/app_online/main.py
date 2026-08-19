@@ -78,7 +78,11 @@ async def _auth_guard(request: Request, call_next):
     if not user:
         return JSONResponse({"detail": "Não autenticado."}, status_code=401)
     request.state.user = user
-    return await call_next(request)
+    resp = await call_next(request)
+    # Sessão deslizante: quem está usando não é deslogado no meio do trabalho.
+    if _auth.deve_renovar(request):
+        _auth.renovar_sessao(resp, user, request)
+    return resp
 
 
 # Rotas de auth/admin são tratadas AQUI (router acima). O resto de /api é PROXEADO.
@@ -90,6 +94,24 @@ _CONSULTA_PREFIXES = (
     "/api/dossie", "/api/companies/search", "/api/prospeccao/pessoas",
     "/api/enrich/upload", "/api/enrich/run", "/api/enrich/export",
 )
+
+# ... MENOS estas, que só leem base LOCAL (JBR/RFB) e não custam nada a ninguém.
+# Elas caíam no prefixo genérico acima e queimavam a cota diária: uma busca por
+# nome dispara DUAS chamadas (exata + ampla), então 50 buscas de graça zeravam
+# as 100 "consultas" do dia e o usuário levava erro sem entender por quê.
+_ROTAS_GRATUITAS = (
+    "/api/person/name-search",
+    "/api/person/resolve",
+    "/api/cnpj/lookup",
+    "/api/prospeccao/modelo",
+    "/api/prospeccao/modelos",
+)
+
+
+def _custa_consulta(full: str) -> bool:
+    if any(full.startswith(g) for g in _ROTAS_GRATUITAS):
+        return False
+    return any(full.startswith(p) for p in _CONSULTA_PREFIXES)
 
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
@@ -108,7 +130,7 @@ async def proxy(path: str, request: Request):
         headers["X-User-Email"] = user.get("email", "")
         headers["X-User-Role"] = user.get("role", "")
         headers["X-User-Grupo"] = user.get("grupo_id") or ""
-        if user.get("role") != "admin" and any(full.startswith(p) for p in _CONSULTA_PREFIXES):
+        if user.get("role") != "admin" and _custa_consulta(full):
             limite = _auth.limite_efetivo(user)
             consumo = _auth.consumo_hoje(user["id"])
             if consumo >= limite:

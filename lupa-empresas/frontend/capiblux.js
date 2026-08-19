@@ -54,6 +54,27 @@ function onlyDigits(s) { return (s || '').replace(/\D/g, ''); }
 function esc(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+// Motivo de um erro vindo da API. O proxy (limite diário, sessão, túnel fora)
+// responde em `detail`, e as rotas de dados em `message` — olhar só um dos dois
+// fazia a tela mostrar um "Erro" seco, sem dizer o que aconteceu.
+function motivoErro(...respostas) {
+  for (const r of respostas) {
+    if (!r || typeof r !== 'object') continue;
+    const txt = r.detail || r.message || r.error;
+    if (!txt) continue;
+    const t = String(txt);
+    if (t.includes('Limite diário')) {
+      return t + ' (buscar nome na base local não deveria contar — se persistir, avise.)';
+    }
+    if (t.includes('Não autenticado')) return 'Sua sessão expirou. Recarregue a página e entre novamente.';
+    if (t.includes('Serviço de dados indisponível')) {
+      return 'O serviço de dados está fora do ar (túnel ou PC desligado). Avise quem cuida da infraestrutura.';
+    }
+    return t;
+  }
+  return '';
+}
+
 function spinner() {
   return `<div class="spinner-wrap"><div class="spinner"></div><span>Consultando…</span></div>`;
 }
@@ -141,7 +162,7 @@ async function searchEmpresa() {
 
 function renderEmpresas(data) {
   if (!data || data.error) {
-    empRes.innerHTML = `<p class="msg error">${esc(data?.message || data?.error || 'Erro desconhecido')}</p>`;
+    empRes.innerHTML = `<p class="msg error">${esc(motivoErro(data) || 'Erro desconhecido')}</p>`;
     return;
   }
   const list = Array.isArray(data) ? data : (data.companies || data.results || []);
@@ -503,7 +524,7 @@ async function searchNome() {
     ]);
 
     if (exactRes.status !== 'ok' && outrosRes.status !== 'ok') {
-      nomeRes.innerHTML = `<p class="msg error">${esc(exactRes.message || outrosRes.message || 'Erro')}</p>`;
+      nomeRes.innerHTML = `<p class="msg error">${esc(motivoErro(exactRes, outrosRes) || 'Não consegui buscar esse nome. Recarregue a página e tente de novo; se continuar, avise com o nome que você digitou.')}</p>`;
       return;
     }
 
@@ -1109,7 +1130,7 @@ async function prospBuscar() {
     }).then(r => r.json());
 
     if (res.status !== 'ok') {
-      out.innerHTML = `<p class="msg error">${esc(res.message || 'Falha na busca.')}</p>`;
+      out.innerHTML = `<p class="msg error">${esc(motivoErro(res) || 'Falha na busca.')}</p>`;
       return;
     }
     prospState.empresas = res.empresas || [];
@@ -2027,7 +2048,7 @@ async function prospBuscarPessoas() {
     }).then(r => r.json());
 
     if (res.status !== 'ok') {
-      out.innerHTML = `<p class="msg error">${esc(res.message || 'Falha na busca.')}</p>`;
+      out.innerHTML = `<p class="msg error">${esc(motivoErro(res) || 'Falha na busca.')}</p>`;
       return;
     }
     const pessoas = res.pessoas || [];

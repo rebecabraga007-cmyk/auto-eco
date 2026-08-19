@@ -23,7 +23,11 @@ _DB_PATH = os.environ.get(
 )
 _JWT_ALG = "HS256"
 COOKIE_NAME = "capiblu_session"  # sessão via cookie httpOnly (robusto, não depende de localStorage)
-_TOKEN_TTL = int(os.environ.get("JWT_TTL_SECONDS", str(60 * 60 * 12)))  # 12h
+_TOKEN_TTL = int(os.environ.get("JWT_TTL_SECONDS", str(60 * 60 * 24)))  # 24h
+# Sessão DESLIZANTE: com 12h fixas a pessoa era deslogada no meio do trabalho e
+# o app voltava pra tela de login sem explicar nada — parecia queda do túnel.
+# Passada metade da validade, qualquer chamada autenticada renova o cookie.
+_RENOVAR_APOS = _TOKEN_TTL // 2
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _UNSET = object()  # sentinela p/ distinguir "não mandou o campo" de "mandou vazio/None"
 
@@ -360,8 +364,85 @@ def current_user(request: Request, authorization: str = Header(default="")) -> d
 
 
 def user_from_request(request: Request) -> Optional[dict]:
-    """Header Authorization OU cookie → usuário (sem exceção). Usado no middleware."""
-    return _user_from_token(_token_from_request(request, request.headers.get("authorization", "")))
+    """Header Authorization OU cookie → usuário (sem exceção). Usado no middleware.
+
+    Tenta os DOIS: o front guarda uma cópia do token no localStorage e manda no
+    header, mas o cookie é quem a sessão deslizante renova. Se olhássemos só o
+    header, um token velho no localStorage derrubaria uma sessão que o servidor
+    acabou de esticar — e o efeito, na tela, é ser deslogado do nada.
+    """
+    header = request.headers.get("authorization", "")
+    candidatos = []
+    if header and header.lower().startswith("bearer "):
+        candidatos.append(header.split(" ", 1)[1].strip())
+    try:
+        biscoito = request.cookies.get(COOKIE_NAME, "")
+    except Exception:
+        biscoito = ""
+    if biscoito and biscoito not in candidatos:
+        candidatos.append(biscoito)
+    for token in candidatos:
+        u = _user_from_token(token)
+        if u:
+            return u
+    return None
+
+
+def deve_renovar(request: Request) -> bool:
+    """Token já passou da metade da validade? Então vale renovar o cookie.
+
+    Sem isso a sessão morre no meio do trabalho: o app volta pra tela de login
+    e, de fora, isso é indistinguível de queda do túnel.
+    """
+    # Olha o token que ainda está VÁLIDO (header ou cookie) — o outro pode estar
+    # vencido sem que a sessão esteja.
+    candidatos = []
+    header = request.headers.get("authorization", "")
+    if header and header.lower().startswith("bearer "):
+        candidatos.append(header.split(" ", 1)[1].strip())
+    try:
+        candidatos.append(request.cookies.get(COOKIE_NAME, "") or "")
+    except Exception:
+        pass
+    for token in [t for t in candidatos if t]:
+        try:
+            exp = int(_decode(token).get("exp") or 0)
+        except Exception:
+            continue
+        restante = exp - int(time.time())
+        if 0 < restante < _RENOVAR_APOS:
+            return True
+    return False
+
+
+def _https(request: Request) -> bool:
+    """A requisição chegou por HTTPS? No Render o TLS termina no proxy, então o
+    sinal verdadeiro está no x-forwarded-proto."""
+    try:
+        enc = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+        return enc == "https" or request.url.scheme == "https"
+    except Exception:
+        return True
+
+
+def set_cookie_sessao(response, token: str, seguro: bool = True) -> None:
+    """Grava o cookie de sessão.
+
+    `secure` acompanha o esquema: em produção (HTTPS) fica ligado; em
+    desenvolvimento por http://127.0.0.1 o navegador RECUSA cookie Secure, e
+    era por isso que a sessão por cookie não funcionava localmente.
+    """
+    response.set_cookie(COOKIE_NAME, token, max_age=_TOKEN_TTL, httponly=True,
+                        secure=seguro, samesite="lax", path="/")
+
+
+def renovar_sessao(response, user: dict, request: Request = None) -> None:
+    """Emite um cookie novo pro mesmo usuário, esticando a sessão."""
+    try:
+        set_cookie_sessao(response, make_token(user),
+                          seguro=_https(request) if request is not None else True)
+    except Exception:
+        pass
 
 
 # compat: mantém a assinatura antiga usada em algum lugar
@@ -401,14 +482,13 @@ async def emergency_reset(payload: dict = Body(default={})):
 
 
 @router.post("/api/auth/login")
-async def login(response: Response, payload: dict = Body(default={})):
+async def login(request: Request, response: Response, payload: dict = Body(default={})):
     u = authenticate(payload.get("email", ""), payload.get("senha", "") or payload.get("password", ""))
     if not u:
         raise HTTPException(status_code=401, detail="E-mail ou senha incorretos.")
     token = make_token(u)
     # Cookie de sessão httpOnly — robusto (não depende de localStorage do navegador).
-    response.set_cookie(COOKIE_NAME, token, max_age=_TOKEN_TTL, httponly=True,
-                        secure=True, samesite="lax", path="/")
+    set_cookie_sessao(response, token, seguro=_https(request))
     return {"token": token, "user": _row_to_user(u)}
 
 
