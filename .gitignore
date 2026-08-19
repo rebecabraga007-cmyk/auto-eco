@@ -1,4 +1,12 @@
 .env
+# Bases locais: dado pessoal e arquivo de dezenas de GB — nunca versionar.
+cnpj_base/cnpj.db
+cnpj_base/_downloads/
+mk_base/mk.db
+mk_base/*.db-journal
+mk_base/*.db-wal
+jbr_base/*.db
+bludata/backend/*.db
 __pycache__/
 *.pyc
 *.pyo

@@ -36,10 +36,12 @@ if ($Quick) {
     -WindowStyle Minimized
   Write-Host "   (veja a URL *.trycloudflare.com na janela do cloudflared)" -ForegroundColor Yellow
 } else {
-  $config = Join-Path $PSScriptRoot "config.yml"
-  if (-not (Test-Path $config)) { throw "config.yml nao existe. Rode ./setup-tunnel.ps1 antes (ou use -Quick)." }
+  if (-not (Test-Path (Join-Path $PSScriptRoot "config.yml"))) { throw "config.yml nao existe. Rode ./setup-tunnel.ps1 antes (ou use -Quick)." }
   Write-Host "==> Tunel NOMEADO (config.yml)..." -ForegroundColor Cyan
-  Start-Process $Cloudflared -ArgumentList "tunnel","--config",$config,"run" -WindowStyle Minimized
+  # WorkingDirectory + config RELATIVO: o caminho absoluto tem espaco ("BLU AUTO")
+  # e o Start-Process quebra o argumento no espaco. Rodar de dentro do deploy evita isso.
+  Start-Process $Cloudflared -ArgumentList "tunnel","--config","config.yml","run" `
+    -WorkingDirectory $PSScriptRoot -WindowStyle Minimized -RedirectStandardError "C:\capiblu_data\cloudflared.log"
 }
 
 if ($WithApp) {

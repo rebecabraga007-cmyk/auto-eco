@@ -1,19 +1,17 @@
-﻿<#
-  Registra o CapiBLU para subir automaticamente no logon (Agendador de Tarefas).
-  Rode UMA vez. Para remover: Unregister-ScheduledTask -TaskName CapiBLU -Confirm:$false
+<#
+  Faz o CapiBLU subir no logon SEM exigir admin: cria um .cmd na pasta
+  Inicializar (Startup) do Windows que chama start-capiblu.ps1 oculto.
+  Rodar UMA vez. Para remover: apague o arquivo indicado no final.
 #>
 $ErrorActionPreference = "Stop"
-$script = Join-Path $PSScriptRoot "start-capiblu.ps1"
-if (-not (Test-Path $script)) { throw "start-capiblu.ps1 não encontrado." }
+$start = Join-Path $PSScriptRoot "start-capiblu.ps1"
+if (-not (Test-Path $start)) { throw "start-capiblu.ps1 nao encontrado." }
 
-$arg = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $script + '"'
-$action  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arg
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-  -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 2)
+$startupDir = [Environment]::GetFolderPath('Startup')   # ...\Start Menu\Programs\Startup
+$cmdPath = Join-Path $startupDir "CapiBLU.cmd"
+$cmd = "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$start`"`r`n"
+[System.IO.File]::WriteAllText($cmdPath, $cmd)
 
-Register-ScheduledTask -TaskName "CapiBLU" -Action $action -Trigger $trigger `
-  -Settings $settings -Description "Sobe serviço de dados + Cloudflare Tunnel do CapiBLU" -Force | Out-Null
-
-Write-Host "Tarefa 'CapiBLU' registrada — sobe sozinho no próximo logon." -ForegroundColor Green
-Write-Host "Testar agora: Start-ScheduledTask -TaskName CapiBLU" -ForegroundColor Gray
+Write-Host "OK! Criado: $cmdPath" -ForegroundColor Green
+Write-Host "O CapiBLU (dados + tunel) vai subir sozinho a cada logon." -ForegroundColor Green
+Write-Host "Para remover no futuro: Remove-Item `"$cmdPath`"" -ForegroundColor Gray
