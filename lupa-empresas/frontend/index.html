@@ -57,6 +57,7 @@
       <button id="menu-users" hidden>👥 Usuários</button>
       <button id="menu-config" hidden>⚙️ Configurações</button>
       <button id="menu-password">🔑 Trocar senha</button>
+      <button id="menu-docs" onclick="window.open('/docs','_blank','noopener')">📖 API do CapiBLU</button>
       <button id="menu-logout">🚪 Sair</button>
     </div>
   </div>
@@ -771,8 +772,11 @@
     </div>
 
     <div class="search-panel">
-      <h3 style="margin:0 0 6px;font-size:1.05rem">Tokens de API</h3>
-      <p class="pf-advanced-hint" style="display:block;margin:0 0 12px">Credencial de máquina para outros sistemas consumirem a <strong>API do CapiBLU</strong> (<code>/api/v1</code>). O token aparece <strong>uma única vez</strong>, na criação — guardamos apenas o hash. Documentação completa em <code>lupa-empresas/API.md</code>.</p>
+      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:0 0 6px">
+        <h3 style="margin:0;font-size:1.05rem">Tokens de API</h3>
+        <a href="/docs" target="_blank" rel="noopener" class="btn-secondary" style="text-decoration:none;padding:4px 12px;font-size:.82rem">📖 Documentação da API</a>
+      </div>
+      <p class="pf-advanced-hint" style="display:block;margin:0 0 12px">Credencial de máquina para outros sistemas consumirem a <strong>API do CapiBLU</strong> (<code>/api/v1</code>). O token aparece <strong>uma única vez</strong>, na criação — guardamos apenas o hash. Os 34 endpoints estão documentados em <a href="/docs" target="_blank" rel="noopener">/docs</a>.</p>
 
       <div class="prosp-build-row">
         <label>Nome do token

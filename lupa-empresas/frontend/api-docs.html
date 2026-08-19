@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API CapiBLU — Documentação</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Mesmo design system do app: papel + azul-noite + terracota, sem sombra. */
+:root{
+  --blue:#12385C; --blue-dark:#0F2E4A; --blue-soft:#EAF0F5;
+  --terracota:#A85A2C; --terracota-soft:#FBEFE7;
+  --green:#2F6B4F; --green-soft:#EAF1EC;
+  --red:#9A3324; --amber:#8C6A16; --amber-soft:#F7F1E1;
+  --gray-900:#1A1D21; --gray-700:#45423B; --gray-600:#4A4F56; --gray-500:#55595F;
+  --gray-300:#B9B0A0; --gray-200:#DBD4C6; --gray-100:#F0ECE3; --gray-50:#FCFBF8;
+  --bg:#F1EEE7; --white:#fff; --radius-sm:4px;
+}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;font-family:"IBM Plex Sans",system-ui,Arial,sans-serif;background:var(--bg);
+  color:var(--gray-900);line-height:1.6;font-size:15px;-webkit-font-smoothing:antialiased}
+code,pre,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace}
+a{color:var(--terracota)}
+
+.shell{display:grid;grid-template-columns:290px 1fr;min-height:100vh}
+
+/* ── Índice ── */
+.side{background:var(--blue-dark);color:#DCE6EE;position:sticky;top:0;height:100vh;
+  overflow-y:auto;display:flex;flex-direction:column}
+.side-top{padding:20px 18px 14px;border-bottom:1px solid rgba(255,255,255,.12)}
+.side-top .marca{font-weight:700;font-size:1.05rem;color:#fff;letter-spacing:.02em}
+.side-top .sub{font-size:.78rem;color:#9FB6C9;margin-top:2px}
+.side-top a.voltar{display:inline-block;margin-top:12px;font-size:.8rem;color:#9FB6C9;text-decoration:none}
+.side-top a.voltar:hover{color:#fff}
+#busca{width:100%;margin-top:12px;padding:8px 10px;background:rgba(255,255,255,.07);
+  border:1px solid rgba(255,255,255,.18);color:#fff;font-size:.85rem;border-radius:var(--radius-sm)}
+#busca::placeholder{color:#7E94A7}
+.side-nav{padding:12px 8px 30px;flex:1}
+.side-nav .grupo{font-size:.68rem;text-transform:uppercase;letter-spacing:.09em;
+  color:#7E94A7;padding:14px 12px 6px;font-weight:600}
+.side-nav a{display:flex;gap:8px;align-items:baseline;padding:5px 12px;color:#DCE6EE;
+  text-decoration:none;font-size:.85rem;border-left:2px solid transparent}
+.side-nav a:hover{background:rgba(255,255,255,.06);color:#fff}
+.side-nav a.ativo{border-left-color:var(--terracota);background:rgba(168,90,44,.16);color:#fff}
+.side-nav a .m{font-size:.62rem;font-weight:600;letter-spacing:.05em;min-width:30px;color:#8FA9BC}
+.side-nav a.oculto{display:none}
+
+/* ── Conteúdo ── */
+.main{padding:0 0 90px}
+.topo{background:var(--blue);color:#fff;padding:38px 46px 30px}
+.topo h1{margin:0;font-size:1.9rem;letter-spacing:-.01em}
+.topo p{margin:8px 0 0;color:#C3D5E3;max-width:70ch}
+.topo .cartoes{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}
+.topo .cartao{background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.20);
+  padding:8px 13px;font-size:.8rem;border-radius:var(--radius-sm)}
+.topo .cartao b{display:block;font-size:.66rem;text-transform:uppercase;letter-spacing:.09em;
+  color:#9FB6C9;font-weight:600}
+.base-url{display:flex;align-items:center;gap:10px;margin-top:20px;background:rgba(0,0,0,.22);
+  border:1px solid rgba(255,255,255,.18);padding:10px 12px;border-radius:var(--radius-sm)}
+.base-url code{color:#EAF0F5;font-size:.86rem;word-break:break-all}
+
+.corpo{padding:34px 46px;max-width:1000px}
+section{margin-bottom:52px;scroll-margin-top:14px}
+h2{font-size:1.32rem;margin:0 0 6px;padding-bottom:8px;border-bottom:2px solid var(--gray-200)}
+h3{font-size:1.02rem;margin:30px 0 8px;color:var(--blue)}
+p{margin:10px 0}
+ul{margin:10px 0;padding-left:22px}
+li{margin:4px 0}
+
+table{width:100%;border-collapse:collapse;margin:14px 0;background:var(--white);
+  border:1px solid var(--gray-200);font-size:.88rem}
+th,td{text-align:left;padding:8px 11px;border-bottom:1px solid var(--gray-100);vertical-align:top}
+th{background:var(--gray-100);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--gray-600);font-weight:600}
+tr:last-child td{border-bottom:0}
+td code,p code,li code{background:var(--gray-100);padding:1px 5px;font-size:.85em;
+  border:1px solid var(--gray-200);border-radius:2px}
+
+pre{position:relative;background:#10222F;color:#DCE6EE;padding:14px 16px;overflow-x:auto;
+  font-size:.83rem;line-height:1.5;margin:12px 0;border-radius:var(--radius-sm)}
+pre code{background:none;border:0;padding:0;color:inherit}
+.copiar{position:absolute;top:8px;right:8px;background:rgba(255,255,255,.10);color:#C3D5E3;
+  border:1px solid rgba(255,255,255,.22);font:inherit;font-size:.7rem;padding:3px 9px;
+  cursor:pointer;border-radius:2px}
+.copiar:hover{background:rgba(255,255,255,.2);color:#fff}
+
+/* ── Endpoint ── */
+.ep{background:var(--white);border:1px solid var(--gray-200);margin:16px 0;scroll-margin-top:14px}
+.ep-cab{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 14px;
+  background:var(--gray-50);border-bottom:1px solid var(--gray-200)}
+.ep-cab .rota{font-family:"IBM Plex Mono",monospace;font-size:.92rem;font-weight:500}
+.ep-corpo{padding:4px 14px 14px}
+.ep-corpo>p:first-child{margin-top:10px}
+.met{font-size:.68rem;font-weight:700;letter-spacing:.06em;padding:3px 8px;color:#fff;border-radius:2px}
+.met.get{background:var(--blue)} .met.post{background:var(--green)} .met.del{background:var(--red)}
+.tag{font-size:.68rem;font-weight:600;padding:3px 8px;border:1px solid;border-radius:2px}
+.tag.paga{color:var(--terracota);background:var(--terracota-soft);border-color:#E8C9B3}
+.tag.gratis{color:var(--green);background:var(--green-soft);border-color:#BFD5C6}
+.tag.adm{color:var(--amber);background:var(--amber-soft);border-color:#DFCE9C}
+.tag.bruto{color:var(--gray-600);background:var(--gray-100);border-color:var(--gray-200)}
+
+.nota{background:var(--blue-soft);border-left:3px solid var(--blue);padding:11px 14px;
+  margin:14px 0;font-size:.89rem}
+.nota.aviso{background:var(--amber-soft);border-left-color:var(--amber)}
+.nota.perigo{background:#F7ECE9;border-left-color:var(--red)}
+.nota b{display:block;margin-bottom:3px}
+
+.vazio{padding:20px;background:var(--white);border:1px dashed var(--gray-300);
+  color:var(--gray-500);font-size:.9rem;display:none}
+body.filtrando section:not(.tem-resultado){display:none}
+body.filtrando .ep.oculto{display:none}
+
+@media(max-width:900px){
+  .shell{grid-template-columns:1fr}
+  .side{position:static;height:auto}
+  .topo,.corpo{padding-left:20px;padding-right:20px}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside class="side">
+  <div class="side-top">
+    <div class="marca">API CapiBLU</div>
+    <div class="sub">Documentação · v1</div>
+    <a class="voltar" href="/">← voltar para a plataforma</a>
+    <input id="busca" type="search" placeholder="Filtrar endpoint ou assunto…" autocomplete="off">
+  </div>
+  <nav class="side-nav" id="indice"></nav>
+</aside>
+
+<main class="main">
+  <header class="topo">
+    <h1>API CapiBLU — v1</h1>
+    <p>Os mesmos dados que a plataforma usa, em JSON, para o seu CRM, seu discador
+       ou sua automação. Autenticação por token, um endpoint por pergunta.</p>
+    <div class="cartoes">
+      <div class="cartao"><b>Versão</b>1.0</div>
+      <div class="cartao"><b>Arquitetura</b>REST / HTTP</div>
+      <div class="cartao"><b>Formato</b>JSON</div>
+      <div class="cartao"><b>Autenticação</b>API Token (Bearer)</div>
+      <div class="cartao"><b>Endpoints</b>34</div>
+    </div>
+    <div class="base-url">
+      <span style="font-size:.66rem;text-transform:uppercase;letter-spacing:.09em;color:#9FB6C9;font-weight:600">URL base</span>
+      <code id="base-url">https://capiblu-app.onrender.com/api/v1</code>
+      <button class="copiar" style="position:static" data-copiar="#base-url">copiar</button>
+    </div>
+  </header>
+
+  <div class="corpo">
+  <div class="vazio" id="sem-resultado">Nada encontrado com esse filtro.</div>
+
+  <!-- ═══ 1 ═══ -->
+  <section id="introducao" data-titulo="Introdução visão geral o que dá para fazer">
+    <h2>1. Introdução</h2>
+    <p>A API do CapiBLU expõe o que a plataforma alcança: cadastro de empresas da
+       Receita Federal, quadro de sócios com CPF resolvido, possíveis decisores com
+       cargo, vínculos empregatícios da RAIS, telefones priorizados por atualidade e
+       parentes.</p>
+    <h3>O que dá para fazer</h3>
+    <ul>
+      <li>Buscar empresas por UF, município, CNAE, porte e capital social</li>
+      <li>Trazer sócios com CPF resolvido e decisores com cargo e nível de decisão</li>
+      <li>Consultar quem trabalha (ou trabalhou) numa empresa, pela RAIS</li>
+      <li>Descobrir onde uma pessoa trabalha, a partir do CPF</li>
+      <li>Montar contatos prontos para abordagem, com telefone do mais atual para o mais antigo</li>
+      <li>Puxar o <b>JSON bruto</b> de cada fonte quando precisar de um campo que a tela não mostra</li>
+      <li>Acompanhar o próprio consumo e o limite diário</li>
+    </ul>
+    <p><b>Pré-requisito:</b> um token de API, gerado por um administrador no
+       <a href="/#admin">painel administrativo</a>.</p>
+  </section>
+
+  <!-- ═══ 2 ═══ -->
+  <section id="autenticacao" data-titulo="Autenticação token bearer escopo leitura consulta segurança">
+    <h2>2. Autenticação</h2>
+    <p>Toda requisição leva o token no header:</p>
+    <pre><code>Authorization: Bearer capi_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxx</code></pre>
+    <h3>Como obter</h3>
+    <p>Um administrador cria o token no painel (aba <b>Painel administrativo → Tokens de API</b>).
+       O valor em claro aparece <b>uma única vez, na criação</b> — o CapiBLU guarda apenas o
+       hash. Se perder, revogue e gere outro.</p>
+    <h3>Escopos</h3>
+    <table>
+      <thead><tr><th>Escopo</th><th>O que libera</th></tr></thead>
+      <tbody>
+        <tr><td><code>leitura</code></td><td>Só o que sai de base local: empresas, sócios, busca por nome, cadastro de CPF. Não gera custo.</td></tr>
+        <tr><td><code>consulta</code></td><td>Também o que <b>gasta consulta paga</b>: telefones, decisores, RAIS, parentes, conexões.</td></tr>
+      </tbody>
+    </table>
+    <p>Token <code>leitura</code> que chamar rota paga recebe <b>403</b> com explicação.
+       Serve para entregar acesso a um sistema de leitura sem risco de ele gerar custo.</p>
+    <div class="nota perigo"><b>Segurança</b>
+      Nunca coloque o token em repositório nem em código de frontend. Use variável de
+      ambiente. Revogar é imediato: a chamada seguinte já recebe 401.</div>
+  </section>
+
+  <!-- ═══ 3 ═══ -->
+  <section id="conceitos" data-titulo="Conceitos gerais datas filtros paginação envelope erros status custo">
+    <h2>3. Conceitos gerais</h2>
+
+    <h3>3.1 Datas</h3>
+    <p>ISO 8601 em UTC: <code>2026-08-19T17:00:00Z</code>. Datas que vêm de base pública
+       (RAIS, Receita) podem chegar no formato original <code>dd/mm/aaaa</code> — nesse
+       caso o campo tem sufixo <code>_br</code>.</p>
+
+    <h3>3.2 Filtros</h3>
+    <pre><code>GET /api/v1/empresas?uf=MG&amp;municipio=GOVERNADOR%20VALADARES&amp;porte=05</code></pre>
+
+    <h3>3.3 Paginação</h3>
+    <table>
+      <thead><tr><th>Parâmetro</th><th>Tipo</th><th>Descrição</th></tr></thead>
+      <tbody>
+        <tr><td><code>page</code></td><td>integer</td><td>Página, começando em 1</td></tr>
+        <tr><td><code>limit</code></td><td>integer</td><td>Registros por página (o máximo varia por rota)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>3.4 Estrutura das respostas</h3>
+    <p>Todo retorno bem-sucedido usa o mesmo envelope:</p>
+    <pre><code>{
+  "data": [ ... ],
+  "meta": { "total": 100, "page": 1, "limit": 20, "fonte": "Receita Federal" }
+}</code></pre>
+    <p>E todo erro tem corpo previsível:</p>
+    <pre><code>{ "error": { "code": "cnpj_invalido", "message": "CNPJ deve ter 14 dígitos." } }</code></pre>
+    <table>
+      <thead><tr><th>Status</th><th>Quando acontece</th></tr></thead>
+      <tbody>
+        <tr><td><code>200</code></td><td>Sucesso</td></tr>
+        <tr><td><code>400</code></td><td>Requisição inválida (documento malformado, filtro impossível, campo inexistente)</td></tr>
+        <tr><td><code>401</code></td><td>Token ausente, inválido ou revogado</td></tr>
+        <tr><td><code>403</code></td><td>Escopo insuficiente, usuário inativo, ou rota só de admin</td></tr>
+        <tr><td><code>404</code></td><td>Documento não encontrado na fonte</td></tr>
+        <tr><td><code>429</code></td><td>Limite diário de consultas atingido</td></tr>
+        <tr><td><code>502</code> / <code>503</code></td><td>Serviço de dados indisponível</td></tr>
+      </tbody>
+    </table>
+
+    <h3>3.5 Custo por chamada</h3>
+    <p>Rotas marcadas <span class="tag paga">gasta consulta</span> consomem o limite diário
+       do usuário dono do token — o mesmo contador da plataforma. Rotas
+       <span class="tag gratis">base local</span> não consomem nada. Veja o saldo em
+       <code>GET /conta</code>.</p>
+    <div class="nota"><b>Ausência não é erro</b>
+      Micro empresa sem decisor devolve <code>200</code> com <code>data: []</code> e um
+      <code>meta.aviso</code> explicando. É resposta legítima, não falha.</div>
+  </section>
+
+  <!-- ═══ 4.1 CONTA ═══ -->
+  <section id="conta" data-titulo="Conta limite diário saldo consumo">
+    <h2>4.1 Conta</h2>
+    <div class="ep" id="ep-conta" data-busca="GET /conta conta limite saldo usuario token">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/conta</span>
+        <span class="tag gratis">não gasta</span></div>
+      <div class="ep-corpo">
+        <p>Quem é o dono do token, qual token está em uso e quanto ainda cabe de consulta hoje.</p>
+        <pre><code>{
+  "data": {
+    "usuario": { "id": 1, "nome": "Rebeca", "email": "rebeca@…", "role": "admin" },
+    "token": { "id": 3, "nome": "Integração CRM", "escopo": "consulta" },
+    "limites": { "consultas_por_dia": 100, "usadas_hoje": 12, "restantes_hoje": 88, "ilimitado": false }
+  },
+  "meta": { "gerado_em": "2026-08-19T20:14:03Z" }
+}</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 4.2 EMPRESAS ═══ -->
+  <section id="empresas" data-titulo="Empresas CNPJ sócios decisores funcionários RAIS contatos conexões">
+    <h2>4.2 Empresas</h2>
+
+    <div class="ep" id="ep-empresas" data-busca="GET /empresas busca uf municipio cnae porte capital situacao texto matriz">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/empresas</span>
+        <span class="tag gratis">base local</span></div>
+      <div class="ep-corpo">
+        <p>Busca na base local da Receita Federal.</p>
+        <table>
+          <thead><tr><th>Parâmetro</th><th>Tipo</th><th>Descrição</th></tr></thead>
+          <tbody>
+            <tr><td><code>uf</code></td><td>string</td><td>Sigla do estado</td></tr>
+            <tr><td><code>municipio</code></td><td>string</td><td>Nome do município</td></tr>
+            <tr><td><code>cnae</code></td><td>string</td><td>Código CNAE (vários separados por vírgula)</td></tr>
+            <tr><td><code>porte</code></td><td>string</td><td><code>01</code> micro · <code>03</code> pequeno · <code>05</code> demais</td></tr>
+            <tr><td><code>situacao</code></td><td>string</td><td>Ex.: <code>ATIVA</code></td></tr>
+            <tr><td><code>capital_min</code> / <code>capital_max</code></td><td>integer</td><td>Faixa de capital social</td></tr>
+            <tr><td><code>com_telefone</code></td><td>boolean</td><td>Só empresas com telefone na Receita</td></tr>
+            <tr><td><code>somente_matriz</code></td><td>boolean</td><td>Exclui filiais</td></tr>
+            <tr><td><code>texto</code></td><td>string</td><td>Busca livre por razão social / nome fantasia</td></tr>
+            <tr><td><code>page</code> / <code>limit</code></td><td>integer</td><td>Paginação (<code>limit</code> máximo 200)</td></tr>
+          </tbody>
+        </table>
+        <div class="nota aviso"><b>A Receita não classifica "grande"</b>
+          <code>05</code> é o balde de médias <b>e</b> grandes. Para chegar nas grandes,
+          combine <code>porte=05</code> com <code>capital_min</code>.</div>
+      </div>
+    </div>
+
+    <div class="ep" id="ep-empresa" data-busca="GET /empresas/{cnpj} cadastro razão social situação cnae endereço capital qsa">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/empresas/{cnpj}</span>
+        <span class="tag gratis">base local</span></div>
+      <div class="ep-corpo"><p>Cadastro completo: razão social, situação, CNAE, endereço,
+        capital social e QSA.</p></div>
+    </div>
+
+    <div class="ep" id="ep-socios" data-busca="GET /empresas/{cnpj}/socios quadro societário QSA CPF resolvido qualificação">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/empresas/{cnpj}/socios</span>
+        <span class="tag gratis">base local</span></div>
+      <div class="ep-corpo">
+        <p>Quadro de sócios com <b>CPF resolvido</b> quando a base local consegue cruzar.</p>
+        <pre><code>{ "data": [ { "nome": "CELIO COUTINHO DA CUNHA",
+              "qualificacao": "Sócio-Administrador",
+              "cpf": "03702149600", "data_entrada": "2021-06-10" } ],
+  "meta": { "total": 1, "fonte": "Receita Federal (QSA)" } }</code></pre>
+      </div>
+    </div>
+
+    <div class="ep" id="ep-decisores" data-busca="GET /empresas/{cnpj}/decisores gestor cargo nível de decisão diretor gerente">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/empresas/{cnpj}/decisores</span>
+        <span class="tag paga">gasta consulta</span></div>
+      <div class="ep-corpo">
+        <p>Possíveis decisores com cargo, classificados em três níveis de decisão.</p>
+        <table>
+          <thead><tr><th>Parâmetro</th><th>Tipo</th><th>Descrição</th></tr></thead>
+          <tbody>
+            <tr><td><code>nivel</code></td><td>string</td><td><code>1</code> decide sozinho · <code>2</code> decide na área · <code>3</code> influencia</td></tr>
+            <tr><td><code>cargo</code></td><td>string</td><td>Filtro por cargo, ex.: <code>diretor</code></td></tr>
+            <tr><td><code>page</code> / <code>limit</code></td><td>integer</td><td>Paginação</td></tr>
+          </tbody>
+        </table>
+        <div class="nota aviso"><b>Cobertura desigual</b>
+          Empresa grande costuma ter muitos (medimos 602 no CNPJ da Google Brasil);
+          micro empresa quase nunca tem. Nesses casos <code>meta.aviso</code> explica e
+          <code>data</code> vem vazio.</div>
+      </div>
+    </div>
+
+    <div class="ep" id="ep-funcionarios" data-busca="GET /empresas/{cnpj}/funcionarios RAIS vínculo empregatício admissão desligamento quadro de funcionários">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/empresas/{cnpj}/funcionarios</span>
+        <span class="tag paga">gasta consulta</span></div>
+      <div class="ep-corpo">
+        <p>Vínculos declarados na RAIS: nome, CPF, admissão, desligamento e tempo de casa.</p>
+        <table>
+          <thead><tr><th>Parâmetro</th><th>Tipo</th><th>Descrição</th></tr></thead>
+          <tbody>
+            <tr><td><code>situacao</code></td><td>string</td><td><code>ativos</code> ou <code>desligados</code></td></tr>
+            <tr><td><code>page</code> / <code>limit</code></td><td>integer</td><td>Paginação (<code>limit</code> máximo 500)</td></tr>
+          </tbody>
+        </table>
+        <div class="nota aviso"><b>A RAIS é um retrato, não tempo real</b>
+          Vale o último ano entregue (<code>meta.referencia</code>): quem entrou depois não
+          aparece, e "ativo" significa "estava lá naquela data". De quem saiu, a base
+          informa dia e mês, sem o ano.</div>
+      </div>
+    </div>
+
+    <div class="ep" id="ep-contatos" data-busca="GET /empresas/{cnpj}/contatos prospecção telefone celular whatsapp abordagem">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/empresas/{cnpj}/contatos</span>
+        <span class="tag paga">gasta consulta</span></div>
+      <div class="ep-corpo">
+        <p>O endpoint de prospecção: sócios e decisores já com telefone priorizado.</p>
+        <table>
+          <thead><tr><th>Parâmetro</th><th>Tipo</th><th>Padrão</th><th>Descrição</th></tr></thead>
+          <tbody>
+            <tr><td><code>incluir_decisores</code></td><td>boolean</td><td><code>true</code></td><td>Anexa decisores que não são sócios</td></tr>
+            <tr><td><code>cargos</code></td><td>string</td><td>—</td><td>Filtro de cargo dos decisores</td></tr>
+            <tr><td><code>max_decisores</code></td><td>integer</td><td><code>3</code></td><td>Teto por empresa</td></tr>
+            <tr><td><code>max_telefones</code></td><td>integer</td><td><code>3</code></td><td>Telefones por contato</td></tr>
+            <tr><td><code>tipo_telefone</code></td><td>string</td><td><code>celular</code></td><td><code>celular</code>, <code>celular_fixo</code> ou <code>todos</code></td></tr>
+            <tr><td><code>fonte_telefone</code></td><td>string</td><td><code>assertiva</code></td><td><code>assertiva</code> ou <code>mk</code></td></tr>
+          </tbody>
+        </table>
+        <p>Os telefones vêm <b>do mais atual para o mais antigo</b>, usando o último contato
+           registrado, linha quente e se o número é do próprio titular.</p>
+      </div>
+    </div>
+
+    <div class="ep" id="ep-conexoes" data-busca="GET /empresas/{cnpj}/conexoes empresas ligadas whatsapp rede">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/empresas/{cnpj}/conexoes</span>
+        <span class="tag paga">gasta consulta</span></div>
+      <div class="ep-corpo"><p>Sócios, possíveis decisores e empresas ligadas — com telefone
+        e indicação de WhatsApp.</p></div>
+    </div>
+  </section>
+
+  <!-- ═══ 4.3 PESSOAS ═══ -->
+  <section id="pessoas" data-titulo="Pessoas CPF nome telefones vínculos parentes família">
+    <h2>4.3 Pessoas</h2>
+
+    <div class="ep" id="ep-pessoas" data-busca="GET /pessoas busca por nome homônimo ampla">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/pessoas</span>
+        <span class="tag gratis">base local</span></div>
+      <div class="ep-corpo">
+        <p>Busca por nome na base local de CPF.</p>
+        <table>
+          <thead><tr><th>Parâmetro</th><th>Tipo</th><th>Descrição</th></tr></thead>
+          <tbody>
+            <tr><td><code>nome</code></td><td>string</td><td><b>Obrigatório</b>, mínimo 3 caracteres</td></tr>
+            <tr><td><code>ampla</code></td><td>boolean</td><td><code>true</code> procura nomes compostos parecidos</td></tr>
+            <tr><td><code>page</code> / <code>limit</code></td><td>integer</td><td>Paginação</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="ep" id="ep-pessoa" data-busca="GET /pessoas/{cpf} cadastro nascimento sexo nome da mãe">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/pessoas/{cpf}</span>
+        <span class="tag gratis">base local</span></div>
+      <div class="ep-corpo"><p>Cadastrais: nome, nascimento, sexo e nome da mãe quando disponível.</p></div>
+    </div>
+
+    <div class="ep" id="ep-telefones-pessoa" data-busca="GET /pessoas/{cpf}/telefones celular fixo atualidade">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/pessoas/{cpf}/telefones</span>
+        <span class="tag paga">gasta consulta</span></div>
+      <div class="ep-corpo"><p>Telefones da pessoa, ordenados do mais atual para o mais antigo.</p></div>
+    </div>
+
+    <div class="ep" id="ep-vinculos-pessoa" data-busca="GET /pessoas/{cpf}/vinculos onde trabalha emprego RAIS inverso">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/pessoas/{cpf}/vinculos</span>
+        <span class="tag paga">gasta consulta</span></div>
+      <div class="ep-corpo"><p>Onde a pessoa trabalha ou trabalhou, pela RAIS — o inverso do CNPJ.</p></div>
+    </div>
+
+    <div class="ep" id="ep-parentes" data-busca="GET /pessoas/{cpf}/parentes mãe pai filhos irmãos cônjuge sócios família">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/pessoas/{cpf}/parentes</span>
+        <span class="tag paga">gasta 2 consultas</span></div>
+      <div class="ep-corpo"><p>Mãe, pai, filhos, irmãos, cônjuge e sócios, com telefone quando
+        existe. Funde duas fontes e marca a origem de cada linha em <code>fonte</code>.</p></div>
+    </div>
+  </section>
+
+  <!-- ═══ 4.4 TELEFONES ═══ -->
+  <section id="telefones" data-titulo="Telefones reverso de quem é este número validar pertence">
+    <h2>4.4 Telefones</h2>
+
+    <div class="ep" id="ep-telefone" data-busca="GET /telefones/{numero} reverso de quem é este número DDD">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/telefones/{numero}</span>
+        <span class="tag paga">gasta consulta</span></div>
+      <div class="ep-corpo"><p>Telefone reverso: CPFs e CNPJs atrelados ao número. Aceita 10 ou
+        11 dígitos com DDD, com ou sem máscara.</p></div>
+    </div>
+
+    <div class="ep" id="ep-pertence" data-busca="GET /telefones/{numero}/pertence/{documento} validar confirmar linha compartilhada">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/telefones/{numero}/pertence/{documento}</span>
+        <span class="tag paga">gasta consulta</span></div>
+      <div class="ep-corpo"><p>Confirma se o número é daquele CPF/CNPJ e avisa quando é linha
+        compartilhada.</p></div>
+    </div>
+  </section>
+
+  <!-- ═══ 4.5 JSON BRUTO ═══ -->
+  <section id="bruto" data-titulo="JSON bruto fontes Assertiva Mk Serasa LinkedIn e-mail busca avançada">
+    <h2>4.5 JSON bruto das fontes</h2>
+    <p>Cada fonte devolve muito mais campo do que a tela mostra. Nestas rotas o
+       <code>meta.bruto</code> vem <code>true</code>: o <code>data</code> é o JSON da fonte,
+       sem tradução nossa. Use quando precisar de um campo que a API tratada não expõe.</p>
+    <table>
+      <thead><tr><th>Rota</th><th>O que devolve</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /empresas/{cnpj}/assertiva</code></td><td>Resposta completa da Assertiva para o CNPJ, sem recorte</td></tr>
+        <tr><td><code>GET /pessoas/{cpf}/assertiva</code></td><td>Resposta completa da Assertiva para o CPF</td></tr>
+        <tr><td><code>GET /pessoas/{cpf}/mk</code></td><td>Perfil Mk: renda, score, endereços, parentes, vizinhos, benefícios</td></tr>
+        <tr><td><code>GET /pessoas/{cpf}/contatos</code></td><td>Telefones e e-mails pela Serasa</td></tr>
+        <tr><td><code>GET /empresas/{cnpj}/contatos-serasa</code></td><td>Telefones e e-mails da empresa pela Serasa</td></tr>
+        <tr><td><code>GET /empresas/{cnpj}/linkedin</code></td><td>Funcionários com cargo pelo LinkedIn</td></tr>
+        <tr><td><code>GET /assertiva/telefone/{numero}</code></td><td>Dono do telefone, resposta completa</td></tr>
+        <tr><td><code>GET /assertiva/email/{email}</code></td><td>Quem está por trás do e-mail</td></tr>
+        <tr><td><code>POST /pessoas/busca-avancada</code></td><td>Busca por nome e/ou endereço na Assertiva</td></tr>
+      </tbody>
+    </table>
+    <p>Todas <span class="tag paga">gastam consulta</span> e são <span class="tag bruto">JSON bruto</span>.</p>
+  </section>
+
+  <!-- ═══ 4.6 COMPLETO ═══ -->
+  <section id="completo" data-titulo="Visões compostas completo incluir blocos tudo numa chamada">
+    <h2>4.6 Visões compostas — tudo numa chamada</h2>
+
+    <div class="ep" id="ep-empresa-completo" data-busca="GET /empresas/{cnpj}/completo blocos incluir tudo de uma vez">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/empresas/{cnpj}/completo</span>
+        <span class="tag paga">gasta por bloco</span></div>
+      <div class="ep-corpo">
+        <pre><code>GET /empresas/{cnpj}/completo?incluir=cadastro,socios,decisores,funcionarios,conexoes,assertiva,linkedin</code></pre>
+        <p>Cada bloco é opcional e <b>cada bloco pago gasta consulta</b> — peça só o que vai
+           usar. Um bloco que falha <b>não derruba os outros</b>:</p>
+        <pre><code>{
+  "data": { "cadastro": {...}, "socios": [...], "decisores": {...} },
+  "meta": {
+    "blocos": ["cadastro", "socios", "decisores"],
+    "falhas": { "funcionarios": "A base RAIS respondeu 504." }
+  }
+}</code></pre>
+        <p>Medido no CNPJ da Google Brasil com cinco blocos: cadastro, 3 sócios,
+           <b>602 decisores</b>, <b>1.023 funcionários</b> e 14 conexões, tudo em uma resposta.</p>
+      </div>
+    </div>
+
+    <div class="ep" id="ep-pessoa-completo" data-busca="GET /pessoas/{cpf}/completo blocos incluir mk assertiva vinculos parentes serasa">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/pessoas/{cpf}/completo</span>
+        <span class="tag paga">gasta por bloco</span></div>
+      <div class="ep-corpo">
+        <pre><code>GET /pessoas/{cpf}/completo?incluir=cadastro,mk,assertiva,vinculos,parentes,serasa</code></pre>
+        <p>Mesma mecânica: <code>meta.blocos</code> diz o que veio, <code>meta.falhas</code>
+           diz o que não veio e por quê. Bloco inexistente devolve
+           <code>400 bloco_invalido</code> listando os aceitos.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 4.7 LOTE ═══ -->
+  <section id="lote" data-titulo="Lote enriquecimento planilha cobertura de decisores prospecção">
+    <h2>4.7 Lote</h2>
+
+    <div class="ep" id="ep-enriquecimento" data-busca="POST /enriquecimento planilha campos lote CNPJs">
+      <div class="ep-cab"><span class="met post">POST</span><span class="rota">/enriquecimento</span>
+        <span class="tag paga">gasta se pedir campo pago</span></div>
+      <div class="ep-corpo">
+        <p>O "Minha planilha" em API: manda CNPJs e a lista de campos, recebe uma linha por
+           CNPJ. Máximo de 200 por chamada.</p>
+        <pre><code>curl -X POST "$BASE/enriquecimento" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"cnpjs":["06990590000123"],
+       "campos":["rfb_razao","rfb_municipio","as_empresa_tel"]}'</code></pre>
+        <p>Campos da Receita não gastam consulta; campos de fonte paga gastam
+           (<code>meta.gasta_consulta</code> avisa qual foi o caso).</p>
+        <div class="nota"><b>Campo errado não passa em silêncio</b>
+          Nome desconhecido volta em <code>meta.campos_ignorados</code>; se <i>nenhum</i>
+          campo for válido, a resposta é <code>400 campos_desconhecidos</code>. O catálogo
+          está em <code>GET /enriquecimento/campos</code>.</div>
+      </div>
+    </div>
+
+    <div class="ep" id="ep-campos" data-busca="GET /enriquecimento/campos catálogo de campos disponíveis">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/enriquecimento/campos</span>
+        <span class="tag gratis">não gasta</span></div>
+      <div class="ep-corpo"><p>Catálogo dos campos aceitos, agrupados por fonte, com indicação
+        de quais cobram.</p></div>
+    </div>
+
+    <div class="ep" id="ep-cobertura" data-busca="POST /prospeccao/cobertura teste de cobertura decisor amostra">
+      <div class="ep-cab"><span class="met post">POST</span><span class="rota">/prospeccao/cobertura</span>
+        <span class="tag paga">2 consultas por CNPJ</span></div>
+      <div class="ep-corpo">
+        <p>Mede em quantas empresas da lista existe decisor na base, <b>sem puxar telefone</b>.
+           Serve para decidir se vale rodar a prospecção antes de gastar. Máximo de 60 CNPJs.</p>
+        <pre><code>{ "meta": { "testadas": 3, "com_decisor": 1, "taxa": 33.3, "consultas_gastas": 6 } }</code></pre>
+      </div>
+    </div>
+
+    <div class="ep" id="ep-prosp-pessoas" data-busca="POST /prospeccao/pessoas sócios por filtro base local">
+      <div class="ep-cab"><span class="met post">POST</span><span class="rota">/prospeccao/pessoas</span>
+        <span class="tag gratis">base local</span></div>
+      <div class="ep-corpo"><p>Sócios e pessoas por filtros de empresa (UF, município, CNAE,
+        porte), direto da base local.</p></div>
+    </div>
+  </section>
+
+  <!-- ═══ 4.8 APOIO ═══ -->
+  <section id="apoio" data-titulo="Apoio fontes lookups CNAE município natureza jurídica consumo dossiê PDF">
+    <h2>4.8 Apoio, consumo e dossiê</h2>
+
+    <div class="ep" id="ep-fontes" data-busca="GET /fontes quais fontes estão ativas cobram">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/fontes</span>
+        <span class="tag gratis">não gasta</span></div>
+      <div class="ep-corpo"><p>Quais fontes estão ativas, o que cada uma entrega e se cobra.
+        Bom para o seu sistema degradar sozinho quando uma fonte cai.</p></div>
+    </div>
+
+    <div class="ep" id="ep-lookups" data-busca="GET /lookups CNAE natureza jurídica município país qualificação motivo">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/lookups/{tipo}</span>
+        <span class="tag gratis">não gasta</span></div>
+      <div class="ep-corpo"><p>Listas de domínio para montar filtro: <code>cnae</code>,
+        <code>natureza</code>, <code>municipio</code>, <code>pais</code>,
+        <code>qualificacao</code>, <code>motivo</code>.</p></div>
+    </div>
+
+    <div class="ep" id="ep-consumo" data-busca="GET /consumo gasto relatório dos últimos dias custo">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/consumo</span>
+        <span class="tag gratis">não gasta</span></div>
+      <div class="ep-corpo"><p>Consumo de hoje, limite e tokens do usuário. Para token de admin,
+        inclui o relatório do período (<code>?dias=30</code>) com o total oficial da Assertiva.</p></div>
+    </div>
+
+    <div class="ep" id="ep-dossie" data-busca="GET /dossie PDF relatório completo insight família admin">
+      <div class="ep-cab"><span class="met get">GET</span><span class="rota">/dossie/{tipo}/{documento}</span>
+        <span class="tag adm">só admin</span><span class="tag paga">gasta consulta</span></div>
+      <div class="ep-corpo">
+        <p>Devolve <code>application/pdf</code>, não JSON. <code>tipo</code> é <code>cpf</code>
+           ou <code>cnpj</code>; aceita <code>insight=true</code> (resumo por IA) e
+           <code>familia=true</code> (consulta os parentes).</p>
+        <pre><code>curl -H "Authorization: Bearer $TOKEN" \
+  "$BASE/dossie/cnpj/06990590000123?insight=true" -o dossie.pdf</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 5 ═══ -->
+  <section id="tokens" data-titulo="Administração de tokens criar revogar limite diário">
+    <h2>5. Administração de tokens</h2>
+    <p>Estas rotas usam <b>sessão de administrador</b>, não token de API — é o que a tela
+       do painel consome.</p>
+    <table>
+      <thead><tr><th>Método</th><th>Rota</th><th>Descrição</th></tr></thead>
+      <tbody>
+        <tr><td><span class="met get">GET</span></td><td><code>/api/admin/tokens</code></td><td>Lista tokens (só o prefixo, nunca o segredo)</td></tr>
+        <tr><td><span class="met post">POST</span></td><td><code>/api/admin/tokens</code></td><td>Cria token. Body: <code>{user_id, nome, escopo}</code></td></tr>
+        <tr><td><span class="met del">DELETE</span></td><td><code>/api/admin/tokens/{id}</code></td><td>Revoga um token</td></tr>
+      </tbody>
+    </table>
+    <p>O token herda o <b>limite diário do usuário</b> a que pertence. Para dar mais folga a
+       uma integração, ajuste o limite desse usuário no painel.</p>
+  </section>
+
+  <!-- ═══ 6 ═══ -->
+  <section id="objetos" data-titulo="Objetos e relacionamentos empresa sócio decisor funcionário pessoa contato">
+    <h2>6. Objetos e relacionamentos</h2>
+    <table>
+      <thead><tr><th>Objeto</th><th>Descrição</th><th>Relacionamentos</th></tr></thead>
+      <tbody>
+        <tr><td><b>Empresa</b></td><td>CNPJ na base da Receita</td><td>tem Sócios, Decisores, Funcionários, Conexões</td></tr>
+        <tr><td><b>Sócio</b></td><td>Pessoa no quadro societário</td><td>pertence a Empresa; é uma Pessoa quando o CPF resolve</td></tr>
+        <tr><td><b>Decisor</b></td><td>Gestor ligado ao CNPJ, com cargo e nível</td><td>pertence a Empresa; é uma Pessoa</td></tr>
+        <tr><td><b>Funcionário</b></td><td>Vínculo declarado na RAIS</td><td>liga Pessoa e Empresa, com admissão e desligamento</td></tr>
+        <tr><td><b>Pessoa</b></td><td>CPF na base local</td><td>tem Telefones, Vínculos, Parentes</td></tr>
+        <tr><td><b>Contato</b></td><td>Sócio ou Decisor já com telefone</td><td>o que a prospecção consome</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ═══ 7 ═══ -->
+  <section id="casos" data-titulo="Casos de uso comuns exemplos curl CRM lead telefone custo">
+    <h2>7. Casos de uso comuns</h2>
+
+    <h3>Enriquecer um CRM com quem decide</h3>
+    <pre><code># 1. acha as empresas do perfil
+curl -H "Authorization: Bearer $CAPIBLU_TOKEN" \
+  "$BASE/empresas?uf=MG&amp;porte=05&amp;capital_min=1000000&amp;limit=50"
+
+# 2. para cada CNPJ, pega contatos com telefone
+curl -H "Authorization: Bearer $CAPIBLU_TOKEN" \
+  "$BASE/empresas/06990590000123/contatos?max_decisores=2&amp;tipo_telefone=celular"</code></pre>
+
+    <h3>Descobrir onde um lead trabalha, a partir do CPF</h3>
+    <pre><code>curl -H "Authorization: Bearer $CAPIBLU_TOKEN" \
+  "$BASE/pessoas/03702149600/vinculos"</code></pre>
+
+    <h3>Validar de quem é um número que ligou</h3>
+    <pre><code>curl -H "Authorization: Bearer $CAPIBLU_TOKEN" \
+  "$BASE/telefones/33997332652"</code></pre>
+
+    <h3>Controlar custo antes de rodar em lote</h3>
+    <pre><code>curl -H "Authorization: Bearer $CAPIBLU_TOKEN" "$BASE/conta"
+# → data.limites.restantes_hoje diz quantas consultas ainda cabem
+
+curl -X POST "$BASE/prospeccao/cobertura" -H "Authorization: Bearer $CAPIBLU_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"cnpjs":["…","…"]}'
+# → meta.taxa diz se vale rodar a lista inteira</code></pre>
+  </section>
+
+  <!-- ═══ 8 ═══ -->
+  <section id="praticas" data-titulo="Boas práticas token por integração escopo 429 cache ausência">
+    <h2>8. Boas práticas</h2>
+    <ol>
+      <li><b>Um token por integração</b>, com nome que diga quem usa. Revogar fica cirúrgico.</li>
+      <li><b>Escopo <code>leitura</code> por padrão.</b> Só suba para <code>consulta</code> o que precisa gastar.</li>
+      <li><b>Trate o 429.</b> O limite é diário e por usuário: espere o dia virar ou peça mais folga a um admin.</li>
+      <li><b>Cacheie do seu lado.</b> CNPJ e RAIS mudam devagar; consultar o mesmo documento duas vezes no mesmo dia é dinheiro fora.</li>
+      <li><b>Não trate ausência como erro.</b> <code>200</code> com <code>data: []</code> e um <code>meta.aviso</code> é resposta legítima.</li>
+      <li><b>Peça só os blocos que usa</b> em <code>/completo</code> — cada bloco pago cobra separado.</li>
+    </ol>
+  </section>
+  </div>
+</main>
+</div>
+
+<script>
+// ── Índice montado a partir das próprias seções: nada de lista duplicada. ──
+(function () {
+  const indice = document.getElementById('indice');
+  const secoes = [...document.querySelectorAll('section')];
+  let html = '';
+  secoes.forEach(sec => {
+    const titulo = sec.querySelector('h2').textContent;
+    html += `<div class="grupo">${titulo}</div>`;
+    const eps = [...sec.querySelectorAll('.ep')];
+    if (!eps.length) {
+      html += `<a href="#${sec.id}" data-alvo="${sec.id}">ler seção</a>`;
+      return;
+    }
+    eps.forEach(ep => {
+      const met = ep.querySelector('.met').textContent;
+      const rota = ep.querySelector('.rota').textContent;
+      html += `<a href="#${ep.id}" data-alvo="${ep.id}"><span class="m">${met}</span>${rota}</a>`;
+    });
+  });
+  indice.innerHTML = html;
+
+  // ── Filtro ──
+  // Casamento por início de palavra, não por substring: em português "rais"
+  // aparece dentro de "cadastrais" e "demais", o que enchia o resultado de rota
+  // sem relação. Acento é ignorado dos dois lados.
+  const semAcento = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const palavras = alvo => new Set(semAcento(alvo).split(/[^a-z0-9]+/).filter(Boolean));
+  function casa(alvo, termos) {
+    const p = palavras(alvo);
+    return termos.every(t => {
+      for (const w of p) if (w.startsWith(t)) return true;
+      return false;
+    });
+  }
+  const busca = document.getElementById('busca');
+  const vazio = document.getElementById('sem-resultado');
+  busca.addEventListener('input', () => {
+    const termos = semAcento(busca.value.trim()).split(/\s+/).filter(Boolean);
+    const q = termos.join(' ');
+    if (!q) {
+      document.body.classList.remove('filtrando');
+      document.querySelectorAll('.ep.oculto').forEach(e => e.classList.remove('oculto'));
+      document.querySelectorAll('#indice a.oculto').forEach(a => a.classList.remove('oculto'));
+      vazio.style.display = 'none';
+      return;
+    }
+    document.body.classList.add('filtrando');
+    let achou = 0;
+    secoes.forEach(sec => {
+      const assunto = (sec.dataset.titulo || '') + ' ' + sec.textContent;
+      const eps = [...sec.querySelectorAll('.ep')];
+      // O endpoint casa pelo próprio conteúdo — herdar o assunto da seção enchia o
+      // resultado de rota que não tem nada a ver com o que foi buscado.
+      let epsVisiveis = 0;
+      eps.forEach(ep => {
+        const alvo = (ep.dataset.busca || '') + ' ' + ep.textContent;
+        const bate = casa(alvo, termos);
+        ep.classList.toggle('oculto', !bate);
+        if (bate) epsVisiveis++;
+      });
+      // Seção de texto corrido (sem cartão de endpoint) casa pelo texto dela.
+      const mostra = epsVisiveis > 0 || (!eps.length && casa(assunto, termos));
+      sec.classList.toggle('tem-resultado', mostra);
+      if (mostra) achou++;
+      // o índice acompanha o que sobrou na tela
+      indice.querySelectorAll(`a[data-alvo]`).forEach(a => {
+        const el = document.getElementById(a.dataset.alvo);
+        if (!el) return;
+        const dentro = el.tagName === 'SECTION' ? el : el.closest('section');
+        const visivel = dentro.classList.contains('tem-resultado') &&
+                        (el.tagName === 'SECTION' || !el.classList.contains('oculto'));
+        a.classList.toggle('oculto', !visivel);
+      });
+    });
+    vazio.style.display = achou ? 'none' : 'block';
+  });
+
+  // ── Copiar bloco de código ──
+  document.querySelectorAll('pre').forEach(pre => {
+    const b = document.createElement('button');
+    b.className = 'copiar'; b.textContent = 'copiar';
+    b.addEventListener('click', () => copiar(pre.querySelector('code').textContent, b));
+    pre.appendChild(b);
+  });
+  document.querySelectorAll('[data-copiar]').forEach(b => {
+    b.addEventListener('click', () =>
+      copiar(document.querySelector(b.dataset.copiar).textContent, b));
+  });
+  async function copiar(txt, btn) {
+    const antes = btn.textContent;
+    try {
+      await navigator.clipboard.writeText(txt.trim());
+      btn.textContent = 'copiado';
+    } catch (e) {
+      btn.textContent = 'use Ctrl+C';  // sem permissão de clipboard
+    }
+    setTimeout(() => { btn.textContent = antes; }, 1600);
+  }
+
+  // ── A URL base real é a de quem está servindo a página. ──
+  document.getElementById('base-url').textContent = location.origin + '/api/v1';
+
+  // ── Item ativo conforme a rolagem ──
+  const alvos = [...document.querySelectorAll('section, .ep')];
+  const obs = new IntersectionObserver(entradas => {
+    entradas.forEach(e => {
+      if (!e.isIntersecting) return;
+      indice.querySelectorAll('a').forEach(a => a.classList.remove('ativo'));
+      const a = indice.querySelector(`a[data-alvo="${e.target.id}"]`) ||
+                indice.querySelector(`a[data-alvo="${e.target.closest('section')?.id}"]`);
+      if (a) {
+        a.classList.add('ativo');
+        if (a.getBoundingClientRect().top < 0 || a.getBoundingClientRect().bottom > innerHeight)
+          a.scrollIntoView({ block: 'nearest' });
+      }
+    });
+  }, { rootMargin: '0px 0px -75% 0px' });
+  alvos.forEach(t => t.id && obs.observe(t));
+})();
+</script>
+</body>
+</html>

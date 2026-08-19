@@ -54,7 +54,8 @@ _TIMEOUT = httpx.Timeout(120.0)
 _SKIP_REQ_HEADERS = {"host", "content-length", "connection", "authorization", "accept-encoding"}
 _SKIP_RESP_HEADERS = {"content-length", "transfer-encoding", "connection", "content-encoding"}
 
-app = FastAPI(title="CapiBLU — App Online", version="1.0.0")
+# /docs é a documentação que escrevemos; o Swagger automático fica em /swagger.
+app = FastAPI(title="CapiBLU — App Online", version="1.0.0", docs_url="/swagger")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 _auth.init()
@@ -188,6 +189,14 @@ async def proxy(path: str, request: Request):
 @app.get("/")
 async def index():
     return FileResponse(os.path.join(_FRONTEND, "index.html"))
+
+
+# Documentação da API. Aberta de propósito: sem token, ninguém tira dado dela —
+# e quem vai integrar precisa ler antes de ter o token na mão.
+@app.get("/api-docs", include_in_schema=False)
+@app.get("/docs", include_in_schema=False)
+async def documentacao_api():
+    return FileResponse(os.path.join(_FRONTEND, "api-docs.html"))
 
 
 app.mount("/", StaticFiles(directory=_FRONTEND, html=True), name="static")
