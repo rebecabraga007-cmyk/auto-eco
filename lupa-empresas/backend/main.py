@@ -2123,6 +2123,28 @@ async def _enrich_cnpj(cnpj: str, want: set) -> dict:
     return out
 
 
+@app.post("/api/enrich/linha")
+async def enrich_linha(payload: dict = Body(default={})):
+    """Enriquece UM CNPJ com os campos pedidos, sem passar por arquivo.
+
+    É o que a API pública usa em /api/v1/enriquecimento: o fluxo da tela precisa
+    de upload de planilha, mas outro sistema só quer mandar CNPJ + campos.
+    Body: {cnpj, campos:[...]}.
+    """
+    cnpj = re.sub(r"\D", "", str(payload.get("cnpj") or ""))
+    pedidos = [c for c in (payload.get("campos") or []) if isinstance(c, str)]
+    campos = [c for c in pedidos if c in _ENRICH_KEYS]
+    # Campo com nome errado era descartado em silêncio; agora volta na resposta.
+    ignorados = [c for c in pedidos if c not in _ENRICH_KEYS]
+    if len(cnpj) != 14:
+        return {"status": "error", "message": "CNPJ inválido."}
+    if not campos:
+        return {"status": "error", "message": "Nenhum campo válido pedido.",
+                "ignorados": ignorados}
+    dados = await _enrich_cnpj(cnpj, set(campos))
+    return {"status": "ok", "cnpj": cnpj, "dados": dados, "ignorados": ignorados}
+
+
 @app.post("/api/enrich/run")
 async def enrich_run(payload: dict = Body(default={})):
     """Enriquece as linhas de uma aba. Body: {upload_id, sheet, cnpj_col, fields:[], limite}."""

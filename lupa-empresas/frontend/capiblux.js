@@ -2818,6 +2818,7 @@ function useRenderMap(colunas) {
 function admCarregar() {
   admCustoTotal(30);
   admPrecosCarregar();
+  admTokensCarregar();
   admConsultasCarregar(); admCustoUsuarioCarregar(); admNavCarregar(); admCustoCarregar();
 }
 
@@ -4296,3 +4297,132 @@ async function admPrecosSalvar() {
 }
 
 document.getElementById('adm-precos-salvar')?.addEventListener('click', admPrecosSalvar);
+
+// ══════════════════════════════════════════════════════
+//  ADMIN · Tokens de API
+//  Só admin chega aqui: a aba fica escondida pra quem não é, e as rotas
+//  /api/admin/tokens recusam sessão sem role admin.
+// ══════════════════════════════════════════════════════
+async function admTokensCarregar() {
+  const lista = document.getElementById('tok-lista');
+  if (!lista) return;
+  lista.innerHTML = '<p class="msg">Carregando…</p>';
+  try {
+    const d = await fetch(`${API}/api/admin/tokens`).then(r => r.json());
+    if (d.status !== 'ok') {
+      lista.innerHTML = `<p class="msg error">${esc(d.detail || d.message || 'Falha ao carregar tokens.')}</p>`;
+      return;
+    }
+    // dono do token: preenche o select uma vez
+    const sel = document.getElementById('tok-user');
+    if (sel && !sel.options.length) {
+      sel.innerHTML = (d.usuarios || []).map(u =>
+        `<option value="${u.id}">${esc(u.email)}${u.role === 'admin' ? ' (admin)' : ''}</option>`).join('');
+    }
+    const emailPorId = {};
+    (d.usuarios || []).forEach(u => { emailPorId[u.id] = u.email; });
+
+    const tokens = d.tokens || [];
+    if (!tokens.length) {
+      lista.innerHTML = `<p class="msg">Nenhum token criado ainda. Use o formulário acima para gerar o primeiro.</p>`;
+      return;
+    }
+    lista.innerHTML = `
+      <table class="data-table">
+        <thead><tr>
+          <th>Nome</th><th>Token</th><th>Dono</th><th>Escopo</th>
+          <th>Criado</th><th>Último uso</th><th>Chamadas</th><th></th>
+        </tr></thead>
+        <tbody>${tokens.map(t => `
+          <tr${t.ativo ? '' : ' style="opacity:.45"'}>
+            <td>${esc(t.nome)}${t.ativo ? '' : ' <span class="badge badge-inativa">revogado</span>'}</td>
+            <td class="mono" style="font-size:.78rem">${esc(t.token)}</td>
+            <td>${esc(emailPorId[t.user_id] || ('usuário ' + t.user_id))}</td>
+            <td>${t.escopo === 'consulta'
+              ? '<span class="badge badge-amber">consulta — gasta</span>'
+              : '<span class="badge badge-neutra">leitura</span>'}</td>
+            <td>${esc(tokData(t.criado_em))}</td>
+            <td>${esc(tokData(t.ultimo_uso) || 'nunca usado')}</td>
+            <td>${t.chamadas || 0}</td>
+            <td>${t.ativo ? `<button class="btn-secondary tok-revogar" data-id="${t.id}" data-nome="${esc(t.nome)}">Revogar</button>` : ''}</td>
+          </tr>`).join('')}</tbody>
+      </table>`;
+
+    lista.querySelectorAll('.tok-revogar').forEach(b => b.addEventListener('click', async () => {
+      if (!confirm(`Revogar o token "${b.dataset.nome}"? Quem estiver usando perde o acesso na hora.`)) return;
+      b.disabled = true;
+      const r = await fetch(`${API}/api/admin/tokens/${b.dataset.id}`, { method: 'DELETE' }).then(x => x.json());
+      if (r.status !== 'ok') { alert(r.detail || 'Falha ao revogar.'); b.disabled = false; return; }
+      admTokensCarregar();
+    }));
+  } catch (e) {
+    lista.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
+  }
+}
+
+function tokData(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
+async function admTokenCriar() {
+  const btn = document.getElementById('tok-criar');
+  const caixa = document.getElementById('tok-novo');
+  const nome = document.getElementById('tok-nome').value.trim();
+  const escopo = document.getElementById('tok-escopo').value;
+  const userId = document.getElementById('tok-user').value;
+  if (!nome) { alert('Dê um nome ao token — é o que permite revogar o certo depois.'); return; }
+
+  btn.disabled = true;
+  try {
+    const r = await fetch(`${API}/api/admin/tokens`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nome, escopo, user_id: userId ? parseInt(userId) : undefined }),
+    }).then(x => x.json());
+    if (r.status !== 'ok') { alert(r.detail || 'Falha ao criar token.'); return; }
+
+    const t = r.token.token;
+    caixa.hidden = false;
+    // O token só existe em claro AGORA — o servidor guarda apenas o hash.
+    caixa.innerHTML = `
+      <div class="dica" style="border-color:var(--terracota)">
+        <div class="dica-title">🔑 Token criado — copie agora</div>
+        <div class="dica-body">
+          <div class="mono" id="tok-valor" style="background:var(--gray-100);padding:10px 12px;word-break:break-all;font-size:.85rem;border:1px solid var(--gray-200)">${esc(t)}</div>
+          <div class="filter-row">
+            <button class="btn-primary" id="tok-copiar">📋 Copiar token</button>
+            <button class="btn-secondary" id="tok-fechar">Já guardei, fechar</button>
+          </div>
+          <strong>Esta é a única vez que ele aparece.</strong> O CapiBLU guarda só o hash — se perder, revogue e gere outro.
+          Use no header: <code>Authorization: Bearer ${esc(t.slice(0, 18))}…</code>
+          ${escopo === 'consulta'
+            ? '<br>⚠️ Escopo <strong>consulta</strong>: este token pode gastar consulta paga, respeitando o limite diário de ' + esc(document.getElementById('tok-user').selectedOptions[0]?.textContent || 'quem é dono') + '.'
+            : '<br>Escopo <strong>leitura</strong>: só base local, não gera custo.'}
+        </div>
+      </div>`;
+    document.getElementById('tok-copiar').addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(t);
+        document.getElementById('tok-copiar').textContent = '✅ Copiado';
+      } catch (e) {
+        // Sem permissão de clipboard: seleciona pra copiar na mão.
+        const el = document.getElementById('tok-valor');
+        const sel = window.getSelection(); const range = document.createRange();
+        range.selectNodeContents(el); sel.removeAllRanges(); sel.addRange(range);
+        document.getElementById('tok-copiar').textContent = 'Selecionado — use Ctrl+C';
+      }
+    });
+    document.getElementById('tok-fechar').addEventListener('click', () => {
+      caixa.hidden = true; caixa.innerHTML = '';
+    });
+    document.getElementById('tok-nome').value = '';
+    admTokensCarregar();
+  } catch (e) {
+    alert('Erro ao criar token: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('tok-criar')?.addEventListener('click', admTokenCriar);

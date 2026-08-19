@@ -591,3 +591,38 @@ async def admin_delete(uid: int, admin: dict = Depends(require_admin)):
         raise HTTPException(status_code=400, detail="Você não pode se excluir.")
     delete_user(uid)
     return {"ok": True}
+
+
+# ---- Tokens de API (credencial de máquina para a API pública v1) ----
+
+@router.get("/api/admin/tokens")
+async def api_tokens_listar(user: dict = Depends(require_admin)):
+    """Tokens de API cadastrados. O segredo não é devolvido — só o prefixo."""
+    import api_tokens
+    return {"status": "ok", "tokens": api_tokens.listar(), "usuarios": [
+        {"id": u["id"], "email": u["email"], "role": u["role"]} for u in list_users()]}
+
+
+@router.post("/api/admin/tokens")
+async def api_tokens_criar(payload: dict = Body(default={}), user: dict = Depends(require_admin)):
+    """Cria um token de API. O valor em claro vem UMA vez, nesta resposta.
+
+    Body: {user_id, nome, escopo}. escopo: 'leitura' (base local) ou 'consulta'
+    (libera as rotas que gastam, respeitando o limite diário do usuário).
+    """
+    import api_tokens
+    uid = payload.get("user_id") or user["id"]
+    try:
+        novo = api_tokens.criar(int(uid), payload.get("nome") or "", payload.get("escopo") or "leitura")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"status": "ok", "token": novo,
+            "aviso": "Guarde este token agora: ele não será mostrado novamente."}
+
+
+@router.delete("/api/admin/tokens/{token_id}")
+async def api_tokens_revogar(token_id: int, user: dict = Depends(require_admin)):
+    import api_tokens
+    if not api_tokens.revogar(token_id):
+        raise HTTPException(status_code=404, detail="Token não encontrado.")
+    return {"status": "ok", "revogado": token_id}

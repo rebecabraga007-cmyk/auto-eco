@@ -23,6 +23,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # auth.py mora no backend/ — reaproveitamos o mesmo módulo.
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -30,6 +31,11 @@ _BACKEND = os.path.join(os.path.dirname(_HERE), "backend")
 _FRONTEND = os.path.join(os.path.dirname(_HERE), "frontend")
 if _BACKEND not in sys.path:
     sys.path.insert(0, _BACKEND)
+# O app sobe de duas formas: `uvicorn main:app` de dentro de app_online/ e
+# `uvicorn app_online.main:app` da raiz (como no Render). No segundo caso este
+# diretório não entra no path sozinho, e `import api_v1` quebrava.
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 try:
     from dotenv import load_dotenv
@@ -37,6 +43,7 @@ try:
 except Exception:
     pass
 
+import api_tokens  # noqa: E402
 import auth as _auth  # noqa: E402
 
 DATA_SERVICE_URL = os.environ.get("DATA_SERVICE_URL", "http://127.0.0.1:8011").strip().rstrip("/")
@@ -51,9 +58,31 @@ app = FastAPI(title="CapiBLU — App Online", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 _auth.init()
+api_tokens.init()
 app.include_router(_auth.router)
 
+# API pública v1 (token Bearer, JSON para outros serviços). Importada depois do
+# app existir porque o módulo lê DATA_SERVICE_URL/PROXY_SECRET daqui.
+from api_v1 import router as _api_v1_router  # noqa: E402
+app.include_router(_api_v1_router)
+
 _PUBLIC_API = {"/api/auth/login", "/api/auth/logout"}
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _erro_padronizado(request: Request, exc: StarletteHTTPException):
+    """A API pública promete `{"error": {"code", "message"}}`; o resto do app
+    (e o frontend) espera `detail`. Traduz só o que sai de /api/v1."""
+    if request.url.path.startswith("/api/v1/"):
+        codigos = {400: "requisicao_invalida", 401: "nao_autenticado",
+                   403: "sem_permissao", 404: "nao_encontrado",
+                   429: "limite_atingido", 502: "servico_indisponivel",
+                   503: "servico_indisponivel"}
+        return JSONResponse(status_code=exc.status_code, content={"error": {
+            "code": codigos.get(exc.status_code, "erro"),
+            "message": exc.detail if isinstance(exc.detail, str) else "Falha na requisição.",
+        }})
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 @app.middleware("http")
@@ -72,7 +101,10 @@ async def _cache_control(request: Request, call_next):
 async def _auth_guard(request: Request, call_next):
     """Exige sessão válida (cookie httpOnly OU header Bearer) em /api/* exceto login/logout."""
     path = request.url.path
-    if request.method == "OPTIONS" or not path.startswith("/api/") or path in _PUBLIC_API:
+    if (request.method == "OPTIONS" or not path.startswith("/api/")
+            or path in _PUBLIC_API or path.startswith("/api/v1/")):
+        # /api/v1/* é a API pública: autentica por token Bearer no próprio router,
+        # não por sessão de navegador.
         return await call_next(request)
     user = _auth.user_from_request(request)
     if not user:
@@ -86,7 +118,7 @@ async def _auth_guard(request: Request, call_next):
 
 
 # Rotas de auth/admin são tratadas AQUI (router acima). O resto de /api é PROXEADO.
-_LOCAL_PREFIXES = ("/api/auth/", "/api/admin/")
+_LOCAL_PREFIXES = ("/api/auth/", "/api/admin/", "/api/v1/")
 
 # Rotas que efetivamente gastam Assertiva/MK — só essas contam pro limite diário.
 _CONSULTA_PREFIXES = (
