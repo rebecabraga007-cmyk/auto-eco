@@ -83,15 +83,46 @@ telefone da Assertiva → baixar XLSX de 7 colunas com as originais preservadas.
 deixaria o cliente alcançar qualquer rota do serviço de dados por fora das
 checagens do Bluutime — inclusive as que gastam consulta paga.
 
-## Fase 3 — Canais de verdade
+## Fase 3 — Canais de verdade ✅
 
-Hoje "enviar WhatsApp" grava uma linha na tabela e devolve 200. Ninguém recebe nada.
+Ver [`CANAIS.md`](CANAIS.md) para configurar. Uma regra manda no desenho:
+**nunca fingir que enviou**. `POST /conversations/{id}/messages` gravava a linha
+e devolvia 200 — a conversa mostrava a mensagem como enviada sem ninguém ter
+recebido nada. E `instances/state` devolvia `CONNECTED` fixo, sem credencial
+nenhuma configurada.
 
-| Canal | O que falta |
+Agora todo envio devolve um estado explícito, e "não configurado" é um estado,
+não um sucesso silencioso:
+
+| Status | O que houve |
 |---|---|
-| WhatsApp | Envio real pela Evolution API, webhook de entrada, mensagem recebida virando conversa, estado real da instância (hoje `CONNECTED` fixo) |
-| E-mail | Não existe rota nenhuma. Envio, rastreio de abertura/clique, e-mail respondido avançando o lead |
-| Telefonia | `POST /calls` só registra resultado. Falta discar pelo provedor, gravar e receber status por webhook |
+| `SENT` | O provedor aceitou e devolveu um id |
+| `FAILED` | O provedor recusou |
+| `SIMULATED` | Envio desligado ou sem credencial — nada saiu |
+| `BLOCKED` | Recusado aqui (não perturbe, fora da janela, sem destino) |
+
+| Canal | Estado |
+|---|---|
+| WhatsApp | Evolution API: envio, estado real da instância, webhook de entrada casando pelos últimos 8 dígitos, `fromMe` descartado |
+| E-mail | SMTP com `Message-ID` guardado para casar a resposta depois; rastreio de abertura preparado e **desligado** |
+| Telefonia | Continua registrando resultado — discar depende de escolher provedor, que é decisão comercial |
+
+### O freio de mão
+
+Ter credencial não basta: enquanto `BLUUTIME_SEND != 1`, tudo volta `SIMULATED`.
+Sem isso, no dia em que alguém colar a chave da Evolution no `.env`, a cadência
+inteira dispararia para leads reais sem ninguém ter decidido isso.
+
+### O bug que o teste pegou
+
+`forcar` servia a dois propósitos e acabou **furando o "não perturbe"** — a
+atividade foi concluída para um lead marcado. Separado em dois: `forcar` é
+cosmético (manda com variável vazia), `foraDaJanela` é decisão de horário, e
+**não perturbe não tem escape por parâmetro**. Para falar com o lead, tira-se a
+marca no cadastro dele: ato deliberado e auditável.
+
+Esse sinal vinha da Assertiva, era guardado e **nunca consultado**. Agora
+bloqueia em e-mail, WhatsApp e no registro de ligação.
 
 ## Fase 4 — Saída e integrações
 
@@ -110,7 +141,7 @@ Hoje "enviar WhatsApp" grava uma linha na tabela e devolve 200. Ninguém recebe 
 
 ---
 
-Ordem recomendada: **1 ✅ → 2 ✅ → 3 → 5 → 4**. A fase 4 é a única que depende de
+Ordem recomendada: **1 ✅ → 2 ✅ → 3 ✅ → 5 → 4**. A fase 4 é a única que depende de
 decisão comercial (qual CRM), o resto é técnico e independente.
 
 ## Canal: um vocabulário, não dois

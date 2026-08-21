@@ -23,8 +23,8 @@ import auth as capiblu_auth  # noqa: E402  — vive em lupa-empresas/backend
 from .capiblu_client import capiblu_app, capiblu_error  # noqa: E402
 from .migrate import run as run_migrations  # noqa: E402
 from . import tick  # noqa: E402
-from .routers import (analytics, capiblu, core, dialer, flow,  # noqa: E402
-                      meetime, whatsapp)
+from .routers import (analytics, capiblu, core, dialer, envio,  # noqa: E402
+                      flow, meetime, whatsapp)
 from .seed import seed_if_empty  # noqa: E402
 
 app = FastAPI(title="Bluutime", version="0.1.0", docs_url="/swagger")
@@ -42,9 +42,12 @@ app.include_router(dialer.router)
 app.include_router(analytics.router)
 app.include_router(whatsapp.router)
 app.include_router(capiblu.router)
+app.include_router(envio.router)
 app.include_router(meetime.router)
 
-_PUBLIC = {"/api/auth/login", "/api/auth/logout", "/api/auth/emergency-reset"}
+_PUBLIC = {"/api/auth/login", "/api/auth/logout", "/api/auth/emergency-reset",
+           # Chamado pelo provedor, nao pelo navegador — autentica por token proprio.
+           "/api/whatsapp/webhook"}
 
 # Rotas do serviço de dados que realmente gastam consulta paga — mesmo recorte
 # do proxy de produção (app_online/main.py).

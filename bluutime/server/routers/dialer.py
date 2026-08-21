@@ -51,6 +51,12 @@ def register_call(payload: dict = Body(...), db: Session = Depends(get_db)):
     lead = db.get(Lead, payload["leadId"]) if payload.get("leadId") else None
     if payload.get("leadId") and not lead:
         raise HTTPException(404, "Lead não encontrado.")
+    # O sinal de "não perturbe" vinha da Assertiva, era guardado e nunca
+    # consultado — dava para registrar ligação para quem pediu para não ser
+    # incomodado.
+    if lead and lead.do_not_call:
+        raise HTTPException(403, "Lead marcado como 'não perturbe'. "
+                                 "Remova a marca no cadastro do lead.")
     status = payload.get("status", "NOT_PERFORMED")
     c = Call(user_id=payload.get("userId"), lead_id=payload.get("leadId"),
              origin_phone=payload.get("originPhone", ""),

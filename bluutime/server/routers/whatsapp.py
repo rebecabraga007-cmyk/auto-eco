@@ -4,8 +4,9 @@ from datetime import datetime
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from .. import channels
 from ..db import get_db
-from ..models import Conversation, Lead, Message
+from ..models import Conversation, Delivery, Lead, Message
 from ..serial import iso
 
 router = APIRouter(prefix="/api/whatsapp")
@@ -20,8 +21,10 @@ def _conv(c: Conversation, last: Message | None = None) -> dict:
 
 
 @router.get("/instances/state")
-def instance_state():
-    return {"state": "CONNECTED", "provider": "EVOLUTION_API", "instance": "bluutime-blu"}
+async def instance_state():
+    """Estado real da instância. Antes isto devolvia `CONNECTED` fixo — a tela
+    dizia que estava conectado mesmo sem nenhuma credencial configurada."""
+    return await channels.get("WHATSAPP").state()
 
 
 @router.get("/conversations")
@@ -67,15 +70,80 @@ def open_conversation(payload: dict = Body(...), db: Session = Depends(get_db)):
 
 
 @router.post("/conversations/{cid}/messages")
-def send_message(cid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+async def send_message(cid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Manda a mensagem pelo provedor e grava o que aconteceu.
+
+    Antes esta rota gravava a linha e devolvia 200 — a conversa mostrava a
+    mensagem como enviada sem ninguém ter recebido nada.
+    """
     c = db.get(Conversation, cid)
     if not c:
         raise HTTPException(404, "Conversa não encontrada.")
     body = (payload.get("body") or "").strip()
     if not body:
         raise HTTPException(400, "Mensagem vazia.")
-    m = Message(conversation_id=cid, direction="OUT", body=body)
+    lead = c.lead
+    # Sem escape por parâmetro: para falar com este lead, tira-se a marca no
+    # cadastro dele — ato deliberado — em vez de repetir a chamada com um flag.
+    if lead and lead.do_not_call:
+        raise HTTPException(403, "Lead marcado como 'não perturbe'. "
+                                 "Remova a marca no cadastro do lead.")
+
+    destino = c.phone or (lead.phone if lead else "")
+    r = await channels.send("WHATSAPP", to=destino, body=body)
+
+    m = Message(conversation_id=cid, direction="OUT", body=body, status=r.status,
+                provider_id=r.provider_id, error=r.error, sent_at=r.at)
     db.add(m)
-    c.last_message_at = m.sent_at = datetime.utcnow()
+    if lead:
+        db.add(Delivery(lead_id=lead.id, user_id=payload.get("userId"),
+                        channel="WHATSAPP", to_address=destino, body=body,
+                        status=r.status, provider=r.provider,
+                        provider_id=r.provider_id, error=r.error))
+    c.last_message_at = r.at
     db.commit()
-    return {"id": m.id, "direction": m.direction, "body": m.body, "sentAt": iso(m.sent_at)}
+    return {"id": m.id, "direction": m.direction, "body": m.body,
+            "sentAt": iso(m.sent_at), **r.as_dict()}
+
+
+@router.post("/webhook")
+async def webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Mensagem que chega da Evolution API.
+
+    Aberta sem autenticação de usuário porque quem chama é o provedor, não o
+    navegador — daí a conferência do `EVOLUTION_WEBHOOK_TOKEN`. Mensagem do
+    próprio número (`fromMe`) é descartada: senão o que o SDR manda volta como
+    se o lead tivesse respondido.
+    """
+    import os
+    esperado = os.environ.get("EVOLUTION_WEBHOOK_TOKEN", "")
+    if esperado and payload.get("token") != esperado:
+        raise HTTPException(401, "Token de webhook inválido.")
+
+    data = payload.get("data") or {}
+    key = data.get("key") or {}
+    if key.get("fromMe"):
+        return {"ok": True, "ignored": "fromMe"}
+    msg = data.get("message") or {}
+    texto = (msg.get("conversation")
+             or (msg.get("extendedTextMessage") or {}).get("text") or "").strip()
+    jid = (key.get("remoteJid") or "").split("@")[0]
+    if not texto or not jid:
+        return {"ok": True, "ignored": "sem texto ou remetente"}
+
+    # Casa pelos últimos 8 dígitos: o nono dígito do celular e o DDI entram e
+    # saem conforme a origem do cadastro, e comparar a string inteira erra.
+    sufixo = jid[-8:]
+    conv = (db.query(Conversation)
+            .filter(Conversation.phone.like(f"%{sufixo}")).first())
+    if not conv:
+        lead = db.query(Lead).filter(Lead.phone.like(f"%{sufixo}")).first()
+        conv = Conversation(lead_id=lead.id if lead else None, phone=jid,
+                            title=(lead.name if lead else jid))
+        db.add(conv)
+        db.flush()
+    db.add(Message(conversation_id=conv.id, direction="IN", body=texto, status="SENT"))
+    conv.last_message_at = datetime.utcnow()
+    db.commit()
+    return {"ok": True, "conversationId": conv.id,
+            "leadId": conv.lead_id, "matched": bool(conv.lead_id)}

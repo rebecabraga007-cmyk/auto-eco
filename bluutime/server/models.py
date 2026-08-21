@@ -351,3 +351,32 @@ class Message(Base):
     direction: Mapped[str] = mapped_column(String(10), default="OUT")  # IN|OUT
     body: Mapped[str] = mapped_column(Text, default="")
     sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Sem isto, "gravei a linha" e "o lead recebeu" ficavam indistinguíveis.
+    status: Mapped[str] = mapped_column(String(12), default="SENT")
+    provider_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    error: Mapped[str] = mapped_column(String(240), default="")
+
+
+class Delivery(Base):
+    """Cada tentativa de envio, de qualquer canal.
+
+    Separado de `Message` porque e-mail não tem conversa e porque o histórico
+    de tentativa interessa mesmo quando a mensagem não existe — é aqui que se
+    responde "por que este lead não recebeu nada?".
+    """
+    __tablename__ = "delivery"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lead_id: Mapped[int | None] = mapped_column(ForeignKey("lead.id", ondelete="CASCADE"))
+    lead_activity_id: Mapped[int | None] = mapped_column(ForeignKey("lead_activity.id"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    template_id: Mapped[int | None] = mapped_column(ForeignKey("template.id"))
+    channel: Mapped[str] = mapped_column(String(20), default="EMAIL", index=True)
+    to_address: Mapped[str] = mapped_column(String(200), default="")
+    subject: Mapped[str] = mapped_column(String(240), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(12), default="SIMULATED", index=True)
+    provider: Mapped[str] = mapped_column(String(30), default="")
+    provider_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    error: Mapped[str] = mapped_column(String(240), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    lead: Mapped["Lead | None"] = relationship()
