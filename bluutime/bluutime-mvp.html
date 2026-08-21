@@ -1,0 +1,1563 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Bluutime</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%8E%AF%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+/* ══════════════════════════════════════════════════════
+   Bluutime — design system herdado do CapiBLU
+   papel + azul-noite + terracota · borda em vez de sombra
+   ══════════════════════════════════════════════════════ */
+:root{
+  --blue:#12385C; --blue-dark:#0F2E4A; --blue-mid:#12385C; --blue-soft:#EAF0F5;
+  --terracota:#A85A2C; --terracota-soft:#FBEFE7;
+  --green:#2F6B4F; --green-soft:#EAF1EC;
+  --red:#9A3324; --red-soft:#F7ECE9;
+  --amber:#8C6A16; --amber-soft:#F7F1E1;
+  --gray-900:#1A1D21; --gray-800:#2A2E34; --gray-700:#45423B; --gray-600:#4A4F56;
+  --gray-500:#55595F; --gray-400:#9A9488; --gray-300:#B9B0A0; --gray-200:#DBD4C6;
+  --gray-100:#F0ECE3; --gray-50:#FCFBF8;
+  --bg:#F1EEE7; --white:#fff;
+  --shadow-float:0 18px 32px -22px rgba(26,29,33,.45);
+  --radius:0px; --radius-sm:4px;
+}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;font-family:"IBM Plex Sans",system-ui,-apple-system,Arial,sans-serif;
+  background:var(--bg);color:var(--gray-900);line-height:1.55;font-size:15px;-webkit-font-smoothing:antialiased}
+.mono,code,pre{font-family:"IBM Plex Mono",ui-monospace,monospace}
+h1,h2,h3,h4,h5{margin:0}
+button{font-family:inherit}
+[hidden]{display:none !important}
+
+/* ── SHELL ── */
+.app-shell{display:grid;grid-template-columns:262px 1fr;min-height:100vh}
+.sidebar{background:var(--blue-dark);color:#DCE6EE;display:flex;flex-direction:column;
+  position:sticky;top:0;height:100vh;z-index:100}
+.brand{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;text-decoration:none;color:#fff;
+  padding:24px 22px 20px;border-bottom:1px solid #1E4265}
+.logo-icon{font-size:1.25rem;line-height:1}
+.brand-name{font-size:1.15rem;font-weight:600;letter-spacing:-.02em}
+.brand-name strong{font-weight:600}
+.brand-tag{font-family:"IBM Plex Mono",monospace;font-size:.62rem;font-weight:500;letter-spacing:.12em;
+  color:#7FA3BF;border:1px solid #2C5478;padding:2px 7px}
+
+.cliente-switch{padding:14px 18px;border-bottom:1px solid #1E4265}
+.cliente-switch label{display:block;font-family:"IBM Plex Mono",monospace;font-size:9.5px;
+  letter-spacing:.14em;text-transform:uppercase;color:#5F87A6;margin-bottom:6px}
+.cliente-switch select{width:100%;background:#163A5C;color:#fff;border:1px solid #2C5478;
+  border-radius:var(--radius-sm);padding:8px 10px;font-size:.9rem;font-weight:600;font-family:inherit}
+
+.sidebar-nav{flex:1;overflow-y:auto;padding:14px 12px;display:flex;flex-direction:column;gap:1px}
+.nav-group-label{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.14em;
+  text-transform:uppercase;color:#5F87A6;padding:14px 10px 7px}
+.nav-group-label:first-child{padding-top:0}
+.nav-btn{text-align:left;border:none;background:transparent;color:#C6D8E5;border-radius:var(--radius-sm);
+  padding:8px 12px;font-size:.92rem;font-weight:600;cursor:pointer;min-height:36px;display:block;width:100%;
+  transition:background .15s,color .15s}
+.nav-btn:hover{background:rgba(255,255,255,.06);color:#fff}
+.nav-btn.active{background:#1E4265;color:#fff}
+.nav-btn-sub{display:block;font-size:.73rem;font-weight:400;color:#7FA3BF;margin-top:1px}
+.nav-pill{display:inline-block;font-family:"IBM Plex Mono",monospace;font-size:.63rem;font-weight:600;
+  background:var(--terracota);color:#fff;padding:1px 5px;margin-left:6px;vertical-align:middle}
+.sidebar-user{padding:14px 18px;border-top:1px solid #1E4265;display:flex;align-items:center;
+  justify-content:space-between;gap:10px;flex-shrink:0}
+.su-name{font-size:.86rem;font-weight:600;color:#fff}
+.su-role{font-size:.7rem;color:#7FA3BF}
+
+.main-wrap{max-width:1240px;margin:0 auto;padding:44px 48px 90px;min-width:0;width:100%}
+.tab-section{display:none}
+.tab-section.active{display:block}
+
+/* ── HEADERS ── */
+.module-header{margin-bottom:26px;display:flex;justify-content:space-between;align-items:flex-end;gap:20px;flex-wrap:wrap}
+.module-overline{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--gray-500);margin-bottom:10px}
+.module-title{font-size:1.85rem;font-weight:600;line-height:1.15;letter-spacing:-.03em;margin-bottom:8px}
+.module-sub{margin:0;color:var(--gray-700);font-size:.98rem;line-height:1.6;max-width:62ch}
+.h3{font-size:1rem;font-weight:700;color:var(--gray-900);margin:0 0 14px}
+.h3-row{display:flex;align-items:baseline;justify-content:space-between;gap:14px;margin:30px 0 14px}
+.h3-row .h3{margin:0}
+.h3-note{font-size:.8rem;color:var(--gray-500)}
+
+/* ── BOTÕES ── */
+.btn-primary{background:var(--blue-mid);color:#fff;border:none;border-radius:var(--radius-sm);
+  padding:11px 20px;font-size:.92rem;font-weight:700;cursor:pointer;white-space:nowrap;transition:background .15s}
+.btn-primary:hover{background:var(--blue-dark)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.btn-secondary{background:#fff;color:var(--gray-800);border:1px solid var(--gray-300);
+  border-radius:var(--radius-sm);padding:10px 16px;font-size:.88rem;font-weight:600;cursor:pointer;white-space:nowrap}
+.btn-secondary:hover{background:var(--gray-100);border-color:var(--blue-mid)}
+.btn-terra{background:var(--terracota);color:#fff;border:none;border-radius:var(--radius-sm);
+  padding:11px 20px;font-size:.92rem;font-weight:700;cursor:pointer}
+.btn-terra:hover{filter:brightness(1.07)}
+.btn-sm{padding:5px 11px;font-size:.78rem;font-weight:600;border-radius:var(--radius-sm);
+  border:1px solid var(--gray-300);background:#fff;cursor:pointer;color:var(--gray-700)}
+.btn-sm:hover{border-color:var(--blue-mid);color:var(--blue-mid)}
+.btn-sm.ok{color:var(--green);border-color:var(--green-soft);background:var(--green-soft)}
+.btn-sm.no{color:var(--red);border-color:var(--red-soft);background:var(--red-soft)}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap}
+
+/* ── CARDS / PANELS ── */
+.card{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);padding:20px 22px}
+.card+.card{margin-top:16px}
+.card-label{font-size:.76rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--gray-500);margin-bottom:10px}
+.grid2{display:grid;grid-template-columns:1.05fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--gray-200);
+  border:1px solid var(--gray-200)}
+.kpi{background:#fff;padding:18px 20px}
+.kpi-label{font-size:11.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--gray-400);margin-bottom:7px}
+.kpi-value{font-size:1.75rem;font-weight:600;letter-spacing:-.02em;line-height:1.1}
+.kpi-value small{font-size:.85rem;font-weight:500;color:var(--gray-500);letter-spacing:0}
+.kpi-sub{font-size:.78rem;color:var(--gray-500);margin-top:5px;line-height:1.45}
+.kpi-bar{height:4px;background:var(--gray-200);margin-top:10px}
+.kpi-bar i{display:block;height:4px;background:var(--blue-mid)}
+
+/* ── BADGES ── */
+.badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:.72rem;font-weight:700;white-space:nowrap}
+.b-green{background:var(--green-soft);color:var(--green)}
+.b-red{background:var(--red-soft);color:var(--red)}
+.b-amber{background:var(--amber-soft);color:var(--amber)}
+.b-blue{background:var(--blue-soft);color:var(--blue-dark)}
+.b-terra{background:var(--terracota-soft);color:var(--terracota)}
+.b-gray{background:var(--gray-100);color:var(--gray-700)}
+
+/* ── TABELAS ── */
+.table-wrap{background:#fff;border:1px solid var(--gray-200);overflow-x:auto}
+table.dt{width:100%;border-collapse:collapse;font-size:.87rem}
+table.dt th{text-align:left;font-size:.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--gray-500);padding:11px 14px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);white-space:nowrap}
+table.dt td{padding:10px 14px;border-bottom:1px solid var(--gray-100);vertical-align:middle}
+table.dt tr:last-child td{border-bottom:none}
+table.dt tbody tr:hover td{background:var(--blue-soft)}
+table.dt td.num{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+.t-strong{font-weight:600;color:var(--gray-900)}
+.t-sub{font-size:.77rem;color:var(--gray-500);margin-top:1px}
+.empty{padding:24px;text-align:center;color:var(--gray-500);font-size:.88rem}
+
+/* ── FILTROS ── */
+.filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.chip{background:#fff;border:1px solid var(--gray-200);color:var(--gray-700);border-radius:var(--radius-sm);
+  padding:6px 12px;font-size:.82rem;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.chip:hover{border-color:var(--blue-mid);color:var(--blue-mid)}
+.chip.active{background:var(--blue-mid);border-color:var(--blue-mid);color:#fff}
+.chip-n{background:var(--gray-100);color:var(--gray-600);border-radius:999px;padding:0 6px;font-size:.72rem}
+.chip.active .chip-n{background:rgba(255,255,255,.24);color:#fff}
+.seg{display:inline-flex;background:var(--gray-100);border-radius:var(--radius-sm);padding:3px;gap:2px}
+.seg button{border:none;background:transparent;padding:5px 13px;font-size:.8rem;font-weight:600;
+  color:var(--gray-600);cursor:pointer;border-radius:2px}
+.seg button.active{background:var(--blue-dark);color:#fff}
+.srch{flex:1;min-width:180px;display:flex;align-items:center;gap:8px;background:#fff;
+  border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:0 12px}
+.srch input{flex:1;border:none;outline:none;background:transparent;padding:9px 0;font-size:.9rem;font-family:inherit}
+
+/* ── GRÁFICOS ── */
+.bars{display:flex;align-items:flex-end;gap:7px;height:126px;margin-top:4px}
+.bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:flex-end}
+.bar{width:100%;max-width:30px;background:var(--blue-dark);min-height:3px;border-radius:2px 2px 0 0;position:relative}
+.bar.b2{background:var(--terracota)}
+.bar-lbl{font-size:.66rem;color:var(--gray-500);white-space:nowrap}
+.bar-val{font-family:"IBM Plex Mono",monospace;font-size:.66rem;color:var(--gray-600)}
+.rank{display:flex;flex-direction:column;gap:13px}
+.rank-row>div{display:flex;align-items:baseline;gap:8px}
+.rank-nome{flex:1;font-size:.88rem;font-weight:600}
+.rank-n{font-family:"IBM Plex Mono",monospace;font-size:.82rem;color:var(--gray-500)}
+.rank-track{height:4px;background:var(--gray-100);margin-top:5px}
+.rank-fill{height:4px;background:var(--terracota)}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;font-size:.78rem;color:var(--gray-600)}
+.legend i{display:inline-block;width:9px;height:9px;margin-right:5px;vertical-align:middle}
+.hbar{display:flex;flex-direction:column;gap:11px}
+.hbar-row{display:grid;grid-template-columns:1fr 46px;gap:10px;align-items:center;font-size:.85rem}
+.hbar-track{height:18px;background:var(--gray-100);position:relative}
+.hbar-fill{height:18px;background:var(--blue-mid)}
+.hbar-fill.t{background:var(--terracota)}
+.hbar-fill.g{background:var(--green)}
+.hbar-lbl{position:absolute;left:9px;top:0;line-height:18px;font-size:.78rem;color:#fff;font-weight:600;
+  white-space:nowrap;text-shadow:0 0 3px rgba(0,0,0,.3)}
+.hbar-n{font-family:"IBM Plex Mono",monospace;font-size:.82rem;text-align:right;color:var(--gray-600)}
+
+/* ── EXECUÇÃO ── */
+.exec-layout{display:grid;grid-template-columns:352px 1fr;gap:18px;align-items:start}
+.exec-queue{background:#fff;border:1px solid var(--gray-200)}
+.exec-queue-head{padding:14px 16px;border-bottom:1px solid var(--gray-200);display:flex;
+  justify-content:space-between;align-items:center;gap:10px}
+.exec-queue-title{font-size:.9rem;font-weight:700}
+.exec-queue-list{max-height:600px;overflow-y:auto}
+.qitem{padding:12px 16px;border-bottom:1px solid var(--gray-100);cursor:pointer;display:flex;gap:11px;align-items:flex-start}
+.qitem:hover{background:var(--gray-50)}
+.qitem.active{background:var(--blue-soft);box-shadow:inset 3px 0 0 var(--blue-mid)}
+.qitem.done{opacity:.42}
+.qitem.done .qi-nome{text-decoration:line-through}
+.qi-ico{width:30px;height:30px;flex-shrink:0;border-radius:50%;display:grid;place-items:center;font-size:.9rem}
+.i-call{background:var(--blue-soft)} .i-mail{background:var(--amber-soft)}
+.i-wpp{background:var(--green-soft)} .i-search{background:var(--gray-100)} .i-li{background:var(--blue-soft)}
+.qi-body{flex:1;min-width:0}
+.qi-nome{font-size:.88rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qi-meta{font-size:.75rem;color:var(--gray-500);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qi-tag{font-family:"IBM Plex Mono",monospace;font-size:.68rem;margin-top:3px}
+.qi-late{color:var(--red);font-weight:600}
+.qi-now{color:var(--green);font-weight:600}
+
+.exec-card{background:#fff;border:1px solid var(--gray-200)}
+.ec-head{padding:20px 24px;border-bottom:1px solid var(--gray-200)}
+.ec-cliente{font-family:"IBM Plex Mono",monospace;font-size:.7rem;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--terracota);margin-bottom:6px}
+.ec-nome{font-size:1.4rem;font-weight:600;letter-spacing:-.02em}
+.ec-empresa{font-size:.94rem;color:var(--gray-600);margin-top:2px}
+.ec-tags{display:flex;gap:7px;flex-wrap:wrap;margin-top:11px}
+.ec-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1px;background:var(--gray-200)}
+.ec-cell{background:var(--gray-50);padding:13px 16px}
+.ec-cell-l{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--gray-400);margin-bottom:4px}
+.ec-cell-v{font-size:.92rem;font-weight:600;color:var(--gray-900);word-break:break-word}
+.ec-body{padding:22px 24px}
+.ec-step{font-family:"IBM Plex Mono",monospace;font-size:.72rem;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--gray-500);margin-bottom:8px}
+.ec-titulo{font-size:1.1rem;font-weight:700;margin-bottom:14px}
+.script{background:var(--gray-50);border:1px solid var(--gray-200);border-left:3px solid var(--terracota);
+  padding:15px 17px;font-size:.92rem;line-height:1.65;color:var(--gray-800);white-space:pre-wrap}
+.script b{color:var(--blue-mid)}
+.mailbox{border:1px solid var(--gray-200)}
+.mailbox-sub{padding:10px 15px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);font-size:.87rem}
+.mailbox-body{padding:15px;font-size:.92rem;line-height:1.65}
+.ec-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:20px;padding-top:18px;border-top:1px solid var(--gray-100)}
+.ec-outcome{display:none;gap:9px;flex-wrap:wrap;margin-top:14px;padding:14px;background:var(--gray-50);
+  border:1px solid var(--gray-200)}
+.ec-outcome.show{display:block}
+.ec-outcome-l{font-size:.8rem;font-weight:700;color:var(--gray-600);margin-bottom:9px}
+.timeline{border-left:2px solid var(--gray-200);margin-left:6px;padding-left:18px;display:flex;
+  flex-direction:column;gap:15px}
+.tl-item{position:relative}
+.tl-item::before{content:'';position:absolute;left:-25px;top:5px;width:9px;height:9px;border-radius:50%;
+  background:var(--gray-300);border:2px solid #fff}
+.tl-item.ok::before{background:var(--green)} .tl-item.no::before{background:var(--red)}
+.tl-when{font-family:"IBM Plex Mono",monospace;font-size:.72rem;color:var(--gray-400)}
+.tl-what{font-size:.88rem;font-weight:600}
+.tl-note{font-size:.83rem;color:var(--gray-600)}
+.fila-progress{display:flex;align-items:center;gap:10px;font-size:.82rem;color:var(--gray-600)}
+.fp-track{flex:1;height:5px;background:var(--gray-200);min-width:70px}
+.fp-fill{height:5px;background:var(--green)}
+
+/* ── WHATSAPP ── */
+.wpp-layout{display:grid;grid-template-columns:300px 1fr;gap:0;background:#fff;border:1px solid var(--gray-200);height:600px}
+.wpp-list{border-right:1px solid var(--gray-200);overflow-y:auto}
+.wpp-conv{padding:13px 15px;border-bottom:1px solid var(--gray-100);cursor:pointer}
+.wpp-conv:hover{background:var(--gray-50)}
+.wpp-conv.active{background:var(--blue-soft)}
+.wpp-conv-top{display:flex;justify-content:space-between;gap:8px}
+.wpp-nome{font-size:.88rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wpp-hora{font-family:"IBM Plex Mono",monospace;font-size:.7rem;color:var(--gray-400);flex-shrink:0}
+.wpp-prev{font-size:.79rem;color:var(--gray-500);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
+.wpp-unread{background:var(--green);color:#fff;border-radius:999px;font-size:.66rem;font-weight:700;padding:0 6px}
+.wpp-pane{display:flex;flex-direction:column;min-width:0}
+.wpp-pane-head{padding:13px 18px;border-bottom:1px solid var(--gray-200);display:flex;
+  justify-content:space-between;align-items:center;gap:12px}
+.wpp-msgs{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:9px;background:var(--gray-50)}
+.msg{max-width:70%;padding:9px 13px;font-size:.88rem;line-height:1.5;border:1px solid var(--gray-200);background:#fff}
+.msg.me{align-self:flex-end;background:var(--green-soft);border-color:#CFE0D5}
+.msg-h{font-family:"IBM Plex Mono",monospace;font-size:.66rem;color:var(--gray-400);margin-top:4px;text-align:right}
+.wpp-compose{padding:12px 16px;border-top:1px solid var(--gray-200);display:flex;gap:9px}
+.wpp-compose input{flex:1;border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:9px 12px;
+  font-size:.9rem;font-family:inherit;outline:none}
+.wpp-compose input:focus{border-color:var(--blue-mid)}
+
+/* ── RELATÓRIOS / AJUSTES ── */
+.rep{border:1px solid var(--gray-200);background:#fff}
+.rep+.rep{margin-top:12px}
+.rep-head{padding:17px 20px;display:flex;gap:15px;align-items:center;cursor:pointer}
+.rep-head:hover{background:var(--gray-50)}
+.rep-ico{width:42px;height:42px;flex-shrink:0;display:grid;place-items:center;font-size:1.15rem;border-radius:var(--radius-sm)}
+.rep-t{flex:1}
+.rep-t h4{font-size:.98rem;font-weight:700}
+.rep-t p{margin:2px 0 0;font-size:.84rem;color:var(--gray-600);line-height:1.5}
+.rep-chev{color:var(--gray-400);transition:transform .2s}
+.rep.open .rep-chev{transform:rotate(180deg)}
+.rep-body{display:none;padding:0 20px 20px 77px;border-top:1px solid var(--gray-100)}
+.rep.open .rep-body{display:block}
+.rep-body h5{font-size:.82rem;font-weight:700;margin:15px 0 5px;color:var(--gray-700)}
+.rep-body ul{margin:0;padding-left:18px;font-size:.86rem;color:var(--gray-600);line-height:1.7}
+.set-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px}
+.set-card{background:#fff;border:1px solid var(--gray-200);padding:18px 20px}
+.set-card h4{font-size:.95rem;font-weight:700;margin-bottom:4px}
+.set-card p{margin:0 0 13px;font-size:.83rem;color:var(--gray-600);line-height:1.55}
+.set-list{list-style:none;margin:0;padding:0;font-size:.86rem}
+.set-list li{padding:7px 0;border-bottom:1px solid var(--gray-100);display:flex;justify-content:space-between;gap:10px}
+.set-list li:last-child{border-bottom:none}
+.set-list .v{color:var(--gray-500);font-family:"IBM Plex Mono",monospace;font-size:.82rem}
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
+.field label{font-size:.8rem;font-weight:700;color:var(--gray-700)}
+.field input,.field select,.field textarea{border:1px solid var(--gray-300);border-radius:var(--radius-sm);
+  padding:9px 11px;font-size:.9rem;font-family:inherit;outline:none;background:#fff}
+.field input:focus,.field select:focus{border-color:var(--blue-mid)}
+.dias{display:flex;gap:5px;flex-wrap:wrap}
+.dia{width:36px;height:32px;display:grid;place-items:center;border:1px solid var(--gray-300);
+  font-size:.78rem;font-weight:700;cursor:pointer;background:#fff;color:var(--gray-500);border-radius:var(--radius-sm)}
+.dia.on{background:var(--blue-mid);border-color:var(--blue-mid);color:#fff}
+
+/* ── AVISOS ── */
+.note{border:1px solid var(--gray-200);border-left:3px solid var(--terracota);background:var(--terracota-soft);
+  padding:14px 17px;font-size:.88rem;line-height:1.6;color:var(--gray-800);margin-bottom:20px}
+.note strong{color:var(--terracota)}
+.note-blue{border-left-color:var(--blue-mid);background:var(--blue-soft)}
+.note-blue strong{color:var(--blue-dark)}
+.toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(120%);
+  background:var(--gray-900);color:#fff;padding:12px 22px;font-size:.9rem;font-weight:600;z-index:900;
+  transition:transform .25s;border-radius:var(--radius-sm)}
+.toast.show{transform:translateX(-50%) translateY(0)}
+
+@media(max-width:1100px){
+  .app-shell{grid-template-columns:1fr}
+  .sidebar{position:static;height:auto}
+  .main-wrap{padding:26px 20px 60px}
+  .exec-layout,.grid2,.grid3,.wpp-layout{grid-template-columns:1fr}
+  .grid4{grid-template-columns:repeat(2,1fr)}
+  .wpp-layout{height:auto}
+}
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+<aside class="sidebar">
+  <a class="brand" href="#">
+    <span class="logo-icon">🎯</span>
+    <span class="brand-name">Bluu<strong>time</strong></span>
+    <span class="brand-tag">MVP</span>
+  </a>
+
+  <div class="cliente-switch">
+    <label for="sel-cliente">Operação / cliente</label>
+    <select id="sel-cliente"></select>
+  </div>
+
+  <nav class="sidebar-nav" id="nav">
+    <div class="nav-group-label">Hoje</div>
+    <button class="nav-btn active" data-tab="painel">Painel da operação<span class="nav-btn-sub">como o time está agora</span></button>
+    <button class="nav-btn" data-tab="execucao">Execução<span class="nav-btn-sub">a fila de hoje do SDR</span></button>
+
+    <div class="nav-group-label">Prospecção</div>
+    <button class="nav-btn" data-tab="leads">Leads<span class="nav-btn-sub">todo mundo em cadência</span></button>
+    <button class="nav-btn" data-tab="cadencias">Cadências<span class="nav-btn-sub">as réguas de contato</span></button>
+    <button class="nav-btn" data-tab="atividades">Atividades<span class="nav-btn-sub">scripts e templates</span></button>
+    <button class="nav-btn" data-tab="bases">Bases de leads<span class="nav-btn-sub">de onde vêm as listas<span class="nav-pill">CapiBLU</span></span></button>
+
+    <div class="nav-group-label">Canais</div>
+    <button class="nav-btn" data-tab="ligacoes">Ligações<span class="nav-btn-sub">discagem e extrato</span></button>
+    <button class="nav-btn" data-tab="whatsapp">WhatsApp<span class="nav-btn-sub">conversas do time</span></button>
+
+    <div class="nav-group-label">Resultado</div>
+    <button class="nav-btn" data-tab="metas">Metas<span class="nav-btn-sub">oportunidades × previsto</span></button>
+    <button class="nav-btn" data-tab="estatisticas">Estatísticas<span class="nav-btn-sub">conversão e perdas</span></button>
+    <button class="nav-btn" data-tab="relatorios">Relatórios<span class="nav-btn-sub">exportar em planilha</span></button>
+
+    <div class="nav-group-label">Configuração</div>
+    <button class="nav-btn" data-tab="clientes">Clientes<span class="nav-btn-sub">operações que a BLU roda<span class="nav-pill">novo</span></span></button>
+    <button class="nav-btn" data-tab="ajustes">Ajustes<span class="nav-btn-sub">metas, perdas, calendário</span></button>
+    <button class="nav-btn" data-tab="integracoes">Integrações<span class="nav-btn-sub">CRM, e-mail, webhooks</span></button>
+  </nav>
+
+  <div class="sidebar-user">
+    <div>
+      <div class="su-name">Rebeca</div>
+      <div class="su-role">Administrador · BLU Sales Group</div>
+    </div>
+    <span style="color:#7FA3BF;font-size:.72rem">▾</span>
+  </div>
+</aside>
+
+<main class="main-wrap">
+
+<!-- ═══ PAINEL DA OPERAÇÃO ═══ -->
+<section id="tab-painel" class="tab-section active">
+  <div class="module-header">
+    <div>
+      <div class="module-overline">Hoje · painel do gestor</div>
+      <h2 class="module-title">Como a operação está agora</h2>
+      <p class="module-sub">Uma linha por SDR: o que tem na mão, o que já fez hoje e o que está atrasado. É a tela que o gestor abre de manhã.</p>
+    </div>
+    <div class="seg" id="seg-periodo">
+      <button class="active" data-dias="1">Hoje</button>
+      <button data-dias="7">7 dias</button>
+      <button data-dias="30">Mês</button>
+    </div>
+  </div>
+
+  <div class="grid4" id="painel-kpis"></div>
+
+  <div class="h3-row"><h3 class="h3">Por SDR</h3><span class="h3-note" id="painel-note"></span></div>
+  <div class="table-wrap">
+    <table class="dt">
+      <thead><tr>
+        <th>SDR</th><th>Cliente</th><th>Leads em cadência</th><th>Disponíveis</th>
+        <th>Pendentes hoje</th><th>Executadas</th><th>Atrasadas</th><th>Ligações</th><th>Meta diária</th>
+      </tr></thead>
+      <tbody id="painel-tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="h3-row"><h3 class="h3">Precisa de você</h3></div>
+  <div class="grid3" id="painel-alertas"></div>
+</section>
+
+<!-- ═══ EXECUÇÃO ═══ -->
+<section id="tab-execucao" class="tab-section">
+  <div class="module-header">
+    <div>
+      <div class="module-overline">Hoje · execução</div>
+      <h2 class="module-title">Sua fila de hoje</h2>
+      <p class="module-sub">A fila já vem ordenada por janela de melhor contato, prioridade da cadência e atraso — não por ordem de chegada.</p>
+    </div>
+    <div class="fila-progress" style="min-width:210px">
+      <span id="fila-txt">0 de 0</span>
+      <span class="fp-track"><i class="fp-fill" id="fila-fill" style="width:0%"></i></span>
+    </div>
+  </div>
+
+  <div class="note note-blue"><strong>Janela recomendada agora:</strong> 18h–19h converteu 96% das ligações conectadas neste mês. As 12 ligações dessa faixa foram puxadas para o topo da fila.</div>
+
+  <div class="exec-layout">
+    <div class="exec-queue">
+      <div class="exec-queue-head">
+        <span class="exec-queue-title">Atividades de hoje</span>
+        <button class="btn-sm" id="btn-power">⚡ Power dialer</button>
+      </div>
+      <div class="exec-queue-list" id="fila-list"></div>
+    </div>
+    <div id="exec-detalhe"></div>
+  </div>
+</section>
+
+<!-- ═══ LEADS ═══ -->
+<section id="tab-leads" class="tab-section">
+  <div class="module-header">
+    <div>
+      <div class="module-overline">Prospecção · leads</div>
+      <h2 class="module-title">Leads</h2>
+      <p class="module-sub">Todo mundo que está ou já passou por uma cadência. Filtre por etapa e aja em massa.</p>
+    </div>
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="toast('Exportação gerada (mock)')">Exportar</button>
+      <button class="btn-primary" onclick="go('bases')">Importar leads</button>
+    </div>
+  </div>
+  <div class="filters" id="leads-chips"></div>
+  <div class="filters">
+    <span class="srch"><span>🔍</span><input id="leads-q" placeholder="Buscar por nome, empresa ou CNPJ" /></span>
+    <select class="chip" id="leads-cad" style="padding:7px 12px"></select>
+  </div>
+  <div class="table-wrap">
+    <table class="dt">
+      <thead><tr>
+        <th style="width:26px"><input type="checkbox" id="leads-all" /></th>
+        <th>Lead</th><th>Etapa</th><th>Cadência</th><th>Cliente</th><th>Responsável</th>
+        <th>Próxima atividade</th><th>Ações</th>
+      </tr></thead>
+      <tbody id="leads-tbody"></tbody>
+    </table>
+  </div>
+  <div class="filters" style="margin-top:14px" id="leads-bulk" hidden>
+    <span style="font-size:.85rem;font-weight:600" id="leads-sel-n"></span>
+    <button class="btn-sm">Transferir responsável</button>
+    <button class="btn-sm">Trocar de cadência</button>
+    <button class="btn-sm">Voltar para espera</button>
+    <button class="btn-sm no">Marcar como perdido</button>
+  </div>
+</section>
+
+<!-- ═══ CADÊNCIAS ═══ -->
+<section id="tab-cadencias" class="tab-section">
+  <div class="module-header">
+    <div>
+      <div class="module-overline">Prospecção · cadências</div>
+      <h2 class="module-title">Cadências</h2>
+      <p class="module-sub">A régua de contato: sequência de pesquisa, ligação, e-mail e WhatsApp ao longo dos dias. Cada cadência pertence a um cliente — sem prefixo no nome.</p>
+    </div>
+    <button class="btn-primary" onclick="toast('Editor de cadência: fora do escopo do MVP')">Nova cadência</button>
+  </div>
+  <div class="filters" id="cad-chips"></div>
+  <div class="table-wrap">
+    <table class="dt">
+      <thead><tr>
+        <th>Cadência</th><th>Cliente</th><th>Foco</th><th>Prioridade</th><th>Etapas</th>
+        <th>SDRs</th><th>Em cadência</th><th>Ganhos</th><th>Perdidos</th><th>Conversão</th><th></th>
+      </tr></thead>
+      <tbody id="cad-tbody"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ═══ ATIVIDADES ═══ -->
+<section id="tab-atividades" class="tab-section">
+  <div class="module-header">
+    <div>
+      <div class="module-overline">Prospecção · atividades</div>
+      <h2 class="module-title">Biblioteca de atividades</h2>
+      <p class="module-sub">Os blocos que montam a cadência: script de ligação, template de e-mail, mensagem de WhatsApp e roteiro de pesquisa. Usam <code>{{firstName}}</code> e <code>{{company}}</code>.</p>
+    </div>
+    <button class="btn-primary" onclick="toast('Nova atividade (mock)')">Nova atividade</button>
+  </div>
+  <div class="filters" id="ativ-chips"></div>
+  <div id="ativ-list"></div>
+</section>
+
+<!-- ═══ BASES DE LEADS ═══ -->
+<section id="tab-bases" class="tab-section">
+  <div class="module-header">
+    <div>
+      <div class="module-overline">Prospecção · bases</div>
+      <h2 class="module-title">De onde vêm as listas</h2>
+      <p class="module-sub">No Meetime toda base entra por CSV na mão. Aqui a lista vem pronta do CapiBLU — com CNPJ, sócios, decisores e telefone já validado.</p>
+    </div>
+  </div>
+
+  <div class="card" style="border-left:3px solid var(--terracota)">
+    <div class="card-label" style="color:var(--terracota)">Novo · integração nativa CapiBLU</div>
+    <div class="grid2" style="align-items:end;gap:20px">
+      <div>
+        <div class="field">
+          <label>Consulta salva no CapiBLU</label>
+          <select id="capi-query">
+            <option>Advocacia · PR/SC · 10–50 func. · CNAE 6911-7</option>
+            <option>Contabilidade · SP capital · 20–100 func.</option>
+            <option>Transporte de carga · Sul · faturamento &gt; R$ 5M</option>
+            <option>Indústria de embalagens · PR · sócio-administrador com telefone</option>
+          </select>
+        </div>
+        <div class="grid2" style="gap:12px">
+          <div class="field"><label>Quantos leads trazer</label><input type="number" id="capi-qtd" value="120" /></div>
+          <div class="field"><label>Jogar direto na cadência</label><select id="capi-cad"></select></div>
+        </div>
+      </div>
+      <div>
+        <ul class="set-list" style="margin-bottom:14px">
+          <li><span>Empresas que batem no filtro</span><span class="v">1.847</span></li>
+          <li><span>Com decisor identificado</span><span class="v">1.204</span></li>
+          <li><span>Com telefone validado (DonoDoZap)</span><span class="v">981</span></li>
+          <li><span>Nunca prospectadas pela BLU</span><span class="v">743</span></li>
+        </ul>
+        <button class="btn-terra" onclick="importarCapi()">Importar do CapiBLU →</button>
+      </div>
+    </div>
+    <p style="margin:14px 0 0;font-size:.82rem;color:var(--gray-600);line-height:1.55">
+      A deduplicação roda contra a base de leads inteira do cliente antes de importar — quem já foi prospectado não volta pra fila.</p>
+  </div>
+
+  <div class="h3-row"><h3 class="h3">Bases importadas</h3><span class="h3-note">CSV manual continua disponível</span></div>
+  <div class="table-wrap">
+    <table class="dt">
+      <thead><tr><th>Base</th><th>Origem</th><th>Cliente</th><th>Leads</th><th>Descartados</th><th>Status</th><th>Importada em</th></tr></thead>
+      <tbody id="bases-tbody"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ═══ LIGAÇÕES ═══ -->
+<section id="tab-ligacoes" class="tab-section">
+  <div class="module-header">
+    <div>
+      <div class="module-overline">Canais · ligações</div>
+      <h2 class="module-title">Ligações</h2>
+      <p class="module-sub">Discagem pelo navegador, resultado obrigatório por chamada e extrato de minutos.</p>
+    </div>
+    <button class="btn-primary" onclick="toast('Softphone WebRTC: fora do escopo do MVP')">📞 Ligar agora</button>
+  </div>
+
+  <div class="grid4" id="lig-kpis"></div>
+
+  <div class="grid2" style="margin-top:16px">
+    <div class="card">
+      <div class="card-label">Conexão por faixa de horário</div>
+      <div class="bars" id="lig-horas"></div>
+      <div class="legend"><span><i style="background:var(--blue-dark)"></i>ligações</span><span><i style="background:var(--terracota)"></i>% conectadas</span></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Resultado das chamadas</div>
+      <div class="hbar" id="lig-outcome"></div>
+      <p style="margin:16px 0 0;font-size:.83rem;color:var(--gray-600);line-height:1.55">
+        Só <b>11%</b> das ligações conectadas viraram conversa significativa. As de 14s de média são derrubadas — entram no relatório de ligações derrubadas.</p>
+    </div>
+  </div>
+
+  <div class="h3-row"><h3 class="h3">Últimas ligações</h3><span class="h3-note">extrato do mês: 145 conectadas · 2h09 · R$ 0,00</span></div>
+  <div class="table-wrap">
+    <table class="dt">
+      <thead><tr><th>Hora</th><th>Lead</th><th>Empresa</th><th>Número</th><th>Duração</th><th>Status</th><th>Resultado</th><th>SDR</th></tr></thead>
+      <tbody id="lig-tbody"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ═══ WHATSAPP ═══ -->
+<section id="tab-whatsapp" class="tab-section">
+  <div class="module-header">
+    <div>
+      <div class="module-overline">Canais · whatsapp</div>
+      <h2 class="module-title">Conversas</h2>
+      <p class="module-sub">Cada conversa amarrada ao lead e à cadência. Responder aqui fecha a atividade de WhatsApp da fila.</p>
+    </div>
+  </div>
+  <div class="wpp-layout">
+    <div class="wpp-list" id="wpp-list"></div>
+    <div class="wpp-pane">
+      <div class="wpp-pane-head">
+        <div><div class="wpp-nome" id="wpp-h-nome">—</div><div class="wpp-prev" id="wpp-h-sub">—</div></div>
+        <button class="btn-sm ok" onclick="toast('Atividade de WhatsApp concluída')">Concluir atividade</button>
+      </div>
+      <div class="wpp-msgs" id="wpp-msgs"></div>
+      <div class="wpp-compose">
+        <input id="wpp-input" placeholder="Escreva a mensagem…" />
+        <button class="btn-primary" onclick="enviarWpp()">Enviar</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ METAS ═══ -->
+<section id="tab-metas" class="tab-section">
+  <div class="module-header">
+    <div>
+      <div class="module-overline">Resultado · metas</div>
+      <h2 class="module-title">Visão geral</h2>
+      <p class="module-sub">Oportunidades geradas contra o previsto até hoje, e o esforço que ainda falta para fechar o mês.</p>
+    </div>
+    <button class="btn-primary" onclick="toast('Editor de metas (mock)')">Editar metas</button>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <div class="card-label">Oportunidades no mês</div>
+      <div style="display:flex;align-items:baseline;gap:12px">
+        <div style="font-size:3.2rem;font-weight:600;letter-spacing:-.04em;line-height:1" id="meta-ganhos">3</div>
+        <div style="font-size:1.1rem;color:var(--gray-500)">de <b style="color:var(--gray-900)" id="meta-alvo">25</b> na meta</div>
+      </div>
+      <ul class="set-list" style="margin-top:18px">
+        <li><span>Previsto até hoje (dia 19 de 21 úteis)</span><span class="v">22</span></li>
+        <li><span>Diferença</span><span class="v" style="color:var(--red);font-weight:700">−86% abaixo</span></li>
+        <li><span>Conversão atual</span><span class="v">3 de 10 desfechos · 30%</span></li>
+        <li><span>Meta de conversão</span><span class="v">15%</span></li>
+      </ul>
+      <div class="kpi-bar" style="margin-top:16px"><i style="width:12%;background:var(--red)"></i></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Oportunidades por dia no mês</div>
+      <div class="bars" id="meta-bars"></div>
+      <p style="margin:16px 0 0;font-size:.84rem;color:var(--gray-600);line-height:1.55">
+        Só 4 dias com atividade registrada em 19 dias corridos. O gargalo não é conversão — é volume de execução.</p>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px;border-left:3px solid var(--terracota)">
+    <div class="card-label" style="color:var(--terracota)">Esforço necessário para fechar a meta</div>
+    <div class="grid3" style="gap:1px;background:var(--gray-200);border:1px solid var(--gray-200)">
+      <div class="kpi"><div class="kpi-label">Leads novos</div><div class="kpi-value">167</div><div class="kpi-sub">a importar no CapiBLU</div></div>
+      <div class="kpi"><div class="kpi-label">Atividades</div><div class="kpi-value">810</div><div class="kpi-sub">no restante do mês</div></div>
+      <div class="kpi"><div class="kpi-label">Por SDR / dia</div><div class="kpi-value">41</div><div class="kpi-sub">hoje a média é 68 em 4 dias úteis</div></div>
+    </div>
+  </div>
+
+  <div class="h3-row"><h3 class="h3">Ranking</h3></div>
+  <div class="grid3">
+    <div class="card"><div class="card-label">Leads em cadência</div><div class="rank" id="rank-leads"></div></div>
+    <div class="card"><div class="card-label">Atividades executadas</div><div class="rank" id="rank-ativ"></div></div>
+    <div class="card"><div class="card-label">Taxa de conversão</div><div class="rank" id="rank-conv"></div></div>
+  </div>
+</section>
+
+<!-- ═══ ESTATÍSTICAS ═══ -->
+<section id="tab-estatisticas" class="tab-section">
+  <div class="module-header">
+    <div>
+      <div class="module-overline">Resultado · estatísticas</div>
+      <h2 class="module-title">Estatísticas de prospecção</h2>
+      <p class="module-sub">Onde o lead morre na régua, por que se perde e de qual base ele veio.</p>
+    </div>
+    <div class="seg" id="seg-est">
+      <button class="active" data-est="conv">Conversão</button>
+      <button data-est="ativ">Atividades</button>
+      <button data-est="perda">Perdas</button>
+      <button data-est="origem">Origem</button>
+    </div>
+  </div>
+  <div id="est-body"></div>
+</section>
+
+<!-- ═══ RELATÓRIOS ═══ -->
+<section id="tab-relatorios" class="tab-section">
+  <div class="module-header">
+    <div>
+      <div class="module-overline">Resultado · relatórios</div>
+      <h2 class="module-title">Relatórios</h2>
+      <p class="module-sub">Exportação em planilha com o detalhe que a tela não mostra. Escolha o tipo e o período.</p>
+    </div>
+  </div>
+  <div id="rep-list"></div>
+</section>
+
+<!-- ═══ CLIENTES ═══ -->
+<section id="tab-clientes" class="tab-section">
+  <div class="module-header">
+    <div>
+      <div class="module-overline">Configuração · clientes</div>
+      <h2 class="module-title">Operações que a BLU roda</h2>
+      <p class="module-sub">A entidade que falta no Meetime. Hoje o cliente vive como prefixo no nome da cadência — <code>[FROTAÍ]</code>, <code>[Planning]</code> — e os e-mails dos clientes se misturam na mesma lista de usuários.</p>
+    </div>
+    <button class="btn-primary" onclick="toast('Novo cliente (mock)')">Novo cliente</button>
+  </div>
+  <div class="note"><strong>Por que isso importa:</strong> com cliente modelado de verdade, cada operação tem meta, ICP, motivos de perda, calendário e relatório próprios — e o gestor do cliente pode ver só a operação dele.</div>
+  <div class="table-wrap">
+    <table class="dt">
+      <thead><tr><th>Cliente</th><th>SDRs</th><th>Cadências ativas</th><th>Leads em cadência</th><th>Meta mensal</th><th>Ganhos no mês</th><th>Status</th></tr></thead>
+      <tbody id="cli-tbody"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ═══ AJUSTES ═══ -->
+<section id="tab-ajustes" class="tab-section">
+  <div class="module-header">
+    <div>
+      <div class="module-overline">Configuração · ajustes</div>
+      <h2 class="module-title">Ajustes da operação</h2>
+      <p class="module-sub">Regras que valem para o cliente selecionado no topo da barra lateral.</p>
+    </div>
+  </div>
+  <div class="set-grid">
+    <div class="set-card">
+      <h4>Meta diária de atividades</h4>
+      <p>Quantas atividades cada SDR precisa executar por dia útil.</p>
+      <div class="field"><label>Meta padrão</label><input type="number" value="170" /></div>
+      <div class="field"><label>Meta do cliente selecionado</label><input type="number" value="200" /></div>
+      <button class="btn-secondary">Salvar</button>
+    </div>
+    <div class="set-card">
+      <h4>Calendário de trabalho</h4>
+      <p>Dias úteis e feriados. A fila não agenda atividade fora daqui.</p>
+      <div class="dias"><span class="dia">D</span><span class="dia on">S</span><span class="dia on">T</span><span class="dia on">Q</span><span class="dia on">Q</span><span class="dia on">S</span><span class="dia">S</span></div>
+      <ul class="set-list" style="margin-top:14px">
+        <li><span>Feriados cadastrados</span><span class="v">11</span></li>
+        <li><span>Próximo</span><span class="v">07/09</span></li>
+      </ul>
+    </div>
+    <div class="set-card">
+      <h4>Motivos de perda</h4>
+      <p>Obrigatório ao marcar um lead como perdido.</p>
+      <ul class="set-list" id="ajuste-perdas"></ul>
+    </div>
+    <div class="set-card">
+      <h4>Campos do lead</h4>
+      <p>16 nativos + personalizados. O CNPJ chega preenchido pelo CapiBLU.</p>
+      <ul class="set-list">
+        <li><span>Nome, e-mail, empresa, cargo</span><span class="v">obrigatório</span></li>
+        <li><span>Telefone(s), site, cidade, UF</span><span class="v">nativo</span></li>
+        <li><span>CNPJ</span><span class="v">personalizado</span></li>
+        <li><span>Sócios / decisores</span><span class="v">CapiBLU</span></li>
+        <li><span>Faturamento estimado</span><span class="v">CapiBLU</span></li>
+      </ul>
+    </div>
+    <div class="set-card">
+      <h4>Permissões</h4>
+      <p>Por papel: administrador, gestor, SDR.</p>
+      <ul class="set-list">
+        <li><span>Ver todos os leads</span><span class="v">admin, gestor</span></li>
+        <li><span>Apagar lead</span><span class="v">admin</span></li>
+        <li><span>Adicionar lead manual</span><span class="v">todos</span></li>
+        <li><span>Subir base de leads</span><span class="v">admin</span></li>
+        <li><span>Ver estatísticas</span><span class="v">admin, gestor</span></li>
+      </ul>
+    </div>
+    <div class="set-card">
+      <h4>Fila e priorização <span class="badge b-terra">novo</span></h4>
+      <p>Como a fila do SDR é ordenada. No Meetime é só ordem cronológica.</p>
+      <ul class="set-list">
+        <li><span>Janela de melhor contato</span><span class="v">ligado</span></li>
+        <li><span>Prioridade da cadência</span><span class="v">ligado</span></li>
+        <li><span>Atraso da atividade</span><span class="v">ligado</span></li>
+        <li><span>Lead quente (respondeu)</span><span class="v">topo da fila</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ INTEGRAÇÕES ═══ -->
+<section id="tab-integracoes" class="tab-section">
+  <div class="module-header">
+    <div>
+      <div class="module-overline">Configuração · integrações</div>
+      <h2 class="module-title">Integrações</h2>
+      <p class="module-sub">Para onde o lead ganho vai e de onde os dados vêm.</p>
+    </div>
+  </div>
+  <div class="set-grid" id="int-grid"></div>
+  <div class="h3-row"><h3 class="h3">Webhooks</h3><span class="h3-note">eventos disparados para fora</span></div>
+  <div class="table-wrap">
+    <table class="dt">
+      <thead><tr><th>Evento</th><th>Destino</th><th>Criado</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td><code>LEAD.WON</code></td><td class="num">https://meetime.ploomes.com/…/callback</td><td class="num">15/01/2026</td><td><span class="badge b-green">ativo</span></td></tr>
+        <tr><td><code>LEAD.LOST</code></td><td class="num">https://api.blusalesgroup.com.br/hooks/lost</td><td class="num">02/03/2026</td><td><span class="badge b-green">ativo</span></td></tr>
+        <tr><td><code>ACTIVITY.DONE</code></td><td class="num">https://api.blusalesgroup.com.br/hooks/activity</td><td class="num">02/03/2026</td><td><span class="badge b-gray">desligado</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ══════════════════════════════════════════════════════
+   Dados mock — derivados da captura real da conta
+   BLU Sales Group no Meetime (01–19/08/2026).
+   ══════════════════════════════════════════════════════ */
+
+const CLIENTES = [
+  {id:'todos',   nome:'Todos os clientes', sdrs:6, cadencias:14, leads:512, meta:60, ganhos:7,  status:'—'},
+  {id:'blu',     nome:'BLU Sales Group',   sdrs:2, cadencias:8,  leads:250, meta:25, ganhos:3,  status:'ativo'},
+  {id:'frotai',  nome:'Frotaí',            sdrs:2, cadencias:3,  leads:256, meta:20, ganhos:3,  status:'ativo'},
+  {id:'planning',nome:'Planning',          sdrs:2, cadencias:2,  leads:83,  meta:10, ganhos:1,  status:'ativo'},
+  {id:'v4',      nome:'V4 Company',        sdrs:1, cadencias:1,  leads:1,   meta:5,  ganhos:0,  status:'pausado'},
+];
+
+const SDRS = [
+  {id:48562, nome:'Felipe Oliveira', cliente:'blu',      prospect:242, disp:1043, pend:181, feitas:9,  atras:151, lig:170, meta:200},
+  {id:41637, nome:'David Schuster',  cliente:'blu',      prospect:8,   disp:0,    pend:12,  feitas:6,  atras:4,   lig:23,  meta:170},
+  {id:47232, nome:'Felipe Costa',    cliente:'frotai',   prospect:164, disp:0,    pend:316, feitas:0,  atras:88,  lig:0,   meta:170},
+  {id:46424, nome:'Willian Silva',   cliente:'frotai',   prospect:92,  disp:0,    pend:183, feitas:0,  atras:41,  lig:0,   meta:170},
+  {id:45442, nome:'Guilherme Figueira',cliente:'planning',prospect:5,  disp:0,    pend:13,  feitas:2,  atras:0,   lig:4,   meta:120},
+  {id:45443, nome:'Viviane Slivinski',cliente:'planning',prospect:78,  disp:0,    pend:9,   feitas:3,  atras:2,   lig:7,   meta:120},
+  {id:41921, nome:'Pedro Lobo',      cliente:'v4',       prospect:1,   disp:4,    pend:4,   feitas:0,  atras:1,   lig:0,   meta:100},
+];
+
+const CADENCIAS = [
+  {id:52806,nome:'Advocacia · conexão',        cliente:'blu',     foco:'OUTBOUND',      prio:'VERY_HIGH',etapas:16,sdrs:2,total:2025,won:116,lost:1524,ativa:true},
+  {id:52832,nome:'Indústria · conexão',        cliente:'blu',     foco:'OUTBOUND',      prio:'VERY_HIGH',etapas:16,sdrs:2,total:1720,won:71, lost:1438,ativa:true},
+  {id:51401,nome:'Diversos · start',           cliente:'blu',     foco:'OUTBOUND',      prio:'VERY_HIGH',etapas:15,sdrs:3,total:1613,won:134,lost:1240,ativa:true},
+  {id:55584,nome:'Contabilidade · conexão',    cliente:'blu',     foco:'OUTBOUND',      prio:'VERY_HIGH',etapas:14,sdrs:2,total:950, won:75, lost:758, ativa:true},
+  {id:52844,nome:'Connect · carteira David',   cliente:'blu',     foco:'OUTBOUND',      prio:'VERY_HIGH',etapas:9, sdrs:1,total:490, won:67, lost:369, ativa:true},
+  {id:55504,nome:'Recuperação de perdidos',    cliente:'blu',     foco:'OUTBOUND',      prio:'HIGH',     etapas:11,sdrs:3,total:182, won:19, lost:139, ativa:true},
+  {id:56857,nome:'Follow-up pós-reunião',      cliente:'blu',     foco:'OTHER',         prio:'MEDIUM',   etapas:10,sdrs:1,total:96,  won:11, lost:52,  ativa:true},
+  {id:62574,nome:'Lista Luleads',              cliente:'blu',     foco:'OUTBOUND',      prio:'VERY_HIGH',etapas:16,sdrs:1,total:64,  won:1,  lost:12,  ativa:true},
+  {id:54812,nome:'Gestão de frota · start',    cliente:'frotai',  foco:'OTHER',         prio:'HIGH',     etapas:16,sdrs:2,total:451, won:11, lost:328, ativa:true},
+  {id:56259,nome:'Frota · leads Ricardo',      cliente:'frotai',  foco:'OTHER',         prio:'LOW',      etapas:16,sdrs:1,total:118, won:4,  lost:96,  ativa:false},
+  {id:55851,nome:'Frota · data science',       cliente:'frotai',  foco:'OTHER',         prio:'LOW',      etapas:16,sdrs:1,total:87,  won:2,  lost:71,  ativa:false},
+  {id:53151,nome:'Imobiliário',                cliente:'planning',foco:'OUTBOUND',      prio:'VERY_HIGH',etapas:12,sdrs:2,total:82,  won:5,  lost:4,   ativa:true},
+  {id:53321,nome:'Transporte',                 cliente:'planning',foco:'OUTBOUND',      prio:'LOW',      etapas:13,sdrs:1,total:332, won:16, lost:294, ativa:false},
+  {id:50365,nome:'Estruturação comercial',     cliente:'v4',      foco:'ACTIVE_INBOUND',prio:'VERY_HIGH',etapas:14,sdrs:1,total:96,  won:3,  lost:37,  ativa:false},
+];
+
+const ETAPAS = {
+  WAITING:              {t:'Em espera',        c:'b-gray'},
+  EXECUTING:            {t:'Em execução',      c:'b-blue'},
+  ON_EXTRA_ACTIVITY:    {t:'Atividade extra',  c:'b-amber'},
+  PAUSED_FROM_EXECUTING:{t:'Pausado',          c:'b-gray'},
+  WON:                  {t:'Ganho',            c:'b-green'},
+  LOST:                 {t:'Perdido',          c:'b-red'},
+  SWITCHED_CADENCE:     {t:'Trocou cadência',  c:'b-gray'},
+};
+
+const LEADS = [
+  {nome:'Paloma Queiroz',      emp:'Sampel Indústria e Comércio de Peças',cnpj:'04.512.887/0001-30',st:'EXECUTING',        cad:62574,cli:'blu',     sdr:'Felipe Oliveira',prox:'Ligação 3 · hoje 18:20'},
+  {nome:'Ricardo Silveira',    emp:'Motoman Robótica',                    cnpj:'12.870.441/0001-08',st:'EXECUTING',        cad:62574,cli:'blu',     sdr:'Felipe Oliveira',prox:'WhatsApp 2 · hoje 16:00'},
+  {nome:'Rodrigo Wawruk Viana',emp:'Sepac Serrados e Pasta de Celulose',  cnpj:'78.117.037/0001-11',st:'ON_EXTRA_ACTIVITY',cad:62574,cli:'blu',     sdr:'Felipe Oliveira',prox:'Ligação extra · hoje 17:10'},
+  {nome:'Flavio Santana',      emp:'Concrelagos Concreto',                cnpj:'22.041.783/0001-92',st:'EXECUTING',        cad:52806,cli:'blu',     sdr:'Felipe Oliveira',prox:'E-mail 2 · amanhã 09:00'},
+  {nome:'José Inácio Barbacovi',emp:'Voges & Barbacovi Advogados',        cnpj:'05.882.114/0001-77',st:'WAITING',          cad:52806,cli:'blu',     sdr:'David Schuster', prox:'Pesquisa · aguardando início'},
+  {nome:'Daniel Tician',       emp:'Tician Advocacia',                    cnpj:'19.443.902/0001-55',st:'WAITING',          cad:52806,cli:'blu',     sdr:'David Schuster', prox:'Pesquisa · aguardando início'},
+  {nome:'Gunnar Zibetti Fagundes',emp:'Papaleo, Vieira & Fagundes',       cnpj:'07.301.556/0001-40',st:'WON',              cad:52806,cli:'blu',     sdr:'Felipe Oliveira',prox:'—'},
+  {nome:'Renan Petrin',        emp:'PackOn Embalagens',                   cnpj:'31.229.884/0001-16',st:'WON',              cad:51401,cli:'blu',     sdr:'Felipe Oliveira',prox:'—'},
+  {nome:'Maria do Carmo Dornellas',emp:'Potenza Facilities',              cnpj:'09.114.665/0001-23',st:'EXECUTING',        cad:55504,cli:'blu',     sdr:'Felipe Oliveira',prox:'Ligação 2 · hoje 18:40'},
+  {nome:'Valdecir Nunes Pereira',emp:'RD Distribuidora e Food Service',   cnpj:'40.882.117/0001-05',st:'LOST',             cad:51401,cli:'blu',     sdr:'Felipe Oliveira',prox:'—'},
+  {nome:'Waldemar Buosi Filho',emp:'Distribuidora de Bebidas Virgínia',   cnpj:'55.201.773/0001-64',st:'PAUSED_FROM_EXECUTING',cad:51401,cli:'blu',sdr:'David Schuster', prox:'—'},
+  {nome:'Caio Emiliano',       emp:'Indicação · sem empresa informada',   cnpj:'—',                 st:'EXECUTING',        cad:56857,cli:'blu',     sdr:'Felipe Oliveira',prox:'Ligação 1 · hoje 19:00'},
+  {nome:'Marcelo Tanaka',      emp:'Transportadora Rota Sul',             cnpj:'66.910.223/0001-18',st:'EXECUTING',        cad:54812,cli:'frotai',  sdr:'Felipe Costa',   prox:'Ligação 4 · hoje 15:30'},
+  {nome:'Juliana Prado',       emp:'Frota Express Logística',             cnpj:'13.559.008/0001-71',st:'EXECUTING',        cad:54812,cli:'frotai',  sdr:'Willian Silva',  prox:'WhatsApp 1 · hoje 14:00'},
+  {nome:'Anderson Múller',     emp:'Locadora Movida Frotas PR',           cnpj:'27.100.884/0001-39',st:'WON',              cad:54812,cli:'frotai',  sdr:'Felipe Costa',   prox:'—'},
+  {nome:'Fernanda Kruger',     emp:'Kruger Empreendimentos',              cnpj:'18.774.290/0001-84',st:'EXECUTING',        cad:53151,cli:'planning',sdr:'Guilherme Figueira',prox:'E-mail 1 · hoje 11:00'},
+  {nome:'Sérgio Bianchi',      emp:'Bianchi Incorporadora',               cnpj:'21.006.554/0001-27',st:'WAITING',          cad:53151,cli:'planning',sdr:'Viviane Slivinski',prox:'Pesquisa · aguardando início'},
+  {nome:'Pedro Henrique Lobo', emp:'Trentini Advocacia',                  cnpj:'34.887.001/0001-60',st:'PAUSED_FROM_EXECUTING',cad:50365,cli:'v4', sdr:'Pedro Lobo',     prox:'—'},
+];
+
+const FILA = [
+  {id:1,tipo:'CALL',  lead:'Paloma Queiroz',      emp:'Sampel Indústria',           tel:'+55 44 99745-5555',cad:'Lista Luleads',    etapa:'Dia 5.1 — Ligação 3',hora:'18:20',janela:true, atrasada:false,cli:'blu',
+    script:'{{firstName}}, aqui é a Rebeca da BLU. Vi que a {{company}} tem 47 funcionários e time comercial próprio.\n\nA gente monta a prospecção outbound de ponta a ponta: lista, script, ligação e reunião agendada na agenda do seu vendedor.\n\nFaz sentido eu te mostrar em 15 minutos como isso funcionaria aí?',
+    tl:[{q:'19/08 14:42',w:'Ligação 2 · não atendeu',n:'Caiu na caixa. 5s.',k:'no'},{q:'18/08 10:15',w:'WhatsApp 1 enviado',n:'Sem resposta.',k:''},{q:'15/08 09:02',w:'E-mail 1 enviado',n:'Aberto 2×, sem clique.',k:'ok'},{q:'14/08 08:30',w:'Pesquisa concluída',n:'Decisor confirmado no LinkedIn. CapiBLU trouxe o telefone direto.',k:'ok'}]},
+  {id:2,tipo:'CALL',  lead:'Maria do Carmo Dornellas',emp:'Potenza Facilities',     tel:'+55 31 7200-2554', cad:'Recuperação de perdidos',etapa:'Dia 3.1 — Ligação 2',hora:'18:40',janela:true,atrasada:false,cli:'blu',
+    script:'{{firstName}}, tudo bem? Conversamos em março e na época prospecção não era prioridade na {{company}}.\n\nAlgo mudou desde então? Vale eu te atualizar rapidinho do que estamos fazendo com empresas do seu porte?',
+    tl:[{q:'19/08 09:30',w:'Pesquisa concluída',n:'Perdida em março por "não é prioridade". Vale recuperar.',k:'ok'}]},
+  {id:3,tipo:'WPP',   lead:'Ricardo Silveira',    emp:'Motoman Robótica',           tel:'+55 44 99108-7506',cad:'Lista Luleads',    etapa:'Dia 2.1 — WhatsApp 2',hora:'16:00',janela:false,atrasada:false,cli:'blu',
+    script:'{{firstName}}, seguindo nosso papo de ontem: separei as opções que fazem sentido para o cenário da {{company}}.\n\nPrefere que eu te ligue às 15h ou às 18h?',
+    tl:[{q:'18/08 16:20',w:'WhatsApp 1 enviado',n:'Visualizou, não respondeu.',k:''},{q:'18/08 11:00',w:'Ligação 1 · não atendeu',n:'',k:'no'}]},
+  {id:4,tipo:'CALL',  lead:'Rodrigo Wawruk Viana',emp:'Sepac Celulose',             tel:'+55 42 99880-1122',cad:'Lista Luleads',    etapa:'Atividade extra — Ligação',hora:'17:10',janela:false,atrasada:true,cli:'blu',
+    script:'Retornar a ligação — ele pediu para chamar depois das 17h.\n\nConfirmar: quem decide compra de serviço comercial e se existe verba aprovada para este semestre.',
+    tl:[{q:'19/08 11:05',w:'Ligação · conversa significativa',n:'4min12. Pediu retorno depois das 17h. Interessado.',k:'ok'}]},
+  {id:5,tipo:'MAIL',  lead:'Flavio Santana',      emp:'Concrelagos Concreto',       tel:'+55 31 3521-8890', cad:'Advocacia · conexão',etapa:'Dia 4.1 — E-mail 2',hora:'09:00',janela:false,atrasada:true,cli:'blu',
+    assunto:'{{firstName}} da {{company}}?',
+    corpo:'{{firstName}}, tentei contato nos últimos dias por telefone e WhatsApp, mas sem sucesso.\n\nVocê continua respondendo pelo comercial da {{company}}? Se a pessoa certa for outra, me diz quem que eu falo com ela direto.',
+    tl:[{q:'16/08 09:00',w:'E-mail 1 enviado',n:'Sem abertura.',k:''},{q:'15/08 15:40',w:'Ligação 1 · não atendeu',n:'',k:'no'}]},
+  {id:6,tipo:'SEARCH',lead:'José Inácio Barbacovi',emp:'Voges & Barbacovi Advogados',tel:'—',              cad:'Advocacia · conexão',etapa:'Dia 1.1 — Pesquisa',hora:'—',janela:false,atrasada:false,cli:'blu',
+    script:'Antes de ligar, confirmar no CapiBLU:\n\n• o sócio-administrador é mesmo o decisor de contratação?\n• quantos advogados o escritório tem hoje?\n• existe alguém em captação/comercial dedicado?\n\nO card do lead já traz sócios, CNAE e faturamento estimado do CapiBLU.',
+    tl:[]},
+  {id:7,tipo:'WPP',   lead:'Caio Emiliano',       emp:'Indicação',                  tel:'+55 41 99632-1188',cad:'Follow-up pós-reunião',etapa:'Dia 1.1 — WhatsApp',hora:'19:00',janela:true,atrasada:false,cli:'blu',
+    script:'Oi {{firstName}}! Aqui é a Rebeca da BLU — o {{referrer}} passou seu contato.\n\nEle comentou que vocês estão montando o time comercial agora. É esse o momento mesmo? Consigo te mostrar como estruturamos isso.',
+    tl:[{q:'19/08 08:00',w:'Lead criado por indicação',n:'',k:'ok'}]},
+  {id:8,tipo:'CALL',  lead:'Marcelo Tanaka',      emp:'Transportadora Rota Sul',    tel:'+55 47 99602-0161',cad:'Gestão de frota · start',etapa:'Dia 7.1 — Ligação 4',hora:'15:30',janela:false,atrasada:false,cli:'frotai',
+    script:'{{firstName}}, aqui é da Frotaí. Vi que vocês rodam 34 veículos próprios.\n\nA gente corta em média 18% do custo de manutenção no primeiro trimestre. Te mostro o cálculo com os números da {{company}}?',
+    tl:[{q:'18/08 15:30',w:'Ligação 3 · não atendeu',n:'',k:'no'},{q:'15/08 15:30',w:'Ligação 2 · não atendeu',n:'',k:'no'}]},
+  {id:9,tipo:'WPP',   lead:'Juliana Prado',       emp:'Frota Express Logística',    tel:'+55 41 98871-5540',cad:'Gestão de frota · start',etapa:'Dia 2.1 — WhatsApp 1',hora:'14:00',janela:false,atrasada:true,cli:'frotai',
+    script:'Olá {{firstName}}! Recebi seu contato pelo formulário da Frotaí.\n\nPara te passar algo útil e não um PDF genérico: quantos veículos vocês têm hoje e em qual cidade? Já te volto com o desenho certo.',
+    tl:[{q:'17/08 09:12',w:'Lead entrou por formulário',n:'Inbound. Prioridade absoluta na fila.',k:'ok'}]},
+  {id:10,tipo:'MAIL', lead:'Fernanda Kruger',     emp:'Kruger Empreendimentos',     tel:'+55 41 3025-7781', cad:'Imobiliário',      etapa:'Dia 1.1 — E-mail 1',hora:'11:00',janela:false,atrasada:false,cli:'planning',
+    assunto:'Contato {{company}}',
+    corpo:'Olá {{firstName}}, tudo bem?\n\nTrabalho com estruturação comercial para incorporadoras e vi que a {{company}} lançou dois empreendimentos este ano.\n\nVale uma conversa de 20 minutos sobre o time de vendas?',
+    tl:[]},
+];
+
+const LIGACOES = [
+  {h:'17:45',lead:'Flavio Santana',emp:'Concrelagos Concreto',tel:'+55 31 7200-2554',dur:'0s',   st:'NOT_PERFORMED',out:'NO_CONTACT',   sdr:'Felipe Oliveira',cli:'blu'},
+  {h:'17:44',lead:'Valdecir Pereira',emp:'RD Distribuidora',  tel:'+55 44 99745-5555',dur:'3s',  st:'CONNECTED',    out:'NO_CONTACT',   sdr:'Felipe Oliveira',cli:'blu'},
+  {h:'17:42',lead:'Waldemar Buosi',emp:'Bebidas Virgínia',    tel:'+55 44 99108-7506',dur:'5s',  st:'CONNECTED',    out:'NO_CONTACT',   sdr:'Felipe Oliveira',cli:'blu'},
+  {h:'17:31',lead:'Rodrigo Wawruk',emp:'Sepac Celulose',      tel:'+55 42 99880-1122',dur:'4m12',st:'CONNECTED',    out:'MEANINGFUL',   sdr:'Felipe Oliveira',cli:'blu'},
+  {h:'16:58',lead:'Paloma Queiroz',emp:'Sampel Indústria',    tel:'+55 44 99745-5555',dur:'12s', st:'CONNECTED',    out:'NO_CONTACT',   sdr:'Felipe Oliveira',cli:'blu'},
+  {h:'16:40',lead:'Maria do Carmo',emp:'Potenza Facilities',  tel:'+55 31 7200-2554',dur:'1m58', st:'CONNECTED',    out:'NOT_MEANINGFUL',sdr:'Felipe Oliveira',cli:'blu'},
+  {h:'16:22',lead:'José Inácio',   emp:'Voges & Barbacovi',   tel:'+55 54 99120-3344',dur:'0s',  st:'NOT_PERFORMED',out:'—',            sdr:'David Schuster', cli:'blu'},
+  {h:'15:33',lead:'Marcelo Tanaka',emp:'Transportadora Rota Sul',tel:'+55 47 99602-0161',dur:'6m03',st:'CONNECTED',out:'MEANINGFUL',   sdr:'Felipe Costa',   cli:'frotai'},
+  {h:'15:10',lead:'Juliana Prado', emp:'Frota Express',       tel:'+55 41 98871-5540',dur:'8s',  st:'CONNECTED',    out:'NO_CONTACT',   sdr:'Willian Silva',  cli:'frotai'},
+  {h:'11:20',lead:'Fernanda Kruger',emp:'Kruger Empreendimentos',tel:'+55 41 3025-7781',dur:'2m44',st:'CONNECTED',  out:'MEANINGFUL',   sdr:'Guilherme Figueira',cli:'planning'},
+];
+
+const ATIVIDADES = [
+  {tipo:'SEARCH',nome:'Pesquisa de decisor — advocacia',cad:'Advocacia · conexão',txt:'Confirmar no CapiBLU quem é o sócio-administrador, quantos advogados e se há alguém em captação. Se não houver estrutura comercial, dar perdido direto por "Lead sem estrutura".'},
+  {tipo:'CALL',  nome:'Ligação 1 — conexão',           cad:'Advocacia · conexão',txt:'{{firstName}}, aqui é a Rebeca da BLU. Vi que a {{company}} tem time comercial próprio.\n\nA gente monta prospecção outbound de ponta a ponta. Faz sentido 15 minutos pra eu te mostrar?'},
+  {tipo:'MAIL',  nome:'E-mail 1 — abertura',           cad:'Advocacia · conexão',assunto:'Contato {{company}}',txt:'Olá {{firstName}}, tudo bem?\n\nTrabalho com estruturação de prospecção B2B e vi que a {{company}} está crescendo. Vale 20 minutos de conversa?'},
+  {tipo:'WPP',   nome:'WhatsApp 1 — quebra-gelo',      cad:'Diversos · start',   txt:'Oi {{firstName}}, tudo bem? Tentei te ligar mais cedo. Sou a Rebeca, da BLU — trabalho com prospecção B2B. Consegue falar 5 minutos hoje?'},
+  {tipo:'MAIL',  nome:'E-mail 5 — devo continuar?',    cad:'Diversos · start',   assunto:'Devo continuar?',txt:'Esse é o quinto e-mail que te mando, {{firstName}}.\n\nSe prospecção de novos clientes para a {{company}} não for prioridade agora, eu entendo. Só me diz e eu paro por aqui.'},
+  {tipo:'WPP',   nome:'Último WhatsApp — encerramento',cad:'Recuperação de perdidos',txt:'{{firstName}}, tentei contato de tudo que era jeito. Não sei se trocou de número ou saiu da {{company}}, mas vou encerrar minhas tentativas por aqui. Grande abraço!'},
+  {tipo:'SEARCH',nome:'Pesquisa de recuperação',       cad:'Recuperação de perdidos',txt:'Analisar o card do lead e a prospecção anterior para entender por que não seguiu. Se não fizer sentido recuperar, dar perdido direto.'},
+  {tipo:'CALL',  nome:'Ligação de recuperação',        cad:'Recuperação de perdidos',txt:'• Algo mudou desde a última conversa?\n• Comercial e crescimento é prioridade agora?\n• Qual a dor do time comercial hoje?\n• Como está a estrutura comercial?'},
+  {tipo:'CALL',  nome:'Ligação inbound — minutos',     cad:'Gestão de frota · start',txt:'{{firstName}}, você acabou de preencher nosso formulário sobre gestão de frota. Me conta rapidinho o cenário que eu já te adianto as opções.\n\nSe não atender: WhatsApp 1 imediato.'},
+];
+
+const BASES = [
+  {nome:'Advocacia PR/SC · 10–50 func.',   origem:'CapiBLU',cli:'blu',     n:120,desc:14,st:'COMPLETED', d:'19/08/2026'},
+  {nome:'Lista Luleads',                   origem:'CSV',    cli:'blu',     n:3,  desc:0, st:'COMPLETED', d:'22/07/2026'},
+  {nome:'Contabilidade SP · 20–100 func.', origem:'CapiBLU',cli:'blu',     n:98, desc:22,st:'COMPLETED', d:'18/07/2026'},
+  {nome:'Advocacia lote 72',               origem:'CSV',    cli:'blu',     n:10, desc:0, st:'COMPLETED', d:'15/06/2026'},
+  {nome:'Transporte de carga · Sul',       origem:'CapiBLU',cli:'frotai',  n:210,desc:31,st:'PROCESSING',d:'19/08/2026'},
+  {nome:'Frotas > 20 veículos · PR',       origem:'CapiBLU',cli:'frotai',  n:174,desc:9, st:'COMPLETED', d:'02/08/2026'},
+  {nome:'Incorporadoras Curitiba',         origem:'CSV',    cli:'planning',n:45, desc:3, st:'COMPLETED', d:'28/07/2026'},
+];
+
+const PERDAS = [
+  {n:'Não consegui contato',v:35},{n:'Fim de cadência',v:24},{n:'Lead rejeitou a prospecção',v:14},
+  {n:'Lead fora do ICP',v:9},{n:'Ponte/carteira — contato futuro',v:7},{n:'Lead sem estrutura',v:5},
+  {n:'LGPD opt-out',v:3},{n:'Lead duplicado',v:3},
+];
+
+const CONVERSAS = [
+  {nome:'Ricardo Silveira',emp:'Motoman Robótica',cli:'blu',hora:'16:04',unread:2,msgs:[
+    {me:false,t:'Bom dia! Recebi seu e-mail sim',h:'09:12'},
+    {me:true, t:'Bom dia, Ricardo! Que bom. Você é quem decide contratação de serviço comercial na Motoman?',h:'09:20'},
+    {me:false,t:'Sou eu junto com meu sócio',h:'15:58'},
+    {me:false,t:'Mas nesse mês tá corrido. Consegue me mandar material?',h:'16:04'}]},
+  {nome:'Paloma Queiroz',emp:'Sampel Indústria',cli:'blu',hora:'11:40',unread:0,msgs:[
+    {me:true,t:'Paloma, tudo bem? Tentei te ligar mais cedo. Sou a Rebeca da BLU.',h:'10:15'},
+    {me:false,t:'Oi! Tô em reunião, me chama depois das 18h',h:'11:40'}]},
+  {nome:'Rodrigo Wawruk Viana',emp:'Sepac Celulose',cli:'blu',hora:'11:20',unread:1,msgs:[
+    {me:false,t:'Pode me ligar depois das 17h hoje',h:'11:20'}]},
+  {nome:'Juliana Prado',emp:'Frota Express',cli:'frotai',hora:'09:30',unread:0,msgs:[
+    {me:true,t:'Olá Juliana! Recebi seu contato pelo formulário da Frotaí. Quantos veículos vocês têm hoje?',h:'09:14'},
+    {me:false,t:'Uns 40 entre próprios e agregados',h:'09:30'}]},
+  {nome:'Marcelo Tanaka',emp:'Transportadora Rota Sul',cli:'frotai',hora:'ter',unread:0,msgs:[
+    {me:true,t:'Marcelo, consegue falar 10 minutos amanhã de manhã?',h:'ter 15:40'}]},
+];
+
+const INTEGRACOES = [
+  {n:'CapiBLU',       d:'Fonte de leads, sócios, decisores e telefone validado. Consulta salva vira base de leads.',st:'conectado',destaque:true},
+  {n:'Ploomes',       d:'CRM de destino. Lead ganho abre negócio no Ploomes via webhook LEAD.WON.',st:'conectado'},
+  {n:'RD Station CRM',d:'Envio de lead ganho e devolução de motivo de perda.',st:'conectado'},
+  {n:'Pipedrive',     d:'Criação de deal e click-to-call a partir do card.',st:'disponível'},
+  {n:'Salesforce',    d:'Sincronismo de lead, contato e oportunidade.',st:'disponível'},
+  {n:'Caixa de e-mail',d:'Envio e rastreio de abertura pelo e-mail do próprio SDR.',st:'conectado'},
+  {n:'WhatsApp',      d:'Instância por SDR. Conversa amarrada ao lead.',st:'conectado'},
+  {n:'Google Agenda', d:'Reunião agendada cai na agenda do vendedor.',st:'disponível'},
+  {n:'API + Webhooks',d:'Token com escopo e eventos LEAD.WON / LEAD.LOST / ACTIVITY.DONE.',st:'conectado'},
+];
+
+const RELATORIOS = [
+  {ico:'📊',bg:'var(--blue-soft)',t:'Estatísticas de Atividades',
+   s:'Compare produtividade e performance dos SDRs: atividades executadas, pendências e resultado dos leads.',
+   det:['Atividades executadas, pendentes e ignoradas por tipo','Leads ganhos, perdidos e em andamento','Dias trabalhados e média por dia útil','Comparativo contra a meta diária','Quebra por cliente, cadência e time']},
+  {ico:'✅',bg:'var(--green-soft)',t:'Atividades Executadas',
+   s:'Todas as atividades realizadas ou ignoradas, com horário, SDR, cadência e lead. Para entender volume e ritmo.',
+   det:['Data e hora exatas de execução','SDR responsável e cliente','Cadência e etapa da régua','Lead, empresa e CNPJ','Se foi executada no prazo ou atrasada','Resultado registrado']},
+  {ico:'📉',bg:'var(--red-soft)',t:'Ligações Derrubadas',
+   s:'Chamadas encerradas manualmente em até 10 segundos. Para achar padrão de desconexão rápida.',
+   det:['Duração exata em segundos','SDR e número discado','Horário e faixa do dia','Lead e cadência','Impacto estimado na taxa de contato']},
+];
+
+/* ══════════════════════════════════════════════════════
+   Estado + helpers
+   ══════════════════════════════════════════════════════ */
+let cliente = 'todos';
+let etapaFiltro = 'todas';
+let cadFiltro = 'todas';
+let ativFiltro = 'todos';
+let estAba = 'conv';
+let filaSel = null;
+let wppSel = 0;
+const feitas = new Set();
+
+const $  = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const nomeCli = id => (CLIENTES.find(c=>c.id===id)||{}).nome || id;
+const noCli = o => cliente==='todos' || o.cli===cliente || o.cliente===cliente;
+const TIPO = {
+  CALL:  {ico:'📞',cls:'i-call',  t:'Ligação'},
+  MAIL:  {ico:'✉️',cls:'i-mail',  t:'E-mail'},
+  WPP:   {ico:'💬',cls:'i-wpp',   t:'WhatsApp'},
+  SEARCH:{ico:'🔍',cls:'i-search',t:'Pesquisa'},
+};
+const FOCO = {OUTBOUND:'Outbound',INBOUND:'Inbound',ACTIVE_INBOUND:'Inbound ativo',OTHER:'Outros'};
+const PRIO = {VERY_HIGH:['Muito alta','b-red'],HIGH:['Alta','b-amber'],MEDIUM:['Média','b-blue'],LOW:['Baixa','b-gray']};
+
+let toastT;
+function toast(msg){
+  const el=$('#toast'); el.textContent=msg; el.classList.add('show');
+  clearTimeout(toastT); toastT=setTimeout(()=>el.classList.remove('show'),2400);
+}
+function go(tab){
+  $$('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
+  $$('.tab-section').forEach(s=>s.classList.toggle('active',s.id==='tab-'+tab));
+  window.scrollTo(0,0);
+  render();
+}
+function tpl(s){
+  return esc(s).replace(/\{\{(\w+)\}\}/g,'<b>{{$1}}</b>').replace(/\n/g,'<br>');
+}
+
+/* ══════════════════════════════════════════════════════
+   Render por tela
+   ══════════════════════════════════════════════════════ */
+
+function renderPainel(){
+  const sdrs = SDRS.filter(noCli);
+  const sum = k => sdrs.reduce((a,s)=>a+s[k],0);
+  const kpis = [
+    ['Leads em cadência', sum('prospect'), 'trabalhando agora'],
+    ['Atividades pendentes', sum('pend'), sum('atras')+' já atrasadas'],
+    ['Executadas hoje', sum('feitas'), 'meta somada: '+sum('meta')],
+    ['Ligações no mês', sum('lig'), '11% viraram conversa'],
+  ];
+  $('#painel-kpis').innerHTML = kpis.map(([l,v,s])=>`
+    <div class="kpi"><div class="kpi-label">${l}</div><div class="kpi-value">${v.toLocaleString('pt-BR')}</div>
+    <div class="kpi-sub">${s}</div></div>`).join('');
+
+  $('#painel-note').textContent = sdrs.length+' SDR(s) · '+(cliente==='todos'?'todas as operações':nomeCli(cliente));
+
+  $('#painel-tbody').innerHTML = sdrs.map(s=>{
+    const pct = Math.round(s.feitas/s.meta*100);
+    return `<tr>
+      <td><div class="t-strong">${s.nome}</div><div class="t-sub mono">#${s.id}</div></td>
+      <td><span class="badge b-terra">${nomeCli(s.cliente)}</span></td>
+      <td class="num">${s.prospect}</td>
+      <td class="num">${s.disp||'—'}</td>
+      <td class="num">${s.pend}</td>
+      <td class="num">${s.feitas}</td>
+      <td class="num">${s.atras?`<span class="badge b-red">${s.atras}</span>`:'—'}</td>
+      <td class="num">${s.lig||'—'}</td>
+      <td><div class="num" style="font-size:.8rem">${s.feitas}/${s.meta} · ${pct}%</div>
+        <div class="kpi-bar" style="margin-top:5px"><i style="width:${Math.min(pct,100)}%;background:${pct<25?'var(--red)':pct<70?'var(--amber)':'var(--green)'}"></i></div></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="9" class="empty">Nenhum SDR nesta operação.</td></tr>';
+
+  const alertas = [
+    ['⏰','151 atividades atrasadas','56% de tudo que o Felipe executou saiu fora do prazo. A fila precisa ser redistribuída ou a meta diária revista.','b-red'],
+    ['📥','1.043 leads parados na fila de um SDR','Fila exclusiva concentrada. Distribua entre os SDRs ou pause a importação de novas bases.','b-amber'],
+    ['🎯','3 de 25 oportunidades no mês','Faltam 22 em 2 dias úteis. Com a conversão atual de 30%, precisa de 73 desfechos.','b-red'],
+  ].filter(a=>cliente==='todos'||cliente==='blu');
+  $('#painel-alertas').innerHTML = (alertas.length?alertas:[['👍','Operação em dia','Nenhum alerta crítico para esta operação no período.','b-green']])
+    .map(([i,t,d,c])=>`<div class="card"><div style="font-size:1.4rem;margin-bottom:8px">${i}</div>
+      <div style="font-weight:700;font-size:.95rem;margin-bottom:6px">${t}</div>
+      <p style="margin:0;font-size:.85rem;color:var(--gray-600);line-height:1.55">${d}</p>
+      <div style="margin-top:11px"><span class="badge ${c}">requer ação</span></div></div>`).join('');
+}
+
+function renderExecucao(){
+  const fila = FILA.filter(noCli);
+  const ordenada = [...fila].sort((a,b)=>
+    (feitas.has(a.id)-feitas.has(b.id)) || (b.janela-a.janela) || (b.atrasada-a.atrasada) || (a.id-b.id));
+
+  if(!ordenada.some(f=>f.id===filaSel)) filaSel = (ordenada[0]||{}).id;
+
+  $('#fila-list').innerHTML = ordenada.map(f=>{
+    const T=TIPO[f.tipo], done=feitas.has(f.id);
+    const tag = done ? '<span class="qi-tag" style="color:var(--green)">✓ concluída</span>'
+      : f.janela ? `<span class="qi-tag qi-now">★ janela de ouro · ${f.hora}</span>`
+      : f.atrasada ? '<span class="qi-tag qi-late">▲ atrasada</span>'
+      : `<span class="qi-tag" style="color:var(--gray-400)">${f.hora}</span>`;
+    return `<div class="qitem ${f.id===filaSel?'active':''} ${done?'done':''}" data-fila="${f.id}">
+      <span class="qi-ico ${T.cls}">${T.ico}</span>
+      <div class="qi-body">
+        <div class="qi-nome">${esc(f.lead)}</div>
+        <div class="qi-meta">${esc(f.emp)} · ${esc(f.cad)}</div>
+        ${tag}
+      </div></div>`;
+  }).join('') || '<div class="empty">Fila vazia para esta operação.</div>';
+
+  const n = ordenada.filter(f=>feitas.has(f.id)).length, tot = ordenada.length;
+  $('#fila-txt').textContent = `${n} de ${tot} concluídas`;
+  $('#fila-fill').style.width = tot? (n/tot*100)+'%' : '0%';
+
+  const f = ordenada.find(x=>x.id===filaSel);
+  if(!f){ $('#exec-detalhe').innerHTML='<div class="card empty">Selecione uma atividade.</div>'; return; }
+  const T = TIPO[f.tipo], done = feitas.has(f.id);
+
+  const bloco = f.tipo==='MAIL'
+    ? `<div class="mailbox"><div class="mailbox-sub"><b>Assunto:</b> ${tpl(f.assunto)}</div>
+       <div class="mailbox-body">${tpl(f.corpo)}</div></div>`
+    : `<div class="script">${tpl(f.script)}</div>`;
+
+  const acoes = done
+    ? `<span class="badge b-green" style="padding:8px 14px">✓ Atividade concluída</span>
+       <button class="btn-secondary" onclick="desfazer(${f.id})">Desfazer</button>`
+    : f.tipo==='CALL'
+      ? `<button class="btn-primary" onclick="abrirResultado()">📞 Ligar para ${esc(f.tel)}</button>
+         <button class="btn-secondary" onclick="concluir(${f.id})">Registrar manualmente</button>
+         <button class="btn-secondary" onclick="toast('Atividade reagendada para amanhã')">Reagendar</button>
+         <button class="btn-secondary" onclick="concluir(${f.id})">Ignorar</button>`
+      : f.tipo==='MAIL'
+      ? `<button class="btn-primary" onclick="concluir(${f.id})">✉️ Enviar e-mail</button>
+         <button class="btn-secondary" onclick="toast('Abrindo editor do template')">Editar antes de enviar</button>
+         <button class="btn-secondary" onclick="concluir(${f.id})">Ignorar</button>`
+      : f.tipo==='WPP'
+      ? `<button class="btn-primary" onclick="concluir(${f.id})">💬 Enviar no WhatsApp</button>
+         <button class="btn-secondary" onclick="go('whatsapp')">Abrir conversa</button>
+         <button class="btn-secondary" onclick="concluir(${f.id})">Ignorar</button>`
+      : `<button class="btn-primary" onclick="concluir(${f.id})">🔍 Marcar pesquisa como feita</button>
+         <button class="btn-secondary" onclick="toast('Abrindo card no CapiBLU')">Ver no CapiBLU</button>`;
+
+  $('#exec-detalhe').innerHTML = `
+  <div class="exec-card">
+    <div class="ec-head">
+      <div class="ec-cliente">${esc(nomeCli(f.cli))} · ${esc(f.cad)}</div>
+      <div class="ec-nome">${esc(f.lead)}</div>
+      <div class="ec-empresa">${esc(f.emp)}</div>
+      <div class="ec-tags">
+        <span class="badge b-blue">${T.t}</span>
+        ${f.janela?'<span class="badge b-green">janela de ouro 18h–19h</span>':''}
+        ${f.atrasada?'<span class="badge b-red">atrasada</span>':''}
+        <span class="badge b-gray">${esc(f.etapa)}</span>
+      </div>
+    </div>
+    <div class="ec-grid">
+      <div class="ec-cell"><div class="ec-cell-l">Telefone</div><div class="ec-cell-v mono">${esc(f.tel)}</div></div>
+      <div class="ec-cell"><div class="ec-cell-l">Horário previsto</div><div class="ec-cell-v mono">${esc(f.hora)}</div></div>
+      <div class="ec-cell"><div class="ec-cell-l">Etapa da régua</div><div class="ec-cell-v">${esc(f.etapa)}</div></div>
+      <div class="ec-cell"><div class="ec-cell-l">Enriquecimento</div><div class="ec-cell-v" style="color:var(--terracota)">CapiBLU ✓</div></div>
+    </div>
+    <div class="ec-body">
+      <div class="ec-step">O que fazer agora</div>
+      <div class="ec-titulo">${T.t} — ${esc(f.etapa)}</div>
+      ${bloco}
+      <div class="ec-actions">${acoes}</div>
+      <div class="ec-outcome" id="ec-outcome">
+        <div class="ec-outcome-l">Qual foi o resultado da ligação?</div>
+        <div class="btn-row">
+          <button class="btn-sm ok" onclick="concluir(${f.id},'Conversa significativa')">Conversa significativa</button>
+          <button class="btn-sm" onclick="concluir(${f.id},'Falou, sem avanço')">Falou, sem avanço</button>
+          <button class="btn-sm" onclick="concluir(${f.id},'Não atendeu')">Não atendeu</button>
+          <button class="btn-sm" onclick="concluir(${f.id},'Número errado')">Número errado</button>
+        </div>
+      </div>
+
+      <div class="h3-row" style="margin-bottom:12px"><h3 class="h3">Desfecho do lead</h3></div>
+      <div class="btn-row">
+        <button class="btn-sm ok" onclick="toast('Lead marcado como ganho — oportunidade criada')">🏆 Ganho (oportunidade)</button>
+        <button class="btn-sm no" onclick="toast('Escolha o motivo de perda')">✕ Perdido</button>
+        <button class="btn-sm" onclick="toast('Atividade extra adicionada')">+ Atividade extra</button>
+        <button class="btn-sm" onclick="toast('Lead pausado')">⏸ Pausar</button>
+        <button class="btn-sm" onclick="toast('Selecione a nova cadência')">⇄ Trocar cadência</button>
+      </div>
+
+      <div class="h3-row"><h3 class="h3">Histórico do lead</h3><span class="h3-note">${f.tl.length} interações</span></div>
+      ${f.tl.length? `<div class="timeline">${f.tl.map(t=>`
+        <div class="tl-item ${t.k}"><div class="tl-when">${esc(t.q)}</div>
+        <div class="tl-what">${esc(t.w)}</div>${t.n?`<div class="tl-note">${esc(t.n)}</div>`:''}</div>`).join('')}</div>`
+        : '<div class="empty" style="border:1px solid var(--gray-200)">Primeiro contato com este lead.</div>'}
+    </div>
+  </div>`;
+}
+function abrirResultado(){ $('#ec-outcome').classList.add('show'); toast('Discando… (softphone fora do escopo)'); }
+function concluir(id,res){ feitas.add(id); renderExecucao(); toast(res? 'Registrado: '+res : 'Atividade concluída'); }
+function desfazer(id){ feitas.delete(id); renderExecucao(); }
+
+function renderLeads(){
+  const base = LEADS.filter(noCli);
+  const cont = {};
+  base.forEach(l=>cont[l.st]=(cont[l.st]||0)+1);
+  const chips = [['todas','Todas',base.length],...Object.entries(ETAPAS).map(([k,v])=>[k,v.t,cont[k]||0])];
+  $('#leads-chips').innerHTML = chips.map(([k,t,n])=>
+    `<button class="chip ${etapaFiltro===k?'active':''}" data-etapa="${k}">${t}<span class="chip-n">${n}</span></button>`).join('');
+
+  const cads = [...new Set(base.map(l=>l.cad))].map(id=>CADENCIAS.find(c=>c.id===id)).filter(Boolean);
+  $('#leads-cad').innerHTML = '<option value="todas">Todas as cadências</option>'+
+    cads.map(c=>`<option value="${c.id}" ${cadFiltro==String(c.id)?'selected':''}>${esc(c.nome)}</option>`).join('');
+
+  const q = ($('#leads-q').value||'').toLowerCase();
+  const list = base.filter(l=>
+    (etapaFiltro==='todas'||l.st===etapaFiltro) &&
+    (cadFiltro==='todas'||String(l.cad)===cadFiltro) &&
+    (!q || (l.nome+l.emp+l.cnpj).toLowerCase().includes(q)));
+
+  $('#leads-tbody').innerHTML = list.map((l,i)=>{
+    const e=ETAPAS[l.st], c=CADENCIAS.find(x=>x.id===l.cad)||{nome:'—'};
+    return `<tr>
+      <td><input type="checkbox" class="lead-chk" data-i="${i}" /></td>
+      <td><div class="t-strong">${esc(l.nome)}</div><div class="t-sub">${esc(l.emp)}</div>
+          <div class="t-sub mono">${esc(l.cnpj)}</div></td>
+      <td><span class="badge ${e.c}">${e.t}</span></td>
+      <td style="font-size:.83rem">${esc(c.nome)}</td>
+      <td><span class="badge b-terra">${nomeCli(l.cli)}</span></td>
+      <td style="font-size:.83rem">${esc(l.sdr)}</td>
+      <td style="font-size:.82rem;color:var(--gray-600)">${esc(l.prox)}</td>
+      <td><div class="btn-row"><button class="btn-sm" onclick="go('execucao')">Abrir</button></div></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="8" class="empty">Nenhum lead com esses filtros.</td></tr>';
+  atualizaBulk();
+}
+function atualizaBulk(){
+  const n = $$('.lead-chk').filter(c=>c.checked).length;
+  $('#leads-bulk').hidden = n===0;
+  $('#leads-sel-n').textContent = n+' lead(s) selecionado(s):';
+}
+
+function renderCadencias(){
+  const base = CADENCIAS.filter(noCli);
+  const chips = [['todas','Todas',base.length],['ativa','Executando',base.filter(c=>c.ativa).length],
+                 ['parada','Paradas',base.filter(c=>!c.ativa).length]];
+  $('#cad-chips').innerHTML = chips.map(([k,t,n])=>
+    `<button class="chip ${cadFiltro===k?'active':''}" data-cadf="${k}">${t}<span class="chip-n">${n}</span></button>`).join('');
+  const list = base.filter(c=> cadFiltro==='ativa'?c.ativa : cadFiltro==='parada'?!c.ativa : true);
+
+  $('#cad-tbody').innerHTML = list.map(c=>{
+    const [pt,pc]=PRIO[c.prio], conv = c.won+c.lost? (c.won/(c.won+c.lost)*100).toFixed(1) : '—';
+    const emCad = c.total-c.won-c.lost;
+    return `<tr>
+      <td><div class="t-strong">${esc(c.nome)}</div><div class="t-sub mono">#${c.id}</div></td>
+      <td><span class="badge b-terra">${nomeCli(c.cliente)}</span></td>
+      <td style="font-size:.83rem">${FOCO[c.foco]}</td>
+      <td><span class="badge ${pc}">${pt}</span></td>
+      <td class="num">${c.etapas}</td>
+      <td class="num">${c.sdrs}</td>
+      <td class="num">${emCad>0?emCad:0}</td>
+      <td class="num" style="color:var(--green);font-weight:600">${c.won}</td>
+      <td class="num" style="color:var(--red)">${c.lost}</td>
+      <td class="num">${conv}${conv==='—'?'':'%'}</td>
+      <td>${c.ativa?'<span class="badge b-green">executando</span>':'<span class="badge b-gray">parada</span>'}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="11" class="empty">Nenhuma cadência.</td></tr>';
+}
+
+function renderAtividades(){
+  const chips=[['todos','Todas',ATIVIDADES.length],
+    ...Object.entries(TIPO).map(([k,v])=>[k,v.t,ATIVIDADES.filter(a=>a.tipo===k).length])];
+  $('#ativ-chips').innerHTML = chips.map(([k,t,n])=>
+    `<button class="chip ${ativFiltro===k?'active':''}" data-ativf="${k}">${t}<span class="chip-n">${n}</span></button>`).join('');
+  const list = ATIVIDADES.filter(a=>ativFiltro==='todos'||a.tipo===ativFiltro);
+  $('#ativ-list').innerHTML = list.map(a=>{
+    const T=TIPO[a.tipo];
+    return `<div class="card" style="margin-bottom:12px">
+      <div style="display:flex;gap:13px;align-items:flex-start">
+        <span class="qi-ico ${T.cls}" style="width:34px;height:34px">${T.ico}</span>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline">
+            <div><div style="font-weight:700;font-size:.98rem">${esc(a.nome)}</div>
+              <div class="t-sub">${T.t} · usada em <b>${esc(a.cad)}</b></div></div>
+            <div class="btn-row"><button class="btn-sm">Editar</button><button class="btn-sm">Duplicar</button></div>
+          </div>
+          ${a.assunto?`<div class="mailbox" style="margin-top:12px">
+            <div class="mailbox-sub"><b>Assunto:</b> ${tpl(a.assunto)}</div>
+            <div class="mailbox-body">${tpl(a.txt)}</div></div>`
+           :`<div class="script" style="margin-top:12px">${tpl(a.txt)}</div>`}
+        </div>
+      </div></div>`;
+  }).join('');
+}
+
+function renderBases(){
+  const cads = CADENCIAS.filter(c=>noCli(c)&&c.ativa);
+  $('#capi-cad').innerHTML = cads.map(c=>`<option>${esc(c.nome)}</option>`).join('')
+    || '<option>— nenhuma cadência ativa —</option>';
+  $('#bases-tbody').innerHTML = BASES.filter(noCli).map(b=>`<tr>
+      <td class="t-strong">${esc(b.nome)}</td>
+      <td>${b.origem==='CapiBLU'?'<span class="badge b-terra">CapiBLU</span>':'<span class="badge b-gray">CSV manual</span>'}</td>
+      <td><span class="badge b-blue">${nomeCli(b.cli)}</span></td>
+      <td class="num">${b.n}</td>
+      <td class="num">${b.desc||'—'}</td>
+      <td>${b.st==='COMPLETED'?'<span class="badge b-green">concluída</span>':'<span class="badge b-amber">processando</span>'}</td>
+      <td class="num">${b.d}</td></tr>`).join('')
+    || '<tr><td colspan="7" class="empty">Nenhuma base para esta operação.</td></tr>';
+}
+function importarCapi(){
+  const q=$('#capi-qtd').value, c=$('#capi-cad').value;
+  toast(`${q} leads importados do CapiBLU para "${c}"`);
+}
+
+function renderLigacoes(){
+  const list = LIGACOES.filter(noCli);
+  const kpis = [
+    ['Ligações no mês','170','145 conectadas · 85%'],
+    ['Conversas significativas','19','11% das conectadas'],
+    ['Duração média','4m06','conversa útil: 4m25'],
+    ['Melhor faixa','18h–19h','96% de conexão'],
+  ];
+  $('#lig-kpis').innerHTML = kpis.map(([l,v,s])=>
+    `<div class="kpi"><div class="kpi-label">${l}</div><div class="kpi-value">${v}</div><div class="kpi-sub">${s}</div></div>`).join('');
+
+  const horas=[['9h',12,58],['10h',24,71],['11h',19,66],['14h',27,74],['15h',31,79],['16h',22,68],['17h',23,83],['18h',12,96]];
+  const maxN=Math.max(...horas.map(h=>h[1]));
+  $('#lig-horas').innerHTML = horas.map(([h,n,p])=>`
+    <div class="bar-col">
+      <span class="bar-val">${p}%</span>
+      <div class="bar ${p>=90?'b2':''}" style="height:${n/maxN*72}%"></div>
+      <span class="bar-lbl">${h}</span>
+    </div>`).join('');
+
+  const out=[['Não fez contato',122,'',''],['Conversa significativa',19,'g',''],['Falou, sem avanço',3,'t',''],['Não realizada',25,'','']];
+  const maxO=Math.max(...out.map(o=>o[1]));
+  $('#lig-outcome').innerHTML = out.map(([t,n,c])=>`
+    <div class="hbar-row"><div class="hbar-track"><div class="hbar-fill ${c}" style="width:${n/maxO*100}%"></div>
+      <span class="hbar-lbl">${t}</span></div><span class="hbar-n">${n}</span></div>`).join('');
+
+  const OUT={MEANINGFUL:['significativa','b-green'],NOT_MEANINGFUL:['sem avanço','b-amber'],NO_CONTACT:['sem contato','b-gray'],'—':['—','b-gray']};
+  $('#lig-tbody').innerHTML = list.map(c=>{
+    const [ot,oc]=OUT[c.out]||['—','b-gray'];
+    return `<tr><td class="num">${c.h}</td><td class="t-strong">${esc(c.lead)}</td><td style="font-size:.83rem">${esc(c.emp)}</td>
+      <td class="num">${c.tel}</td><td class="num">${c.dur}</td>
+      <td>${c.st==='CONNECTED'?'<span class="badge b-blue">conectada</span>':'<span class="badge b-gray">não realizada</span>'}</td>
+      <td><span class="badge ${oc}">${ot}</span></td><td style="font-size:.83rem">${esc(c.sdr)}</td></tr>`;
+  }).join('') || '<tr><td colspan="8" class="empty">Nenhuma ligação nesta operação.</td></tr>';
+}
+
+function renderWpp(){
+  const list = CONVERSAS.filter(noCli);
+  if(wppSel>=list.length) wppSel=0;
+  $('#wpp-list').innerHTML = list.map((c,i)=>`
+    <div class="wpp-conv ${i===wppSel?'active':''}" data-wpp="${i}">
+      <div class="wpp-conv-top"><span class="wpp-nome">${esc(c.nome)}</span>
+        <span class="wpp-hora">${c.hora}</span></div>
+      <div class="wpp-prev">${esc(c.emp)}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
+        <span class="wpp-prev" style="flex:1">${esc((c.msgs.at(-1)||{}).t||'')}</span>
+        ${c.unread?`<span class="wpp-unread">${c.unread}</span>`:''}
+      </div></div>`).join('') || '<div class="empty">Nenhuma conversa.</div>';
+
+  const c = list[wppSel];
+  if(!c){ $('#wpp-msgs').innerHTML='<div class="empty">—</div>'; return; }
+  $('#wpp-h-nome').textContent = c.nome;
+  $('#wpp-h-sub').textContent = c.emp+' · '+nomeCli(c.cli);
+  $('#wpp-msgs').innerHTML = c.msgs.map(m=>
+    `<div class="msg ${m.me?'me':''}">${esc(m.t)}<div class="msg-h">${m.h}</div></div>`).join('');
+  const box=$('#wpp-msgs'); box.scrollTop=box.scrollHeight;
+}
+function enviarWpp(){
+  const v=$('#wpp-input').value.trim(); if(!v) return;
+  const list=CONVERSAS.filter(noCli), c=list[wppSel]; if(!c) return;
+  c.msgs.push({me:true,t:v,h:'agora'}); c.unread=0; $('#wpp-input').value='';
+  renderWpp(); toast('Mensagem enviada');
+}
+
+function renderMetas(){
+  const cli = CLIENTES.find(c=>c.id===cliente) || CLIENTES[0];
+  $('#meta-ganhos').textContent = cli.ganhos;
+  $('#meta-alvo').textContent = cli.meta;
+
+  const dias=[['01',0],['04',0],['05',1],['06',0],['07',0],['08',0],['11',0],['12',0],['13',0],['14',0],['15',0],['18',1],['19',1]];
+  const maxD=Math.max(1,...dias.map(d=>d[1]));
+  $('#meta-bars').innerHTML = dias.map(([d,n])=>`
+    <div class="bar-col"><span class="bar-val">${n||''}</span>
+      <div class="bar ${n?'':''}" style="height:${n?n/maxD*80:2}%;${n?'':'background:var(--gray-200)'}"></div>
+      <span class="bar-lbl">${d}</span></div>`).join('');
+
+  const rk = (el,dados,fmt)=>{
+    const max=Math.max(...dados.map(d=>d[1]));
+    $(el).innerHTML = dados.map(([n,v])=>`
+      <div class="rank-row"><div><span class="rank-nome">${esc(n)}</span>
+        <span class="rank-n">${fmt?fmt(v):v}</span></div>
+        <div class="rank-track"><div class="rank-fill" style="width:${v/max*100}%"></div></div></div>`).join('');
+  };
+  const sdrs = SDRS.filter(noCli);
+  rk('#rank-leads', sdrs.map(s=>[s.nome,s.prospect]).sort((a,b)=>b[1]-a[1]).slice(0,5));
+  rk('#rank-ativ',  sdrs.map(s=>[s.nome,s.feitas]).sort((a,b)=>b[1]-a[1]).slice(0,5));
+  rk('#rank-conv',  [['Felipe Oliveira',30],['Felipe Costa',22],['Guilherme Figueira',18],['Willian Silva',9],['David Schuster',7]],
+     v=>v+'%');
+}
+
+function renderEst(){
+  const b=$('#est-body');
+  if(estAba==='conv'){
+    const etapas=[['Lead entrou na cadência',512],['Pesquisa concluída',498],['1ª ligação feita',441],
+      ['Contato falado',187],['Conversa significativa',52],['Oportunidade (ganho)',7]];
+    const max=etapas[0][1];
+    b.innerHTML=`<div class="card"><div class="card-label">Onde o lead morre na régua</div>
+      <div class="hbar">${etapas.map(([t,n],i)=>{
+        const pct=(n/max*100).toFixed(1), queda=i? ((1-n/etapas[i-1][1])*100).toFixed(0)+'% de queda':'';
+        return `<div class="hbar-row"><div class="hbar-track">
+          <div class="hbar-fill ${i===etapas.length-1?'g':i>3?'t':''}" style="width:${pct}%"></div>
+          <span class="hbar-lbl">${t}${queda?' · '+queda:''}</span></div>
+          <span class="hbar-n">${n}</span></div>`;}).join('')}</div>
+      <p style="margin:18px 0 0;font-size:.86rem;color:var(--gray-600);line-height:1.6">
+      A perda maior está entre <b>ligação feita</b> e <b>contato falado</b> — 58% dos leads nunca atendem.
+      É exatamente o que a janela de melhor horário e o telefone validado do CapiBLU atacam.</p></div>`;
+  }
+  else if(estAba==='ativ'){
+    const tipos=[['Ligação',158,'var(--blue-mid)'],['WhatsApp',98,'var(--green)'],['E-mail',16,'var(--terracota)'],['Pesquisa',0,'var(--gray-400)']];
+    const max=158;
+    b.innerHTML=`<div class="grid2">
+      <div class="card"><div class="card-label">Atividades finalizadas por tipo · mês</div>
+        <div class="hbar">${tipos.map(([t,n,c])=>`<div class="hbar-row"><div class="hbar-track">
+          <div class="hbar-fill" style="width:${n/max*100}%;background:${c}"></div>
+          <span class="hbar-lbl">${t}</span></div><span class="hbar-n">${n}</span></div>`).join('')}</div>
+        <p style="margin:16px 0 0;font-size:.85rem;color:var(--gray-600);line-height:1.55">
+        272 no total em <b>4 dias úteis</b> — média de 68/dia contra meta de 200.</p></div>
+      <div class="card"><div class="card-label">Pontualidade</div>
+        <div class="grid2" style="gap:1px;background:var(--gray-200);border:1px solid var(--gray-200)">
+          <div class="kpi"><div class="kpi-label">No prazo</div><div class="kpi-value" style="color:var(--green)">121</div><div class="kpi-sub">44%</div></div>
+          <div class="kpi"><div class="kpi-label">Atrasadas</div><div class="kpi-value" style="color:var(--red)">151</div><div class="kpi-sub">56%</div></div>
+        </div>
+        <p style="margin:16px 0 0;font-size:.85rem;color:var(--gray-600);line-height:1.55">
+        Mais da metade das atividades sai do prazo. A cadência perde efeito quando o Dia 3 acontece no Dia 9.</p></div></div>`;
+  }
+  else if(estAba==='perda'){
+    const max=Math.max(...PERDAS.map(p=>p.v));
+    const tot=PERDAS.reduce((a,p)=>a+p.v,0);
+    b.innerHTML=`<div class="grid2">
+      <div class="card"><div class="card-label">Motivos de perda · mês</div>
+        <div class="hbar">${PERDAS.map(p=>`<div class="hbar-row"><div class="hbar-track">
+          <div class="hbar-fill ${p.v>20?'':'t'}" style="width:${p.v/max*100}%"></div>
+          <span class="hbar-lbl">${esc(p.n)}</span></div>
+          <span class="hbar-n">${p.v}</span></div>`).join('')}</div>
+        <p style="margin:18px 0 0;font-size:.86rem;color:var(--gray-600);line-height:1.6">
+        <b>${PERDAS[0].v+PERDAS[1].v} das ${tot} perdas</b> são "não consegui contato" + "fim de cadência" —
+        não é rejeição, é ausência. Só ${PERDAS[2].v} leads de fato disseram não.</p>
+      </div>
+      <div class="card"><div class="card-label">Detalhe</div>
+        <ul class="set-list">${PERDAS.map(p=>
+          `<li><span>${esc(p.n)}</span><span class="v">${p.v} · ${(p.v/tot*100).toFixed(0)}%</span></li>`).join('')}</ul>
+        <p style="margin:16px 0 0;font-size:.85rem;color:var(--gray-600);line-height:1.55">
+        Motivo de perda é obrigatório no desfecho — é o que alimenta o ICP e a fila de recuperação.</p></div></div>`;
+  }
+  else {
+    const origens=[['Advocacia PR/SC · CapiBLU',120,4],['Transporte de carga · CapiBLU',210,3],
+      ['Contabilidade SP · CapiBLU',98,2],['Frotas > 20 veículos · CapiBLU',174,3],
+      ['Lista Luleads · CSV',64,1],['Advocacia lote 72 · CSV',10,0],['Indicação',18,4]];
+    b.innerHTML=`<div class="card"><div class="card-label">Oportunidades por base de origem</div>
+      <div class="table-wrap" style="border:none">
+      <table class="dt"><thead><tr><th>Base</th><th>Leads</th><th>Ganhos</th><th>Conversão</th><th>Origem</th></tr></thead>
+      <tbody>${origens.map(([n,l,g])=>`<tr><td class="t-strong">${esc(n)}</td><td class="num">${l}</td>
+        <td class="num" style="color:var(--green);font-weight:600">${g}</td>
+        <td class="num">${(g/l*100).toFixed(1)}%</td>
+        <td>${n.includes('CapiBLU')?'<span class="badge b-terra">CapiBLU</span>':n==='Indicação'?'<span class="badge b-green">indicação</span>':'<span class="badge b-gray">CSV</span>'}</td></tr>`).join('')}
+      </tbody></table></div>
+      <p style="margin:16px 0 0;font-size:.86rem;color:var(--gray-600);line-height:1.6">
+      Indicação converte <b>22%</b> — 30× mais que qualquer lista fria. Nenhuma cadência estruturada explora isso hoje.</p></div>`;
+  }
+}
+
+function renderRelatorios(){
+  $('#rep-list').innerHTML = RELATORIOS.map((r,i)=>`
+    <div class="rep" data-rep="${i}">
+      <div class="rep-head">
+        <span class="rep-ico" style="background:${r.bg}">${r.ico}</span>
+        <div class="rep-t"><h4>${esc(r.t)}</h4><p>${esc(r.s)}</p></div>
+        <span class="rep-chev">▾</span>
+      </div>
+      <div class="rep-body">
+        <h5>Detalhes incluídos</h5>
+        <ul>${r.det.map(d=>`<li>${esc(d)}</li>`).join('')}</ul>
+        <div class="btn-row" style="margin-top:16px;align-items:flex-end">
+          <div class="field" style="margin:0"><label>Período</label><select><option>Mês atual</option><option>Últimos 30 dias</option><option>Mês anterior</option><option>Personalizado</option></select></div>
+          <div class="field" style="margin:0"><label>Cliente</label><select>${CLIENTES.map(c=>`<option>${esc(c.nome)}</option>`).join('')}</select></div>
+          <button class="btn-primary" onclick="toast('Relatório em processamento — chega por e-mail')">Gerar relatório</button>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+function renderClientes(){
+  $('#cli-tbody').innerHTML = CLIENTES.filter(c=>c.id!=='todos').map(c=>`
+    <tr><td><div class="t-strong">${esc(c.nome)}</div><div class="t-sub mono">#${c.id}</div></td>
+      <td class="num">${c.sdrs}</td><td class="num">${c.cadencias}</td><td class="num">${c.leads}</td>
+      <td class="num">${c.meta}</td>
+      <td class="num" style="color:var(--green);font-weight:600">${c.ganhos}</td>
+      <td>${c.status==='ativo'?'<span class="badge b-green">ativo</span>':'<span class="badge b-gray">pausado</span>'}</td></tr>`).join('');
+}
+
+function renderAjustes(){
+  $('#ajuste-perdas').innerHTML = PERDAS.map(p=>
+    `<li><span>${esc(p.n)}</span><span class="v">${p.v} usos</span></li>`).join('');
+}
+
+function renderIntegracoes(){
+  $('#int-grid').innerHTML = INTEGRACOES.map(i=>`
+    <div class="set-card" ${i.destaque?'style="border-left:3px solid var(--terracota)"':''}>
+      <h4>${esc(i.n)} ${i.destaque?'<span class="badge b-terra">nativo</span>':''}</h4>
+      <p>${esc(i.d)}</p>
+      ${i.st==='conectado'?'<span class="badge b-green">conectado</span>':'<span class="badge b-gray">disponível</span>'}
+    </div>`).join('');
+}
+
+/* ══════════════════════════════════════════════════════
+   Boot
+   ══════════════════════════════════════════════════════ */
+function render(){
+  const ativa = ($('.tab-section.active')||{}).id || 'tab-painel';
+  ({
+    'tab-painel':renderPainel,'tab-execucao':renderExecucao,'tab-leads':renderLeads,
+    'tab-cadencias':renderCadencias,'tab-atividades':renderAtividades,'tab-bases':renderBases,
+    'tab-ligacoes':renderLigacoes,'tab-whatsapp':renderWpp,'tab-metas':renderMetas,
+    'tab-estatisticas':renderEst,'tab-relatorios':renderRelatorios,'tab-clientes':renderClientes,
+    'tab-ajustes':renderAjustes,'tab-integracoes':renderIntegracoes,
+  }[ativa]||(()=>{}))();
+}
+
+$('#sel-cliente').innerHTML = CLIENTES.map(c=>`<option value="${c.id}">${esc(c.nome)}</option>`).join('');
+$('#sel-cliente').addEventListener('change',e=>{
+  cliente=e.target.value; etapaFiltro='todas'; cadFiltro='todas'; filaSel=null; wppSel=0; render();
+});
+
+document.addEventListener('click',e=>{
+  const nav=e.target.closest('.nav-btn');           if(nav){ go(nav.dataset.tab); return; }
+  const q=e.target.closest('[data-fila]');          if(q){ filaSel=+q.dataset.fila; renderExecucao(); return; }
+  const et=e.target.closest('[data-etapa]');        if(et){ etapaFiltro=et.dataset.etapa; renderLeads(); return; }
+  const cf=e.target.closest('[data-cadf]');         if(cf){ cadFiltro=cf.dataset.cadf; renderCadencias(); return; }
+  const af=e.target.closest('[data-ativf]');        if(af){ ativFiltro=af.dataset.ativf; renderAtividades(); return; }
+  const w=e.target.closest('[data-wpp]');           if(w){ wppSel=+w.dataset.wpp; renderWpp(); return; }
+  const r=e.target.closest('[data-rep] .rep-head'); if(r){ r.parentElement.classList.toggle('open'); return; }
+  const d=e.target.closest('.dia');                 if(d){ d.classList.toggle('on'); return; }
+  const p=e.target.closest('#seg-periodo button');  if(p){ $$('#seg-periodo button').forEach(b=>b.classList.remove('active')); p.classList.add('active'); renderPainel(); return; }
+  const s=e.target.closest('#seg-est button');      if(s){ $$('#seg-est button').forEach(b=>b.classList.remove('active')); s.classList.add('active'); estAba=s.dataset.est; renderEst(); return; }
+});
+document.addEventListener('input',e=>{
+  if(e.target.id==='leads-q') renderLeads();
+  if(e.target.id==='leads-cad'){ cadFiltro=e.target.value; renderLeads(); }
+});
+document.addEventListener('change',e=>{
+  if(e.target.id==='leads-all'){ $$('.lead-chk').forEach(c=>c.checked=e.target.checked); atualizaBulk(); }
+  if(e.target.classList.contains('lead-chk')) atualizaBulk();
+});
+$('#wpp-input').addEventListener('keydown',e=>{ if(e.key==='Enter') enviarWpp(); });
+$('#btn-power').addEventListener('click',()=>toast('Power dialer: discagem em série das 12 ligações da janela'));
+
+render();
+</script>
+</body>
+</html>

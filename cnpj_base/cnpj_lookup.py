@@ -453,11 +453,24 @@ def search(filtros: dict, limite: int = 50, offset: int = 0) -> dict:
                 else:
                     capped = con.execute(f"SELECT COUNT(*) FROM (SELECT 1 {count_base} LIMIT ?)",
                                          params + [CAP + 1]).fetchone()[0]
+                # Telefone e e-mail entram aqui (e não no ramo FTS, cuja tabela
+                # virtual não os indexa): sem eles o filtro "só com telefone"
+                # devolvia empresa que tem telefone sem dizer qual.
                 rows = con.execute(
                     f"SELECT e.cnpj, emp.razao_social, e.nome_fantasia, e.uf, e.municipio, "
-                    f"e.situacao, e.cnae_principal, emp.porte, emp.capital_social {base} "
+                    f"e.situacao, e.cnae_principal, emp.porte, emp.capital_social, "
+                    f"e.ddd1, e.tel1, e.ddd2, e.tel2, e.email {base} "
                     f"LIMIT ? OFFSET ?", params + [limite, int(offset or 0)]
                 ).fetchall()
+        def _tel(r, ddd_col, tel_col):
+            """O ramo FTS não traz essas colunas — daí o teste por `keys()`."""
+            if ddd_col not in r.keys():
+                return ""
+            ddd, tel = (r[ddd_col] or "").strip(), (r[tel_col] or "").strip()
+            if not tel:
+                return ""
+            return f"({ddd}) {tel}" if ddd else tel
+
         empresas = [{
             "cnpj": _fmt_cnpj(r["cnpj"]),
             "razao_social": r["razao_social"] or "",
@@ -469,6 +482,9 @@ def search(filtros: dict, limite: int = 50, offset: int = 0) -> dict:
             "cnae_codigo": r["cnae_principal"] or "",
             "porte": PORTE.get(r["porte"], ""),
             "capital_social": r["capital_social"] or 0,
+            "telefone_1": _tel(r, "ddd1", "tel1"),
+            "telefone_2": _tel(r, "ddd2", "tel2"),
+            "email": (r["email"] or "").strip() if "email" in r.keys() else "",
         } for r in rows]
         if tem_texto:
             total, total_aprox = len(empresas), len(rows) >= limite

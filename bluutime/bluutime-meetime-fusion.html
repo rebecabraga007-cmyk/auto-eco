@@ -1,0 +1,1786 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meetime - Bluutime MVP</title>
+  <link rel="stylesheet" href="meetime-assets/meetime-app.css">
+  <style>
+    :root {
+      --nav: #242826;
+      --nav-hover: #303633;
+      --body: #f5f5f5;
+      --panel: #fff;
+      --text: #333;
+      --muted: #777;
+      --line: #ddd;
+      --line-soft: #eee;
+      --green: #00a443;
+      --green-2: #00c850;
+      --blue: #2196f3;
+      --red: #f44336;
+      --orange: #ff5722;
+      --cyan: #00bcd4;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--body);
+      color: var(--text);
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-size: 13px;
+      line-height: 1.5384616;
+      padding-top: 56px;
+    }
+    button, input, select { font: inherit; }
+    a { color: #1e88e5; text-decoration: none; cursor: pointer; }
+    a:hover { color: #1565c0; text-decoration: none; }
+    .text-semibold { font-weight: 600; }
+    .text-muted { color: #999; }
+    .text-grey { color: #777; }
+    .text-size-small { font-size: 12px; }
+    .position-left { margin-right: 7px; }
+    .position-right { margin-left: 7px; }
+    .ml-5 { margin-left: 5px; }
+    .mr-10 { margin-right: 10px; }
+    .mt-10 { margin-top: 10px; }
+    .mb-20 { margin-bottom: 20px; }
+    .nowrap { white-space: nowrap; }
+
+    .navbar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 1000;
+      min-height: 56px;
+      background: var(--nav);
+      border: 0;
+      color: #fff;
+    }
+    .navbar-boxed {
+      max-width: 1700px;
+      margin: 0 auto;
+      display: flex;
+      min-height: 56px;
+      align-items: stretch;
+    }
+    .navbar-header {
+      width: 188px;
+      display: flex;
+      align-items: center;
+      padding-left: 0;
+    }
+    .navbar-brand img {
+      display: block;
+      max-height: 38px;
+      max-width: 152px;
+    }
+    .navbar-collapse {
+      flex: 1;
+      display: flex;
+      min-width: 0;
+    }
+    .nav {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+    }
+    .navbar-nav > li { position: relative; }
+    .navbar-nav > li > a {
+      height: 56px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: #f7f7f7;
+      padding: 0 15px;
+      white-space: nowrap;
+      font-size: 14px;
+    }
+    .navbar-nav > li > a:hover,
+    .navbar-nav > li.active > a {
+      background: var(--nav-hover);
+      color: #fff;
+    }
+    .navbar-right { margin-left: auto; }
+    .caret {
+      width: 0;
+      height: 0;
+      display: inline-block;
+      border-left: 4px solid transparent;
+      border-right: 4px solid transparent;
+      border-top: 4px solid currentColor;
+      margin-left: 4px;
+    }
+    .dropdown-menu {
+      display: none;
+      position: absolute;
+      top: 56px;
+      left: 0;
+      min-width: 220px;
+      margin: 0;
+      padding: 6px 0;
+      list-style: none;
+      background: #fff;
+      border: 1px solid rgba(0,0,0,.15);
+      box-shadow: 0 6px 12px rgba(0,0,0,.175);
+      z-index: 1001;
+    }
+    .dropdown:hover > .dropdown-menu { display: block; }
+    .dropdown-menu-right { right: 0; left: auto; }
+    .dropdown-menu li a {
+      display: block;
+      padding: 7px 14px;
+      color: #333;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+    .dropdown-menu li a:hover { background: #f5f5f5; color: #262626; }
+    .divider { height: 1px; margin: 6px 0; overflow: hidden; background: #e5e5e5; }
+    .avatar {
+      width: 42px;
+      height: 42px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: #9ddca8;
+      color: transparent;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .navbar-user-name { font-size: 13px; font-weight: 700; }
+    .nav-icon { opacity: .95; min-width: 15px; display: inline-block; text-align: center; font-size: 15px; }
+    .nav-icon.position-left { margin-right: 7px; }
+
+    .label {
+      display: inline;
+      padding: .2em .6em .25em;
+      font-size: 75%;
+      font-weight: 700;
+      line-height: 1;
+      color: #fff;
+      text-align: center;
+      white-space: nowrap;
+      vertical-align: baseline;
+      border-radius: .25em;
+    }
+    .label-success { background: var(--green); }
+    .nav-new-top {
+      position: absolute;
+      top: -8px;
+      right: 2px;
+      border-radius: 1px;
+      padding: 2px 6px;
+      font-size: 10px;
+      line-height: 1;
+      letter-spacing: .02em;
+    }
+    .label-info { background: var(--blue); }
+    .label-danger { background: var(--red); }
+    .label-warning { background: var(--orange); }
+    .label-default { background: #999; }
+    .label-light {
+      color: #555;
+      background: #f5f5f5;
+      border: 1px solid #ddd;
+      font-weight: 600;
+    }
+    .badge {
+      display: inline-block;
+      min-width: 10px;
+      padding: 3px 7px;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+      color: #fff;
+      text-align: center;
+      white-space: nowrap;
+      vertical-align: middle;
+      background: #999;
+      border-radius: 10px;
+    }
+    .badge-success { background: var(--green); }
+    .status-mark {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 7px;
+      background: var(--green);
+    }
+
+    .page-header {
+      background: #fff;
+      border-bottom: 1px solid var(--line);
+      margin: 0 0 20px;
+    }
+    .breadcrumb-line {
+      min-height: 46px;
+      background: #fcfcfc;
+      border-bottom: 1px solid #e6e6e6;
+    }
+    .breadcrumb-boxed {
+      max-width: 1700px;
+      min-height: 42px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+    }
+    .breadcrumb {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      color: #777;
+    }
+    .breadcrumb li + li:before {
+      content: "/";
+      padding: 0 8px;
+      color: #ccc;
+    }
+    .breadcrumb-elements {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      align-items: center;
+    }
+    .breadcrumb-elements li a {
+      display: block;
+      color: #555;
+      padding: 11px 12px;
+    }
+    .breadcrumb-elements li a:hover { background: #f5f5f5; }
+
+    .page-container { max-width: 1340px; margin: 0 auto; }
+    .page-content { padding: 0 20px 40px; }
+    .content-wrapper { width: 100%; }
+    .content { padding: 0; }
+
+    .panel {
+      margin-bottom: 20px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      box-shadow: 0 1px 1px rgba(0,0,0,.05);
+    }
+    .panel-flat { box-shadow: none; }
+    .panel-heading {
+      position: relative;
+      padding: 15px 20px;
+      border-bottom: 1px solid transparent;
+      min-height: 50px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .panel-heading.has-border { border-bottom-color: #ddd; }
+    .panel-title {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 500;
+      color: #333;
+    }
+    .panel-body { padding: 20px; }
+    .panel-body.no-padding-bottom { padding-bottom: 0; }
+    .heading-elements {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
+    }
+    .heading-text { color: #777; }
+
+    .btn {
+      display: inline-block;
+      margin-bottom: 0;
+      font-weight: 400;
+      text-align: center;
+      white-space: nowrap;
+      vertical-align: middle;
+      user-select: none;
+      background-image: none;
+      border: 1px solid transparent;
+      padding: 7px 12px;
+      font-size: 13px;
+      line-height: 1.5384616;
+      border-radius: 3px;
+      color: #333;
+      background: #fff;
+      border-color: #ddd;
+      cursor: pointer;
+    }
+    .btn:hover { background: #f5f5f5; border-color: #ccc; }
+    .btn-xs { padding: 4px 9px; font-size: 12px; line-height: 1.6666667; }
+    .btn-sm { padding: 6px 11px; font-size: 12px; }
+    .btn-main, .btn-success {
+      color: #fff;
+      background: var(--green);
+      border-color: #02923e;
+    }
+    .btn-main:hover, .btn-success:hover { background: #02923e; color: #fff; }
+    .btn-primary {
+      color: #fff;
+      background: var(--blue);
+      border-color: #1e88e5;
+    }
+    .btn-danger {
+      color: #fff;
+      background: var(--red);
+      border-color: #e72910;
+    }
+    .btn-default { color: #333; background: #fff; border-color: #ddd; }
+    .btn-link { color: #1e88e5; background: transparent; border-color: transparent; }
+    .btn-group { display: inline-flex; position: relative; vertical-align: middle; }
+
+    .main-search .form-group { margin-bottom: 15px; }
+    .has-feedback { position: relative; }
+    .has-feedback-left .form-control { padding-left: 42px; }
+    .form-control {
+      display: block;
+      width: 100%;
+      height: 36px;
+      padding: 7px 12px;
+      font-size: 13px;
+      color: #333;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      box-shadow: inset 0 1px 1px rgba(0,0,0,.075);
+    }
+    .form-control:focus {
+      border-color: #2196f3;
+      outline: 0;
+      box-shadow: inset 0 1px 1px rgba(0,0,0,.075), 0 0 0 2px rgba(33,150,243,.12);
+    }
+    .input-xlg { height: 46px; padding: 10px 14px; font-size: 15px; }
+    .form-control-feedback {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 2;
+      display: block;
+      width: 42px;
+      height: 46px;
+      line-height: 46px;
+      text-align: center;
+      color: #999;
+    }
+    .filter-row {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(140px, 1fr));
+      gap: 12px;
+      margin-top: 15px;
+    }
+    .help-block {
+      display: block;
+      margin-top: 5px;
+      margin-bottom: 10px;
+      color: #999;
+    }
+
+    .nav-tabs {
+      display: flex;
+      margin: 0;
+      padding: 0 20px;
+      list-style: none;
+      border-bottom: 1px solid #ddd;
+      background: #fff;
+    }
+    .nav-tabs > li > a {
+      display: block;
+      padding: 14px 16px;
+      color: #777;
+      border-bottom: 2px solid transparent;
+    }
+    .nav-tabs > li.active > a {
+      color: #333;
+      border-bottom-color: var(--green);
+      font-weight: 600;
+    }
+
+    .table-responsive { overflow-x: auto; }
+    table { width: 100%; max-width: 100%; border-collapse: collapse; background: #fff; }
+    .table > thead > tr > th,
+    .table > tbody > tr > td {
+      padding: 10px 16px;
+      line-height: 1.5384616;
+      vertical-align: middle;
+      border-top: 1px solid #ddd;
+      text-align: left;
+    }
+    .table > thead > tr > th {
+      border-bottom: 1px solid #bbb;
+      color: #777;
+      font-weight: 600;
+      background: #fafafa;
+      font-size: 11px;
+    }
+    .table-striped > tbody > tr:nth-of-type(odd) { background: #fcfcfc; }
+    .table-hover > tbody > tr:hover { background: #f5f5f5; }
+    .media-left { display: table-cell; padding-right: 10px; vertical-align: middle; }
+    .media-body { display: table-cell; vertical-align: middle; width: 10000px; }
+    .lead-avatar-dot {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: #e6e6e6;
+      color: #777;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+    }
+    .lead-avatar-dot.success { background: #e8f5e9; color: var(--green); }
+    .lead-avatar-dot.info { background: #e3f2fd; color: var(--blue); }
+    .lead-avatar-dot.warn { background: #fff3e0; color: #ef6c00; }
+
+    .kpi-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+    }
+    .kpi {
+      padding: 16px 20px;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+    }
+    .kpi .number { font-size: 28px; line-height: 1; margin-bottom: 7px; color: #333; }
+    .kpi .caption { color: #777; }
+    .kpi.success .number { color: var(--green); }
+    .kpi.danger .number { color: var(--red); }
+    .kpi.info .number { color: var(--blue); }
+    .kpi.warning .number { color: #ef6c00; }
+
+    .alert {
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      border: 1px solid transparent;
+      border-radius: 3px;
+    }
+    .alert-info {
+      color: #31708f;
+      background: #e3f2fd;
+      border-color: #b3e5fc;
+    }
+    .alert-success {
+      color: #2e7d32;
+      background: #e8f5e9;
+      border-color: #c8e6c9;
+    }
+    .alert-styled-left { border-left-width: 4px; }
+
+    .page-section { display: none; }
+    .page-section.active { display: block; }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1.15fr .85fr;
+      gap: 20px;
+    }
+    .timeline {
+      border-left: 2px solid #ddd;
+      margin-left: 8px;
+      padding-left: 18px;
+    }
+    .timeline-item {
+      position: relative;
+      padding-bottom: 16px;
+    }
+    .timeline-item:before {
+      content: "";
+      position: absolute;
+      left: -24px;
+      top: 3px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #fff;
+      border: 2px solid var(--green);
+    }
+    .bar-line {
+      display: grid;
+      grid-template-columns: 145px 1fr 45px;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 11px;
+    }
+    .bar {
+      height: 18px;
+      background: #eee;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .bar span { display: block; height: 100%; background: #999; }
+    .bar.success span { background: var(--green); }
+    .bar.info span { background: var(--blue); }
+    .bar.warning span { background: var(--orange); }
+    .phone-box {
+      background: #242826;
+      color: #fff;
+      border-radius: 3px;
+      padding: 18px;
+      text-align: center;
+    }
+    .phone-number { font-size: 24px; margin: 10px 0; }
+    .dial-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      margin-top: 12px;
+      background: #444;
+    }
+    .dial-grid button {
+      border: 0;
+      height: 42px;
+      background: #333;
+      color: #fff;
+      font-size: 18px;
+    }
+    .top-actions-line {
+      height: 46px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 34px;
+      color: #777;
+      padding: 0 110px;
+      background: #fff;
+      border-bottom: 1px solid #ddd;
+    }
+    .dashboard-wrap {
+      max-width: 1665px;
+      margin: 0 auto;
+      padding: 54px 18px 70px;
+    }
+    .meetime-page-wide {
+      max-width: 1310px;
+      margin: 30px auto 0;
+    }
+    .native-filter-strip {
+      border: 1px solid #ddd;
+      padding: 14px 16px;
+      margin-bottom: 18px;
+      background: #fff;
+    }
+    .native-filter-strip .form-control { height: 32px; padding: 5px 9px; font-size: 12px; }
+    .native-filter-strip .btn { padding-top: 5px; padding-bottom: 5px; }
+    .dashboard-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 0 12px 32px;
+    }
+    .dashboard-head h1 {
+      margin: 0;
+      font-size: 27px;
+      line-height: 1;
+      font-weight: 700;
+      color: #242826;
+    }
+    .goal-filters {
+      display: flex;
+      align-items: center;
+      gap: 34px;
+      color: #777;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .blue-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+      background: #15a6ed;
+      margin-right: 12px;
+    }
+    .btn-goal {
+      height: 48px;
+      border: 2px solid #00b950;
+      border-radius: 26px;
+      color: #00a443;
+      background: #fff;
+      font-size: 18px;
+      font-weight: 600;
+      padding: 0 18px;
+    }
+    .goal-card {
+      min-height: 518px;
+      background: #fff;
+      border-radius: 4px;
+      box-shadow: 0 16px 35px rgba(0,0,0,.04);
+      display: grid;
+      grid-template-columns: 38% 62%;
+      align-items: center;
+      padding: 58px 78px;
+    }
+    .goal-number {
+      font-size: 78px;
+      line-height: 1;
+      font-weight: 700;
+      color: #242826;
+      margin-bottom: 12px;
+    }
+    .goal-title {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 56px;
+    }
+    .goal-info-row {
+      display: grid;
+      grid-template-columns: 74px 1fr;
+      align-items: center;
+      gap: 22px;
+      color: #8b8f96;
+      font-size: 18px;
+      margin: 30px 0;
+    }
+    .round-icon {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: #f7f7fb;
+      display: grid;
+      place-items: center;
+      color: #00c850;
+      font-size: 30px;
+      font-weight: 700;
+    }
+    .chart-area svg {
+      width: 100%;
+      height: 355px;
+      display: block;
+    }
+    .chart-legend {
+      display: flex;
+      justify-content: center;
+      gap: 42px;
+      color: #8b8f96;
+      font-size: 16px;
+      margin-top: -10px;
+    }
+    .legend-box {
+      width: 20px;
+      height: 16px;
+      display: inline-block;
+      margin-right: 8px;
+      vertical-align: -2px;
+      background: #00c850;
+    }
+    .ranking-title {
+      font-size: 26px;
+      font-weight: 700;
+      margin: 52px 0 20px;
+    }
+    .ranking-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+    }
+    .ranking-card {
+      min-height: 255px;
+      background: #fff;
+      padding: 18px 22px;
+      box-shadow: 0 12px 28px rgba(0,0,0,.035);
+    }
+    .ranking-card h3 {
+      margin: 0 0 24px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .ranking-big {
+      text-align: center;
+      font-size: 38px;
+      font-weight: 700;
+      margin: 12px 0 12px;
+    }
+    .mini-list-row {
+      display: grid;
+      grid-template-columns: 1fr 48px 48px;
+      gap: 10px;
+      border-top: 1px dashed #bbb;
+      padding: 8px 0;
+      align-items: center;
+      font-size: 11px;
+    }
+    .insights-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin-top: 22px;
+    }
+    .insight-card {
+      background: #fff;
+      padding: 18px;
+      min-height: 210px;
+    }
+    .sheet-layout {
+      display: grid;
+      grid-template-columns: 128px minmax(0, 1fr);
+      max-width: 1100px;
+      margin: 18px auto 0;
+    }
+    .inner-menu {
+      padding-top: 8px;
+    }
+    .inner-menu a {
+      display: block;
+      padding: 10px 14px;
+      color: #333;
+      border-left: 3px solid transparent;
+      font-size: 12px;
+    }
+    .inner-menu a.active {
+      border-left-color: #00c850;
+      background: #fff;
+      font-weight: 700;
+    }
+    .mt-sheet {
+      background: #fff;
+      border: 1px solid #d6d6d6;
+      min-height: 344px;
+      padding: 28px 32px;
+    }
+    .sheet-title {
+      font-size: 22px;
+      font-weight: 500;
+      margin-bottom: 5px;
+    }
+    .sheet-subtitle {
+      color: #777;
+      font-size: 12px;
+      margin-bottom: 42px;
+    }
+    .big-center-icon {
+      margin: 0 auto 10px;
+      width: 66px;
+      height: 66px;
+      border: 3px solid #00a443;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      color: #00a443;
+      font-size: 30px;
+    }
+    .cadence-toolbar {
+      display: grid;
+      grid-template-columns: auto auto auto 1fr;
+      gap: 10px;
+      margin: 22px 0 18px;
+      align-items: center;
+    }
+    .pill-tab {
+      display: inline-block;
+      padding: 12px 18px;
+      border-bottom: 2px solid transparent;
+      color: #777;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .pill-tab.active {
+      color: #333;
+      border-bottom-color: #00c850;
+    }
+    .scroll-arrows {
+      position: absolute;
+      right: 26px;
+      top: 260px;
+      bottom: 38px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      color: #8b8b8b;
+      font-size: 38px;
+      pointer-events: none;
+    }
+    .phone-filter-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .call-legend {
+      display: flex;
+      gap: 62px;
+      margin: 22px 0;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .whatsapp-shell {
+      display: grid;
+      grid-template-columns: 315px 1fr;
+      max-width: 1010px;
+      min-height: 560px;
+      margin: 34px 0 0 6px;
+      background: #fff;
+      border-radius: 9px;
+      overflow: hidden;
+    }
+    .whatsapp-sidebar {
+      border-right: 1px solid #ddd;
+      padding: 18px;
+    }
+    .whatsapp-main {
+      position: relative;
+      display: grid;
+      place-items: center;
+      background: #fff;
+      overflow: hidden;
+    }
+    .whatsapp-empty {
+      text-align: center;
+      color: #777;
+      z-index: 2;
+    }
+    .whatsapp-empty-illo {
+      width: 180px;
+      height: 140px;
+      margin: 0 auto 18px;
+      position: relative;
+    }
+    .bubble-draw {
+      position: absolute;
+      border: 4px solid #111;
+      background: #fff;
+      border-radius: 38px;
+    }
+    .bubble-draw.large {
+      width: 132px;
+      height: 82px;
+      left: 22px;
+      top: 15px;
+      transform: rotate(-12deg);
+    }
+    .bubble-draw.large:after {
+      content: "";
+      position: absolute;
+      left: 18px;
+      bottom: -18px;
+      width: 22px;
+      height: 22px;
+      border-left: 4px solid #111;
+      border-bottom: 4px solid #111;
+      background: #fff;
+      transform: rotate(-20deg);
+    }
+    .bubble-draw.small {
+      width: 74px;
+      height: 40px;
+      left: 84px;
+      top: 88px;
+      border-width: 3px;
+      transform: rotate(-4deg);
+    }
+    .bubble-draw.mini {
+      width: 44px;
+      height: 32px;
+      left: 18px;
+      top: 100px;
+      border-width: 3px;
+    }
+    .bubble-lines {
+      position: absolute;
+      left: 28px;
+      top: 25px;
+      color: #111;
+      font-weight: 700;
+      letter-spacing: 5px;
+      line-height: 18px;
+      transform: rotate(-12deg);
+      font-size: 17px;
+    }
+    .bubble-question {
+      position: absolute;
+      top: 0;
+      left: 108px;
+      width: 34px;
+      height: 25px;
+      border: 4px solid #111;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      color: #00a443;
+      font-weight: 700;
+      background: #fff;
+    }
+    .whatsapp-pattern {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 120px;
+      opacity: .65;
+      background-image: radial-gradient(ellipse at center, #dcdcdc 0 35%, transparent 36%);
+      background-size: 35px 26px;
+      transform: skewY(-8deg);
+    }
+
+    @media (max-width: 980px) {
+      body { padding-top: 0; }
+      .navbar { position: static; }
+      .navbar-boxed, .navbar-collapse, .nav { display: block; }
+      .navbar-header { width: auto; height: 56px; }
+      .navbar-nav > li > a { height: 42px; }
+      .dropdown-menu { position: static; display: block; box-shadow: none; border: 0; }
+      .navbar-right { margin-left: 0; }
+      .filter-row, .kpi-row, .two-col, .goal-card, .ranking-grid, .insights-grid, .sheet-layout, .whatsapp-shell { grid-template-columns: 1fr; }
+      .breadcrumb-boxed { display: block; padding: 12px 20px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="navbar navbar-lg navbar-fixed-top navbar-inverse navbar-component" id="meetime-nav">
+    <div class="navbar-boxed">
+      <div class="navbar-header">
+        <a class="navbar-brand" data-page="dashboard">
+          <img src="meetime-assets/logo-inverse.png" alt="Meetime">
+        </a>
+      </div>
+      <div class="navbar-collapse collapse" id="navbar-mobile">
+        <ul class="nav navbar-nav">
+          <li class="active"><a data-page="dashboard"><i class="icon-home4 nav-icon position-left"></i><span class="text-semibold">Dashboard</span></a></li>
+        </ul>
+        <ul class="nav navbar-nav">
+          <li class="dropdown mega-menu" id="menu-flow">
+            <a><i class="icon-target2 nav-icon position-left"></i><span class="text-semibold">Prospecção</span><span class="caret"></span></a>
+            <ul class="dropdown-menu dropdown-content">
+              <li><a data-page="painel"><i class="fas fa-magnifying-glass-chart nav-icon position-left"></i>Painel <span class="label label-success ml-5">Novo</span></a></li>
+              <li><a data-page="execucao"><i class="icon-play3 nav-icon position-left"></i>Execução</a></li>
+              <li><a data-page="gente"><i class="icon-user-plus nav-icon position-left"></i>Procurar GENTE <span class="label label-success ml-5">Novo</span></a></li>
+              <li><a data-page="atividades"><i class="icon-task nav-icon position-left"></i>Atividades</a></li>
+              <li><a data-page="cadencias"><i class="icon-sort-time-asc nav-icon position-left"></i>Cadências</a></li>
+              <li><a data-page="leads"><i class="icon-users4 nav-icon position-left"></i>Leads</a></li>
+              <li><a data-page="lead-detalhe"><i class="icon-profile nav-icon position-left"></i>Detalhe do lead</a></li>
+              <li><a data-page="bases"><i class="icon-file-plus nav-icon position-left"></i>Bases de leads</a></li>
+              <li><a data-page="importacao"><i class="icon-upload4 nav-icon position-left"></i>Importação</a></li>
+              <li><a data-page="ajustes"><i class="fa fa-wrench nav-icon position-left"></i>Ajustes</a></li>
+            </ul>
+          </li>
+        </ul>
+        <ul class="nav navbar-nav">
+          <li class="dropdown mega-menu">
+            <a><i class="fa fa-phone nav-icon position-left"></i><span class="text-semibold">Ligações</span><span class="caret"></span></a>
+            <ul class="dropdown-menu dropdown-content">
+              <li><a data-page="ligacoes"><i class="icon-address-book3 nav-icon position-left"></i>Painel de Ligações</a></li>
+              <li><a data-page="lista-ligacoes"><i class="fa fa-list-ul nav-icon position-left"></i>Lista de Ligações</a></li>
+              <li><a data-page="extrato"><i class="icon-stack-text nav-icon position-left"></i>Extrato</a></li>
+            </ul>
+          </li>
+        </ul>
+        <ul class="nav navbar-nav">
+          <li class="dropdown mega-menu">
+            <a><i class="fa fa-whatsapp nav-icon position-left"></i><span class="text-semibold">WhatsApp</span><span class="caret"></span></a>
+            <ul class="dropdown-menu dropdown-content">
+              <li><a data-page="whatsapp"><i class="fa fa-comments-o nav-icon position-left"></i>Conversas</a></li>
+            </ul>
+          </li>
+        </ul>
+        <ul class="nav navbar-nav">
+          <li class="dropdown mega-menu">
+            <a><i class="icon-chart nav-icon position-left"></i><span class="text-semibold">Estatísticas</span><span class="caret"></span></a>
+            <ul class="dropdown-menu dropdown-content">
+              <li><a data-page="estatisticas"><i class="icon-stats-growth nav-icon position-left"></i>Prospecção</a></li>
+              <li><a data-page="feedback"><i class="icon-stats-bars3 nav-icon position-left"></i>Feedback de Oportunidade</a></li>
+            </ul>
+          </li>
+        </ul>
+        <ul class="nav navbar-nav">
+          <li style="position:relative"><a data-page="relatorios"><i class="fa fa-file-text nav-icon position-left"></i><span class="text-semibold">Relatórios</span><span class="label label-success nav-new-top">NOVO</span></a></li>
+        </ul>
+        <ul class="nav navbar-nav">
+          <li class="dropdown mega-menu">
+            <a><i class="icon-cogs nav-icon position-left"></i><span class="text-semibold">Integrações</span><span class="caret"></span></a>
+            <ul class="dropdown-menu dropdown-content">
+              <li><a data-page="integracoes"><i class="icon-puzzle3 nav-icon position-left"></i>Integrações</a></li>
+              <li><a data-page="api-token"><i class="icon-key nav-icon position-left"></i>API Token</a></li>
+              <li><a data-page="financeiro"><i class="icon-credit-card nav-icon position-left"></i>Financeiro</a></li>
+            </ul>
+          </li>
+        </ul>
+        <ul class="nav navbar-nav navbar-right">
+          <li class="dropdown">
+            <a><i class="icon-question3 nav-icon position-left"></i><span class="caret"></span></a>
+            <ul class="dropdown-menu dropdown-menu-right">
+              <li><a>Status do sistema</a></li>
+              <li><a>Central de ajuda</a></li>
+              <li><a>Documentação da API</a></li>
+            </ul>
+          </li>
+          <li class="dropdown dropdown-user">
+            <a><span class="avatar">.</span><span class="navbar-user-name">ADM BLU</span><span class="caret"></span></a>
+            <ul class="dropdown-menu dropdown-menu-right">
+              <li><a>Meu Perfil</a></li>
+              <li><a>Empresa</a></li>
+              <li><a>Integrações</a></li>
+              <li class="divider"></li>
+              <li><a>Sair</a></li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-header hidden-sm hidden-xs">
+    <div class="breadcrumb-line breadcrumb-line-wide">
+      <div class="breadcrumb-boxed">
+        <ul class="breadcrumb" id="breadcrumb">
+          <li><a>Meetime</a></li>
+          <li><span>Prospecção</span></li>
+          <li><span id="breadcrumbCurrent">Painel</span></li>
+        </ul>
+        <ul class="breadcrumb-elements">
+          <li><a data-page="ligacoes"><i class="fa fa-phone nav-icon position-left"></i>Ligar</a></li>
+          <li><a><i class="icon-user-plus nav-icon position-left"></i>Usuário</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-container">
+    <div class="page-content">
+      <div class="content-wrapper">
+        <div class="content">
+          <section id="page-dashboard" class="page-section active" data-title="Visão geral" data-area="Dashboard">
+            <div class="dashboard-wrap">
+              <div class="dashboard-head">
+                <h1>Visão geral</h1>
+                <div class="goal-filters">
+                  <span style="color:#169cf0;font-size:22px">▣</span>
+                  <span>01/08/2026 - 21/08/2026</span>
+                  <span><i class="blue-dot"></i>53 cadências⌄</span>
+                  <span><i class="blue-dot"></i>2 usuários⌄</span>
+                  <button class="btn-goal">Editar metas</button>
+                </div>
+              </div>
+              <div class="goal-card">
+                <div>
+                  <div class="goal-number">3</div>
+                  <div class="goal-title">Oportunidades em agosto <span class="text-muted">ⓘ</span></div>
+                  <div class="goal-info-row">
+                    <div class="round-icon">▣</div>
+                    <div>Meta de oportunidades<br>Oportunidades em agosto: <strong style="color:#00a443">25</strong></div>
+                  </div>
+                  <div class="goal-info-row">
+                    <div style="color:#2687df;font-size:40px;text-align:center">▮▮▮</div>
+                    <div><strong style="color:#ff2f2f">▼ 82%</strong> abaixo do previsto até hoje <strong>(17)</strong><br>para alcançar a meta mensal</div>
+                  </div>
+                </div>
+                <div class="chart-area">
+                  <svg viewBox="0 0 760 350" aria-label="grafico de oportunidades">
+                    <g stroke="#e8e8e8" stroke-width="1">
+                      <line x1="70" y1="54" x2="720" y2="54"/><line x1="70" y1="108" x2="720" y2="108"/><line x1="70" y1="162" x2="720" y2="162"/><line x1="70" y1="216" x2="720" y2="216"/><line x1="70" y1="270" x2="720" y2="270"/>
+                    </g>
+                    <g fill="#333" font-size="14" font-weight="700">
+                      <text x="36" y="60">25</text><text x="36" y="114">20</text><text x="36" y="168">15</text><text x="36" y="222">10</text><text x="45" y="276">5</text><text x="45" y="324">0</text>
+                      <text x="60" y="344">1. Ago</text><text x="380" y="344">16. Ago</text><text x="680" y="344">31. Ago</text>
+                    </g>
+                    <polyline points="70,322 720,54" fill="none" stroke="#ededed" stroke-width="3"/>
+                    <polygon points="70,322 92,322 114,300 136,300 158,300 180,300 202,300 224,300 246,300 268,300 290,300 312,300 334,300 356,300 378,300 400,300 422,300 444,300 466,289 488,289 510,289 532,289 532,322 70,322" fill="#d6f9e2"/>
+                    <polyline points="70,322 92,322 114,300 136,300 158,300 180,300 202,300 224,300 246,300 268,300 290,300 312,300 334,300 356,300 378,300 400,300 422,300 444,300 466,289 488,289 510,289 532,289" fill="none" stroke="#00c850" stroke-width="4"/>
+                    <g fill="#00c850">
+                      <circle cx="70" cy="322" r="4"/><circle cx="92" cy="322" r="4"/><circle cx="114" cy="300" r="4"/><circle cx="136" cy="300" r="4"/><circle cx="158" cy="300" r="4"/><circle cx="180" cy="300" r="4"/><circle cx="202" cy="300" r="4"/><circle cx="224" cy="300" r="4"/><circle cx="246" cy="300" r="4"/><circle cx="268" cy="300" r="4"/><circle cx="290" cy="300" r="4"/><circle cx="312" cy="300" r="4"/><circle cx="334" cy="300" r="4"/><circle cx="356" cy="300" r="4"/><circle cx="378" cy="300" r="4"/><circle cx="400" cy="300" r="4"/><circle cx="422" cy="300" r="4"/><circle cx="444" cy="300" r="4"/><circle cx="466" cy="289" r="4"/><circle cx="488" cy="289" r="4"/><circle cx="510" cy="289" r="4"/><circle cx="532" cy="289" r="4"/>
+                    </g>
+                  </svg>
+                  <div class="chart-legend"><span><i class="legend-box"></i>Oportunidades</span><span><i class="legend-box" style="background:#ededed"></i>Meta</span></div>
+                </div>
+              </div>
+              <h2 class="ranking-title">Ranking</h2>
+              <div class="ranking-grid">
+                <div class="ranking-card"><h3>Leads Finalizados</h3><div class="round-icon" style="width:42px;height:42px;font-size:20px;margin:0 auto">♙</div><div class="ranking-big">31</div><div style="display:flex;justify-content:center;gap:22px;font-size:12px"><span style="color:#f44336">▼ 73% do previsto</span><span style="color:#00a443">Meta mês: 167</span></div><div class="mini-list-row"><strong>Felipe</strong><span>220</span><span>21</span></div><div class="mini-list-row"><strong>ADM</strong><span>164</span><span>0</span></div><div class="mini-list-row"><strong>média</strong><span></span><span style="color:#1e88e5">5</span></div></div>
+                <div class="ranking-card"><h3>Atividades Realizadas</h3><div class="round-icon" style="width:42px;height:42px;font-size:20px;margin:0 auto">☑</div><div class="ranking-big">310</div><div style="display:flex;justify-content:center;gap:22px;font-size:12px"><span style="color:#f44336">▼ 44% do previsto</span><span style="color:#00a443">Meta mês: 810</span></div><div class="mini-list-row"><strong>Felipe</strong><span></span><span>78</span></div><div class="mini-list-row"><strong>ADM</strong><span></span><span>0</span></div><div class="mini-list-row"><strong>média</strong><span></span><span style="color:#1e88e5">39</span></div></div>
+                <div class="ranking-card"><h3>Taxa de Conversão</h3><div class="round-icon" style="width:42px;height:42px;font-size:20px;margin:0 auto">↗</div><div class="ranking-big">10%</div><div style="display:flex;justify-content:center;gap:22px;font-size:12px"><span style="color:#f44336">Abaixo da meta</span><span style="color:#00a443">Meta mês: 15%</span></div><div class="mini-list-row"><strong>Felipe</strong><span></span><span>2 (10%)</span></div><div class="mini-list-row"><strong>ADM</strong><span></span><span>0 (0%)</span></div><div class="mini-list-row"><strong>média</strong><span></span><span style="color:#1e88e5">2</span></div></div>
+              </div>
+              <h2 class="ranking-title" style="font-size:20px;margin-top:34px">Insights</h2>
+              <div class="insights-grid">
+                <div class="insight-card"><h3>Motivos de perda</h3><div class="bar-line"><span>Não consegui contato</span><div class="bar"><span style="width:57%;background:#e99b9e"></span></div><strong>57%</strong></div><div class="bar-line"><span>Ponte/carteira</span><div class="bar"><span style="width:16%;background:#e99b9e"></span></div><strong>16%</strong></div><div class="bar-line"><span>Lead rejeitou</span><div class="bar"><span style="width:11%;background:#e99b9e"></span></div><strong>11%</strong></div></div>
+                <div class="insight-card"><h3>Conversão por origem</h3><div class="bar-line"><span>Desconhecido</span><div class="bar success"><span style="width:76%"></span></div><strong>19</strong></div><div class="bar-line"><span>[Lista Luleads]</span><div class="bar success"><span style="width:12%"></span></div><strong>3</strong></div><div class="bar-line"><span>[ADV 72]</span><div class="bar"><span style="width:8%;background:#e99b9e"></span></div><strong>2</strong></div></div>
+              </div>
+            </div>
+          </section>
+
+          <section id="page-gente" class="page-section" data-title="Procurar GENTE" data-area="Prospecção">
+            <div class="panel panel-flat meetime-page-wide">
+              <div class="panel-heading has-border">
+                <div>
+                  <h2 class="panel-title">Procurar GENTE</h2>
+                  <div class="text-muted text-size-small">Localize pessoas, telefones e vínculos antes de criar o lead.</div>
+                </div>
+                <div class="heading-elements">
+                  <button class="btn btn-default btn-xs">Histórico</button>
+                  <button class="btn btn-main btn-xs"><i class="icon-user-plus position-left"></i>Adicionar como lead</button>
+                </div>
+              </div>
+              <div class="panel-body no-padding-bottom">
+                <form class="main-search">
+                  <div class="form-group">
+                    <div class="has-feedback has-feedback-left">
+                      <input id="peopleSearch" class="form-control input-xlg" type="text" placeholder="Buscar pessoa por nome, CPF, telefone ou empresa">
+                      <div class="form-control-feedback">⌕</div>
+                    </div>
+                  </div>
+                  <div class="native-filter-strip">
+                  <div class="filter-row" style="margin-top:0">
+                    <select class="form-control"><option>Tipo: Pessoa</option><option>Sócio</option><option>Decisor</option><option>Funcionário RAIS</option></select>
+                    <select class="form-control"><option>UF: todas</option><option>SP</option><option>MG</option><option>PR</option><option>SC</option></select>
+                    <select class="form-control"><option>Telefone: celular + WhatsApp</option><option>Todos</option><option>Somente validados</option></select>
+                    <select class="form-control"><option>Origem: CAPIBLU</option><option>Assertiva</option><option>MK</option><option>Serasa</option></select>
+                    <button type="button" class="btn btn-main" id="peopleSearchBtn">Buscar</button>
+                  </div>
+                  </div>
+                </form>
+                <div class="help-block mt-10">
+                  <span class="text-muted">Busca CAPIBLU dentro do padrão Meetime: resolve CPF, telefones, vínculos, parentes/conexões e valida se o telefone pertence ao documento.</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel panel-flat meetime-page-wide">
+              <ul class="nav nav-tabs nav-tabs-bottom mt-tabs nav-tabs-component">
+                <li class="active"><a>Pessoas encontradas <span class="badge badge-success position-right">4</span></a></li>
+                <li><a>Com WhatsApp <span class="badge position-right">3</span></a></li>
+                <li><a>Decisores <span class="badge position-right">2</span></a></li>
+                <li><a>Vínculos RAIS <span class="badge position-right">4</span></a></li>
+              </ul>
+              <div class="panel-heading">
+                <h6 class="panel-title">
+                  <small class="text-grey text-semibold">
+                    <span class="status-mark"></span><span id="peopleCount">4</span> pessoas encontradas
+                  </small>
+                </h6>
+                <div class="heading-elements">
+                  <span class="heading-text">Itens por página: <a>25 <span class="caret"></span></a></span>
+                </div>
+              </div>
+              <div class="panel-body">
+                <div class="alert alert-success alert-styled-left">
+                  Os dados abaixo simulam as funções do CAPIBLU, mas a tela usa apenas componentes e proporções do dashboard Meetime.
+                </div>
+                <div style="display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px">
+                <div class="table-responsive">
+                  <table class="table table-striped table-hover table-fixed" id="peopleTable">
+                    <thead>
+                      <tr>
+                        <th class="text-left text-grey">Pessoa</th>
+                        <th class="text-left text-grey">Documento</th>
+                        <th class="text-left text-grey">Telefone principal</th>
+                        <th class="text-left text-grey">Vínculo</th>
+                        <th class="text-left text-grey">Validação</th>
+                        <th class="text-center text-grey"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td class="nowrap">
+                          <div class="media-left"><div class="lead-avatar-dot success">ML</div></div>
+                          <div class="media-body"><a class="text-default text-semibold">Marina Lopes</a><div class="text-muted text-size-small">Diretora Comercial - Bluefit Franquias</div></div>
+                        </td>
+                        <td>***.384.118-**</td>
+                        <td>(11) 99876-4432 <span class="label label-success ml-5">WhatsApp</span></td>
+                        <td>Bluefit Franquias<br><span class="text-muted text-size-small">CNPJ 12.345.678/0001-90</span></td>
+                        <td><span class="label label-success">Pertence</span> <span class="label label-light">RAIS</span></td>
+                        <td class="nowrap"><button class="btn btn-default btn-xs">Detalhes</button> <button class="btn btn-main btn-xs">Criar lead</button></td>
+                      </tr>
+                      <tr>
+                        <td class="nowrap">
+                          <div class="media-left"><div class="lead-avatar-dot info">RP</div></div>
+                          <div class="media-body"><a class="text-default text-semibold">Rafael Prado</a><div class="text-muted text-size-small">CEO - Zeta Energia Solar</div></div>
+                        </td>
+                        <td>***.920.771-**</td>
+                        <td>(31) 98765-1122 <span class="label label-success ml-5">WhatsApp</span></td>
+                        <td>Zeta Energia Solar<br><span class="text-muted text-size-small">Sócio administrador</span></td>
+                        <td><span class="label label-success">Pertence</span> <span class="label label-info">Sócio</span></td>
+                        <td class="nowrap"><button class="btn btn-default btn-xs">Detalhes</button> <button class="btn btn-main btn-xs">Criar lead</button></td>
+                      </tr>
+                      <tr>
+                        <td class="nowrap">
+                          <div class="media-left"><div class="lead-avatar-dot warn">CD</div></div>
+                          <div class="media-body"><a class="text-default text-semibold">Camila Duarte</a><div class="text-muted text-size-small">Operações - Norte Transportes</div></div>
+                        </td>
+                        <td>***.118.449-**</td>
+                        <td>(41) 3344-0011</td>
+                        <td>Norte Transportes<br><span class="text-muted text-size-small">Vínculo RAIS ativo</span></td>
+                        <td><span class="label label-warning">Fixo</span> <span class="label label-light">Atualidade média</span></td>
+                        <td class="nowrap"><button class="btn btn-default btn-xs">Detalhes</button> <button class="btn btn-main btn-xs">Criar lead</button></td>
+                      </tr>
+                      <tr>
+                        <td class="nowrap">
+                          <div class="media-left"><div class="lead-avatar-dot success">BT</div></div>
+                          <div class="media-body"><a class="text-default text-semibold">Bruno Trentini</a><div class="text-muted text-size-small">Sócio - Trentini Advocacia</div></div>
+                        </td>
+                        <td>***.661.530-**</td>
+                        <td>(48) 99122-7788 <span class="label label-success ml-5">WhatsApp</span></td>
+                        <td>Trentini Advocacia<br><span class="text-muted text-size-small">Sócio no QSA</span></td>
+                        <td><span class="label label-success">Pertence</span> <span class="label label-info">Conexões</span></td>
+                        <td class="nowrap"><button class="btn btn-default btn-xs">Detalhes</button> <button class="btn btn-main btn-xs">Criar lead</button></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div style="border-left:1px solid #ddd;padding-left:18px">
+                  <h3 style="margin-top:0;font-size:14px">Resumo CAPIBLU</h3>
+                  <table class="table table-striped">
+                    <tbody>
+                      <tr><td class="text-grey">Cobertura</td><td><span class="label label-success">4 encontrados</span></td></tr>
+                      <tr><td class="text-grey">WhatsApp</td><td>3 contatos</td></tr>
+                      <tr><td class="text-grey">Telefone pertence</td><td>3 validações</td></tr>
+                      <tr><td class="text-grey">Vínculo RAIS</td><td>4 vínculos</td></tr>
+                      <tr><td class="text-grey">Custo</td><td>6 consultas</td></tr>
+                    </tbody>
+                  </table>
+                  <button class="btn btn-default btn-xs">Exportar seleção</button>
+                  <button class="btn btn-main btn-xs">Criar leads</button>
+                </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="two-col">
+              <div class="panel panel-flat">
+                <div class="panel-heading has-border"><h6 class="panel-title">Detalhes da pessoa selecionada</h6></div>
+                <div class="panel-body">
+                  <table class="table table-striped">
+                    <tbody>
+                      <tr><td class="text-grey">CPF resolvido</td><td>***.384.118-**</td></tr>
+                      <tr><td class="text-grey">Telefones</td><td>(11) 99876-4432, (11) 3900-2010</td></tr>
+                      <tr><td class="text-grey">WhatsApp</td><td><span class="label label-success">Ativo</span></td></tr>
+                      <tr><td class="text-grey">Vínculos</td><td>Bluefit Franquias, Bluefit Participações</td></tr>
+                      <tr><td class="text-grey">Parentes/conexões</td><td>2 conexões societárias com telefone</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="panel panel-flat">
+                <div class="panel-heading has-border"><h6 class="panel-title">Linha do tempo CAPIBLU</h6></div>
+                <div class="panel-body">
+                  <div class="timeline">
+                    <div class="timeline-item"><div class="text-muted text-size-small">Agora</div><strong>Telefone pertence ao CPF</strong><br><span class="text-muted">Validado por consulta reversa.</span></div>
+                    <div class="timeline-item"><div class="text-muted text-size-small">Agora</div><strong>Vínculo RAIS encontrado</strong><br><span class="text-muted">Cargo comercial compatível com decisor.</span></div>
+                    <div class="timeline-item"><div class="text-muted text-size-small">Agora</div><strong>Pronto para Meetime</strong><br><span class="text-muted">Criar lead com pessoa, empresa, CNPJ e telefone.</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="page-execucao" class="page-section" data-title="Execução" data-area="Prospecção">
+            <div class="panel panel-flat">
+              <div class="panel-heading has-border">
+                <h2 class="panel-title">Execução</h2>
+                <div class="heading-elements"><button class="btn btn-primary btn-xs">Power Dialer</button><button class="btn btn-main btn-xs">Iniciar próxima atividade</button></div>
+              </div>
+              <div class="panel-body">
+                <div class="two-col">
+                  <div>
+                    <table class="table table-striped table-hover">
+                      <thead><tr><th>Atividade</th><th>Lead</th><th>Prioridade</th></tr></thead>
+                      <tbody>
+                        <tr><td><span class="label label-info">CALL</span></td><td>Bluefit Franquias<br><span class="text-muted text-size-small">Marina Lopes</span></td><td><span class="label label-success">18h-19h</span></td></tr>
+                        <tr><td><span class="label label-success">WHATSAPP</span></td><td>Zeta Energia Solar<br><span class="text-muted text-size-small">Rafael Prado</span></td><td><span class="label label-success">Telefone pertence</span></td></tr>
+                        <tr><td><span class="label label-default">E-MAIL</span></td><td>Norte Transportes<br><span class="text-muted text-size-small">Camila Duarte</span></td><td><span class="label label-warning">Atrasada</span></td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div class="phone-box">
+                    <div class="text-muted">Softphone</div>
+                    <div class="phone-number">(11) 99876-4432</div>
+                    <button class="btn btn-success btn-sm">Ligar</button>
+                    <div class="dial-grid"><button>1</button><button>2</button><button>3</button><button>4</button><button>5</button><button>6</button><button>7</button><button>8</button><button>9</button><button>*</button><button>0</button><button>#</button></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="page-leads" class="page-section" data-title="Leads" data-area="Prospecção">
+            <div class="panel panel-flat">
+              <div class="panel-heading">
+                <h2 class="panel-title">Leads</h2>
+                <div class="heading-elements"><button class="btn btn-main btn-xs">Adicionar</button><button class="btn btn-default btn-xs">Listas de importação <span class="caret"></span></button></div>
+              </div>
+              <div class="panel-body no-padding-bottom">
+                <form class="main-search">
+                  <div class="form-group">
+                    <div class="has-feedback has-feedback-left">
+                      <input id="leadSearch" class="form-control input-xlg" type="text" placeholder="Buscar lead">
+                      <div class="form-control-feedback">⌕</div>
+                    </div>
+                  </div>
+                </form>
+                <div class="help-block">Filtros relativos à prospecção atual do lead.</div>
+              </div>
+            </div>
+            <div class="panel panel-flat">
+              <ul class="nav nav-tabs nav-tabs-bottom mt-tabs nav-tabs-component">
+                <li class="active"><a>Todos <span class="badge badge-success">512</span></a></li>
+                <li><a>Executando <span class="badge">441</span></a></li>
+                <li><a>Ganhos <span class="badge">7</span></a></li>
+                <li><a>Perdidos <span class="badge">25</span></a></li>
+              </ul>
+              <div class="panel-body">
+                <div class="table-responsive">
+                  <table class="table table-striped table-hover" id="leadTable">
+                    <thead><tr><th>Lead</th><th>Status</th><th>Cadência atual</th><th>Responsável atual</th><th></th></tr></thead>
+                    <tbody>
+                      <tr><td><div class="media-left"><div class="lead-avatar-dot success">B</div></div><div class="media-body"><a class="text-semibold">Bluefit Franquias</a><div class="text-muted text-size-small">Marina Lopes</div></div></td><td><span class="label label-success">Executando</span></td><td>ADV [BLU] [START]</td><td>Rebeca</td><td><button class="btn btn-default btn-xs">Abrir</button></td></tr>
+                      <tr><td><div class="media-left"><div class="lead-avatar-dot info">Z</div></div><div class="media-body"><a class="text-semibold">Zeta Energia Solar</a><div class="text-muted text-size-small">Rafael Prado</div></div></td><td><span class="label label-success">Executando</span></td><td>[ENERGIA] [Planning]</td><td>Rebeca</td><td><button class="btn btn-default btn-xs">Abrir</button></td></tr>
+                      <tr><td><div class="media-left"><div class="lead-avatar-dot warn">N</div></div><div class="media-body"><a class="text-semibold">Norte Transportes</a><div class="text-muted text-size-small">Camila Duarte</div></div></td><td><span class="label label-default">Aguardando</span></td><td>[FROTAI] [LEADS RICARDO]</td><td>Renata</td><td><button class="btn btn-default btn-xs">Abrir</button></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="page-lead-detalhe" class="page-section" data-title="Detalhe do lead" data-area="Prospecção">
+            <div class="sheet-layout" style="grid-template-columns:180px minmax(0,1fr);max-width:1220px">
+              <div class="inner-menu">
+                <a class="active">timeline</a>
+                <a>dados do lead</a>
+                <a>prospecções</a>
+                <a>whatsapp</a>
+                <a>crm</a>
+              </div>
+              <div class="mt-sheet" style="padding:0">
+                <div style="padding:24px 28px;border-bottom:1px solid #ddd;display:flex;justify-content:space-between;gap:20px">
+                  <div>
+                    <div class="sheet-title" style="margin:0">Bluefit Franquias</div>
+                    <div class="text-muted">Marina Lopes · Diretora Comercial · ADV [BLU] [START]</div>
+                  </div>
+                  <div>
+                    <span class="label label-success">Executando</span>
+                    <button class="btn btn-main btn-xs ml-5">Marcar ganho</button>
+                    <button class="btn btn-default btn-xs">Marcar perdido</button>
+                  </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 330px;gap:0">
+                  <div style="padding:28px">
+                    <div class="timeline">
+                      <div class="timeline-item"><div class="text-muted text-size-small">Hoje · 18:05</div><strong>Ligação significativa</strong><br><span class="text-muted">Marina pediu resumo da proposta e próximos passos.</span></div>
+                      <div class="timeline-item"><div class="text-muted text-size-small">Hoje · 17:42</div><strong>WhatsApp enviado</strong><br><span class="text-muted">Mensagem inicial com contexto da expansão.</span></div>
+                      <div class="timeline-item"><div class="text-muted text-size-small">Hoje · 16:10</div><strong>Pesquisa concluída</strong><br><span class="text-muted">CAPIBLU confirmou CNPJ, vínculo RAIS, telefone e WhatsApp.</span></div>
+                      <div class="timeline-item"><div class="text-muted text-size-small">19/08/2026</div><strong>Lead importado</strong><br><span class="text-muted">Origem: [Lista Luleads] - AGO 26.</span></div>
+                    </div>
+                  </div>
+                  <div style="border-left:1px solid #ddd;padding:24px;background:#fafafa">
+                    <h3 style="margin-top:0">Dados principais</h3>
+                    <table class="table table-striped">
+                      <tbody>
+                        <tr><td class="text-grey">Empresa</td><td>Bluefit Franquias</td></tr>
+                        <tr><td class="text-grey">CNPJ</td><td>12.345.678/0001-90</td></tr>
+                        <tr><td class="text-grey">Contato</td><td>Marina Lopes</td></tr>
+                        <tr><td class="text-grey">Telefone</td><td>(11) 99876-4432</td></tr>
+                        <tr><td class="text-grey">Validação</td><td><span class="label label-success">Pertence</span></td></tr>
+                        <tr><td class="text-grey">Cliente</td><td>BLU Sales Group</td></tr>
+                      </tbody>
+                    </table>
+                    <button class="btn btn-default btn-xs">Abrir dossiê</button>
+                    <button class="btn btn-main btn-xs">Executar próxima</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="page-bases" class="page-section" data-title="Bases de leads" data-area="Prospecção">
+            <div class="panel panel-flat" style="max-width:1240px;margin:28px auto 0">
+              <div class="panel-heading has-border">
+                <div>
+                  <h2 class="panel-title">Bases de leads</h2>
+                  <div class="text-muted text-size-small">Histórico das listas importadas e bases geradas pelo CAPIBLU.</div>
+                </div>
+                <div class="heading-elements">
+                  <button class="btn btn-default btn-xs">Ver histórico</button>
+                  <button class="btn btn-main btn-xs" data-page="importacao">Importar nova lista</button>
+                </div>
+              </div>
+              <div class="panel-body">
+                <div class="phone-filter-row">
+                  <div class="has-feedback has-feedback-left"><input class="form-control" placeholder="Pesquisar base"><div class="form-control-feedback" style="height:36px;line-height:36px">⌕</div></div>
+                  <select class="form-control"><option>Status: todos</option><option>Processada</option><option>Com erro</option></select>
+                  <select class="form-control"><option>Origem: todas</option><option>CSV</option><option>CAPIBLU</option></select>
+                </div>
+                <table class="table table-striped table-hover">
+                  <thead><tr><th>Base</th><th>Origem</th><th>Leads</th><th>Novos</th><th>Duplicados</th><th>Status</th><th>Data</th><th></th></tr></thead>
+                  <tbody>
+                    <tr><td><strong>[Lista Luleads] - AGO 26</strong><br><span class="text-muted">Cliente BLU</span></td><td>CAPIBLU</td><td>167</td><td style="color:#00a443">143</td><td>24</td><td><span class="label label-success">Processada</span></td><td>21/08/2026</td><td><button class="btn btn-default btn-xs">Detalhes</button></td></tr>
+                    <tr><td><strong>[ADV 72] - AGO 26</strong><br><span class="text-muted">Cliente BLU</span></td><td>CSV</td><td>72</td><td>61</td><td>11</td><td><span class="label label-success">Processada</span></td><td>19/08/2026</td><td><button class="btn btn-default btn-xs">Detalhes</button></td></tr>
+                    <tr><td><strong>[ENERGIA] Planning</strong><br><span class="text-muted">Cliente Planning</span></td><td>CAPIBLU</td><td>98</td><td>74</td><td>24</td><td><span class="label label-warning">Em revisão</span></td><td>18/08/2026</td><td><button class="btn btn-default btn-xs">Detalhes</button></td></tr>
+                    <tr><td><strong>[CNT 34] - AGO 26</strong><br><span class="text-muted">Cliente BLU</span></td><td>CSV</td><td>34</td><td>31</td><td>3</td><td><span class="label label-success">Processada</span></td><td>15/08/2026</td><td><button class="btn btn-default btn-xs">Detalhes</button></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <section id="page-importacao" class="page-section" data-title="Importação" data-area="Prospecção">
+            <div class="mt-sheet" style="max-width:1040px;margin:30px auto 0;padding:0">
+              <div style="padding:24px 30px;border-bottom:1px solid #ddd">
+                <div class="sheet-title">Importar nova lista de leads</div>
+                <div class="sheet-subtitle" style="margin-bottom:0">Upload, associação de campos, validação CAPIBLU e configuração de execução.</div>
+              </div>
+              <div style="display:grid;grid-template-columns:240px 1fr;min-height:430px">
+                <div style="border-right:1px solid #ddd;background:#fafafa;padding:22px">
+                  <div class="mini-list-row" style="grid-template-columns:28px 1fr;border-top:0"><span class="label label-success">1</span><strong>Origem</strong></div>
+                  <div class="mini-list-row" style="grid-template-columns:28px 1fr"><span class="badge">2</span><span>Campos</span></div>
+                  <div class="mini-list-row" style="grid-template-columns:28px 1fr"><span class="badge">3</span><span>Deduplicação</span></div>
+                  <div class="mini-list-row" style="grid-template-columns:28px 1fr"><span class="badge">4</span><span>Execução</span></div>
+                </div>
+                <div style="padding:30px">
+                  <h3 style="margin-top:0">Escolha a origem da lista</h3>
+                  <div class="two-col">
+                    <div class="panel panel-flat" style="box-shadow:none">
+                      <div class="panel-body">
+                        <h3>CSV/XLSX</h3>
+                        <p class="text-muted">Fluxo tradicional da Meetime: upload de planilha e associação dos campos.</p>
+                        <button class="btn btn-default btn-xs">Selecionar arquivo</button>
+                      </div>
+                    </div>
+                    <div class="panel panel-flat" style="box-shadow:none;border-color:#00a443">
+                      <div class="panel-body">
+                        <h3>CAPIBLU</h3>
+                        <p class="text-muted">Gerar lista já enriquecida com CNPJ, decisores, telefone validado, WhatsApp e dedup.</p>
+                        <button class="btn btn-main btn-xs">Puxar lista CAPIBLU</button>
+                      </div>
+                    </div>
+                  </div>
+                  <table class="table table-striped" style="margin-top:20px">
+                    <tbody>
+                      <tr><td class="text-grey">Campos nativos</td><td>Nome, empresa, email, telefone, cidade, estado</td></tr>
+                      <tr><td class="text-grey">Campos extras</td><td>CNPJ, decisor, cargo, WhatsApp, score, cliente</td></tr>
+                      <tr><td class="text-grey">Ação final</td><td>Criar execução em cadência selecionada</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="page-cadencias" class="page-section" data-title="Cadências" data-area="Prospecção">
+            <div class="sheet-layout" style="max-width:1325px">
+              <div class="inner-menu">
+                <a>painel <span class="label label-success">novo</span></a>
+                <a>execução</a>
+                <a>atividades</a>
+                <a class="active">cadências</a>
+                <a>leads</a>
+                <a>ajustes</a>
+              </div>
+              <div class="mt-sheet" style="position:relative;padding:44px 26px 34px">
+                <div class="sheet-title" style="font-weight:700">Cadências</div>
+                <div class="sheet-subtitle">Defina e visualize os dados das cadências de contato com os leads.</div>
+                <div class="cadence-toolbar">
+                  <select class="form-control"><option>Filtro: Status</option></select>
+                  <select class="form-control"><option>Prioridade</option></select>
+                  <select class="form-control"><option>Foco</option></select>
+                  <div class="has-feedback has-feedback-left"><input class="form-control" placeholder="Pesquisar por nome"><div class="form-control-feedback" style="height:36px;line-height:36px">⌕</div></div>
+                </div>
+                <div class="help-block"><span class="status-mark"></span>54 cadências exibidas.</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #ddd;margin-top:26px">
+                  <div><span class="pill-tab active">Padrão <span class="label label-success">54</span></span><span class="pill-tab">E-mail Automático <span class="badge">1</span></span></div>
+                  <div><button class="btn btn-default btn-xs" disabled>Visualizar leads</button> <button class="btn btn-main btn-xs">Criar cadência</button> <button class="btn btn-default btn-xs">⌄</button></div>
+                </div>
+                <div class="table-responsive" style="margin-top:46px">
+                  <table class="table table-striped table-hover">
+                    <thead><tr><th><input type="checkbox"></th><th>Prioridade</th><th>Nome da Cadência</th><th>Foco</th><th>Total</th><th>Esperando início</th><th>Execução</th><th>Finalizados</th><th>Ganhos</th><th>Info</th></tr></thead>
+                    <tbody>
+                      <tr><td><input type="checkbox"></td><td style="color:#f44336">↑</td><td><strong>ADV [BLU] [START]</strong></td><td><span class="label label-light">Outbound</span></td><td>2025</td><td>1</td><td>4</td><td>1840</td><td>116 / 7%</td><td>i</td></tr>
+                      <tr><td><input type="checkbox"></td><td style="color:#f44336">↑</td><td><strong>B2C Tech [BLU] [START]</strong></td><td><span class="label label-light">Outbound</span></td><td>30</td><td>0</td><td>0</td><td>19</td><td>0 / 0%</td><td>i</td></tr>
+                      <tr><td><input type="checkbox"></td><td style="color:#f44336">↑</td><td><strong>BLU INBOUND DIRKA</strong></td><td><span class="label label-light">Inbound ativo</span></td><td>186</td><td>0</td><td>0</td><td>170</td><td>50 / 29%</td><td>i</td></tr>
+                      <tr><td><input type="checkbox"></td><td><span style="color:#f44336">↑</span> <span style="color:#2196f3">↓</span></td><td class="text-muted">CJH - ([David]) Leads Pipe</td><td><span class="label label-light">Outbound</span></td><td>156</td><td>0</td><td>0</td><td>150</td><td>33 / 22%</td><td>i</td></tr>
+                      <tr><td><input type="checkbox"></td><td style="color:#f44336">↑</td><td><strong>CNT [BLU] [START]</strong></td><td><span class="label label-light">Outbound</span></td><td>950</td><td>0</td><td>1</td><td>833</td><td>75 / 9%</td><td>i</td></tr>
+                      <tr><td><input type="checkbox"></td><td style="color:#f44336">↑</td><td><strong>DIVERSOS [BLU] [START]</strong></td><td><span class="label label-light">Outbound</span></td><td>1613</td><td>0</td><td>2</td><td>1374</td><td>134 / 10%</td><td>i</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="scroll-arrows"><span>▲</span><span style="font-size:46px">▌</span><span>▼</span></div>
+              </div>
+            </div>
+          </section>
+
+          <section id="page-atividades" class="page-section" data-title="Atividades" data-area="Prospecção">
+            <div class="sheet-layout">
+              <div class="inner-menu">
+                <a class="active">pesquisa</a>
+                <a>social point</a>
+                <a>e-mail</a>
+                <a>ligação</a>
+              </div>
+              <div class="mt-sheet">
+                <div class="big-center-icon">⌕</div>
+                <h2 style="text-align:center;margin:0;font-weight:500">Pesquisa</h2>
+                <div class="text-muted text-size-small" style="text-align:center;margin-bottom:26px">Atividades que poderão ser utilizadas nas cadências.</div>
+                <table class="table table-striped table-hover">
+                  <thead><tr><th>nome</th><th>instruções</th><th style="width:42px"><button class="btn btn-main btn-xs">+</button></th></tr></thead>
+                  <tbody>
+                    <tr><td><strong>[lista] pesquisa e validação</strong></td><td class="text-muted">Pesquisar - validar o cargo e a empresa - entendendo que a empresa tem, por quem soube...</td><td>⋮</td></tr>
+                    <tr><td><strong>[stl] pesquisa</strong></td><td class="text-muted">Pesquisar - Entenda qual foi a objeção, produto vendido e se foi feito uma reunião...</td><td>⋮</td></tr>
+                    <tr><td><strong>pesquisa</strong></td><td class="text-muted">Remova o histórico do lead, mensagens, ligações, E-mails. Entenda o motivo que levou este lead a não marcar...</td><td>⋮</td></tr>
+                    <tr><td><strong>pesquisa - contato</strong></td><td class="text-muted">Encontre novos meios sociais e pontos de contato da empresa e stakeholders.</td><td>⋮</td></tr>
+                    <tr><td><strong>pesquisa de canais alternativo</strong></td><td class="text-muted">Pesquisar e abordar Facebook, LinkedIn e outros canais disponíveis.</td><td>⋮</td></tr>
+                    <tr><td><strong>pesquisa recuperação</strong></td><td class="text-muted">Atualizar o card do lead e a prospecção anterior para entender porque não seguiu.</td><td>⋮</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <section id="page-ligacoes" class="page-section" data-title="Lista" data-area="Ligações">
+            <div class="panel panel-flat" style="max-width:1310px;margin:30px 0 0">
+              <div class="panel-body">
+                <div style="border:1px solid #ddd;padding:16px 18px;margin-bottom:20px">
+                  <div class="phone-filter-row">
+                    <div><strong>Pesquisa</strong></div>
+                    <div><button class="btn btn-default btn-xs">Hoje</button> <button class="btn btn-default btn-xs">Esta Semana</button> <button class="btn btn-default btn-xs">Este Mês</button> <button class="btn btn-default btn-xs">Selecionar...</button></div>
+                    <div><button class="btn btn-default btn-xs">Todas</button> <button class="btn btn-default btn-xs">Importantes</button></div>
+                  </div>
+                </div>
+                <h2 class="panel-title" style="font-size:20px;margin-bottom:20px">Ligações</h2>
+                <div class="phone-filter-row">
+                  <div class="call-legend">
+                    <span style="color:#00a443">○ Significativa</span>
+                    <span style="color:#5e62ff">○ Não Significativa</span>
+                    <span style="color:#ef6c00">○ Cliente Ocupado</span>
+                    <span style="color:#f44336">⊘ Sem contato</span>
+                    <span style="color:#777">⊗ Não conectada</span>
+                  </div>
+                  <div class="has-feedback has-feedback-left"><input class="form-control" placeholder="buscar ligação"><div class="form-control-feedback" style="height:36px;line-height:36px">⌕</div></div>
+                  <button class="btn btn-default btn-xs">exportar CSV</button>
+                </div>
+                <div class="help-block"><span class="status-mark"></span>158 registros de ligações</div>
+                <table class="table table-striped table-hover">
+                  <thead><tr><th>Status</th><th>Origem</th><th>Destino</th><th>Data</th><th>Duração</th><th>Opções</th></tr></thead>
+                  <tbody>
+                    <tr><td style="color:#00a443">○</td><td>Felipe Oliveira<br><span class="text-muted">(47) 97032-0101</span></td><td><a>Adriano Venturini</a><br><span class="text-muted">(49) 99920-6995</span></td><td>19/08/2026<br><span class="text-muted">18:17h</span></td><td>7m 6s</td><td><button class="btn btn-default btn-xs">◉</button></td></tr>
+                    <tr><td style="color:#f44336">⊘</td><td>Felipe Oliveira<br><span class="text-muted">(47) 97032-0101</span></td><td><a>ricardo silveira</a><br><span class="text-muted">(11) 98879-8505</span></td><td>19/08/2026<br><span class="text-muted">18:14h</span></td><td>10s</td><td><button class="btn btn-default btn-xs">◉</button></td></tr>
+                    <tr><td style="color:#f44336">⊘</td><td>Felipe Oliveira</td><td><a>fabiano gueireza</a></td><td>19/08/2026<br><span class="text-muted">18:13h</span></td><td>1m 10s</td><td><button class="btn btn-default btn-xs">◉</button></td></tr>
+                    <tr><td style="color:#f44336">⊘</td><td>Felipe Oliveira</td><td><a>vagner nacin</a></td><td>19/08/2026<br><span class="text-muted">17:59h</span></td><td>15s</td><td><button class="btn btn-default btn-xs">◉</button></td></tr>
+                    <tr><td style="color:#f44336">⊘</td><td>Felipe Oliveira</td><td><a>REBERTO CARLOS GOMES</a></td><td>19/08/2026<br><span class="text-muted">17:43h</span></td><td>3s</td><td><button class="btn btn-default btn-xs">◉</button></td></tr>
+                    <tr><td style="color:#777">⊗</td><td>Felipe Oliveira</td><td><a>fabio santana</a></td><td>19/08/2026<br><span class="text-muted">17:26h</span></td><td>-</td><td><button class="btn btn-default btn-xs">◉</button></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <section id="page-whatsapp" class="page-section" data-title="Conversas" data-area="WhatsApp">
+            <div class="whatsapp-shell">
+              <div class="whatsapp-sidebar">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px">
+                  <h2 style="margin:0;font-size:22px;font-weight:500">Conversas</h2>
+                  <button class="btn btn-default btn-xs">⚱</button>
+                </div>
+                <div class="text-muted">Nenhuma conversa por aqui ainda</div>
+              </div>
+              <div class="whatsapp-main">
+                <div class="whatsapp-empty">
+                  <div class="whatsapp-empty-illo">
+                    <div class="bubble-question">?</div>
+                    <div class="bubble-draw large"></div>
+                    <div class="bubble-draw small"></div>
+                    <div class="bubble-draw mini"></div>
+                    <div class="bubble-lines">•••<br>•••</div>
+                  </div>
+                  <div>Selecione um contato para visualizar a conversa</div>
+                </div>
+                <div class="whatsapp-pattern"></div>
+              </div>
+            </div>
+          </section>
+
+          <section id="page-estatisticas" class="page-section" data-title="Prospecção" data-area="Estatísticas">
+            <div class="panel panel-flat"><div class="panel-heading has-border"><h2 class="panel-title">Estatísticas de Prospecção</h2><div class="heading-elements"><button class="btn btn-default btn-xs">Exportar</button></div></div><div class="panel-body"><div class="bar-line"><span>Ligações</span><div class="bar warning"><span style="width:100%"></span></div><strong>158</strong></div><div class="bar-line"><span>WhatsApp</span><div class="bar success"><span style="width:62%"></span></div><strong>98</strong></div><div class="bar-line"><span>Email</span><div class="bar info"><span style="width:10%"></span></div><strong>16</strong></div></div></div>
+          </section>
+
+          <section id="page-relatorios" class="page-section" data-title="Relatórios" data-area="Gestão">
+            <div class="panel panel-flat"><div class="panel-heading has-border"><h2 class="panel-title">Relatórios</h2><div class="heading-elements"><button class="btn btn-main btn-xs">Gerar relatório</button></div></div><div class="panel-body"><table class="table table-striped table-hover"><thead><tr><th>Relatório</th><th>Para que serve</th><th></th></tr></thead><tbody><tr><td>Estatísticas de Atividades</td><td>Produtividade por usuário</td><td><button class="btn btn-default btn-xs">Baixar</button></td></tr><tr><td>Atividades Executadas</td><td>Auditoria de execução</td><td><button class="btn btn-default btn-xs">Baixar</button></td></tr><tr><td>Ligações Derrubadas</td><td>Chamadas encerradas em até 10 segundos</td><td><button class="btn btn-default btn-xs">Baixar</button></td></tr></tbody></table></div></div>
+          </section>
+
+          <section id="page-integracoes" class="page-section" data-title="Integrações" data-area="Integrações">
+            <div class="panel panel-flat" style="max-width:1160px;margin:30px auto 0">
+              <div class="panel-heading has-border">
+                <div>
+                  <h2 class="panel-title">Integrações</h2>
+                  <div class="text-muted text-size-small">Conecte CRMs, agenda, email, webhooks e fontes de dados.</div>
+                </div>
+                <div class="heading-elements"><button class="btn btn-default btn-xs">Atualizar</button></div>
+              </div>
+              <div class="panel-body">
+                <div class="filter-row" style="grid-template-columns:repeat(4,1fr)">
+                  <div class="panel panel-flat"><div class="panel-body"><strong>Pipedrive</strong><br><span class="text-muted">CRM</span><br><br><span class="label label-success">Conectado</span></div></div>
+                  <div class="panel panel-flat"><div class="panel-body"><strong>Salesforce</strong><br><span class="text-muted">CRM</span><br><br><span class="label label-default">Não conectado</span></div></div>
+                  <div class="panel panel-flat"><div class="panel-body"><strong>RD Station</strong><br><span class="text-muted">Marketing/CRM</span><br><br><span class="label label-success">Conectado</span></div></div>
+                  <div class="panel panel-flat"><div class="panel-body"><strong>CAPIBLU</strong><br><span class="text-muted">Dados e enriquecimento</span><br><br><span class="label label-success">Ativo</span></div></div>
+                </div>
+                <table class="table table-striped table-hover">
+                  <thead><tr><th>Integração</th><th>Tipo</th><th>Última sincronização</th><th>Status</th><th></th></tr></thead>
+                  <tbody>
+                    <tr><td>Pipedrive</td><td>CRM</td><td>Hoje 08:12</td><td><span class="label label-success">OK</span></td><td><button class="btn btn-default btn-xs">Configurar</button></td></tr>
+                    <tr><td>Google Agenda</td><td>Calendário</td><td>Hoje 07:55</td><td><span class="label label-success">OK</span></td><td><button class="btn btn-default btn-xs">Configurar</button></td></tr>
+                    <tr><td>Emailbox</td><td>Email</td><td>Ontem 19:14</td><td><span class="label label-warning">Atenção</span></td><td><button class="btn btn-default btn-xs">Configurar</button></td></tr>
+                    <tr><td>CAPIBLU</td><td>Enriquecimento</td><td>Hoje 08:20</td><td><span class="label label-success">OK</span></td><td><button class="btn btn-default btn-xs">Configurar</button></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <section id="page-api-token" class="page-section" data-title="API Token" data-area="Integrações">
+            <div class="mt-sheet" style="max-width:930px;margin:30px auto 0">
+              <div class="sheet-title">API Token</div>
+              <div class="sheet-subtitle">Use o token para integrar sistemas externos com os eventos da Meetime.</div>
+              <div class="alert alert-info alert-styled-left">Este MVP simula a tela de token da Meetime com escopos extras para CAPIBLU: deduplicação, enriquecimento e criação de leads.</div>
+              <table class="table table-striped">
+                <tbody>
+                  <tr><td class="text-grey">Token atual</td><td><code>mt_live_••••••••••••9210</code></td><td><button class="btn btn-default btn-xs">Copiar</button></td></tr>
+                  <tr><td class="text-grey">Escopos</td><td>leads:read, leads:write, cadences:read, capiblu:enrich, capiblu:dedup</td><td><button class="btn btn-default btn-xs">Editar</button></td></tr>
+                  <tr><td class="text-grey">Último uso</td><td>21/08/2026 08:20 · CAPIBLU</td><td><span class="label label-success">Ativo</span></td></tr>
+                </tbody>
+              </table>
+              <div style="margin-top:18px"><button class="btn btn-main btn-xs">Gerar novo token</button> <button class="btn btn-danger btn-xs">Revogar</button></div>
+            </div>
+          </section>
+
+          <section id="page-financeiro" class="page-section" data-title="Financeiro" data-area="Empresa">
+            <div class="panel panel-flat" style="max-width:1040px;margin:30px auto 0">
+              <div class="panel-heading has-border"><h2 class="panel-title">Financeiro</h2><div class="heading-elements"><button class="btn btn-default btn-xs">Ver boletos</button></div></div>
+              <div class="panel-body">
+                <div class="kpi-row">
+                  <div class="kpi"><div class="number">R$ 1.789,98</div><div class="caption">Mensalidade atual</div></div>
+                  <div class="kpi info"><div class="number">2</div><div class="caption">Usuários pagos</div></div>
+                  <div class="kpi success"><div class="number">3</div><div class="caption">Usuários gratuitos disponíveis</div></div>
+                  <div class="kpi warning"><div class="number">R$ 21,5k</div><div class="caption">Estimativa anual</div></div>
+                </div>
+                <table class="table table-striped table-hover" style="margin-top:22px">
+                  <thead><tr><th>Item</th><th>Quantidade</th><th>Valor</th><th>Status</th></tr></thead>
+                  <tbody>
+                    <tr><td>FLOW por usuário</td><td>2</td><td>R$ 581,19</td><td><span class="label label-success">Ativo</span></td></tr>
+                    <tr><td>COMBO</td><td>1</td><td>R$ 327,68</td><td><span class="label label-success">Ativo</span></td></tr>
+                    <tr><td>CALLER ID</td><td>1</td><td>R$ 46,41</td><td><span class="label label-success">Ativo</span></td></tr>
+                    <tr><td>Boleto mensal</td><td>1</td><td>R$ 1.789,98</td><td><span class="label label-default">Ciclo atual</span></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <section id="page-ajustes" class="page-section" data-title="Ajustes" data-area="Prospecção">
+            <div class="panel panel-flat"><div class="panel-heading has-border"><h2 class="panel-title">Ajustes</h2><div class="heading-elements"><button class="btn btn-main btn-xs">Salvar</button></div></div><div class="panel-body"><table class="table table-striped"><tbody><tr><td>Meta diária</td><td>41 atividades por SDR</td></tr><tr><td>Campos personalizados</td><td>CNPJ, origem, cliente</td></tr><tr><td>Motivos de perda</td><td>Sem contato, sem fit, timing</td></tr></tbody></table></div></div>
+          </section>
+
+          <section id="page-lista-ligacoes" class="page-section" data-title="Lista de Ligações" data-area="Ligações">
+            <div class="panel panel-flat"><div class="panel-heading has-border"><h2 class="panel-title">Lista de Ligações</h2></div><div class="panel-body"><table class="table table-striped"><thead><tr><th>Hora</th><th>Lead</th><th>Número</th><th>Resultado</th></tr></thead><tbody><tr><td>18:04</td><td>Bluefit Franquias</td><td>(11) 99876-4432</td><td>MEANINGFUL</td></tr><tr><td>17:41</td><td>Zeta Energia Solar</td><td>(31) 98765-1122</td><td>NO_CONTACT</td></tr></tbody></table></div></div>
+          </section>
+
+          <section id="page-extrato" class="page-section" data-title="Extrato" data-area="Ligações">
+            <div class="panel panel-flat"><div class="panel-heading has-border"><h2 class="panel-title">Extrato</h2></div><div class="panel-body"><table class="table table-striped"><tbody><tr><td>Minutos utilizados</td><td>697</td></tr><tr><td>Custo estimado</td><td>R$ 327,68</td></tr><tr><td>Caller ID</td><td>R$ 46,41</td></tr></tbody></table></div></div>
+          </section>
+
+          <section id="page-feedback" class="page-section" data-title="Feedback de Oportunidade" data-area="Estatísticas">
+            <div class="panel panel-flat"><div class="panel-heading has-border"><h2 class="panel-title">Feedback de Oportunidade</h2></div><div class="panel-body"><div class="alert alert-info alert-styled-left">Tela simulada para manter o mapa de produto capturado no ZIP.</div></div></div>
+          </section>
+
+          <section id="page-painel" class="page-section" data-title="Painel de controle diário" data-area="Prospecção">
+            <div class="mt-sheet" style="max-width:1060px;margin:34px auto 0;min-height:548px;padding:28px 26px">
+              <div class="sheet-title">Painel de controle diário</div>
+              <div class="sheet-subtitle">Monitore as atividades da sua equipe e mantenha o controle do desempenho diário.</div>
+              <div style="text-align:right;margin-bottom:10px"><span class="blue-dot"></span>1 usuários⌄<br><span class="text-muted text-size-small">Última atualização: 08:09</span></div>
+              <table class="table table-striped table-hover">
+                <thead>
+                  <tr>
+                    <th colspan="3" style="border-bottom:2px solid #00c850">TIME</th>
+                    <th colspan="4" style="border-bottom:2px solid #00c850">LEADS</th>
+                    <th colspan="6" style="border-bottom:2px solid #00c850">ATIVIDADES</th>
+                  </tr>
+                  <tr>
+                    <th>Usuários</th><th>Atividade Atual</th><th>Duração</th>
+                    <th>Prospectando</th><th>Disponíveis</th><th>Ganhos</th><th>Perdidos</th>
+                    <th>Pendentes</th><th>Realizadas</th><th>Ignoradas</th><th>☎</th><th>✉</th><th>⌕</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><div class="media-left"><div class="lead-avatar-dot">FO</div></div><div class="media-body"><strong>Felipe Oliveira</strong><br><span class="text-muted">Offline</span></div></td>
+                    <td class="text-muted">Última atividade<br>-</td><td>-</td>
+                    <td>221</td><td>1044</td><td style="color:#00a443">0</td><td style="color:#f44336">4</td>
+                    <td style="color:#1e88e5">281</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div style="display:flex;align-items:center;gap:12px;margin:18px 12px;color:#888">
+                <span style="font-size:34px">◀</span>
+                <div style="height:22px;background:#888;border-radius:12px;flex:1"></div>
+                <span style="font-size:34px">▶</span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const pages = Array.from(document.querySelectorAll(".page-section"));
+    const links = Array.from(document.querySelectorAll("[data-page]"));
+    const crumbArea = document.querySelector("#breadcrumb li:nth-child(2) span");
+    const crumbCurrent = document.getElementById("breadcrumbCurrent");
+
+    function showPage(name) {
+      const page = document.getElementById("page-" + name);
+      if (!page) return;
+      pages.forEach((item) => item.classList.toggle("active", item === page));
+      crumbArea.textContent = page.dataset.area || "Meetime";
+      crumbCurrent.textContent = page.dataset.title || name;
+      links.forEach((link) => {
+        const li = link.closest("li");
+        if (!li) return;
+        li.classList.toggle("active", link.dataset.page === name && li.parentElement.classList.contains("navbar-nav"));
+      });
+    }
+
+    links.forEach((link) => {
+      link.addEventListener("click", (event) => {
+        const page = link.dataset.page;
+        if (!page) return;
+        event.preventDefault();
+        showPage(page);
+      });
+    });
+
+    const peopleSearch = document.getElementById("peopleSearch");
+    const peopleRows = Array.from(document.querySelectorAll("#peopleTable tbody tr"));
+    function filterPeople() {
+      const value = (peopleSearch.value || "").toLowerCase();
+      let count = 0;
+      peopleRows.forEach((row) => {
+        const visible = row.textContent.toLowerCase().includes(value);
+        row.style.display = visible ? "" : "none";
+        if (visible) count += 1;
+      });
+      document.getElementById("peopleCount").textContent = count;
+    }
+    if (peopleSearch) {
+      peopleSearch.addEventListener("input", filterPeople);
+      document.getElementById("peopleSearchBtn").addEventListener("click", filterPeople);
+    }
+
+    const leadSearch = document.getElementById("leadSearch");
+    if (leadSearch) {
+      leadSearch.addEventListener("input", () => {
+        const value = leadSearch.value.toLowerCase();
+        document.querySelectorAll("#leadTable tbody tr").forEach((row) => {
+          row.style.display = row.textContent.toLowerCase().includes(value) ? "" : "none";
+        });
+      });
+    }
+  </script>
+</body>
+</html>

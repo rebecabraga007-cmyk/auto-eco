@@ -1,0 +1,444 @@
+<title>Meetime desmontado</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%94%8D%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+<style>
+:root{
+  --paper:#EDF1F4;
+  --surface:#FFFFFF;
+  --surface-2:#F6F8F9;
+  --ink:#0E1A23;
+  --slate:#57697A;
+  --slate-2:#7E8E9C;
+  --line:#D3DDE4;
+  --line-soft:#E4EBEF;
+  --blue:#12385C;
+  --blue-pale:#DCE7EF;
+  --terra:#9E5227;
+  --terra-pale:#F6E7DC;
+  --good:#2A6349;
+  --bad:#93301F;
+  --measure:67ch;
+  --wide:1040px;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0B141C;
+    --surface:#111E28;
+    --surface-2:#16242F;
+    --ink:#DCE6ED;
+    --slate:#93A5B3;
+    --slate-2:#758795;
+    --line:#22333F;
+    --line-soft:#1B2A35;
+    --blue:#8FB6D4;
+    --blue-pale:#1A2C3A;
+    --terra:#D69264;
+    --terra-pale:#2A1D14;
+    --good:#7FBB9C;
+    --bad:#D98873;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0B141C;
+  --surface:#111E28;
+  --surface-2:#16242F;
+  --ink:#DCE6ED;
+  --slate:#93A5B3;
+  --slate-2:#758795;
+  --line:#22333F;
+  --line-soft:#1B2A35;
+  --blue:#8FB6D4;
+  --blue-pale:#1A2C3A;
+  --terra:#D69264;
+  --terra-pale:#2A1D14;
+  --good:#7FBB9C;
+  --bad:#D98873;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:"IBM Plex Sans",system-ui,-apple-system,Arial,sans-serif;
+  font-size:16.5px;line-height:1.62;-webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:var(--wide);margin:0 auto;padding:0 28px 100px;
+  display:flex;flex-direction:column;gap:0}
+.col{max-width:var(--measure)}
+
+/* ── capa ── */
+.cover{padding:74px 0 40px;border-bottom:1px solid var(--line)}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11px;font-weight:500;
+  letter-spacing:.19em;text-transform:uppercase;color:var(--slate-2);margin-bottom:22px}
+h1{font-family:"Newsreader",Georgia,serif;font-weight:500;font-size:clamp(2.6rem,6vw,4.1rem);
+  line-height:1.02;letter-spacing:-.025em;margin:0 0 20px;text-wrap:balance;max-width:22ch}
+.lede{font-family:"Newsreader",Georgia,serif;font-size:1.32rem;line-height:1.52;
+  color:var(--slate);max-width:56ch;margin:0}
+.cover-meta{display:flex;flex-wrap:wrap;gap:0;margin-top:36px;
+  border-top:1px solid var(--line);border-left:1px solid var(--line)}
+.cm{flex:1 1 168px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);
+  padding:13px 16px;background:var(--surface)}
+.cm-l{font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.15em;
+  text-transform:uppercase;color:var(--slate-2);margin-bottom:5px}
+.cm-v{font-size:.9rem;font-weight:600}
+
+/* ── seções ── */
+section{padding:52px 0;border-bottom:1px solid var(--line)}
+section:last-of-type{border-bottom:none}
+.sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:26px}
+.sec-n{font-family:"IBM Plex Mono",monospace;font-size:.8rem;font-weight:600;
+  color:var(--terra);flex-shrink:0;padding-top:.35em}
+h2{font-family:"Newsreader",Georgia,serif;font-weight:500;font-size:clamp(1.7rem,3.4vw,2.3rem);
+  line-height:1.14;letter-spacing:-.02em;margin:0;text-wrap:balance}
+h3{font-family:"IBM Plex Sans",sans-serif;font-size:.94rem;font-weight:700;
+  letter-spacing:.01em;margin:34px 0 12px}
+h4{font-family:"IBM Plex Mono",monospace;font-size:10.5px;font-weight:600;letter-spacing:.15em;
+  text-transform:uppercase;color:var(--slate-2);margin:30px 0 12px}
+p{margin:0 0 18px;max-width:var(--measure)}
+p:last-child{margin-bottom:0}
+strong{font-weight:600}
+em{font-style:italic}
+a{color:var(--blue);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:2px}
+code{font-family:"IBM Plex Mono",monospace;font-size:.86em;background:var(--surface-2);
+  border:1px solid var(--line-soft);padding:1px 5px;color:var(--terra)}
+ul{margin:0 0 18px;padding-left:22px;max-width:var(--measure)}
+li{margin-bottom:7px}
+li::marker{color:var(--slate-2)}
+
+/* ── destaque ── */
+.pull{border-left:2px solid var(--terra);padding:4px 0 4px 20px;margin:26px 0;
+  font-family:"Newsreader",Georgia,serif;font-size:1.2rem;line-height:1.5;color:var(--ink);max-width:54ch}
+
+/* ── métricas conectadas ── */
+.mgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(196px,1fr));
+  gap:1px;background:var(--line);border:1px solid var(--line);margin:26px 0}
+.mcell{background:var(--surface);padding:18px 20px}
+.mcell.hot{background:var(--terra-pale)}
+.m-l{font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--slate-2);margin-bottom:8px}
+.m-v{font-family:"IBM Plex Mono",monospace;font-size:1.62rem;font-weight:500;
+  letter-spacing:-.02em;line-height:1.1;font-variant-numeric:tabular-nums}
+.m-v.terra{color:var(--terra)}
+.m-v.bad{color:var(--bad)}
+.m-s{font-size:.79rem;color:var(--slate);margin-top:6px;line-height:1.45}
+
+/* ── tabelas ── */
+.tscroll{overflow-x:auto;margin:26px 0;border:1px solid var(--line);background:var(--surface)}
+table{width:100%;border-collapse:collapse;font-size:.87rem}
+th{text-align:left;font-family:"IBM Plex Mono",monospace;font-size:9.5px;font-weight:600;
+  letter-spacing:.13em;text-transform:uppercase;color:var(--slate-2);
+  padding:11px 15px;border-bottom:1px solid var(--line);background:var(--surface-2);white-space:nowrap}
+td{padding:10px 15px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.n{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+td.n b{font-weight:600}
+
+/* ── funil ── */
+.funnel{display:flex;flex-direction:column;gap:9px;margin:26px 0;max-width:640px}
+.fn-row{display:grid;grid-template-columns:1fr 58px;gap:12px;align-items:center}
+.fn-track{height:26px;background:var(--surface-2);border:1px solid var(--line-soft);position:relative}
+.fn-fill{height:100%;background:var(--blue-pale);border-right:2px solid var(--blue)}
+.fn-fill.warn{background:var(--terra-pale);border-right-color:var(--terra)}
+.fn-lbl{position:absolute;inset:0;display:flex;align-items:center;padding-left:11px;
+  font-size:.8rem;font-weight:500;white-space:nowrap;color:var(--ink)}
+.fn-n{font-family:"IBM Plex Mono",monospace;font-size:.82rem;text-align:right;
+  color:var(--slate);font-variant-numeric:tabular-nums}
+
+/* ── blocos de código / enum ── */
+pre{margin:24px 0;padding:18px 20px;background:var(--surface);border:1px solid var(--line);
+  overflow-x:auto;font-family:"IBM Plex Mono",monospace;font-size:.79rem;line-height:1.75;color:var(--slate)}
+pre b{color:var(--ink);font-weight:600}
+pre .k{color:var(--terra)}
+
+/* ── nomes de cadência (amostra crua) ── */
+.raw{display:flex;flex-wrap:wrap;gap:6px;margin:22px 0}
+.raw span{font-family:"IBM Plex Mono",monospace;font-size:.76rem;background:var(--surface);
+  border:1px solid var(--line);padding:4px 9px;color:var(--slate)}
+
+/* ── caixa nota ── */
+.note{background:var(--surface);border:1px solid var(--line);border-left:2px solid var(--blue);
+  padding:18px 22px;margin:26px 0}
+.note-t{font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--blue);margin-bottom:9px}
+.note p{margin-bottom:0;font-size:.94rem}
+
+/* ── lista de módulos ── */
+.mods{display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:1px;
+  background:var(--line);border:1px solid var(--line);margin:26px 0}
+.mod{background:var(--surface);padding:18px 20px}
+.mod h5{margin:0 0 4px;font-size:.92rem;font-weight:700}
+.mod .tag{font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--slate-2);display:block;margin-bottom:9px}
+.mod p{font-size:.84rem;color:var(--slate);margin:0;line-height:1.55;max-width:none}
+
+/* ── status ── */
+.st{font-family:"IBM Plex Mono",monospace;font-size:.72rem;font-weight:600;
+  padding:2px 8px;white-space:nowrap;border:1px solid}
+.st-ok{color:var(--good);border-color:var(--good);background:transparent}
+.st-new{color:var(--terra);border-color:var(--terra);background:var(--terra-pale)}
+.st-no{color:var(--slate-2);border-color:var(--line)}
+
+footer{padding:44px 0 0;border-top:1px solid var(--line);margin-top:52px;
+  font-size:.85rem;color:var(--slate-2);max-width:var(--measure)}
+
+@media(max-width:640px){
+  body{font-size:16px}
+  .wrap{padding:0 20px 70px}
+  .cover{padding:48px 0 32px}
+  .sec-head{flex-direction:column;gap:6px}
+  .sec-n{padding-top:0}
+}
+</style>
+
+<div class="wrap">
+
+<header class="cover">
+  <div class="eyebrow">Engenharia reversa · projeto Bluutime</div>
+  <h1>Meetime desmontado</h1>
+  <p class="lede">O que a ferramenta faz, o que ela cobra, e as três coisas que ela nunca vai fazer pela BLU — lidas direto do dashboard capturado e das respostas de API da nossa própria conta.</p>
+
+  <div class="cover-meta">
+    <div class="cm"><div class="cm-l">Fonte</div><div class="cm-v">6 capturas do dashboard</div></div>
+    <div class="cm"><div class="cm-l">Conta</div><div class="cm-v">BLU Sales Group · #9210</div></div>
+    <div class="cm"><div class="cm-l">Data da captura</div><div class="cm-v">19/08/2026</div></div>
+    <div class="cm"><div class="cm-l">Rotas mapeadas</div><div class="cm-v">289</div></div>
+    <div class="cm"><div class="cm-l">Telas capturadas</div><div class="cm-v">94</div></div>
+  </div>
+</header>
+
+<section>
+  <div class="sec-head"><span class="sec-n">01</span><h2>O que existe por baixo</h2></div>
+  <div class="col">
+    <p>Os seis arquivos são capturas “salvar página como” do dashboard, progressivamente mais completas — o primeiro só carregou o Dashboard, o último acumula Prospecção, Ligações, WhatsApp, Estatísticas, Integrações e Financeiro. As respostas de API vieram salvas junto, como arquivos <code>.html</code>: é daí que sai o modelo de dados real, com os números da operação de agosto.</p>
+  </div>
+
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>Camada</th><th>Tecnologia</th><th>Observação</th></tr></thead>
+      <tbody>
+        <tr><td><b>Front-end (99% das telas)</b></td><td>AngularJS 1.x + ui-router</td><td>Template Limitless/Bootstrap 3, gráficos Highcharts</td></tr>
+        <tr><td><b>Front-end novo</b></td><td>Angular moderno</td><td>Só duas telas — e embutidas por <code>&lt;iframe&gt;</code> dentro do app velho</td></tr>
+        <tr><td><b>Autenticação</b></td><td>Keycloak + Firebase</td><td>Firestore e Realtime DB para notificação ao vivo</td></tr>
+        <tr><td><b>Telefonia</b></td><td>Twilio WebRTC + Asterisk</td><td>Softphone no navegador, provider SIP próprio</td></tr>
+        <tr><td><b>Back-end</b></td><td>Java / Kotlin</td><td>Erros vazam <code>br.com.meetime.whatsapp_middleware</code></td></tr>
+        <tr><td><b>WhatsApp</b></td><td>Evolution API</td><td>Atrás de um middleware próprio</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <p class="pull">A feature mais nova — o Painel de Controle, marcada como <em>NOVO</em> no menu — é um iframe de app Angular novo dentro do AngularJS antigo. O Meetime está no meio de uma migração de front-end travada.</p>
+    <p>Isso importa porque diz o ritmo: a superfície de produto está congelada. Não estamos correndo atrás de um alvo que se move rápido.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-n">02</span><h2>A superfície completa de produto</h2></div>
+  <div class="col">
+    <p>Das 289 rotas e 94 telas, o produto se organiza em seis territórios. A BLU contrata três módulos — <code>FLOW</code>, <code>DIALER</code> e <code>WHATSAPP</code>. Demonstrações não está contratado.</p>
+  </div>
+
+  <div class="mods">
+    <div class="mod">
+      <h5>Prospecção <span class="st st-ok">contratado</span></h5>
+      <span class="tag">módulo flow · o coração</span>
+      <p>Painel do gestor, Execução (a fila do SDR, com power dialer e leads quentes), Cadências, biblioteca de Atividades, Leads com card e timeline, Bases de leads por CSV, e 12 telas de ajuste — meta diária, motivos de perda, calendário de trabalho, campos personalizados, fit score, blacklist, permissões.</p>
+    </div>
+    <div class="mod">
+      <h5>Ligações <span class="st st-ok">contratado</span></h5>
+      <span class="tag">módulo dialer</span>
+      <p>Painel de discagem, lista de ligações, extrato de minutos e custo, ajustes de números e gravações, softphone em modal. Add-ons de discador preditivo e caller ID.</p>
+    </div>
+    <div class="mod">
+      <h5>WhatsApp <span class="st st-ok">contratado</span></h5>
+      <span class="tag">módulo whatsapp</span>
+      <p>Tela de conversas por instância, amarrada ao lead. É uma das duas telas do app novo.</p>
+    </div>
+    <div class="mod">
+      <h5>Demonstrações <span class="st st-no">não contratado</span></h5>
+      <span class="tag">módulo demo</span>
+      <p>Painel, lista, sala de demo e “demo instantânea”. Fora do escopo da BLU — e fora do escopo do Bluutime.</p>
+    </div>
+    <div class="mod">
+      <h5>Estatísticas e Relatórios</h5>
+      <span class="tag">análise</span>
+      <p>Conversão por etapa, performance, overview de cadência, motivos de perda em três recortes, templates de e-mail, funil de ligação. Mais exatamente três relatórios exportáveis.</p>
+    </div>
+    <div class="mod">
+      <h5>Integrações</h5>
+      <span class="tag">saída de dados</span>
+      <p>Pipedrive, Salesforce, RD Station (Marketing e CRM), Nectar, HubSpot, Ploomes por webhook, Google Agenda, caixa de e-mail via Nylas, e-mail whitelabel com DNS, webhooks e token de API.</p>
+    </div>
+  </div>
+
+  <h4>Os três relatórios, na íntegra</h4>
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>Relatório</th><th>Para que serve</th></tr></thead>
+      <tbody>
+        <tr><td><b>Estatísticas de Atividades</b></td><td>Produtividade por SDR: atividades executadas, pendências, e resultado dos leads</td></tr>
+        <tr><td><b>Atividades Executadas</b></td><td>Cada atividade feita ou ignorada, com horário, usuário, cadência e lead</td></tr>
+        <tr><td><b>Ligações Derrubadas</b></td><td>Chamadas encerradas à mão em até 10 segundos — padrão de desconexão rápida</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-n">03</span><h2>O modelo de dados, como ele é</h2></div>
+  <div class="col">
+    <p>Os enums abaixo não são suposição: saíram das respostas de API capturadas. Eles são o contrato que o Bluutime precisa reproduzir para que a migração seja possível.</p>
+  </div>
+
+<pre><b>Lead.status</b>        <span class="k">WAITING</span> · <span class="k">EXECUTING</span> · <span class="k">ON_EXTRA_ACTIVITY</span> · <span class="k">PAUSED_FROM_EXECUTING</span>
+                   <span class="k">WON</span> · <span class="k">LOST</span> · <span class="k">SWITCHED_CADENCE</span>
+
+<b>Activity.type</b>     <span class="k">SEARCH</span> · <span class="k">CALL</span> · <span class="k">E_MAIL</span> · <span class="k">SOCIAL_POINT</span> (WHATSAPP | LINKEDIN)
+
+<b>Cadence.focus</b>     <span class="k">OUTBOUND</span> · <span class="k">INBOUND</span> · <span class="k">ACTIVE_INBOUND</span> · <span class="k">OTHER</span>
+<b>Cadence.priority</b>  <span class="k">VERY_HIGH</span> · <span class="k">HIGH</span> · <span class="k">MEDIUM</span> · <span class="k">LOW</span>
+
+<b>Call.status</b>       <span class="k">CONNECTED</span> · <span class="k">NOT_PERFORMED</span>
+<b>Call.output</b>       <span class="k">MEANINGFUL</span> · <span class="k">NOT_MEANINGFUL</span> · <span class="k">NO_CONTACT</span>
+
+<b>User.roles</b>        <span class="k">ADMINISTRATOR</span> · <span class="k">MANAGER</span> · <span class="k">SDR</span> · <span class="k">SALESMAN</span>
+<b>Permissions</b>       <span class="k">LEADS_VIEW_ALL</span> · <span class="k">LEADS_DELETE</span> · <span class="k">LEADS_ADD_MANUAL</span>
+                   <span class="k">LEADBASE_UPLOAD</span> · <span class="k">STATISTICS_ACCESS</span></pre>
+
+  <div class="col">
+    <p>O lead tem 16 campos nativos e aceita personalizados. A BLU precisou criar <strong>CNPJ</strong> como campo personalizado — o dado mais básico de uma prospecção B2B brasileira não é nativo na ferramenta.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-n">04</span><h2>A operação de agosto, em números</h2></div>
+  <div class="col">
+    <p>Todos os números abaixo são leitura direta das respostas de API da conta, período de 1 a 19 de agosto de 2026.</p>
+  </div>
+
+  <div class="mgrid">
+    <div class="mcell"><div class="m-l">Execuções de cadência</div><div class="m-v">597</div><div class="m-s">no mês, todos os SDRs</div></div>
+    <div class="mcell"><div class="m-l">Atividades finalizadas</div><div class="m-v">272</div><div class="m-s">158 ligações · 98 WhatsApp · 16 e-mails</div></div>
+    <div class="mcell hot"><div class="m-l">Atividades atrasadas</div><div class="m-v bad">151</div><div class="m-s">56% de tudo que foi executado</div></div>
+    <div class="mcell"><div class="m-l">Dias trabalhados</div><div class="m-v">4</div><div class="m-s">em 19 dias corridos</div></div>
+    <div class="mcell"><div class="m-l">Ligações</div><div class="m-v">170</div><div class="m-s">145 conectadas · 85%</div></div>
+    <div class="mcell hot"><div class="m-l">Conversas úteis</div><div class="m-v terra">19</div><div class="m-s">11% das conectadas</div></div>
+    <div class="mcell"><div class="m-l">Melhor faixa de contato</div><div class="m-v">18h</div><div class="m-s">96% de conexão entre 18h e 19h</div></div>
+    <div class="mcell"><div class="m-l">Oportunidades no mês</div><div class="m-v">3<span style="font-size:.9rem;color:var(--slate)"> / 25</span></div><div class="m-s">meta mensal de 25, conversão-alvo 15%</div></div>
+  </div>
+
+  <h4>O esforço que a própria ferramenta calcula para fechar a meta</h4>
+  <div class="mgrid">
+    <div class="mcell"><div class="m-l">Leads novos necessários</div><div class="m-v">167</div></div>
+    <div class="mcell"><div class="m-l">Atividades necessárias</div><div class="m-v">810</div></div>
+    <div class="mcell"><div class="m-l">Por SDR por dia</div><div class="m-v">41</div></div>
+  </div>
+
+  <h4>Onde o lead morre na régua</h4>
+  <div class="funnel">
+    <div class="fn-row"><div class="fn-track"><div class="fn-fill" style="width:100%"></div><span class="fn-lbl">Lead entrou na cadência</span></div><span class="fn-n">512</span></div>
+    <div class="fn-row"><div class="fn-track"><div class="fn-fill" style="width:97%"></div><span class="fn-lbl">Pesquisa concluída</span></div><span class="fn-n">498</span></div>
+    <div class="fn-row"><div class="fn-track"><div class="fn-fill" style="width:86%"></div><span class="fn-lbl">1ª ligação feita</span></div><span class="fn-n">441</span></div>
+    <div class="fn-row"><div class="fn-track"><div class="fn-fill warn" style="width:37%"></div><span class="fn-lbl">Contato falado · 58% de queda</span></div><span class="fn-n">187</span></div>
+    <div class="fn-row"><div class="fn-track"><div class="fn-fill warn" style="width:10%"></div><span class="fn-lbl">Conversa significativa</span></div><span class="fn-n">52</span></div>
+    <div class="fn-row"><div class="fn-track"><div class="fn-fill warn" style="width:2%"></div><span class="fn-lbl">Oportunidade</span></div><span class="fn-n">7</span></div>
+  </div>
+  <div class="col">
+    <p>A hemorragia está entre <em>ligação feita</em> e <em>contato falado</em>: 58% dos leads simplesmente nunca atendem. É o número que justifica telefone validado na origem e fila ordenada por janela de horário.</p>
+  </div>
+
+  <h4>O que a BLU paga por isso</h4>
+  <div class="mgrid">
+    <div class="mcell hot"><div class="m-l">Mensalidade</div><div class="m-v terra">R$ 1.789,98</div><div class="m-s">boleto · ciclo mensal</div></div>
+    <div class="mcell"><div class="m-l">Flow por usuário</div><div class="m-v">R$ 581,19</div></div>
+    <div class="mcell"><div class="m-l">Combo</div><div class="m-v">R$ 327,68</div></div>
+    <div class="mcell"><div class="m-l">Ao ano</div><div class="m-v">R$ 21,5 mil</div><div class="m-s">para 2 usuários pagantes ativos</div></div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-n">05</span><h2>As três coisas que a ferramenta não faz</h2></div>
+
+  <h3>1 · Cliente não existe como entidade</h3>
+  <div class="col">
+    <p>A BLU roda prospecção para clientes dentro de uma única conta. A lista de usuários mistura <code>@blusalesgroup.com.br</code> com <code>@frotai.com.br</code>, <code>@planning.com.br</code>, <code>@v4company.com</code> e <code>@trentiniadvocacia.com</code>. Como não há campo para o cliente, ele virou prefixo no nome da cadência:</p>
+  </div>
+  <div class="raw">
+    <span>ADV [BLU] [START]</span><span>IND [BLU] [START]</span><span>CNT [BLU] [START]</span>
+    <span>[FROTAÍ] [LEADS RICARDO]</span><span>[IMOB] [Planning]</span><span>[ENERGIA] [Planning]</span>
+    <span>[TRANSPORT] [Planning]</span><span>[CONNECT] [BLU] [DAVID]</span><span>LISTA LULEADS [BLU] [START]</span>
+  </div>
+  <div class="col">
+    <p>Convenção de nomenclatura no lugar de modelagem. A ferramenta tem times — e a BLU tem exatamente <strong>um</strong> time cadastrado, com um usuário. A multi-operação não é suportada; é improvisada.</p>
+  </div>
+
+  <h3>2 · A lista de leads entra na mão</h3>
+  <div class="col">
+    <p>As bases importadas se chamam <code>[Lista Luleads] - [JUN 26]</code>, <code>[ADV 72] - [JUN 26]</code>, <code>[CNT 34] - [JUN 26]</code> — dezenas delas, todas CSV. A BLU já tem o CapiBLU gerando exatamente essas listas, com CNPJ, sócios, decisores e telefone validado. Hoje o caminho é exportar XLSX e reimportar à mão, perdendo tudo que o CapiBLU sabe e que o Meetime não tem campo para receber.</p>
+  </div>
+
+  <h3>3 · A fila não se prioriza</h3>
+  <div class="col">
+    <p>151 de 272 atividades saíram fora do prazo. A ferramenta <em>sabe</em> que 18h–19h converte 96% — o número está no relatório de ligações — mas a fila do SDR continua em ordem cronológica pura. O dado existe e não governa nada.</p>
+  </div>
+
+  <div class="note">
+    <div class="note-t">O que isso define para o Bluutime</div>
+    <p>Paridade com Meetime em cadências, atividades, execução, timeline, estatísticas, relatórios, softphone e WhatsApp — mais cliente como entidade de primeira classe, CapiBLU como fonte nativa de leads, e fila ordenada por janela de contato, prioridade e atraso.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-n">06</span><h2>O que foi entregue no MVP</h2></div>
+  <div class="col">
+    <p>Front-end navegável, arquivo único, sem dependência externa além das fontes. Desenho herdado do CapiBLU — papel, azul-noite, terracota, IBM Plex, borda em vez de sombra — para que as duas ferramentas leiam como uma família. Os dados são mock derivados dos números reais acima.</p>
+  </div>
+
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>Tela</th><th>Origem no Meetime</th><th>Estado</th></tr></thead>
+      <tbody>
+        <tr><td>Painel da operação</td><td class="n">prospector.control-panel</td><td><span class="st st-ok">interativo</span></td></tr>
+        <tr><td>Execução — fila do SDR</td><td class="n">cadence-execution.activities</td><td><span class="st st-ok">interativo</span></td></tr>
+        <tr><td>Leads</td><td class="n">prospector.lead-list</td><td><span class="st st-ok">interativo</span></td></tr>
+        <tr><td>Cadências</td><td class="n">cadence-management</td><td><span class="st st-ok">interativo</span></td></tr>
+        <tr><td>Atividades</td><td class="n">activity-management</td><td><span class="st st-ok">interativo</span></td></tr>
+        <tr><td>Bases de leads</td><td class="n">lead-base-list</td><td><span class="st st-new">+ CapiBLU</span></td></tr>
+        <tr><td>Ligações</td><td class="n">dialer.list · statement</td><td><span class="st st-ok">interativo</span></td></tr>
+        <tr><td>WhatsApp</td><td class="n">whatsapp.conversation</td><td><span class="st st-ok">interativo</span></td></tr>
+        <tr><td>Metas</td><td class="n">mt.app.goals</td><td><span class="st st-ok">interativo</span></td></tr>
+        <tr><td>Estatísticas</td><td class="n">statistics.flow</td><td><span class="st st-ok">4 recortes</span></td></tr>
+        <tr><td>Relatórios</td><td class="n">mt.app.reports</td><td><span class="st st-ok">os 3</span></td></tr>
+        <tr><td>Ajustes</td><td class="n">prospector.config.*</td><td><span class="st st-ok">interativo</span></td></tr>
+        <tr><td>Clientes</td><td class="n">— não existe</td><td><span class="st st-new">novo</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <p>Fora do MVP de front-end: softphone WebRTC de verdade, editor de cadência arrastando etapas, OAuth dos CRMs, e o módulo de Demonstrações.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-n">07</span><h2>Como construir a versão real</h2></div>
+  <div class="col">
+    <p>Boa parte da fundação já está de pé no CapiBLU e não precisa ser reescrita.</p>
+    <ul>
+      <li><strong>Back-end</strong> — o FastAPI do CapiBLU já tem auth JWT, tokens de API com escopo, controle de custo e um conector Meetime que serve para extrair os dados antes do desligamento.</li>
+      <li><strong>Banco</strong> — Postgres para o domínio transacional. SQLite não aguenta a fila de execução com concorrência.</li>
+      <li><strong>Agendamento</strong> — as atividades precisam de scheduler de verdade: dias úteis e feriados são regra de negócio, não enfeite de tela.</li>
+      <li><strong>Telefonia</strong> — Asterisk + WebRTC é o caminho que o Meetime usa. Começar com click-to-call por provedor é o atalho aceitável.</li>
+      <li><strong>WhatsApp</strong> — Evolution API, a mesma escolha do Meetime.</li>
+      <li><strong>Migração</strong> — o token de API do Meetime permite tirar leads, cadências e histórico antes de cancelar.</li>
+    </ul>
+    <p class="pull">Ordem de construção: Clientes → Cadências e Atividades → Leads e Bases com CapiBLU → Execução → Estatísticas → Ligações → WhatsApp.</p>
+  </div>
+</section>
+
+<footer>
+  Relatório gerado a partir de 6 capturas do dashboard <code>meetime.com.br</code> e das respostas de API de <code>app.meetime.com.br</code>, conta BLU Sales Group. Todos os números citados são leitura direta dessas respostas — nenhum foi estimado.
+</footer>
+
+</div>

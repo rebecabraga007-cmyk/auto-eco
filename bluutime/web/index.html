@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bluutime</title>
+  <link rel="stylesheet" href="app.css?v=1">
+</head>
+<body class="app-loading">
+
+<div class="login-shell" id="loginShell">
+  <form class="login-card" id="loginForm">
+    <h1>Bluutime</h1>
+    <div class="sub">Prospecção da BLU · dados do CapiBLU</div>
+    <div class="form-group">
+      <label for="loginEmail">E-mail</label>
+      <input class="form-control" id="loginEmail" type="email" autocomplete="username" required>
+    </div>
+    <div class="form-group">
+      <label for="loginPass">Senha</label>
+      <input class="form-control" id="loginPass" type="password" autocomplete="current-password" required>
+    </div>
+    <button class="btn btn-main" style="width:100%;margin-top:6px" type="submit" id="loginBtn">Entrar</button>
+    <div class="login-error" id="loginError"></div>
+  </form>
+</div>
+
+<div class="navbar navbar-lg navbar-fixed-top navbar-inverse navbar-component">
+  <div class="navbar-boxed">
+    <div class="navbar-header">
+      <a class="navbar-brand" data-page="dashboard"><img src="assets/logo-inverse.png" alt="Bluutime"></a>
+    </div>
+    <div class="navbar-collapse collapse">
+      <ul class="nav navbar-nav">
+        <li><a data-page="dashboard"><span class="nav-icon position-left">▤</span><span class="text-semibold">Dashboard</span></a></li>
+      </ul>
+      <ul class="nav navbar-nav">
+        <li class="dropdown">
+          <a><span class="nav-icon position-left">◎</span><span class="text-semibold">Prospecção</span><span class="caret"></span></a>
+          <ul class="dropdown-menu dropdown-content">
+            <li><a data-page="painel">Painel de controle <span class="label label-success ml-5">Novo</span></a></li>
+            <li><a data-page="execucao">Execução</a></li>
+            <li><a data-page="leads">Leads</a></li>
+            <li><a data-page="cadencias">Cadências</a></li>
+            <li><a data-page="atividades">Atividades</a></li>
+            <li><a data-page="bases">Bases de leads</a></li>
+            <li><a data-page="clientes">Clientes <span class="label label-success ml-5">Novo</span></a></li>
+            <li class="divider"></li>
+            <li><a data-page="ajustes">Ajustes</a></li>
+          </ul>
+        </li>
+      </ul>
+      <ul class="nav navbar-nav">
+        <li class="dropdown">
+          <a><span class="nav-icon position-left">✆</span><span class="text-semibold">Ligações</span><span class="caret"></span></a>
+          <ul class="dropdown-menu dropdown-content">
+            <li><a data-page="ligacoes">Painel de Ligações</a></li>
+            <li><a data-page="lista-ligacoes">Lista de Ligações</a></li>
+            <li><a data-page="extrato">Extrato</a></li>
+          </ul>
+        </li>
+      </ul>
+      <ul class="nav navbar-nav">
+        <li><a data-page="whatsapp"><span class="nav-icon position-left">✉</span><span class="text-semibold">WhatsApp</span></a></li>
+      </ul>
+      <ul class="nav navbar-nav">
+        <li class="dropdown">
+          <a><span class="nav-icon position-left">⌗</span><span class="text-semibold">CapiBLU</span><span class="caret"></span>
+             <span class="label label-success nav-new-top">NOVO</span></a>
+          <ul class="dropdown-menu dropdown-content">
+            <li><a data-page="capiblu-empresas">Prospecção B2B</a></li>
+            <li><a data-page="capiblu-gente">Procurar GENTE</a></li>
+            <li><a data-page="capiblu-telefone">De quem é este telefone</a></li>
+            <li><a data-page="capiblu-enriquecimento">Minha planilha</a></li>
+            <li><a data-page="capiblu-dossie">Dossiê</a></li>
+            <li class="divider"></li>
+            <li><a data-page="capiblu-ferramentas">Todas as ferramentas</a></li>
+            <li><a data-page="capiblu-consumo">Consumo e custo</a></li>
+          </ul>
+        </li>
+      </ul>
+      <ul class="nav navbar-nav">
+        <li class="dropdown">
+          <a><span class="nav-icon position-left">◫</span><span class="text-semibold">Estatísticas</span><span class="caret"></span></a>
+          <ul class="dropdown-menu dropdown-content">
+            <li><a data-page="estatisticas">Prospecção</a></li>
+            <li><a data-page="relatorios">Relatórios</a></li>
+          </ul>
+        </li>
+      </ul>
+      <ul class="nav navbar-nav">
+        <li class="dropdown">
+          <a><span class="nav-icon position-left">⚙</span><span class="text-semibold">Integrações</span><span class="caret"></span></a>
+          <ul class="dropdown-menu dropdown-content">
+            <li><a data-page="integracoes">Integrações e webhooks</a></li>
+            <li><a data-page="usuarios">Usuários e times</a></li>
+            <li><a data-page="financeiro">Financeiro</a></li>
+          </ul>
+        </li>
+      </ul>
+      <ul class="nav navbar-nav navbar-right">
+        <li class="dropdown dropdown-user">
+          <a><span class="avatar" id="navAvatar">·</span><span class="navbar-user-name" id="navUser">…</span><span class="caret"></span></a>
+          <ul class="dropdown-menu dropdown-menu-right">
+            <li><a data-page="usuarios">Usuários</a></li>
+            <li><a data-page="ajustes">Ajustes</a></li>
+            <li class="divider"></li>
+            <li><a id="logoutBtn">Sair</a></li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="page-header">
+  <div class="breadcrumb-line breadcrumb-line-wide">
+    <div class="breadcrumb-boxed">
+      <ul class="breadcrumb">
+        <li><a data-page="dashboard">Bluutime</a></li>
+        <li><span id="crumbArea">Dashboard</span></li>
+        <li><span id="crumbCurrent">Visão geral</span></li>
+      </ul>
+      <ul class="breadcrumb-elements">
+        <li><a data-page="execucao">▶ Executar fila</a></li>
+        <li><a data-page="capiblu-empresas">⌗ Buscar no CapiBLU</a></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="page-container">
+  <div class="page-content">
+    <div class="content-wrapper">
+      <div class="content" id="view"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-stack" id="toasts"></div>
+<div id="modalRoot"></div>
+
+<script src="app.js?v=1"></script>
+</body>
+</html>

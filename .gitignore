@@ -23,3 +23,6 @@ build/
 .DS_Store
 .claude/
 relatorio_automacao_extraido.txt
+
+# banco local do Bluutime (dados reais importados do Meetime)
+bluutime/bluutime.db
