@@ -7,14 +7,18 @@ Duas camadas:
    CapiBLU em base de leads e cadência, sem exportar XLSX e reimportar CSV.
 """
 import asyncio
+import io
 import json
+import re
 from datetime import datetime
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi import (APIRouter, Body, Depends, File, HTTPException, Query,
+                     Request, UploadFile)
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from .. import serial
-from ..capiblu_client import capiblu_error, get, post
+from ..capiblu_client import call_files, call_raw, capiblu_error, get, post
 from ..db import get_db
 from ..models import Cadence, Lead, LeadBase
 from .flow import _schedule_cadence
@@ -286,6 +290,158 @@ def _clean_filtros(raw: dict) -> dict:
             continue
         out[key] = value
     return out
+
+
+# ── Arquivos: XLSX, PDF e upload de planilha ─────────────────────────────
+# Rotas do CapiBLU que produzem binário. A lista é fechada de propósito: um
+# proxy que aceita caminho arbitrário deixaria o cliente alcançar qualquer rota
+# do serviço de dados por fora das checagens daqui.
+EXPORTS = {
+    "empresas": ("POST", "/api/export/xlsx", "empresas.xlsx"),
+    "vinculos": ("POST", "/api/vinculos/export", "vinculos.xlsx"),
+    "modelo": ("POST", "/api/prospeccao/modelo/exportar", "modelo.xlsx"),
+    "planilha": ("POST", "/api/enrich/export", "planilha-enriquecida.xlsx"),
+}
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _stream(status: int, content, headers: dict, fallback_name: str,
+            mime: str = XLSX_MIME):
+    if status >= 400:
+        detail = content.get("detail") or content.get("message") if isinstance(content, dict) else None
+        raise HTTPException(status, detail or "Falha ao gerar o arquivo.")
+    # Preserva o nome que o CapiBLU escolheu; ele carrega o filtro da consulta.
+    disposition = headers.get("content-disposition") or \
+        f'attachment; filename="{fallback_name}"'
+    return StreamingResponse(
+        io.BytesIO(content), media_type=headers.get("content-type") or mime,
+        headers={"Content-Disposition": disposition})
+
+
+def _norm_columns(columns: list) -> list[dict]:
+    """Aceita `"CNPJ"` ou `{"key","label"}` na mesma lista.
+
+    `/enrich/run` devolve `base_cols` como texto e `added_cols` como objeto;
+    juntar os dois e mandar para o export dava 500, porque lá todo item é
+    tratado como dicionário.
+    """
+    out = []
+    for col in columns or []:
+        if isinstance(col, str):
+            out.append({"key": col, "label": col})
+        elif isinstance(col, dict) and (col.get("key") or col.get("label")):
+            out.append({"key": col.get("key") or col["label"],
+                        "label": col.get("label") or col["key"]})
+    return out
+
+
+@router.post("/export/{kind}")
+async def export_xlsx(kind: str, payload: dict = Body(default={})):
+    """Exporta em XLSX — empresas, vínculos, modelo do cliente ou planilha."""
+    spec = EXPORTS.get(kind)
+    if not spec:
+        raise HTTPException(404, f"Export desconhecido. Use: {', '.join(EXPORTS)}")
+    method, path, name = spec
+    body = dict(payload)
+    if "columns" in body:
+        body["columns"] = _norm_columns(body["columns"])
+        if not body["columns"]:
+            raise HTTPException(400, "Escolha ao menos uma coluna para exportar.")
+    status, content, headers = await call_raw(method, path, json=body)
+    return _stream(status, content, headers, name)
+
+
+@router.get("/dossie/{tipo}/{doc}")
+async def dossie_pdf(tipo: str, doc: str, request: Request):
+    """Dossiê em PDF de um CPF ou CNPJ. Gasta consulta e é restrito a admin."""
+    if tipo not in {"cpf", "cnpj"}:
+        raise HTTPException(400, "tipo deve ser cpf ou cnpj.")
+    limpo = re.sub(r"\D", "", doc)
+    if tipo == "cnpj" and not _valid_cnpj(limpo):
+        raise HTTPException(400, "CNPJ inválido.")
+    if tipo == "cpf" and len(limpo) != 11:
+        raise HTTPException(400, "CPF inválido.")
+    # `insight`, `familia` e `web` vêm da query e são opt-in: cada um gasta
+    # consulta a mais, então são repassados como o chamador pediu.
+    params = {**dict(request.query_params), "tipo": tipo, "doc": limpo}
+    status, content, headers = await call_raw("GET", "/api/dossie/pdf", params=params,
+                                              timeout=600.0)
+    return _stream(status, content, headers, f"dossie-{limpo}.pdf", "application/pdf")
+
+
+@router.post("/planilha/upload")
+async def planilha_upload(file: UploadFile = File(...)):
+    """Sobe a planilha do usuário e devolve as colunas que o CapiBLU detectou."""
+    status, content, _ = await call_files("/api/enrich/upload", upload=file)
+    if status >= 400:
+        raise HTTPException(status, (content or {}).get("detail", "Falha no upload."))
+    return json.loads(content) if isinstance(content, bytes) else content
+
+
+@router.post("/modelo/analisar")
+async def modelo_analisar(file: UploadFile = File(...)):
+    """Lê o layout de coluna que o cliente pede e vira um modelo de exportação."""
+    status, content, _ = await call_files("/api/prospeccao/modelo/analisar", upload=file)
+    if status >= 400:
+        raise HTTPException(status, (content or {}).get("detail", "Falha ao analisar."))
+    return json.loads(content) if isinstance(content, bytes) else content
+
+
+# O resto do ciclo de "Minha planilha": catálogo de campos → enriquecer →
+# exportar. Só o upload e o export são binários; estes três são JSON.
+
+def _unwrap(code: int, data: dict, fallback: str) -> dict:
+    """Converte o erro silencioso do CapiBLU em erro HTTP de verdade.
+
+    Várias rotas do serviço de dados devolvem 200 com `{"status": "error"}` —
+    "upload expirado", "selecione ao menos um campo". Repassado assim, o front
+    trata como sucesso e mostra tabela vazia sem dizer o porquê.
+    """
+    if code >= 400:
+        raise HTTPException(code, data.get("detail") or fallback)
+    if isinstance(data, dict) and data.get("status") == "error":
+        raise HTTPException(422, data.get("message") or fallback)
+    return data
+@router.get("/planilha/catalogo")
+async def planilha_catalogo():
+    """Os campos que dá para preencher, agrupados por fonte e custo."""
+    code, data = await get("/api/enrich/catalog")
+    return _unwrap(code, data, "Falha ao ler o catálogo.")
+
+
+@router.post("/planilha/enriquecer")
+async def planilha_enriquecer(payload: dict = Body(...)):
+    """Preenche as linhas da aba. `{upload_id, sheet, cnpj_col, fields, limite}`."""
+    if not payload.get("upload_id"):
+        raise HTTPException(400, "Envie o upload_id devolvido pelo upload.")
+    code, data = await post("/api/enrich/run", json=payload, timeout=900.0)
+    return _unwrap(code, data, "Falha ao enriquecer.")
+
+
+@router.post("/planilha/linha")
+async def planilha_linha(payload: dict = Body(...)):
+    """Enriquece uma linha só — a prévia antes de gastar na planilha inteira."""
+    code, data = await post("/api/enrich/linha", json=payload, timeout=300.0)
+    return _unwrap(code, data, "Falha ao enriquecer a linha.")
+
+
+@router.get("/modelos")
+async def listar_modelos():
+    code, data = await get("/api/prospeccao/modelos")
+    return _unwrap(code, data, "Falha ao listar modelos.")
+
+
+@router.post("/modelos")
+async def salvar_modelo(payload: dict = Body(...)):
+    code, data = await post("/api/prospeccao/modelos", json=payload)
+    return _unwrap(code, data, "Falha ao salvar o modelo.")
+
+
+@router.get("/modelos/campos")
+async def modelo_campos():
+    """Os campos que um modelo de exportação pode mapear."""
+    code, data = await get("/api/prospeccao/modelo/campos")
+    return _unwrap(code, data, "Falha ao listar campos.")
 
 
 @router.post("/prospect/preview")

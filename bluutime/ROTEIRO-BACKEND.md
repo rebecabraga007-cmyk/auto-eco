@@ -45,16 +45,43 @@ Verificado de ponta a ponta: 5 etapas agendadas em dia útil às 18h locais, res
 pausando 4 atividades, retomada reagendando, domingo 3h ajustado para segunda 9h,
 e o tick fechando cadência com o motivo "Fim de cadência".
 
-## Fase 2 — Ponte binária com o CapiBLU
+## Fase 2 — Ponte binária com o CapiBLU ✅
 
-`capiblu_client.call()` termina em `r.json()`. Só isso zera três abas inteiras.
+`capiblu_client.call()` terminava em `r.json()`, então nenhum XLSX, PDF ou upload
+atravessava a ponte. Agora `call_raw` devolve bytes e headers, e `call_files`
+repassa multipart.
 
-- `call_raw` (bytes) e `call_files` (multipart) no cliente
-- Rotas de exportação com `StreamingResponse` — XLSX padrão Datastone, export de vínculos, export por modelo
-- Upload de planilha (`enrich/upload`, `modelo/analisar`)
-- Dossiê PDF por proxy
+### Rotas novas
 
-Destrava: **Minha planilha** (0,43/10), **Meus modelos** (1,13/10) e todo export.
+| Rota | O que faz |
+|---|---|
+| `POST /export/{empresas·vinculos·modelo·planilha}` | XLSX, preservando o nome que o CapiBLU escolheu (ele carrega o filtro da consulta) |
+| `GET /dossie/{cpf·cnpj}/{doc}` | PDF; `insight`, `familia` e `web` são repassados como opt-in porque cada um gasta consulta a mais |
+| `POST /planilha/upload` · `/modelo/analisar` | Recebem a planilha do usuário |
+| `GET /planilha/catalogo` | 37 campos em 4 grupos, por fonte e custo |
+| `POST /planilha/enriquecer` · `/planilha/linha` | Preenche a aba, ou uma linha só como prévia |
+| `GET/POST /modelos` · `GET /modelos/campos` | Layout de coluna que o cliente pede |
+
+Verificado de ponta a ponta com CNPJs reais: subir planilha → 37 campos no
+catálogo → enriquecer 3 de 3 linhas com razão social, situação, capital e
+telefone da Assertiva → baixar XLSX de 7 colunas com as originais preservadas.
+
+### Três coisas que a ponte teve de consertar
+
+1. **Erro silencioso.** Várias rotas do serviço de dados devolvem **HTTP 200 com
+   `{"status": "error"}`** — "upload expirado", "selecione ao menos um campo".
+   Repassado assim, o front trata como sucesso e mostra tabela vazia sem dizer o
+   porquê. `_unwrap()` converte em 422.
+2. **Duas formas na mesma resposta.** `/enrich/run` devolve `base_cols` como
+   lista de texto e `added_cols` como lista de objeto; juntar os dois e mandar
+   para o export dava **500**. `_norm_columns()` aceita as duas formas.
+3. **Nome de parâmetro.** O dossiê espera `doc`, não `documento`.
+
+### Por que a lista de exports é fechada
+
+`EXPORTS` é um mapa fixo em vez de proxy de caminho livre: um proxy genérico
+deixaria o cliente alcançar qualquer rota do serviço de dados por fora das
+checagens do Bluutime — inclusive as que gastam consulta paga.
 
 ## Fase 3 — Canais de verdade
 
@@ -83,7 +110,7 @@ Hoje "enviar WhatsApp" grava uma linha na tabela e devolve 200. Ninguém recebe 
 
 ---
 
-Ordem recomendada: **1 ✅ → 2 → 3 → 5 → 4**. A fase 4 é a única que depende de
+Ordem recomendada: **1 ✅ → 2 ✅ → 3 → 5 → 4**. A fase 4 é a única que depende de
 decisão comercial (qual CRM), o resto é técnico e independente.
 
 ## Canal: um vocabulário, não dois

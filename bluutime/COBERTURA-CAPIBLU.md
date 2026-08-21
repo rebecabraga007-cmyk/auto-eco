@@ -12,15 +12,16 @@ em JSON cru · 7–9 = quase toda a superfície do original · 10 = paridade com
 1. **Todas as rotas do CapiBLU já respondem.** `app.py` monta o serviço de dados
    inteiro em `/capiblu`. O gargalo nunca foi backend: é interface e repasse de
    parâmetro.
-2. **`capiblu_client.call()` termina em `r.json()`.** Nenhum XLSX e nenhum upload
-   multipart atravessa a ponte — isso sozinho zera "Minha planilha", "Meus modelos"
-   e todos os exports.
+2. **`capiblu_client.call()` terminava em `r.json()`.** Nenhum XLSX e nenhum
+   upload multipart atravessava a ponte — isso sozinho zerava "Minha planilha",
+   "Meus modelos" e todos os exports. Resolvido na Fase 2 com `call_raw` e
+   `call_files`.
 
 ## Nota por aba
 
 | Aba do CapiBLU | Funções | Nota inicial | Depois do Bloco 1 |
 |---|---|---|---|
-| Dossiê | 4 | 8,75 | 8,75 |
+| Dossiê | 4 | 8,75 | 8,75 → **10** (Fase 2) |
 | De quem é este telefone | 3 | 5,67 | 5,67 |
 | Painel administrativo | 16 | 3,44 | 3,9 |
 | **Prospecção B2B** | 57 | **2,79** | **~7** |
@@ -30,9 +31,9 @@ em JSON cru · 7–9 = quase toda a superfície do original · 10 = paridade com
 | Empresa Assertiva | 11 | 1,36 | 1,8 |
 | Consulta Assertiva | 10 | 1,30 | 1,30 |
 | Vínculo empregatício | 13 | 1,15 | 1,6 |
-| Meus modelos | 8 | 1,13 | 1,13 |
+| Meus modelos | 8 | 1,13 | 1,13 → **~7** (Fase 2) |
 | Início | 6 | 0,67 | 0,67 |
-| Minha planilha | 7 | 0,43 | 0,43 |
+| Minha planilha | 7 | 0,43 | 0,43 → **~7** (Fase 2) |
 
 **Nota geral inicial: 2,3/10** — o motor inteiro, ~14% da superfície.
 
@@ -66,11 +67,15 @@ em JSON cru · 7–9 = quase toda a superfície do original · 10 = paridade com
 
 ### Bloco 2 — rota nova (destrava categorias inteiras)
 
+✅ **Feito** (ver `ROTEIRO-BACKEND.md`, Fase 2): `call_raw`, `call_files`, as
+rotas de exportação em `StreamingResponse`, o ciclo inteiro de "Minha planilha"
+e o dossiê PDF por proxy. **Minha planilha** sai de 0,43 e **Meus modelos** de
+1,13 para utilizáveis.
+
+Continua faltando:
+
 | O quê | Onde | Destrava |
 |---|---|---|
-| `call_raw` no client — devolver bytes sem `r.json()` | `capiblu_client.py` | todos os XLSX e o PDF por proxy |
-| `call_files` — repassar multipart | `capiblu_client.py` | `enrich/upload`, `modelo/analisar` |
-| Rotas de exportação → `StreamingResponse` | `routers/capiblu.py` | XLSX padrão Datastone, export de vínculos, export por modelo |
 | Dedup contra o CRM Meetime (distinto do dedup local) | `routers/capiblu.py` | `/api/meetime/dedup` |
 | "Continuar buscando" no servidor (repaginar até fechar N com decisor) | `routers/capiblu.py` | hoje é laço de browser no CapiBLU |
 | Validação de telefone em lote, por pessoa, parando no 1º confirmado | `routers/capiblu.py` | hoje valida só o primeiro número de um lead |
