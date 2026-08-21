@@ -7,9 +7,10 @@ Um processo só:
 - `/api/*` é o domínio novo (cadências, leads, execução, ligações, métricas);
 - `/` serve a SPA no design system da Meetime.
 """
+import asyncio
 import os
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -21,6 +22,7 @@ import auth as capiblu_auth  # noqa: E402  — vive em lupa-empresas/backend
 
 from .capiblu_client import capiblu_app, capiblu_error  # noqa: E402
 from .migrate import run as run_migrations  # noqa: E402
+from . import tick  # noqa: E402
 from .routers import (analytics, capiblu, core, dialer, flow,  # noqa: E402
                       meetime, whatsapp)
 from .seed import seed_if_empty  # noqa: E402
@@ -97,9 +99,30 @@ else:
     print(f"[bluutime] CapiBLU indisponível: {capiblu_error()}")
 
 
+@app.on_event("startup")
+async def _start_tick():
+    """O laço que fecha cadência e limpa atividade vencida (server/tick.py)."""
+    app.state.tick = asyncio.create_task(tick.loop())
+
+
+@app.on_event("shutdown")
+async def _stop_tick():
+    task = getattr(app.state, "tick", None)
+    if task:
+        task.cancel()
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "capiblu": capiblu_error() is None}
+
+
+@app.post("/api/admin/tick")
+async def run_tick(request: Request):
+    """Roda agora o que o laço faria — para não esperar 5 min ao testar."""
+    if (request.state.user or {}).get("role") != "admin":
+        raise HTTPException(403, "Só admin.")
+    return await asyncio.to_thread(tick.run_once)
 
 
 @app.get("/")

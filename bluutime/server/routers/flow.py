@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import (Activity, Cadence, CadenceStep, CadenceUser, Client,
                       CustomField, Lead, LeadActivity, LeadBase, LeadFieldValue,
-                      LostReason, User)
-from .. import serial
+                      LostReason, Template, User)
+from .. import agenda, render, serial
 
 router = APIRouter(prefix="/api/flow")
 
@@ -128,7 +128,11 @@ def add_step(cid: int, payload: dict = Body(...), db: Session = Depends(get_db))
     day = int(payload.get("day", 1))
     order = (db.query(func.count(CadenceStep.id))
              .filter_by(cadence_id=cid, day=day).scalar() or 0) + 1
-    s = CadenceStep(cadence_id=cid, activity_id=activity_id, day=day, order_in_day=order)
+    template_id = payload.get("templateId")
+    if template_id and not db.get(Template, template_id):
+        raise HTTPException(400, "Modelo de mensagem inválido.")
+    s = CadenceStep(cadence_id=cid, activity_id=activity_id, day=day,
+                    order_in_day=order, template_id=template_id)
     db.add(s)
     db.commit()
     return serial.cadence_step(s)
@@ -141,6 +145,99 @@ def delete_step(cid: int, sid: int, db: Session = Depends(get_db)):
         db.delete(s)
         db.commit()
     return {"ok": True}
+
+
+# ── Modelos de mensagem ──
+CHANNELS = {"EMAIL", "WHATSAPP", "SOCIAL"}
+
+
+def _template(t: Template) -> dict:
+    return {"id": t.id, "name": t.name, "channel": t.channel, "subject": t.subject,
+            "body": t.body, "clientId": t.client_id, "active": t.active,
+            "variables": sorted({m.group(1).lower()
+                                 for m in render._VAR.finditer(f"{t.subject} {t.body}")})}
+
+
+@router.get("/templates")
+def list_templates(channel: str | None = None, client_id: int | None = None,
+                   db: Session = Depends(get_db)):
+    q = db.query(Template).filter(Template.active.is_(True))
+    if channel:
+        q = q.filter(Template.channel == channel.upper())
+    if client_id:
+        q = q.filter(Template.client_id == client_id)
+    return [_template(t) for t in q.order_by(Template.name).all()]
+
+
+@router.post("/templates")
+def create_template(payload: dict = Body(...), db: Session = Depends(get_db)):
+    channel = (payload.get("channel") or "EMAIL").upper()
+    if channel not in CHANNELS:
+        raise HTTPException(400, f"Canal inválido. Use: {', '.join(sorted(CHANNELS))}")
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "Dê um nome ao modelo.")
+    t = Template(name=name, channel=channel, subject=payload.get("subject", ""),
+                 body=payload.get("body", ""), client_id=payload.get("clientId"),
+                 created_by_id=payload.get("createdById"))
+    db.add(t)
+    db.commit()
+    return _template(t)
+
+
+@router.patch("/templates/{tid}")
+def update_template(tid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    t = db.get(Template, tid)
+    if not t:
+        raise HTTPException(404, "Modelo não encontrado.")
+    for key, attr in {"name": "name", "subject": "subject", "body": "body",
+                      "clientId": "client_id", "active": "active"}.items():
+        if key in payload:
+            setattr(t, attr, payload[key])
+    if "channel" in payload:
+        if payload["channel"].upper() not in CHANNELS:
+            raise HTTPException(400, "Canal inválido.")
+        t.channel = payload["channel"].upper()
+    db.commit()
+    return _template(t)
+
+
+@router.delete("/templates/{tid}")
+def delete_template(tid: int, db: Session = Depends(get_db)):
+    t = db.get(Template, tid)
+    if not t:
+        raise HTTPException(404, "Modelo não encontrado.")
+    # Passo de cadência aponta para o modelo — desativar preserva o histórico.
+    used = db.query(CadenceStep).filter(CadenceStep.template_id == tid).count()
+    if used:
+        t.active = False
+        db.commit()
+        return {"ok": True, "deactivated": True, "usedBySteps": used}
+    db.delete(t)
+    db.commit()
+    return {"ok": True, "deactivated": False}
+
+
+@router.post("/templates/{tid}/preview")
+def preview_template(tid: int, payload: dict = Body(default={}),
+                     db: Session = Depends(get_db)):
+    """Renderiza o modelo com um lead real — ou com o primeiro que houver.
+
+    É o que evita mandar "Olá {{primeiro_nome}}" para um cliente.
+    """
+    t = db.get(Template, tid)
+    if not t:
+        raise HTTPException(404, "Modelo não encontrado.")
+    lead = (db.get(Lead, payload["leadId"]) if payload.get("leadId")
+            else db.query(Lead).order_by(Lead.id.desc()).first())
+    if not lead:
+        raise HTTPException(400, "Não há lead para pré-visualizar.")
+    user = db.get(User, payload["userId"]) if payload.get("userId") else lead.sdr
+    values = render.lead_vars(lead, user)
+    return {"leadId": lead.id, "leadName": lead.name,
+            "subject": render.render(t.subject, values),
+            "body": render.render(t.body, values),
+            "missing": render.missing(f"{t.subject}\n{t.body}", values)}
 
 
 # ── Biblioteca de atividades ──
@@ -289,24 +386,27 @@ def _build_lead(db: Session, row: dict, defaults: dict | None = None) -> Lead:
 
 
 def _schedule_cadence(db: Session, lead: Lead) -> int:
-    """Agenda as atividades da cadência. Pula fins de semana."""
+    """Agenda as atividades da cadência em dias úteis, no fuso da operação.
+
+    O dia 1 da cadência é o dia da entrada do lead; os demais contam em dias
+    úteis, pulando fim de semana e feriado. `scheduled_at` é gravado em UTC.
+    """
     if not lead.cadence_id:
         return 0
     cadence = db.get(Cadence, lead.cadence_id)
     if not cadence:
         return 0
-    base = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
+    holidays = agenda.holiday_dates(db)
+    start = agenda.now_local().date()
     created = 0
-    for step in cadence.steps:
-        when = base + timedelta(days=step.day - 1)
-        while when.weekday() >= 5:
-            when += timedelta(days=1)
-        when = when.replace(hour=lead.best_hour)
+    for step in sorted(cadence.steps, key=lambda s: (s.day, s.order_in_day)):
+        day = agenda.add_business_days(start, step.day - 1, holidays)
+        when = agenda.slot(day, lead.best_hour, holidays)
         db.add(LeadActivity(lead_id=lead.id, activity_id=step.activity_id,
                             cadence_step_id=step.id, user_id=lead.sdr_id,
                             type=step.activity.type,
                             social_network=step.activity.social_network,
-                            scheduled_at=when))
+                            scheduled_at=agenda.to_utc(when)))
         created += 1
     if created:
         lead.status = "EXECUTING"
@@ -323,7 +423,17 @@ def update_lead(lid: int, payload: dict = Body(...), db: Session = Depends(get_d
               "site": "site", "state": "state", "city": "city", "linkedIn": "linkedin",
               "annotations": "annotations", "cnpj": "cnpj", "cpf": "cpf",
               "razaoSocial": "razao_social", "sdrId": "sdr_id", "clientId": "client_id",
-              "bestHour": "best_hour"}
+              "bestHour": "best_hour", "cadenceId": "cadence_id",
+              "leadBaseId": "lead_base_id", "externalReference": "external_reference",
+              "decisionLevel": "decision_level", "whatsapp": "whatsapp",
+              "doNotCall": "do_not_call"}
+    # Campo que não existe é erro, não silêncio: antes `cadenceId` não estava no
+    # mapa e o PATCH devolvia 200 sem ter mudado nada.
+    unknown = set(payload) - set(fields) - {"customFields"}
+    if unknown:
+        raise HTTPException(400, f"Campo desconhecido: {', '.join(sorted(unknown))}")
+    if payload.get("cadenceId") and not db.get(Cadence, payload["cadenceId"]):
+        raise HTTPException(400, "Cadência inexistente.")
     for key, attr in fields.items():
         if key in payload:
             setattr(l, attr, payload[key])
@@ -544,14 +654,62 @@ def execute_activity(aid: int, payload: dict = Body(default={}),
         raise HTTPException(400, "Atividade já finalizada.")
     a.status = "SKIPPED" if payload.get("skip") else "DONE"
     a.done_at = datetime.utcnow()
-    a.notes = payload.get("notes", "")
+    if payload.get("notes"):                 # não apaga anotação ao executar sem texto
+        a.notes = payload["notes"]
     lead = a.lead
     lead.current_step += 1
     if lead.status == "WAITING":
         lead.status = "EXECUTING"
+
+    # Regra de avanço: o lead respondeu, então a sequência automática para.
+    # Continuar disparando e-mail de cadência para quem já está conversando com
+    # o SDR é o jeito mais rápido de queimar o lead.
+    paused = 0
+    if payload.get("replied"):
+        # `LeadActivity.id != aid` porque a atividade recém-executada ainda não
+        # foi para o banco: sem isso ela entraria na contagem das pausadas.
+        paused = (db.query(LeadActivity)
+                  .filter(LeadActivity.lead_id == lead.id,
+                          LeadActivity.id != aid,
+                          LeadActivity.status == "PENDING")
+                  .update({"status": "PAUSED"}, synchronize_session=False))
+        lead.status = "ON_EXTRA_ACTIVITY"
     db.commit()
-    return {"ok": True, "activity": serial.lead_activity(a, datetime.utcnow()),
+    return {"ok": True, "pausedActivities": paused,
+            "activity": serial.lead_activity(a, datetime.utcnow()),
             "lead": serial.lead(lead)}
+
+
+@router.post("/execution/leads/{lid}/resume")
+def resume_cadence(lid: int, payload: dict = Body(default={}),
+                   db: Session = Depends(get_db)):
+    """Retoma a cadência pausada pela resposta do lead.
+
+    As atividades que sobraram são reagendadas a partir de hoje — remontar no
+    calendário original devolveria tudo já vencido.
+    """
+    lead = db.get(Lead, lid)
+    if not lead:
+        raise HTTPException(404, "Lead não encontrado.")
+    paused = (db.query(LeadActivity)
+              .filter(LeadActivity.lead_id == lid, LeadActivity.status == "PAUSED")
+              .order_by(LeadActivity.scheduled_at).all())
+    if not paused:
+        raise HTTPException(400, "Esse lead não tem atividade pausada.")
+
+    holidays = agenda.holiday_dates(db)
+    start = agenda.now_local().date()
+    # Preserva o espaçamento original entre as etapas, recontado a partir de hoje.
+    first = paused[0].scheduled_at.date()
+    for act in paused:
+        gap = (act.scheduled_at.date() - first).days
+        day = agenda.add_business_days(start, gap, holidays)
+        act.scheduled_at = agenda.to_utc(agenda.slot(day, lead.best_hour, holidays))
+        act.status = "PENDING"
+    lead.status = "EXECUTING"
+    db.commit()
+    return {"ok": True, "resumed": len(paused),
+            "nextAt": serial.iso(paused[0].scheduled_at)}
 
 
 @router.post("/execution/leads/{lid}/outcome")
@@ -586,11 +744,18 @@ def reschedule(aid: int, payload: dict = Body(...), db: Session = Depends(get_db
     if not a:
         raise HTTPException(404, "Atividade não encontrada.")
     try:
-        a.scheduled_at = datetime.fromisoformat(payload["scheduledAt"].replace("Z", ""))
+        wanted = datetime.fromisoformat(payload["scheduledAt"].replace("Z", ""))
     except (KeyError, ValueError):
         raise HTTPException(400, "scheduledAt inválido.")
+    # Chega em UTC; a janela útil é local. Sem isso dava para reagendar uma
+    # ligação para domingo às 3h da manhã.
+    local = agenda.next_open(agenda.to_local(wanted), agenda.holiday_dates(db))
+    a.scheduled_at = agenda.to_utc(local)
+    a.status = "PENDING"
     db.commit()
-    return serial.lead_activity(a, datetime.utcnow())
+    return {**serial.lead_activity(a, datetime.utcnow()),
+            "adjusted": local != agenda.to_local(wanted),
+            "scheduledLocal": local.isoformat(timespec="minutes")}
 
 
 def _fire_webhooks(db: Session, event: str, data: dict) -> None:

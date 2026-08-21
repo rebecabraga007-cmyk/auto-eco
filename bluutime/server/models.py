@@ -127,8 +127,29 @@ class CadenceStep(Base):
     activity_id: Mapped[int] = mapped_column(ForeignKey("activity.id"))
     day: Mapped[int] = mapped_column(Integer, default=1)
     order_in_day: Mapped[int] = mapped_column(Integer, default=1)
+    template_id: Mapped[int | None] = mapped_column(ForeignKey("template.id"))
     cadence: Mapped["Cadence"] = relationship(back_populates="steps")
     activity: Mapped["Activity"] = relationship()
+    template: Mapped["Template | None"] = relationship()
+
+
+class Template(Base):
+    """Texto de um passo de e-mail, WhatsApp ou social.
+
+    O corpo aceita variáveis no formato `{{primeiro_nome}}` — a substituição
+    fica em `render.py`, para o mesmo modelo servir a canais diferentes.
+    """
+    __tablename__ = "template"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(160))
+    channel: Mapped[str] = mapped_column(String(20), default="EMAIL")  # EMAIL|WHATSAPP|SOCIAL
+    subject: Mapped[str] = mapped_column(String(240), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("client.id"))
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    client: Mapped["Client | None"] = relationship()
 
 
 class LeadBase(Base):
@@ -225,7 +246,8 @@ class LeadActivity(Base):
     user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     type: Mapped[str] = mapped_column(String(20), default="CALL")
     social_network: Mapped[str] = mapped_column(String(20), default="")
-    status: Mapped[str] = mapped_column(String(20), default="PENDING")  # PENDING|DONE|SKIPPED
+    status: Mapped[str] = mapped_column(String(20), default="PENDING")
+    """PENDING · DONE · SKIPPED · PAUSED (lead respondeu; ver /execution/leads/{id}/resume)"""
     scheduled_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     done_at: Mapped[datetime | None] = mapped_column(DateTime)
     notes: Mapped[str] = mapped_column(Text, default="")

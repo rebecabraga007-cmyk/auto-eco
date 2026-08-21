@@ -1,6 +1,7 @@
 """Serialização — mantém o formato de resposta compatível com a API do Meetime."""
 from datetime import datetime
 
+from . import agenda
 from .models import PRIORITY_WEIGHT
 
 
@@ -52,7 +53,8 @@ def cadence(c, overview=None, users=None):
 
 def cadence_step(s):
     return {"id": s.id, "day": s.day, "order": s.order_in_day,
-            "activity": activity(s.activity)}
+            "activity": activity(s.activity), "templateId": s.template_id,
+            "templateName": s.template.name if s.template else ""}
 
 
 def lead(l, custom=None):
@@ -119,6 +121,9 @@ def queue_score(la, now) -> float:
     hours_late = max(0.0, (now - la.scheduled_at).total_seconds() / 3600)
     prio = PRIORITY_WEIGHT.get(la.lead.cadence.priority, 2) if la.lead and la.lead.cadence else 2
     best = la.lead.best_hour if la.lead else 18
-    window = max(0, 6 - abs(now.hour - best))          # 6 na hora exata, 0 longe demais
+    # `now` e `scheduled_at` são UTC; `best_hour` é hora de Brasília. Sem a
+    # conversão a janela das 18h abria às 15h.
+    hour_local = agenda.to_local(now).hour
+    window = max(0, 6 - abs(hour_local - best))        # 6 na hora exata, 0 longe demais
     call_bonus = 3 if la.type == "CALL" else 0
     return round(hours_late * 1.5 + prio * 6 + window * 2.5 + call_bonus, 2)
