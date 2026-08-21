@@ -19,6 +19,47 @@ async function api(path, options = {}) {
   return data;
 }
 
+/** Baixa um arquivo vindo de uma rota que devolve binário.
+ *
+ * Não dá para usar `window.open` aqui: o export é POST com o filtro no corpo,
+ * e o erro vem em JSON — que precisa virar mensagem em vez de baixar um
+ * arquivo chamado "erro". */
+async function apiDownload(path, { method = "POST", body, fallbackName = "arquivo.xlsx" } = {}) {
+  const res = await fetch(path, {
+    method, credentials: "same-origin",
+    headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) { showLogin(); throw new Error("Não autenticado."); }
+  if (!res.ok) {
+    let detail = `Erro ${res.status}`;
+    try { detail = (await res.json()).detail || detail; } catch { /* corpo não-JSON */ }
+    throw new Error(detail);
+  }
+  const disp = res.headers.get("content-disposition") || "";
+  const match = disp.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement("a"),
+    { href: url, download: decodeURIComponent(match ? match[1] : fallbackName) });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return blob.size;
+}
+
+async function apiUpload(path, file, extra = {}) {
+  const form = new FormData();
+  form.append("file", file);
+  Object.entries(extra).forEach(([k, v]) => form.append(k, v));
+  const res = await fetch(path, { method: "POST", credentials: "same-origin", body: form });
+  if (res.status === 401) { showLogin(); throw new Error("Não autenticado."); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || `Erro ${res.status}`);
+  return data;
+}
+
 const h = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -1741,6 +1782,7 @@ function renderB2B(res) {
       <span class="spacer"></span>
       <button class="btn btn-default btn-xs" id="selNone">Limpar seleção</button>
       <button class="btn btn-default btn-xs" id="dedupBtn">Checar duplicados</button>
+      <button class="btn btn-default btn-xs" id="xlsxBtn">Baixar XLSX</button>
       <button class="btn btn-main btn-xs" id="toBase">Montar base de leads</button>
     </div>
     <div id="dedupOut"></div>
@@ -1773,6 +1815,21 @@ function renderB2B(res) {
     out.innerHTML = `<div class="alert ${r.meta.duplicates ? "alert-info" : "alert-success"} alert-styled-left">
       ${r.meta.duplicates} de ${r.meta.checked} já existem como lead aqui dentro.
       ${r.existing.slice(0, 8).map((x) => h(x.name)).join(", ")}</div>`;
+  };
+  document.getElementById("xlsxBtn").onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span> gerando…`;
+    try {
+      // Reenvia os filtros, não as linhas da tela: o XLSX sai com a consulta
+      // inteira, não só com a página que está à vista.
+      await apiDownload("/api/capiblu/export/empresas", {
+        body: { filtros: state.b2bFilters || {}, limite: Math.min(res.total || 1000, 5000) },
+        fallbackName: "empresas.xlsx" });
+      toast("Arquivo baixado.", "ok");
+    } catch (err) { toast(err.message, "err"); }
+    btn.disabled = false;
+    btn.textContent = "Baixar XLSX";
   };
   document.getElementById("toBase").onclick = () => openProspectImport(selected());
 }
@@ -2061,29 +2118,298 @@ PAGES["capiblu-telefone"] = {
   },
 };
 
+/* ── Minha planilha: subir → escolher campos → enriquecer → baixar ─────── */
+const planilha = { upload: null, sheet: null, cnpjCol: null, catalogo: null, run: null };
+
 PAGES["capiblu-enriquecimento"] = {
   area: "CapiBLU", title: "Minha planilha",
   async render() {
     view.innerHTML = `
       <div class="alert alert-info alert-styled-left">
-        O enriquecimento em lote roda no CapiBLU. Aqui você acessa o mesmo motor, e o resultado
-        pode virar base de leads sem sair da tela.
+        Suba sua planilha, escolha o que preencher e baixe de volta com as colunas
+        originais intactas. O que vem da Receita é instantâneo e não gasta consulta;
+        telefone e sócio passam pela Assertiva e são cobrados por linha.
       </div>
-      ${panel("Enriquecer lista de CNPJs", `
-        <div class="field"><label>CNPJs (um por linha, máx. 200)</label>
-          <textarea class="form-control" id="ecCnpjs" style="min-height:150px"
-            placeholder="06990590000123&#10;12345678000199"></textarea></div>
-        <button class="btn btn-main btn-sm" id="ecGo">Buscar contatos</button>
-        <span class="text-muted text-size-small ml-5">Gasta consulta por CNPJ</span>`)}
-      <div id="ecOut"></div>`;
-    document.getElementById("ecGo").onclick = () => {
-      const cnpjs = document.getElementById("ecCnpjs").value.split(/\s+/)
-        .map((c) => c.replace(/\D/g, "")).filter((c) => c.length === 14);
-      if (!cnpjs.length) return toast("Informe ao menos um CNPJ válido (14 dígitos).", "err");
-      openProspectImport(cnpjs);
-    };
+      <div id="etapa1"></div><div id="etapa2"></div>
+      <div id="etapa3"></div><div id="etapa4"></div>`;
+    renderUploadStep();
+    if (planilha.upload) { await renderCamposStep(); }
+    if (planilha.run) renderResultado();
   },
 };
+
+function renderUploadStep() {
+  const up = planilha.upload;
+  document.getElementById("etapa1").innerHTML = panel("1 · A planilha", up ? `
+      <div class="toolbar" style="border:0;padding:0;background:none">
+        <span><strong>${h(up.fileName)}</strong>
+          <span class="text-muted">· ${up.sheets.length} aba${up.sheets.length > 1 ? "s" : ""}</span></span>
+        <span class="spacer"></span>
+        <button class="btn btn-default btn-xs" id="pTrocar">Trocar planilha</button>
+      </div>
+      <div class="filter-row mt-10">
+        <div><label class="text-muted text-size-small">Aba</label>
+          <select class="form-control" id="pSheet">
+            ${up.sheets.map((s) => `<option value="${h(s.nome || s.name)}"
+              ${(s.nome || s.name) === planilha.sheet ? " selected" : ""}>
+              ${h(s.nome || s.name)} (${s.linhas ?? s.rows ?? "?"} linhas)</option>`).join("")}
+          </select></div>
+        <div><label class="text-muted text-size-small">Coluna do CNPJ</label>
+          <select class="form-control" id="pCnpjCol"></select></div>
+      </div>` : `
+      <div class="field">
+        <label>Arquivo XLSX ou CSV</label>
+        <input type="file" class="form-control" id="pFile" accept=".xlsx,.xls,.csv">
+      </div>
+      <button class="btn btn-main btn-sm" id="pSubir">Subir planilha</button>`);
+
+  if (!up) {
+    document.getElementById("pSubir").onclick = async () => {
+      const file = document.getElementById("pFile").files[0];
+      if (!file) return toast("Escolha um arquivo.", "err");
+      const btn = document.getElementById("pSubir");
+      btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> subindo…`;
+      try {
+        const r = await apiUpload("/api/capiblu/planilha/upload", file);
+        planilha.upload = { ...r, fileName: file.name };
+        planilha.sheet = (r.sheets[0].nome || r.sheets[0].name);
+        planilha.run = null;
+        go("capiblu-enriquecimento");
+      } catch (e) { toast(e.message, "err"); btn.disabled = false; btn.textContent = "Subir planilha"; }
+    };
+    return;
+  }
+
+  const sheetSel = document.getElementById("pSheet");
+  const colSel = document.getElementById("pCnpjCol");
+  const fillCols = () => {
+    const s = up.sheets.find((x) => (x.nome || x.name) === sheetSel.value) || up.sheets[0];
+    const cols = (s.colunas || s.columns || []).map((c) => typeof c === "string" ? c : c.header);
+    // A coluna de CNPJ é adivinhada pelo nome; o usuário corrige se errar.
+    const guess = cols.find((c) => /cnpj|documento|doc/i.test(c)) || cols[0];
+    planilha.cnpjCol = planilha.cnpjCol && cols.includes(planilha.cnpjCol) ? planilha.cnpjCol : guess;
+    colSel.innerHTML = cols.map((c) =>
+      `<option${c === planilha.cnpjCol ? " selected" : ""}>${h(c)}</option>`).join("");
+  };
+  sheetSel.onchange = () => { planilha.sheet = sheetSel.value; planilha.cnpjCol = null; fillCols(); };
+  colSel.onchange = () => { planilha.cnpjCol = colSel.value; };
+  fillCols();
+  document.getElementById("pTrocar").onclick = () => {
+    Object.assign(planilha, { upload: null, sheet: null, cnpjCol: null, run: null });
+    go("capiblu-enriquecimento");
+  };
+}
+
+async function renderCamposStep() {
+  const el = document.getElementById("etapa2");
+  el.innerHTML = LOADING;
+  try {
+    planilha.catalogo = planilha.catalogo || await api("/api/capiblu/planilha/catalogo");
+  } catch (e) {
+    el.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+    return;
+  }
+  const grupos = planilha.catalogo.grupos || [];
+  const pago = (g) => /assertiva|integralx|workapi/i.test(g.fonte || "");
+  el.innerHTML = panel("2 · O que preencher", `
+    ${grupos.map((g, i) => `
+      <div class="mb-20">
+        <label style="font-weight:600">
+          <input type="checkbox" class="grp-all" data-grp="${i}"> ${h(g.grupo)}
+        </label>
+        <span class="pill ${pago(g) ? "amber" : "green"} ml-5">${h(g.fonte || "")}</span>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:4px"
+             class="mt-10">
+          ${(g.campos || []).map((c) => `<label class="text-size-small">
+            <input type="checkbox" class="campo" data-grp="${i}" value="${h(c.key)}"> ${h(c.label)}
+          </label>`).join("")}
+        </div>
+      </div>`).join("")}
+    <div class="toolbar" style="border:0;padding:0;background:none">
+      <span class="text-muted text-size-small" id="pCusto">nenhum campo escolhido</span>
+      <span class="spacer"></span>
+      <input class="form-control" type="number" id="pLimite" value="50" min="1" max="2000"
+             style="width:90px" title="Quantas linhas processar">
+      <button class="btn btn-default btn-sm" id="pPrevia">Testar 1 linha</button>
+      <button class="btn btn-main btn-sm" id="pRodar">Enriquecer</button>
+    </div>`, { subtitle: "Campos da Receita são instantâneos e gratuitos; os demais gastam consulta por linha." });
+
+  const marcados = () => [...view.querySelectorAll(".campo:checked")].map((c) => c.value);
+  const atualizaCusto = () => {
+    const n = marcados().length;
+    const pagos = [...view.querySelectorAll(".campo:checked")]
+      .filter((c) => pago(grupos[+c.dataset.grp])).length;
+    document.getElementById("pCusto").innerHTML = n
+      ? `${n} campo${n > 1 ? "s" : ""} · <strong>${pagos ? `${pagos} cobrado${pagos > 1 ? "s" : ""}` : "nenhum cobrado"}</strong>`
+      : "nenhum campo escolhido";
+  };
+  view.querySelectorAll(".campo").forEach((c) => { c.onchange = atualizaCusto; });
+  view.querySelectorAll(".grp-all").forEach((g) => {
+    g.onchange = () => {
+      view.querySelectorAll(`.campo[data-grp="${g.dataset.grp}"]`)
+        .forEach((c) => { c.checked = g.checked; });
+      atualizaCusto();
+    };
+  });
+
+  document.getElementById("pPrevia").onclick = () => rodarEnriquecimento(marcados(), 1, true);
+  document.getElementById("pRodar").onclick = () =>
+    rodarEnriquecimento(marcados(), Number(document.getElementById("pLimite").value) || 50, false);
+}
+
+async function rodarEnriquecimento(fields, limite, previa) {
+  if (!fields.length) return toast("Escolha ao menos um campo.", "err");
+  const el = document.getElementById("etapa3");
+  el.innerHTML = `<div class="alert alert-info alert-styled-left"><span class="spinner"></span>
+    Enriquecendo ${limite} linha${limite > 1 ? "s" : ""}…</div>`;
+  try {
+    const r = await api("/api/capiblu/planilha/enriquecer", { method: "POST", body: {
+      upload_id: planilha.upload.upload_id, sheet: planilha.sheet,
+      cnpj_col: planilha.cnpjCol, fields, limite } });
+    planilha.run = { ...r, previa };
+    el.innerHTML = "";
+    renderResultado();
+  } catch (e) {
+    el.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+  }
+}
+
+function renderResultado() {
+  const r = planilha.run;
+  const cols = [...(r.base_cols || []), ...(r.added_cols || [])]
+    .map((c) => typeof c === "string" ? { key: c, label: c } : c);
+  // Campo que a fonte não tinha volta como string vazia, não como nulo — sem
+  // este trecho a célula fica em branco e parece erro de renderização.
+  const cell = (v) => {
+    const s = String(v ?? "").trim();
+    return s ? h(s.slice(0, 42)) : `<span class="text-muted">—</span>`;
+  };
+  const rows = (r.rows || []).map((row) => ({ cells: cols.map((c) => cell(row[c.key])) }));
+  document.getElementById("etapa3").innerHTML = panel(
+    `${r.previa ? "Prévia" : "3 · Resultado"}`,
+    table(cols.map((c) => c.label), rows, { scroll: true }),
+    { subtitle: `${r.enriquecidas} de ${r.total_aba} linhas · coluna de CNPJ: ${h(r.cnpj_col)}`,
+      actions: r.previa
+        ? `<span class="text-muted text-size-small">Confira e rode a planilha inteira.</span>`
+        : `<button class="btn btn-main btn-xs" id="pBaixar">Baixar XLSX</button>` });
+
+  const btn = document.getElementById("pBaixar");
+  if (btn) btn.onclick = async () => {
+    btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> gerando…`;
+    try {
+      await apiDownload("/api/capiblu/export/planilha", {
+        body: { columns: cols, rows: r.rows }, fallbackName: "planilha-enriquecida.xlsx" });
+      toast("Planilha baixada.", "ok");
+    } catch (e) { toast(e.message, "err"); }
+    btn.disabled = false; btn.textContent = "Baixar XLSX";
+  };
+}
+
+/* ── Meus modelos: o layout de coluna que cada cliente pede ──────────── */
+PAGES["capiblu-modelos"] = {
+  area: "CapiBLU", title: "Meus modelos",
+  async render() {
+    view.innerHTML = `
+      <div class="alert alert-info alert-styled-left">
+        Cliente que pede a lista num layout específico vira um modelo: suba uma
+        planilha de exemplo, o CapiBLU reconhece as colunas, e a exportação passa
+        a sair nesse formato.
+      </div>
+      ${panel("Novo modelo a partir de um exemplo", `
+        <div class="field-row">
+          <div class="field"><label>Planilha de exemplo (só o cabeçalho importa)</label>
+            <input type="file" class="form-control" id="mFile" accept=".xlsx,.xls,.csv"></div>
+          <div class="field"><label>&nbsp;</label>
+            <button class="btn btn-main" style="width:100%" id="mAnalisar">Analisar colunas</button></div>
+        </div>`)}
+      <div id="mAnalise"></div>
+      <div id="mLista">${LOADING}</div>`;
+
+    document.getElementById("mAnalisar").onclick = async () => {
+      const file = document.getElementById("mFile").files[0];
+      if (!file) return toast("Escolha um arquivo.", "err");
+      const out = document.getElementById("mAnalise");
+      out.innerHTML = LOADING;
+      try {
+        const r = await apiUpload("/api/capiblu/modelo/analisar", file);
+        renderAnalise(r, file.name);
+      } catch (e) {
+        out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+      }
+    };
+    await listarModelos();
+  },
+};
+
+function renderAnalise(r, fileName) {
+  const cols = r.colunas || [];
+  const rows = cols.map((c) => ({ cells: [
+    h(c.header),
+    c.fillable
+      ? `<span class="pill green">${h(c.campo_label || c.campo)}</span>`
+      : `<span class="pill grey">não reconhecida</span>`,
+    h(c.fonte || "—"),
+  ] }));
+  const reconhecidas = cols.filter((c) => c.fillable).length;
+  document.getElementById("mAnalise").innerHTML = panel(
+    `Colunas de ${h(fileName)}`,
+    table(["Cabeçalho na planilha", "Campo do CapiBLU", "Fonte"], rows, { scroll: true }),
+    { subtitle: `${reconhecidas} de ${cols.length} colunas reconhecidas · aba ${h(r.aba || "—")}`,
+      actions: `<input class="form-control" id="mNome" placeholder="Nome do modelo"
+                  style="width:200px;display:inline-block">
+                <button class="btn btn-main btn-xs ml-5" id="mSalvar">Salvar modelo</button>` });
+
+  document.getElementById("mSalvar").onclick = async () => {
+    const nome = document.getElementById("mNome").value.trim();
+    if (!nome) return toast("Dê um nome ao modelo.", "err");
+    try {
+      await api("/api/capiblu/modelos", { method: "POST",
+        body: { nome, aba: r.aba, colunas: cols } });
+      toast("Modelo salvo.", "ok");
+      document.getElementById("mAnalise").innerHTML = "";
+      await listarModelos();
+    } catch (e) { toast(e.message, "err"); }
+  };
+}
+
+async function listarModelos() {
+  const el = document.getElementById("mLista");
+  try {
+    const r = await api("/api/capiblu/modelos");
+    const modelos = r.modelos || r.data || (Array.isArray(r) ? r : []);
+    if (!modelos.length) {
+      el.innerHTML = panel("Modelos salvos", emptyState("Nenhum modelo ainda."));
+      return;
+    }
+    el.innerHTML = panel("Modelos salvos", table(
+      ["Nome", "Aba", "Colunas", ""],
+      modelos.map((m) => ({ cells: [
+        `<strong>${h(m.nome || m.name)}</strong>`,
+        h(m.aba || "—"),
+        String((m.colunas || m.columns || []).length),
+        `<button class="btn btn-default btn-xs mod-usar" data-id="${h(m.id)}">Exportar com este modelo</button>`,
+      ] }))));
+    view.querySelectorAll(".mod-usar").forEach((b) => {
+      b.onclick = () => exportarPorModelo(b.dataset.id);
+    });
+  } catch (e) {
+    el.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+  }
+}
+
+async function exportarPorModelo(modeloId) {
+  // Exporta o resultado da última busca da Prospecção B2B no layout do modelo.
+  const res = state.b2bResult;
+  if (!res || !res.empresas?.length) {
+    return toast("Faça uma busca em Prospecção B2B primeiro — é o resultado dela que sai no modelo.", "err");
+  }
+  try {
+    await apiDownload("/api/capiblu/export/modelo", {
+      body: { modelo_id: modeloId, empresas: res.empresas },
+      fallbackName: "lista-no-modelo.xlsx" });
+    toast(`${res.empresas.length} empresas exportadas.`, "ok");
+  } catch (e) { toast(e.message, "err"); }
+}
 
 PAGES["capiblu-dossie"] = {
   area: "CapiBLU", title: "Dossiê",
@@ -2103,15 +2429,26 @@ PAGES["capiblu-dossie"] = {
         <label><input type="checkbox" id="dFamilia"> Consultar parentes</label>
       </div>
       <button class="btn btn-main btn-sm" id="dGo">Gerar PDF</button>`);
-    document.getElementById("dGo").onclick = () => {
+    document.getElementById("dGo").onclick = async () => {
       const doc = document.getElementById("dDoc").value.replace(/\D/g, "");
+      const tipo = document.getElementById("dTipo").value;
       if (!doc) return toast("Informe o documento.", "err");
       const qs = new URLSearchParams({
-        tipo: document.getElementById("dTipo").value, doc,
         insight: document.getElementById("dInsight").checked,
         familia: document.getElementById("dFamilia").checked,
       });
-      window.open(`/capiblu/api/dossie/pdf?${qs}`, "_blank");
+      const btn = document.getElementById("dGo");
+      btn.disabled = true;
+      btn.innerHTML = `<span class="spinner"></span> montando o PDF…`;
+      try {
+        // Pela rota do Bluutime, não direto no serviço de dados: é ela que
+        // valida o dígito do CNPJ antes de gastar a consulta.
+        await apiDownload(`/api/capiblu/dossie/${tipo}/${doc}?${qs}`,
+                          { method: "GET", fallbackName: `dossie-${doc}.pdf` });
+        toast("Dossiê baixado.", "ok");
+      } catch (e) { toast(e.message, "err"); }
+      btn.disabled = false;
+      btn.textContent = "Gerar PDF";
     };
   },
 };

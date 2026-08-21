@@ -83,11 +83,26 @@ Continua faltando:
 
 ### Bloco 3 — tela nova sobre rota que já existe
 
-Decisores por CNPJ (com filtro de nível 1/2/3) · Vínculos RAIS (abas Todos /
-Ainda lá / Já saíram) · Ficha da pessoa renderizada no lugar do JSON · Ficha da
-empresa · Minha planilha de verdade · Meus modelos · Consulta Assertiva (5
-modalidades + finalidade LGPD) · Admin (tabela de preços, navlog, tokens de API) ·
-Painel de uso pessoal.
+✅ **Feito:**
+
+- **Minha planilha** — quatro passos numa tela: subir XLSX/CSV → escolher a aba
+  e a coluna de CNPJ (adivinhada pelo cabeçalho) → marcar campos entre os 37 do
+  catálogo, com contador que separa gratuito de cobrado → prévia de uma linha
+  antes de gastar → enriquecer → baixar. Verificado no navegador: 3 de 3 linhas
+  com dados reais, XLSX de 25 colunas.
+- **Meus modelos** — sobe a planilha de exemplo do cliente, mostra coluna a
+  coluna o que foi reconhecido e o que não foi, salva o modelo e exporta o
+  resultado da busca nesse layout.
+- **Dossiê** — passou a usar a rota do Bluutime em vez de abrir o serviço de
+  dados direto, então o dígito verificador do CNPJ é conferido **antes** de
+  gastar a consulta, e o erro vira mensagem em vez de baixar um arquivo quebrado.
+- **Baixar XLSX** na Prospecção B2B, reenviando os filtros — o arquivo sai com a
+  consulta inteira, não só com a página à vista.
+
+Continua faltando: decisores por CNPJ (filtro de nível 1/2/3) · vínculos RAIS
+(abas Todos / Ainda lá / Já saíram) · ficha da pessoa e da empresa renderizadas
+no lugar do JSON · Consulta Assertiva (5 modalidades + finalidade LGPD) · admin
+(tabela de preços, navlog, tokens de API) · painel de uso pessoal.
 
 ## Ranking de pessoas — o que sobrevive
 
