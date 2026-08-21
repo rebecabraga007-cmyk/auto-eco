@@ -2,7 +2,7 @@
 from datetime import datetime
 
 from . import agenda
-from .models import PRIORITY_WEIGHT
+from .models import PRIORITY_WEIGHT, channel_of
 
 
 def iso(dt: datetime | None) -> str | None:
@@ -33,7 +33,7 @@ def activity(a):
     if not a:
         return None
     out = {"id": a.id, "name": a.name, "type": a.type, "instruction": a.instruction,
-           "clientId": a.client_id}
+           "channel": channel_of(a.type, a.social_network), "clientId": a.client_id}
     if a.social_network:
         out["socialNetwork"] = a.social_network
     if a.type == "E_MAIL":
@@ -80,6 +80,7 @@ def lead_activity(la, overdue_ref=None):
     late = bool(overdue_ref and la.status == "PENDING" and la.scheduled_at < overdue_ref)
     return {
         "id": la.id, "type": la.type, "socialNetwork": la.social_network,
+        "channel": channel_of(la.type, la.social_network),
         "status": la.status, "scheduledAt": iso(la.scheduled_at), "doneAt": iso(la.done_at),
         "notes": la.notes, "late": late,
         "activity": activity(la.activity), "user": user_min(la.user),

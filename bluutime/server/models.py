@@ -16,6 +16,20 @@ from .db import Base
 LEAD_STATUS = ["WAITING", "EXECUTING", "ON_EXTRA_ACTIVITY", "PAUSED_FROM_EXECUTING",
                "WON", "LOST", "SWITCHED_CADENCE"]
 ACTIVITY_TYPES = ["SEARCH", "CALL", "E_MAIL", "SOCIAL_POINT"]
+
+# O canal é a pergunta que o resto do sistema faz ("por onde isso sai?"), e
+# `SOCIAL_POINT` sozinho não responde: WhatsApp e LinkedIn são o mesmo tipo.
+# O armazenamento continua igual ao do Meetime — o canal é derivado.
+CHANNELS = ["CALL", "EMAIL", "WHATSAPP", "SOCIAL", "SEARCH"]
+
+
+def channel_of(type_: str, social_network: str = "") -> str:
+    """Canal de uma atividade — o vocabulário único de `Template.channel`."""
+    if type_ == "E_MAIL":
+        return "EMAIL"
+    if type_ == "SOCIAL_POINT":
+        return "WHATSAPP" if (social_network or "").upper() == "WHATSAPP" else "SOCIAL"
+    return type_ if type_ in CHANNELS else "SEARCH"
 CADENCE_FOCUS = ["OUTBOUND", "INBOUND", "ACTIVE_INBOUND", "OTHER"]
 CADENCE_PRIORITY = ["VERY_HIGH", "HIGH", "MEDIUM", "LOW"]
 PRIORITY_WEIGHT = {"VERY_HIGH": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}

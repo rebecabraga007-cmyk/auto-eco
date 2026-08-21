@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import (Activity, Cadence, CadenceStep, CadenceUser, Client,
                       CustomField, Lead, LeadActivity, LeadBase, LeadFieldValue,
-                      LostReason, Template, User)
+                      LostReason, Template, User, channel_of)
 from .. import agenda, render, serial
 
 router = APIRouter(prefix="/api/flow")
@@ -129,8 +129,17 @@ def add_step(cid: int, payload: dict = Body(...), db: Session = Depends(get_db))
     order = (db.query(func.count(CadenceStep.id))
              .filter_by(cadence_id=cid, day=day).scalar() or 0) + 1
     template_id = payload.get("templateId")
-    if template_id and not db.get(Template, template_id):
-        raise HTTPException(400, "Modelo de mensagem inválido.")
+    if template_id:
+        tpl = db.get(Template, template_id)
+        if not tpl:
+            raise HTTPException(400, "Modelo de mensagem inválido.")
+        # Sem esta checagem dava para pendurar um modelo de WhatsApp num passo
+        # de e-mail — e só se descobria quando a mensagem saísse errada.
+        act = db.get(Activity, activity_id)
+        canal = channel_of(act.type, act.social_network)
+        if tpl.channel != canal:
+            raise HTTPException(
+                400, f"O modelo é de {tpl.channel} e o passo é de {canal}.")
     s = CadenceStep(cadence_id=cid, activity_id=activity_id, day=day,
                     order_in_day=order, template_id=template_id)
     db.add(s)
@@ -148,7 +157,8 @@ def delete_step(cid: int, sid: int, db: Session = Depends(get_db)):
 
 
 # ── Modelos de mensagem ──
-CHANNELS = {"EMAIL", "WHATSAPP", "SOCIAL"}
+# Canal de modelo: os que carregam texto (SEARCH e CALL não têm corpo).
+TEMPLATE_CHANNELS = {"EMAIL", "WHATSAPP", "SOCIAL"}
 
 
 def _template(t: Template) -> dict:
@@ -172,8 +182,8 @@ def list_templates(channel: str | None = None, client_id: int | None = None,
 @router.post("/templates")
 def create_template(payload: dict = Body(...), db: Session = Depends(get_db)):
     channel = (payload.get("channel") or "EMAIL").upper()
-    if channel not in CHANNELS:
-        raise HTTPException(400, f"Canal inválido. Use: {', '.join(sorted(CHANNELS))}")
+    if channel not in TEMPLATE_CHANNELS:
+        raise HTTPException(400, f"Canal inválido. Use: {', '.join(sorted(TEMPLATE_CHANNELS))}")
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "Dê um nome ao modelo.")
@@ -195,7 +205,7 @@ def update_template(tid: int, payload: dict = Body(...), db: Session = Depends(g
         if key in payload:
             setattr(t, attr, payload[key])
     if "channel" in payload:
-        if payload["channel"].upper() not in CHANNELS:
+        if payload["channel"].upper() not in TEMPLATE_CHANNELS:
             raise HTTPException(400, "Canal inválido.")
         t.channel = payload["channel"].upper()
     db.commit()

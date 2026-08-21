@@ -86,9 +86,31 @@ Hoje "enviar WhatsApp" grava uma linha na tabela e devolve 200. Ninguém recebe 
 Ordem recomendada: **1 ✅ → 2 → 3 → 5 → 4**. A fase 4 é a única que depende de
 decisão comercial (qual CRM), o resto é técnico e independente.
 
-## Uma coisa que a Fase 1 deixou à mostra
+## Canal: um vocabulário, não dois
 
-A biblioteca de atividades herdada do Meetime só tem `SEARCH`, `CALL`, `E_MAIL` e
-`SOCIAL_POINT` — **não existe tipo WhatsApp**, embora seja o canal que a BLU mais
-usa. O `Template` já aceita o canal; falta o tipo de atividade correspondente,
-que entra junto com a Fase 3.
+WhatsApp **já** era modelado — como `SOCIAL_POINT` + `social_network="WHATSAPP"`,
+que é como o Meetime faz. O problema não era falta de tipo, era haver dois
+vocabulários para a mesma coisa:
+
+| Onde | Como dizia "WhatsApp" |
+|---|---|
+| `Activity` · `LeadActivity` | `type="SOCIAL_POINT"` + `social_network="WHATSAPP"` |
+| `Template` | `channel="WHATSAPP"` |
+
+Isso deixava pendurar um modelo de WhatsApp num passo de e-mail sem ninguém
+reclamar — só se descobriria quando a mensagem saísse errada para um lead real.
+
+**Decisão:** o armazenamento continua igual ao do Meetime (sem migração, sem
+perder compatibilidade) e o canal passa a ser **derivado**, por `channel_of()`
+em `models.py`:
+
+| type | social_network | canal |
+|---|---|---|
+| `E_MAIL` | — | `EMAIL` |
+| `SOCIAL_POINT` | `WHATSAPP` | `WHATSAPP` |
+| `SOCIAL_POINT` | outro | `SOCIAL` |
+| `CALL` · `SEARCH` | — | `CALL` · `SEARCH` |
+
+`activity()` e `lead_activity()` passam a expor `channel`, e montar uma etapa com
+modelo de canal diferente agora é 400. É esse `channel` que a Fase 3 vai
+perguntar na hora de enviar — não o `type`.
