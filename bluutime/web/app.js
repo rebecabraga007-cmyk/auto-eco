@@ -152,6 +152,9 @@ const statusPill = (s) => {
   const [label, tone] = STATUS_LABEL[s] || [s, "grey"];
   return `<span class="pill ${tone}">${h(label)}</span>`;
 };
+// Canais cujo passo carrega texto — os demais (ligação, pesquisa) não têm modelo.
+const PRECISA_MODELO = new Set(["EMAIL", "WHATSAPP", "SOCIAL"]);
+
 const TYPE_LABEL = { CALL: "Ligação", E_MAIL: "E-mail", SEARCH: "Pesquisa", SOCIAL_POINT: "Ponto social" };
 const PRIORITY_LABEL = { VERY_HIGH: "Muito alta", HIGH: "Alta", MEDIUM: "Média", LOW: "Baixa" };
 const FOCUS_LABEL = { OUTBOUND: "Outbound", INBOUND: "Inbound", ACTIVE_INBOUND: "Inbound ativo", OTHER: "Outro" };
@@ -453,7 +456,12 @@ PAGES.execucao = {
           </span>
         </div>
         <div class="nowrap">
-          <button class="btn btn-main btn-xs" data-exec="${a.id}">Executar</button>
+          ${PRECISA_MODELO.has(a.channel)
+            // Passo de mensagem tem caminho próprio: o texto sai do modelo e a
+            // entrega fica registrada, em vez de só marcar como feita.
+            ? `<button class="btn btn-main btn-xs" data-enviar="${a.id}">Enviar</button>`
+            : `<button class="btn btn-main btn-xs" data-exec="${a.id}">Executar</button>`}
+          <button class="btn btn-default btn-xs" data-adiar="${a.id}">Adiar</button>
           <button class="btn btn-default btn-xs" data-skip="${a.id}">Ignorar</button>
           <button class="btn btn-default btn-xs" data-lead="${a.lead.id}">Abrir lead</button>
         </div>
@@ -503,11 +511,95 @@ PAGES.execucao = {
         go("execucao");
       };
     });
+    view.querySelectorAll("[data-enviar]").forEach((b) => {
+      b.onclick = () => enviarAtividade(items.find((a) => String(a.id) === b.dataset.enviar));
+    });
+    view.querySelectorAll("[data-adiar]").forEach((b) => {
+      b.onclick = () => adiarAtividade(items.find((a) => String(a.id) === b.dataset.adiar));
+    });
     view.querySelectorAll("[data-lead]").forEach((b) => {
       b.onclick = () => openLeadModal(Number(b.dataset.lead));
     });
   },
 };
+
+/** Envia a mensagem do passo — o texto vem do modelo da etapa. */
+function enviarAtividade(act) {
+  const m = modal({
+    wide: true,
+    title: `Enviar ${act.channel} para ${act.lead.name}`,
+    body: `<div class="alert alert-info alert-styled-left" id="evAviso">
+        Conferindo o modelo e o destino…
+      </div>
+      <div id="evPrev"></div>
+      <div class="field">
+        <label><input type="checkbox" id="evFora"> Enviar fora da janela de 9h–18h</label>
+      </div>`,
+    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+             <button class="btn btn-main btn-sm" data-ok>Enviar</button>`,
+  });
+  m.root.querySelector("[data-cancel]").onclick = m.close;
+
+  const disparar = async (forcar) => {
+    const ok = m.root.querySelector("[data-ok]");
+    ok.disabled = true;
+    ok.innerHTML = `<span class="spinner"></span> enviando…`;
+    try {
+      const r = await api(`/api/envio/atividades/${act.id}`, { method: "POST", body: {
+        forcar, foraDaJanela: m.root.querySelector("#evFora").checked } });
+      const d = r.delivery;
+      m.close();
+      if (d.status === "BLOCKED") {
+        // Bloqueio não conclui a atividade: ela continua na fila.
+        toast(d.error, "err");
+      } else {
+        toast(d.status === "SENT" ? "Mensagem enviada."
+                                  : "Registrado como SIMULADO — envio está desligado.", "ok");
+      }
+      go("execucao");
+    } catch (e) {
+      const faltando = /variáveis sem valor/i.test(e.message);
+      m.root.querySelector("#evAviso").className = "alert alert-info alert-styled-left";
+      m.root.querySelector("#evAviso").innerHTML = h(e.message);
+      ok.disabled = false;
+      ok.textContent = faltando ? "Enviar mesmo assim" : "Enviar";
+      if (faltando) ok.onclick = () => disparar(true);
+    }
+  };
+  m.root.querySelector("[data-ok]").onclick = () => disparar(false);
+  m.root.querySelector("#evAviso").textContent =
+    "O texto vem do modelo da etapa. Nada sai enquanto o envio estiver desligado.";
+}
+
+/** Reagenda a atividade — o servidor encaixa na próxima janela útil. */
+function adiarAtividade(act) {
+  const amanha = new Date(Date.now() + 864e5);
+  const m = modal({
+    title: `Adiar atividade de ${act.lead.name}`,
+    body: `<div class="field"><label>Nova data e hora</label>
+        <input class="form-control" type="datetime-local" id="adQuando"
+               value="${amanha.toISOString().slice(0, 11)}${String(act.lead.bestHour).padStart(2, "0")}:00"></div>
+      <span class="text-muted text-size-small">
+        Fora do expediente, o servidor empurra para a próxima abertura — não existe
+        atividade agendada para domingo de madrugada.</span>`,
+    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+             <button class="btn btn-main btn-sm" data-ok>Adiar</button>`,
+  });
+  m.root.querySelector("[data-cancel]").onclick = m.close;
+  m.root.querySelector("[data-ok]").onclick = async () => {
+    const v = m.root.querySelector("#adQuando").value;
+    if (!v) return toast("Escolha a data.", "err");
+    try {
+      const r = await api(`/api/flow/execution/activities/${act.id}/reschedule`,
+        { method: "POST", body: { scheduledAt: new Date(v).toISOString() } });
+      m.close();
+      toast(r.adjusted
+        ? `Ajustado para a próxima janela útil: ${r.scheduledLocal.replace("T", " ")}.`
+        : "Atividade adiada.", "ok");
+      go("execucao");
+    } catch (e) { toast(e.message, "err"); }
+  };
+}
 
 function openExecuteModal(act) {
   if (!act) return;
@@ -918,6 +1010,12 @@ async function openCadenceDetail(id) {
       ${byDay[day].map((s) => `<div class="queue-item" style="grid-template-columns:1fr auto">
         <div><span class="pill ${s.activity.type === "CALL" ? "blue" : "green"}">${h(TYPE_LABEL[s.activity.type])}</span>
           <strong class="ml-5">${h(s.activity.name)}</strong>
+          ${s.templateName
+            ? `<span class="pill grey ml-5">modelo: ${h(s.templateName)}</span>`
+            : PRECISA_MODELO.has(s.activity.channel)
+              // Passo de mensagem sem modelo é recusado no envio: melhor dizer
+              // aqui do que na hora de disparar para o lead.
+              ? `<span class="pill amber ml-5">sem modelo — não envia</span>` : ""}
           ${s.activity.instruction ? `<br><span class="text-muted text-size-small">${h(s.activity.instruction.slice(0, 160))}</span>` : ""}</div>
         <button class="btn btn-default btn-xs" data-del-step="${s.id}">Remover</button>
       </div>`).join("")}
@@ -944,22 +1042,60 @@ async function openCadenceDetail(id) {
   });
   m.root.querySelector("[data-close2]").onclick = m.close;
   m.root.querySelector("[data-add-step]").onclick = async () => {
-    const acts = await api("/api/flow/activities?limit=300");
+    const [acts, modelos] = await Promise.all([
+      api("/api/flow/activities?limit=300"),
+      api("/api/flow/templates"),
+    ]);
+    const lista = acts.data || acts;
     const inner = modal({
       title: "Adicionar etapa",
       body: `<div class="field"><label>Atividade</label>
           <select class="form-control" id="stepAct">${options(acts, "")}</select></div>
+        <div class="field" id="stepTplBox"><label>Modelo de mensagem</label>
+          <select class="form-control" id="stepTpl"></select>
+          <span class="text-muted text-size-small" id="stepTplAviso"></span></div>
         <div class="field"><label>Dia da cadência</label>
           <input class="form-control" type="number" min="1" id="stepDay" value="1"></div>`,
       footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
                <button class="btn btn-main btn-sm" data-ok>Adicionar</button>`,
     });
+
+    const selAct = inner.root.querySelector("#stepAct");
+    const selTpl = inner.root.querySelector("#stepTpl");
+    const box = inner.root.querySelector("#stepTplBox");
+    const aviso = inner.root.querySelector("#stepTplAviso");
+    // Só oferece modelo do mesmo canal da atividade — o backend recusa o
+    // contrário, e escolher para depois levar 400 é atrito à toa.
+    const refresh = () => {
+      const act = lista.find((a) => String(a.id) === selAct.value);
+      const canal = act ? act.channel : "";
+      if (!PRECISA_MODELO.has(canal)) {
+        box.style.display = "none";
+        return;
+      }
+      box.style.display = "";
+      const doCanal = modelos.filter((t) => t.channel === canal);
+      selTpl.innerHTML = doCanal.length
+        ? doCanal.map((t) => `<option value="${t.id}">${h(t.name)}</option>`).join("")
+        : `<option value="">— nenhum modelo de ${h(canal)} —</option>`;
+      aviso.textContent = doCanal.length
+        ? `Passo de ${canal}: o texto vem deste modelo.`
+        : `Não há modelo de ${canal}. Crie um em Modelos de mensagem, senão este passo não envia.`;
+    };
+    selAct.onchange = refresh;
+    refresh();
+
     inner.root.querySelector("[data-cancel]").onclick = () => { inner.close(); openCadenceDetail(id); };
     inner.root.querySelector("[data-ok]").onclick = async () => {
-      await api(`/api/flow/cadences/${id}/steps`, { method: "POST", body: {
-        activityId: Number(inner.root.querySelector("#stepAct").value),
-        day: Number(inner.root.querySelector("#stepDay").value) } });
-      inner.close(); toast("Etapa adicionada.", "ok"); openCadenceDetail(id);
+      const body = {
+        activityId: Number(selAct.value),
+        day: Number(inner.root.querySelector("#stepDay").value),
+      };
+      if (box.style.display !== "none" && selTpl.value) body.templateId = Number(selTpl.value);
+      try {
+        await api(`/api/flow/cadences/${id}/steps`, { method: "POST", body });
+        inner.close(); toast("Etapa adicionada.", "ok"); openCadenceDetail(id);
+      } catch (e) { toast(e.message, "err"); }
     };
   };
   m.root.querySelectorAll("[data-del-step]").forEach((b) => {
