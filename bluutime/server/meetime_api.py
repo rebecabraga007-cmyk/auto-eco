@@ -147,16 +147,34 @@ async def prospections_for_leads(lead_ids: list[str], concurrency: int = 4,
     return out
 
 
-async def counts() -> dict:
-    """Quantos registros existem de cada recurso, sem baixá-los."""
-    result = {}
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        for resource in RESOURCES:
+async def counts(prazo: float = 20.0) -> dict:
+    """Quantos registros existem de cada recurso, sem baixá-los.
+
+    Antes isto percorria os 7 recursos em série, com `sleep(0.6)` entre cada e
+    repique de até 6 tentativas em 429 — o pior caso passava de dois minutos e a
+    rota simplesmente não voltava.
+
+    Agora vão de três em três (a API limita taxa; paralelismo maior só provoca
+    429) e o conjunto tem prazo: o que não responder a tempo volta como
+    `"tempo esgotado"` em vez de segurar a resposta inteira.
+    """
+    result: dict[str, object] = {}
+    sem = asyncio.Semaphore(3)
+
+    async def um(client: httpx.AsyncClient, resource: str) -> None:
+        async with sem:
             try:
                 r = await _get(client, resource, {"limit": 1})
                 result[resource] = (r.json().get("totalItems")
                                     if r.status_code < 300 else f"erro {r.status_code}")
             except Exception as exc:
                 result[resource] = f"falha: {type(exc).__name__}"
-            await asyncio.sleep(0.6)
+
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        tarefas = [asyncio.create_task(um(client, r)) for r in RESOURCES]
+        _, pendentes = await asyncio.wait(tarefas, timeout=prazo)
+        for t in pendentes:
+            t.cancel()
+    for resource in RESOURCES:
+        result.setdefault(resource, "tempo esgotado")
     return result

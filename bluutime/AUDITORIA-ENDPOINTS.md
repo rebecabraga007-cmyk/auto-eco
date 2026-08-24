@@ -135,7 +135,7 @@ trocar a própria senha pelo Bluutime.
 
 | Endpoint | Nota | Problema |
 |---|---|---|
-| `GET /api/meetime/status` | **3** | **Trava.** Percorre os 7 recursos em série, com `sleep(0.6)` entre cada e reenvio em 429. Passou de 25 s sem responder. Precisa ser paralelo, ou cache |
+| `GET /api/meetime/status` | 3 → **7** ✅ | **Corrigido.** Percorria os 7 recursos em série com `sleep(0.6)` e repique em 429; passava de 25 s sem responder. Agora vão de três em três com prazo de 20 s — devolve em ~21 s, e o recurso que não responde a tempo volta como `"tempo esgotado"` em vez de segurar a resposta |
 | `GET /api/meetime/preview/{resource}` | 5 | Funciona (1.145 b), mas só aceita `users`, `cadences`, `leads`, `prospections`, `calls`, `webhooks`, `feedbacks` — sem tela, a lista é invisível |
 | `POST /api/meetime/sync` | 5 | A migração inteira, só por `curl`. Funcionou (1.200 leads, 2.984 ligações), mas leva 5 min sem nenhum progresso visível |
 
@@ -161,5 +161,14 @@ CapiBLU ou infraestrutura. Nenhum endpoint promete algo que não entrega.
 (5 rotas), envio e entregas (6) e administração de contas (10). São 21 das 57 —
 e são justamente as três coisas que entreguei nas Fases 1, 3 e 5.
 
-**Um problema de verdade:** `/api/meetime/status` não responde. É o único
-endpoint do projeto que está quebrado na prática.
+**Um problema de verdade, já corrigido:** `/api/meetime/status` não respondia.
+Era o único endpoint quebrado na prática — agora volta em ~21 s com contagem
+parcial em vez de travar.
+
+## Corrigido depois desta auditoria (bloco 1)
+
+| O quê | Situação |
+|---|---|
+| `/api/meetime/status` travando | Paralelizado com prazo. Responde em ~21 s |
+| **Tabela de feriados vazia** | O suporte existia desde a Fase 1 e **não havia um único registro** — o agendador consultava, não achava nada e caía para "só pula fim de semana". `feriados.py` calcula os nacionais (Páscoa por Meeus/Jones/Butcher) e carrega na subida: 26 para 2026–2027 |
+| Mensagem órfã no banco | Causa-raiz: o **SQLite ignora `ondelete=CASCADE`** sem `PRAGMA foreign_keys=ON`, que é por conexão. Os modelos declaravam cascata e o banco não cumpria |

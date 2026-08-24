@@ -22,7 +22,7 @@ import auth as capiblu_auth  # noqa: E402  — vive em lupa-empresas/backend
 
 from .capiblu_client import capiblu_app, capiblu_error  # noqa: E402
 from .migrate import run as run_migrations  # noqa: E402
-from . import auditoria, perm, tick  # noqa: E402
+from . import agenda, auditoria, feriados, perm, tick  # noqa: E402
 from .db import SessionLocal  # noqa: E402
 from .routers import (analytics, capiblu, core, dialer, envio,  # noqa: E402
                       flow, meetime, whatsapp)
@@ -35,6 +35,17 @@ _migrated = run_migrations()
 if _migrated:
     print(f"[bluutime] colunas adicionadas: {', '.join(_migrated)}")
 seed_if_empty()
+
+# Feriado do ano corrente e do seguinte. A carga é idempotente e o agendador
+# depende dela: sem registro, `agenda` só pulava fim de semana.
+_db = SessionLocal()
+try:
+    _ano = agenda.now_local().year
+    _novos = feriados.carregar(_db, [_ano, _ano + 1])
+    if _novos:
+        print(f"[bluutime] {_novos} feriados carregados ({_ano}–{_ano + 1})")
+finally:
+    _db.close()
 
 app.include_router(capiblu_auth.router)     # /api/auth/*, /api/admin/*
 app.include_router(core.router)
