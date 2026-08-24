@@ -1896,7 +1896,8 @@ function renderB2B(res) {
     `<input type="checkbox" class="emp-check" value="${h(e.cnpj || "")}" checked>`,
     `<strong>${h(e.razao_social || e.nome_fantasia || "—")}</strong>
      ${e.nome_fantasia && e.razao_social ? `<br><span class="text-muted text-size-small">${h(e.nome_fantasia)}</span>` : ""}`,
-    h(e.cnpj || "—"),
+    `<a class="emp-ficha" data-cnpj="${h((e.cnpj || "").replace(/\D/g, ""))}"
+        style="cursor:pointer">${h(e.cnpj || "—")}</a>`,
     `${h(e.municipio || "")}${e.uf ? `/${h(e.uf)}` : ""}`,
     h(e.cnae || e.cnae_codigo || "—"),
     h(e.porte || "—"),
@@ -1967,6 +1968,9 @@ function renderB2B(res) {
     btn.disabled = false;
     btn.textContent = "Baixar XLSX";
   };
+  view.querySelectorAll(".emp-ficha").forEach((a) => {
+    a.onclick = () => { state.fichaCnpj = a.dataset.cnpj; go("capiblu-empresa"); };
+  });
   document.getElementById("toBase").onclick = () => openProspectImport(selected());
 }
 
@@ -2219,7 +2223,7 @@ function openPersonModal(cpf) {
       const path = b.dataset.block ? `/api/capiblu/pessoas/${cpf}/${b.dataset.block}` : `/api/capiblu/pessoas/${cpf}`;
       try {
         const r = await api(path);
-        out.innerHTML = `<div class="json-box">${h(JSON.stringify(r, null, 2))}</div>`;
+        out.innerHTML = renderPessoa(r, b.dataset.block);
       } catch (e) { out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`; }
     };
   });
@@ -2248,7 +2252,7 @@ PAGES["capiblu-telefone"] = {
       try {
         const r = await api(doc ? `/api/capiblu/telefones/${phone}/pertence/${doc}`
                                 : `/api/capiblu/telefones/${phone}`);
-        out.innerHTML = panel("Resultado", `<div class="json-box">${h(JSON.stringify(r, null, 2))}</div>`);
+        out.innerHTML = doc ? renderPertence(r, phone, doc) : renderReverso(r, phone);
       } catch (e) { out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`; }
     };
   },
@@ -3533,4 +3537,338 @@ async function abaTrilha() {
   document.getElementById("trAcao").onchange = (e) => {
     state.trilhaAcao = e.target.value; go("envio");
   };
+}
+
+/* ── Fichas do CapiBLU ─────────────────────────────────────────────────
+ *
+ * As rotas devolviam JSON completo e a tela mostrava `JSON.stringify` — era a
+ * nota 6 da auditoria. Aqui viram ficha de verdade.
+ *
+ * Um cuidado atravessa as três: separar o que é **grátis** (base local da
+ * Receita, já paga) do que **gasta consulta** (Assertiva, Mk). Bloco pago só
+ * carrega quando o usuário pede.
+ */
+const fmtCNPJ = (v) => {
+  const d = String(v || "").replace(/\D/g, "").padStart(14, "0");
+  return d.length === 14
+    ? `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5,8)}/${d.slice(8,12)}-${d.slice(12)}` : v;
+};
+const fmtCPF = (v) => {
+  const d = String(v || "").replace(/\D/g, "");
+  return d.length === 11 ? `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9)}` : (v || "—");
+};
+const fone = (ddd, num) => (ddd && num) ? `(${ddd.slice(0,2)}) ${num || ddd.slice(2)}` : (num || ddd || "");
+
+/** Linha de "rótulo: valor" — o formato da ficha inteira. */
+const campo = (label, valor) => `
+  <div><span class="text-muted text-size-small">${h(label)}</span><br>
+    <span>${valor === 0 || valor ? h(String(valor)) : "—"}</span></div>`;
+
+const grade = (itens, cols = 4) => `
+  <div class="filter-row" style="grid-template-columns:repeat(${cols},1fr);row-gap:14px">
+    ${itens.join("")}</div>`;
+
+const NIVEL_ROTULO = {
+  1: ["green", "decide sozinho"], 2: ["blue", "decide na área"], 3: ["grey", "influencia"],
+};
+
+PAGES["capiblu-empresa"] = {
+  area: "CapiBLU", title: "Ficha da empresa",
+  async render() {
+    const cnpj = state.fichaCnpj || "";
+    view.innerHTML = `
+      ${panel("Consultar CNPJ", `
+        <div class="filter-row" style="grid-template-columns:3fr 1fr">
+          <div><input class="form-control input-xlg" id="fcCnpj"
+                      placeholder="76.485.390/0001-07" value="${h(cnpj)}"></div>
+          <div><button class="btn btn-main" style="width:100%" id="fcGo">Abrir ficha</button></div>
+        </div>`, { subtitle: "Cadastro e QSA vêm da base local da Receita — não gastam consulta." })}
+      <div id="fcOut">${cnpj ? LOADING : emptyState("Informe um CNPJ.")}</div>`;
+
+    const abrir = () => {
+      const v = document.getElementById("fcCnpj").value.replace(/\D/g, "");
+      if (v.length !== 14) return toast("CNPJ precisa de 14 dígitos.", "err");
+      state.fichaCnpj = v;
+      go("capiblu-empresa");
+    };
+    document.getElementById("fcGo").onclick = abrir;
+    document.getElementById("fcCnpj").onkeydown = (e) => { if (e.key === "Enter") abrir(); };
+    if (cnpj) await renderFichaEmpresa(cnpj);
+  },
+};
+
+async function renderFichaEmpresa(cnpj) {
+  const out = document.getElementById("fcOut");
+  let c;
+  try {
+    c = (await api(`/api/capiblu/empresas/${cnpj}`)).company;
+  } catch (e) {
+    out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+    return;
+  }
+  const ativa = (c.descricao_situacao_cadastral || "").toUpperCase() === "ATIVA";
+  const socios = c.qsa || [];
+  out.innerHTML = `
+    <div class="panel panel-flat">
+      <div class="panel-heading has-border">
+        <h2 class="panel-title">${h(c.razao_social || "—")}</h2>
+        <div class="heading-elements">
+          <span class="pill ${ativa ? "green" : "red"}">${h(c.descricao_situacao_cadastral || "—")}</span>
+          <button class="btn btn-default btn-xs ml-5" id="fcLead">Virar lead</button>
+        </div>
+      </div>
+      <div class="panel-body">
+        ${c.nome_fantasia ? `<p class="text-muted">${h(c.nome_fantasia)}</p>` : ""}
+        ${grade([
+          campo("CNPJ", fmtCNPJ(c.cnpj)),
+          campo("Abertura", c.data_inicio_atividade),
+          campo("Porte", c.porte),
+          campo("Capital social", c.capital_social
+            ? Number(c.capital_social).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : null),
+          campo("Natureza jurídica", c.natureza_juridica),
+          campo("Matriz ou filial", c.descricao_identificador_matriz_filial),
+          campo("Simples", c.opcao_pelo_simples ? "optante" : "não optante"),
+          campo("MEI", c.opcao_pelo_mei ? "optante" : "não"),
+        ])}
+        <h4 style="font-size:13px;margin-top:20px">Atividade</h4>
+        ${grade([campo(`CNAE ${c.cnae_fiscal || ""}`, c.cnae_fiscal_descricao)], 1)}
+        <h4 style="font-size:13px;margin-top:20px">Onde fica e como falar</h4>
+        ${grade([
+          campo("Endereço", [c.descricao_tipo_de_logradouro, c.logradouro, c.numero, c.complemento]
+            .filter(Boolean).join(" ")),
+          campo("Bairro", c.bairro),
+          campo("Município", [c.municipio, c.uf].filter(Boolean).join("/")),
+          campo("CEP", c.cep),
+          campo("Telefone 1", fone(c.ddd_telefone_1)),
+          campo("Telefone 2", fone(c.ddd_telefone_2)),
+          campo("E-mail", c.email),
+          campo("Situação desde", c.data_situacao_cadastral),
+        ])}
+      </div>
+    </div>
+
+    ${panel(`Quadro societário (${socios.length})`, socios.length ? table(
+      ["Sócio", "CPF/CNPJ", "Qualificação", "Entrada", "Faixa etária"],
+      socios.map((s) => ({ cells: [
+        `<strong>${h(s.nome_socio)}</strong>`,
+        h(s.cnpj_cpf_do_socio || "—"),
+        h(s.qualificacao_socio || "—"),
+        h(s.data_entrada_sociedade || "—"),
+        h(s.faixa_etaria || "—"),
+      ] }))) : emptyState("Sem QSA na base da Receita."),
+      { subtitle: "Base local — grátis." })}
+
+    <div id="fcPagos">
+      ${panel("Decisores, vínculos e conexões", `
+        <div class="alert alert-info alert-styled-left">
+          Estes blocos <strong>gastam consulta</strong> na Assertiva. Carregam só quando você pedir.
+        </div>
+        <button class="btn btn-main btn-sm mr-10" data-bloco="decisores">Quem manda aqui</button>
+        <button class="btn btn-default btn-sm mr-10" data-bloco="vinculos">Vínculos (RAIS)</button>
+        <button class="btn btn-default btn-sm" data-bloco="conexoes">Conexões</button>`)}
+    </div>`;
+
+  document.getElementById("fcLead").onclick = () => openLeadForm({
+    company: c.nome_fantasia || c.razao_social, razaoSocial: c.razao_social,
+    cnpj: c.cnpj, city: c.municipio, state: c.uf,
+    phone: fone(c.ddd_telefone_1), email: c.email || "",
+  });
+  view.querySelectorAll("[data-bloco]").forEach((b) => {
+    b.onclick = () => carregarBloco(cnpj, b.dataset.bloco);
+  });
+}
+
+async function carregarBloco(cnpj, bloco) {
+  const alvo = document.getElementById("fcPagos");
+  const antes = alvo.innerHTML;
+  alvo.innerHTML = `<div class="alert alert-info alert-styled-left"><span class="spinner"></span>
+    Consultando ${h(bloco)}…</div>` + antes;
+  try {
+    const r = await api(`/api/capiblu/empresas/${cnpj}/${bloco}`);
+    alvo.innerHTML = ({ decisores: blocoDecisores, vinculos: blocoLista,
+                        conexoes: blocoLista })[bloco](r, bloco) + antes;
+    view.querySelectorAll("[data-bloco]").forEach((b) => {
+      b.onclick = () => carregarBloco(cnpj, b.dataset.bloco);
+    });
+  } catch (e) {
+    alvo.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>` + antes;
+  }
+}
+
+function blocoDecisores(r) {
+  const dec = r.decisores || [];
+  const cad = r.cadastro_assertiva || {};
+  const niv = r.por_nivel || {};
+  const linhas = dec.map((d) => {
+    const [cor, rot] = NIVEL_ROTULO[d.nivel] || ["grey", d.rotulo || "—"];
+    return { cells: [
+      `<strong>${h(d.nome)}</strong>`,
+      fmtCPF(d.cpf),
+      h(d.cargo || "—"),
+      `<span class="pill ${cor}">nível ${h(d.nivel || "—")} · ${h(rot)}</span>`,
+      h(d.area || "—"),
+      h(d.fonte_cargo || "—"),
+    ] };
+  });
+  return panel(`Decisores (${r.total || dec.length})`,
+    `${grade([
+      campo("Funcionários", cad.quantidade_funcionarios),
+      campo("Porte (Assertiva)", cad.porte),
+      campo("Idade da empresa", cad.idade_empresa ? `${cad.idade_empresa} anos` : null),
+      campo("Situação", cad.situacao),
+    ])}
+    <div class="mt-10 mb-20">
+      ${[1, 2, 3].map((n) => {
+        const [cor, rot] = NIVEL_ROTULO[n];
+        return `<span class="pill ${cor} mr-10">nível ${n} · ${rot}: <strong>${niv["nivel_" + n] ?? 0}</strong></span>`;
+      }).join("")}
+    </div>
+    ${linhas.length ? table(["Nome", "CPF", "Cargo", "Nível", "Área", "Fonte"], linhas, { scroll: true })
+      : emptyState("Nenhum decisor encontrado — em micro empresa isso é comum; use o QSA.")}`,
+    { subtitle: "Consulta paga · Assertiva" });
+}
+
+/** Vínculos e conexões variam de forma; renderiza o que houver de lista. */
+function blocoLista(r, bloco) {
+  const lista = r.vinculos || r.conexoes || r.registros || r.data || [];
+  if (!Array.isArray(lista) || !lista.length) {
+    return panel(bloco, emptyState("Nada encontrado."), { subtitle: "Consulta paga" });
+  }
+  const cols = [...new Set(lista.flatMap((x) => Object.keys(x)))].slice(0, 8);
+  return panel(`${bloco} (${lista.length})`, table(
+    cols.map((c) => c.replace(/_/g, " ")),
+    lista.map((x) => ({ cells: cols.map((c) => {
+      const v = x[c];
+      return h(typeof v === "object" && v !== null ? JSON.stringify(v).slice(0, 40) : String(v ?? "—").slice(0, 40));
+    }) })), { scroll: true }), { subtitle: "Consulta paga · Assertiva" });
+}
+
+/* ── Renderização das fichas de pessoa e telefone ─────────────────────── */
+
+/** Cadastro, perfil Mk, vínculos, parentes ou contatos — cada bloco tem forma
+ *  própria, então o que não for reconhecido cai numa tabela genérica em vez de
+ *  virar JSON cru. */
+function renderPessoa(r, bloco) {
+  if (r.status === "unavailable" || r.status === "error") {
+    return `<div class="alert alert-info alert-styled-left">${h(r.message || r.detail || "Indisponível.")}</div>`;
+  }
+  if (!bloco && r.pessoa) {
+    const p = r.pessoa;
+    return grade([
+      campo("Nome", p.nome), campo("CPF", fmtCPF(p.cpf)),
+      campo("Nascimento", p.nascimento),
+      campo("Sexo", p.sexo === "F" ? "feminino" : p.sexo === "M" ? "masculino" : p.sexo),
+    ], 2);
+  }
+  if (bloco === "mk") return renderMk(r);
+  if (bloco === "parentes") return renderParentes(r);
+  return tabelaGenerica(r);
+}
+
+function renderMk(r) {
+  const p = r.pessoa || r.dados || r;
+  const tels = p.telefones || r.telefones || [];
+  const ends = p.enderecos || r.enderecos || [];
+  const mails = p.emails || r.emails || [];
+  return `
+    ${grade([
+      campo("Nome", p.nome), campo("CPF", fmtCPF(p.cpf)),
+      campo("Nascimento", p.nascimento || p.data_nascimento),
+      campo("Mãe", p.nome_mae), campo("Renda estimada", p.renda),
+      campo("Score", p.score), campo("Escolaridade", p.escolaridade),
+      campo("Situação do CPF", p.situacao_cpf || p.situacao),
+    ])}
+    ${tels.length ? `<h4 style="font-size:13px;margin-top:20px">Telefones (${tels.length})</h4>
+      ${table(["Número", "Tipo", "WhatsApp", "Atualizado"], tels.slice(0, 12).map((t) => ({ cells: [
+        `<strong>${h(t.display || t.numero || t.telefone || "—")}</strong>`,
+        h(t.categoria || t.tipo || "—"),
+        t.whatsapp ? `<span class="pill green">sim</span>` : `<span class="text-muted">—</span>`,
+        h(t.atualizacao || t.data || "—"),
+      ] })), { scroll: true })}` : ""}
+    ${mails.length ? `<h4 style="font-size:13px;margin-top:20px">E-mails</h4>
+      <p>${mails.slice(0, 8).map((e) => h(typeof e === "string" ? e : e.email)).join(" · ")}</p>` : ""}
+    ${ends.length ? `<h4 style="font-size:13px;margin-top:20px">Endereços (${ends.length})</h4>
+      ${table(["Endereço", "Bairro", "Cidade", "CEP"], ends.slice(0, 8).map((e) => ({ cells: [
+        h(endereco(e)), h(e.bairro || "—"),
+        h([e.cidade || e.municipio, e.uf].filter(Boolean).join("/")), h(e.cep || "—"),
+      ] })), { scroll: true })}` : ""}`;
+}
+
+function renderParentes(r) {
+  const lista = r.parentes || r.conexoes || r.data || [];
+  if (!lista.length) return emptyState("Nenhum parente ou conexão encontrada.");
+  return table(["Nome", "CPF", "Parentesco", "Telefone"], lista.map((p) => ({ cells: [
+    `<strong>${h(p.nome || "—")}</strong>`,
+    fmtCPF(p.cpf),
+    h(p.parentesco || p.vinculo || p.tipo || "—"),
+    h((p.telefones && p.telefones[0] && (p.telefones[0].display || p.telefones[0].numero))
+      || p.telefone || "—"),
+  ] })), { scroll: true });
+}
+
+/** Última linha de defesa: monta tabela a partir das chaves da própria lista. */
+function tabelaGenerica(r) {
+  const lista = Object.values(r).find((v) => Array.isArray(v) && v.length && typeof v[0] === "object");
+  if (!lista) {
+    const simples = Object.entries(r).filter(([, v]) => typeof v !== "object");
+    return simples.length ? grade(simples.map(([k, v]) => campo(k.replace(/_/g, " "), v)), 3)
+                          : emptyState("Nada encontrado.");
+  }
+  const cols = [...new Set(lista.flatMap((x) => Object.keys(x)))].slice(0, 8);
+  return table(cols.map((c) => c.replace(/_/g, " ")),
+    lista.map((x) => ({ cells: cols.map((c) => {
+      const v = x[c];
+      return h(typeof v === "object" && v !== null
+        ? JSON.stringify(v).slice(0, 40) : String(v ?? "—").slice(0, 40));
+    }) })), { scroll: true });
+}
+
+/** Telefone reverso: de quem é este número. */
+/** O endereço vem ora como texto, ora como objeto — achatar aqui evita o
+ *  clássico "[object Object]" na célula. */
+function endereco(e) {
+  if (!e) return "—";
+  if (typeof e === "string") return e;
+  const rua = [e.logradouro || e.endereco, e.numero, e.complemento].filter(Boolean).join(" ");
+  const cidade = [e.bairro, e.cidade || e.municipio, e.uf].filter(Boolean).join(", ");
+  return [rua, cidade, e.cep].filter(Boolean).join(" · ") || "—";
+}
+
+function renderReverso(r, phone) {
+  const regs = r.registros || [];
+  const rows = regs.map((x) => {
+    const doc = String(x.cpf_cnpj || "").replace(/\D/g, "");
+    return { cells: [
+      `<strong>${h(x.nome || "—")}</strong>`,
+      doc.length === 14 ? fmtCNPJ(doc) : fmtCPF(doc),
+      `<span class="pill ${doc.length === 14 ? "blue" : "grey"}">${doc.length === 14 ? "empresa" : "pessoa"}</span>`,
+      h(endereco(x.endereco)),
+      doc.length === 14
+        ? `<button class="btn btn-default btn-xs rv-emp" data-cnpj="${h(doc)}">Abrir ficha</button>` : "",
+    ] };
+  });
+  const painel = panel(`${regs.length} atrelado(s) a ${h(phone)}`,
+    rows.length ? table(["Nome", "Documento", "Tipo", "Endereço", ""], rows, { scroll: true })
+                : emptyState("Nenhum registro para este número."),
+    { subtitle: `Consulta paga${r.remaining_daily != null
+        ? ` · restam ${r.remaining_daily} hoje` : ""}` });
+  setTimeout(() => {
+    document.querySelectorAll(".rv-emp").forEach((b) => {
+      b.onclick = () => { state.fichaCnpj = b.dataset.cnpj; go("capiblu-empresa"); };
+    });
+  }, 0);
+  return painel;
+}
+
+/** Validação telefone × documento: o número é mesmo daquela pessoa? */
+function renderPertence(r, phone, doc) {
+  const pertence = r.pertence ?? r.atrelado ?? r.confirmado;
+  const compartilhada = r.compartilhada ?? r.linha_compartilhada;
+  return panel("Validação", `
+    <div class="alert ${pertence ? "alert-success" : "alert-info"} alert-styled-left">
+      <strong>${pertence ? "Confirmado" : "Não confirmado"}</strong> —
+      ${h(phone)} ${pertence ? "está atrelado a" : "não aparece atrelado a"} ${h(doc)}.
+      ${compartilhada ? " <strong>Atenção:</strong> a linha aparece para mais de um documento." : ""}
+    </div>
+    ${tabelaGenerica(r)}`, { subtitle: "Consulta paga" });
 }

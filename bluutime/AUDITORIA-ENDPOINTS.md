@@ -91,8 +91,19 @@ alguém ou mexer em grupo continua só pelo CapiBLU.
 | `GET /api/capiblu/telefones/{numero}/pertence/{doc}` | 200 |
 | `GET /api/capiblu/modelos/campos` | 200 · 2.040 b |
 
-Todas devolvem JSON completo. É o **Bloco 3** da cobertura do CapiBLU: ficha de
-empresa, ficha de pessoa e telefone reverso renderizados no lugar do JSON cru.
+✅ **Feito.** As três fichas passaram de `JSON.stringify` para ficha de verdade:
+
+- **Ficha da empresa** — cadastro, atividade, endereço e QSA da base local
+  (grátis), e os blocos pagos (decisores, vínculos, conexões) atrás de botão,
+  com o aviso de que gastam consulta. Decisores vêm com o nível traduzido —
+  “nível 3 · influencia” em vez do número solto — e o resumo da Assertiva
+  (funcionários, porte, idade). O CNPJ na lista da Prospecção B2B abre a ficha.
+- **Ficha da pessoa** — cadastro, perfil Mk com telefones (categoria e flag de
+  WhatsApp), e-mails e endereços, e parentes. O que não tem forma conhecida cai
+  numa tabela montada a partir das próprias chaves, não em JSON.
+- **Telefone reverso** — quem está atrelado ao número, com tipo (pessoa ou
+  empresa) e link para a ficha quando é CNPJ; mostra quantas consultas restam
+  no dia.
 
 ### Execução — 3 rotas · nota 6
 
