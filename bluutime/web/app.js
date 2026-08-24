@@ -2785,3 +2785,261 @@ function promptOne(title, label, onOk) {
     try { await onOk(v); } catch (e) { toast(e.message, "err"); }
   };
 }
+
+/* ── Contas de acesso ──────────────────────────────────────────────────
+ *
+ * Distinta de "Usuários e times", que lista o pessoal da operação vindo do
+ * Meetime. Aqui é quem consegue *entrar* — o cadastro do `auth.py` do CapiBLU,
+ * compartilhado entre as duas ferramentas. Eram 10 rotas prontas sem tela, e a
+ * falta dela obrigava a mexer no CapiBLU para criar conta ou trocar senha.
+ */
+PAGES["contas"] = {
+  area: "Configurações", title: "Contas de acesso",
+  async render() {
+    const eu = await api("/api/envio/quem-sou-eu");
+    if (eu.nivel !== "admin") {
+      view.innerHTML = `<div class="alert alert-info alert-styled-left">
+        Só administradores gerenciam contas de acesso.
+        Seu perfil é <strong>${h(eu.nivel)}</strong>.</div>`;
+      return;
+    }
+    const aba = state.contasAba || "contas";
+    view.innerHTML = `
+      <ul class="nav nav-tabs">
+        ${[["contas", "Contas"], ["grupos", "Grupos"], ["tokens", "Tokens de API"],
+           ["consumo", "Limite diário"]].map(([k, t]) =>
+          `<li${aba === k ? " class=\"active\"" : ""}><a data-aba="${k}">${t}</a></li>`).join("")}
+      </ul>
+      <div id="ctOut">${LOADING}</div>`;
+    view.querySelectorAll("[data-aba]").forEach((a) => {
+      a.onclick = () => { state.contasAba = a.dataset.aba; go("contas"); };
+    });
+    const abas = { contas: abaContas, grupos: abaGrupos, tokens: abaTokens, consumo: abaConsumo };
+    try {
+      await abas[aba]();
+    } catch (e) {
+      document.getElementById("ctOut").innerHTML =
+        `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+    }
+  },
+};
+
+const rolePill = (r) => r === "admin"
+  ? `<span class="pill amber">administrador</span>`
+  : `<span class="pill grey">usuário</span>`;
+
+const epoch = (s) => s ? new Date(s * 1000).toISOString() : null;
+
+async function abaContas() {
+  const out = document.getElementById("ctOut");
+  const { users } = await api("/api/admin/users");
+  const rows = users.map((u) => ({ cells: [
+    `<strong>${h(u.nome || "—")}</strong>`,
+    h(u.email),
+    rolePill(u.role),
+    u.ativo ? `<span class="pill green">ativo</span>` : `<span class="pill red">inativo</span>`,
+    u.ultimo_login ? fmtDateTime(epoch(u.ultimo_login)) : "nunca entrou",
+    `<button class="btn btn-default btn-xs ct-senha" data-id="${u.id}" data-nome="${h(u.email)}">Trocar senha</button>
+     <button class="btn btn-default btn-xs ct-toggle" data-id="${u.id}" data-ativo="${u.ativo}">${u.ativo ? "Desativar" : "Reativar"}</button>`,
+  ] }));
+  out.innerHTML = panel("Quem consegue entrar",
+    table(["Nome", "E-mail", "Perfil", "Situação", "Último acesso", ""], rows),
+    { subtitle: "Mesmo cadastro do CapiBLU — a conta serve às duas ferramentas.",
+      actions: `<button class="btn btn-main btn-xs" id="ctNova">Nova conta</button>` });
+
+  document.getElementById("ctNova").onclick = novaConta;
+  out.querySelectorAll(".ct-senha").forEach((b) => {
+    b.onclick = () => trocarSenha(b.dataset.id, b.dataset.nome);
+  });
+  out.querySelectorAll(".ct-toggle").forEach((b) => {
+    b.onclick = async () => {
+      const ativo = b.dataset.ativo !== "true";
+      try {
+        await api(`/api/admin/users/${b.dataset.id}`, { method: "PATCH", body: { ativo } });
+        toast(ativo ? "Conta reativada." : "Conta desativada.", "ok");
+        go("contas");
+      } catch (e) { toast(e.message, "err"); }
+    };
+  });
+}
+
+function novaConta() {
+  const m = modal({
+    title: "Nova conta de acesso",
+    body: `
+      <div class="field"><label>Nome</label><input class="form-control" id="ncNome"></div>
+      <div class="field"><label>E-mail</label>
+        <input class="form-control" id="ncEmail" type="email"></div>
+      <div class="field"><label>Senha provisória <span class="text-grey">(mínimo 8 caracteres)</span></label>
+        <input class="form-control" id="ncSenha" type="password"></div>
+      <div class="field"><label>Perfil</label>
+        <select class="form-control" id="ncRole">
+          <option value="user">Usuário — usa as ferramentas, com limite diário</option>
+          <option value="admin">Administrador — sem limite, gerencia contas</option>
+        </select></div>`,
+    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+             <button class="btn btn-main btn-sm" data-ok>Criar conta</button>`,
+  });
+  m.root.querySelector("[data-cancel]").onclick = m.close;
+  m.root.querySelector("[data-ok]").onclick = async () => {
+    const v = (id) => m.root.querySelector(id).value.trim();
+    if (!v("#ncEmail") || !v("#ncSenha")) return toast("E-mail e senha são obrigatórios.", "err");
+    if (v("#ncSenha").length < 8) return toast("A senha precisa de ao menos 8 caracteres.", "err");
+    try {
+      await api("/api/admin/users", { method: "POST", body: {
+        email: v("#ncEmail"), nome: v("#ncNome"),
+        senha: v("#ncSenha"), role: v("#ncRole") } });
+      m.close();
+      toast("Conta criada.", "ok");
+      go("contas");
+    } catch (e) { toast(e.message, "err"); }
+  };
+}
+
+function trocarSenha(uid, email) {
+  const m = modal({
+    title: `Trocar a senha de ${email}`,
+    body: `<div class="alert alert-info alert-styled-left">
+        A pessoa passa a entrar com esta senha. Combine com ela antes.
+      </div>
+      <div class="field"><label>Nova senha <span class="text-grey">(mínimo 8)</span></label>
+        <input class="form-control" id="tsSenha" type="password"></div>`,
+    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+             <button class="btn btn-main btn-sm" data-ok>Trocar</button>`,
+  });
+  m.root.querySelector("[data-cancel]").onclick = m.close;
+  m.root.querySelector("[data-ok]").onclick = async () => {
+    const senha = m.root.querySelector("#tsSenha").value;
+    if (senha.length < 8) return toast("A senha precisa de ao menos 8 caracteres.", "err");
+    try {
+      await api(`/api/admin/users/${uid}/password`, { method: "POST", body: { senha } });
+      m.close();
+      toast("Senha alterada.", "ok");
+    } catch (e) { toast(e.message, "err"); }
+  };
+}
+
+async function abaGrupos() {
+  const out = document.getElementById("ctOut");
+  const { grupos } = await api("/api/admin/grupos");
+  // Grupo guarda só id, nome e data — `criar_grupo` não aceita limite. O limite
+  // diário é por conta, na aba ao lado.
+  const rows = (grupos || []).map((g) => ({ cells: [
+    `<strong>${h(g.nome || g.name)}</strong>`,
+    g.criado_em ? fmtDate(epoch(g.criado_em)) : "—",
+    `<button class="btn btn-default btn-xs gr-del" data-id="${g.id}">Excluir</button>`,
+  ] }));
+  out.innerHTML = panel("Grupos", rows.length
+    ? table(["Nome", "Criado em", ""], rows)
+    : emptyState("Nenhum grupo. Serve para organizar as contas por equipe ou cliente."),
+    { subtitle: "O limite diário é definido por conta, na aba “Limite diário”.",
+      actions: `<button class="btn btn-main btn-xs" id="grNovo">Novo grupo</button>` });
+
+  document.getElementById("grNovo").onclick = () =>
+    promptOne("Novo grupo", "Nome do grupo", async (nome) => {
+      await api("/api/admin/grupos", { method: "POST", body: { nome } });
+      toast("Grupo criado.", "ok");
+      go("contas");
+    });
+  out.querySelectorAll(".gr-del").forEach((b) => {
+    b.onclick = async () => {
+      try {
+        await api(`/api/admin/grupos/${b.dataset.id}`, { method: "DELETE" });
+        toast("Grupo excluído.", "ok"); go("contas");
+      } catch (e) { toast(e.message, "err"); }
+    };
+  });
+}
+
+async function abaTokens() {
+  const out = document.getElementById("ctOut");
+  const r = await api("/api/admin/tokens");
+  const rows = (r.tokens || []).map((t) => ({ cells: [
+    `<strong>${h(t.nome || t.name || "—")}</strong>`,
+    h(t.email || t.usuario || "—"),
+    t.criado_em ? fmtDate(epoch(t.criado_em)) : "—",
+    t.ultimo_uso ? fmtDateTime(epoch(t.ultimo_uso)) : "nunca usado",
+    `<button class="btn btn-default btn-xs tk-del" data-id="${t.id}">Revogar</button>`,
+  ] }));
+  out.innerHTML = panel("Tokens de API", rows.length
+    ? table(["Nome", "Dono", "Criado", "Último uso", ""], rows)
+    : emptyState("Nenhum token. Token permite chamar a API sem passar pelo login."),
+    { subtitle: "O valor do token aparece uma única vez, na criação.",
+      actions: `<button class="btn btn-main btn-xs" id="tkNovo">Novo token</button>` });
+
+  document.getElementById("tkNovo").onclick = () => {
+    const m = modal({
+      title: "Novo token de API",
+      body: `<div class="field">
+               <label>Nome <span class="text-grey">(para você reconhecer depois)</span></label>
+               <input class="form-control" id="tnNome" placeholder="integração n8n"></div>
+             <div class="field"><label>Age em nome de</label>
+               <select class="form-control" id="tnUser">
+                 ${(r.usuarios || []).map((u) =>
+                   `<option value="${u.id}">${h(u.email)}</option>`).join("")}
+               </select></div>`,
+      footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+               <button class="btn btn-main btn-sm" data-ok>Gerar</button>`,
+    });
+    m.root.querySelector("[data-cancel]").onclick = m.close;
+    m.root.querySelector("[data-ok]").onclick = async () => {
+      const nome = m.root.querySelector("#tnNome").value.trim();
+      if (!nome) return toast("Dê um nome ao token.", "err");
+      try {
+        const novo = await api("/api/admin/tokens", { method: "POST", body: {
+          nome, user_id: Number(m.root.querySelector("#tnUser").value) } });
+        m.close();
+        // O valor só existe agora: o servidor guarda o hash.
+        modal({ title: "Token gerado", body: `
+          <div class="alert alert-info alert-styled-left">
+            Copie agora — este valor não aparece de novo.
+          </div>
+          <div class="json-box" style="user-select:all">${h(novo.token || novo.valor || JSON.stringify(novo))}</div>` });
+        go("contas");
+      } catch (e) { toast(e.message, "err"); }
+    };
+  };
+  out.querySelectorAll(".tk-del").forEach((b) => {
+    b.onclick = async () => {
+      try {
+        await api(`/api/admin/tokens/${b.dataset.id}`, { method: "DELETE" });
+        toast("Token revogado.", "ok"); go("contas");
+      } catch (e) { toast(e.message, "err"); }
+    };
+  });
+}
+
+async function abaConsumo() {
+  const out = document.getElementById("ctOut");
+  const r = await api("/api/admin/consumo");
+  const rows = (r.consumo || []).map((u) => {
+    const limite = u.limite_diario ?? r.limite_default;
+    const pct = limite ? Math.min(100, Math.round(u.consumo_hoje / limite * 100)) : 0;
+    return { cells: [
+      `<strong>${h(u.nome || "—")}</strong><br>
+       <span class="text-muted text-size-small">${h(u.email)}</span>`,
+      `${u.consumo_hoje} de ${limite}
+       <div style="height:5px;background:#eee;border-radius:3px;margin-top:4px">
+         <div style="height:5px;width:${pct}%;border-radius:3px;
+                     background:${pct > 85 ? "#c62828" : "#00a443"}"></div>
+       </div>`,
+      u.limite_diario_custom != null
+        ? `<span class="pill blue">próprio: ${u.limite_diario_custom}</span>`
+        : `<span class="text-muted">padrão (${r.limite_default})</span>`,
+      `<button class="btn btn-default btn-xs lm-set" data-id="${u.id}">Ajustar limite</button>`,
+    ] };
+  });
+  out.innerHTML = panel(`Consumo de ${r.dia}`, rows.length
+    ? table(["Conta", "Hoje", "Limite", ""], rows)
+    : emptyState("Nenhuma conta com limite — administrador não tem teto."),
+    { subtitle: "Administrador não consome cota; o limite vale para o perfil de usuário." });
+
+  out.querySelectorAll(".lm-set").forEach((b) => {
+    b.onclick = () => promptOne("Ajustar limite", "Consultas por dia", async (v) => {
+      await api(`/api/admin/users/${b.dataset.id}`, { method: "PATCH",
+        body: { limite_diario: Number(v) } });
+      toast("Limite atualizado.", "ok");
+      go("contas");
+    });
+  });
+}
