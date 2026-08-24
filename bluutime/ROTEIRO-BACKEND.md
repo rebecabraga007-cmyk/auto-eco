@@ -130,18 +130,66 @@ bloqueia em e-mail, WhatsApp e no registro de ligação.
 - Sincronia com um CRM de verdade — Ploomes é o que a BLU usa
 - Token de API com escopo, no padrão que o CapiBLU já tem
 
-## Fase 5 — Governança
+## Fase 5 — Governança ✅
 
-- Permissão por papel **na rota**: hoje o middleware exige login e cota, mas um SDR
-  pode apagar cadência e ver o financeiro inteiro
-- Escopo por dono: SDR enxerga todos os leads da empresa
-- Trilha de auditoria e registro de acesso a dado pessoal (LGPD) — o produto lê
-  CPF, telefone e renda; hoje isso não fica registrado
-- `nao_perturbe` bloqueando discagem, não só sendo coletado
+### Dois cadastros de papel, um nível efetivo
+
+Nenhum dos dois responde sozinho: o **login** é do CapiBLU (`admin`/`user`), e o
+**papel operacional** vem do Meetime (`ADMINISTRATOR`/`MANAGER`/`SALESMAN`), no
+`User` do Bluutime — que é quem é dono de lead. A ligação é o e-mail, e
+`perm.py` os resolve em `sdr` < `gestor` < `admin`.
+
+| Rota | Exige |
+|---|---|
+| Criar · alterar · excluir cadência | gestor |
+| Excluir base de leads | gestor |
+| Ação em massa sobre leads | gestor |
+| Ver a trilha de auditoria | gestor |
+
+Verificado: SDR recebe **403 nas cinco**, admin passa.
+
+### Escopo por dono
+
+`GET /flow/leads` e a fila de execução passam por `perm.escopo_leads`. SDR vê só
+a própria carteira; gestor e admin veem tudo. Antes disso, qualquer conta
+listava os leads da empresa inteira — medido: **1.199 para admin, 0 para SDR**.
+
+Uma consequência de desenho que vale saber: SDR **sem `User` correspondente por
+e-mail não é dono de nada**, e recebe lista vazia. É deliberado — melhor vazio
+do que a carteira inteira por falta de vínculo — mas significa que todo SDR de
+verdade precisa do registro operacional com o mesmo e-mail do login.
+
+### Trilha de auditoria (LGPD)
+
+O produto lê CPF, telefone, endereço e renda de pessoa física a partir de bases
+de terceiros. Tratamento sem registro é o que não dá para explicar depois.
+
+Fica no **middleware**, não espalhado pelas rotas, para que rota nova nasça
+auditada — depender de cada autor lembrar de chamar o log é como o
+`nao_perturbe`, que era coletado e nunca consultado.
+
+O documento é **mascarado** na trilha (`76.***.***/0001-07`): ela existe para
+provar quem acessou o quê, e reescrever o CPF inteiro num lugar a mais aumenta
+a exposição em vez de reduzir.
+
+Só o que toca pessoa entra — `DOSSIE`, `PESSOA`, `PESSOA_PERFIL`,
+`TELEFONE_REVERSO`, `ASSERTIVA`, `ENRIQUECIMENTO`, `DECISORES`, `MONTAR_BASE`,
+`ENVIO`. Listar cadência e abrir o painel não entram: registrar tudo transforma
+a trilha em ruído e some com o que importa.
+
+Um erro que o teste pegou: escrevi os padrões contra os caminhos internos do
+CapiBLU (`/capiblu/api/company/...`) e esqueci os do Bluutime
+(`/api/capiblu/empresas/...`) — a consulta de decisores passava sem registro.
+Agora os dois vocabulários casam.
+
+### Não perturbe
+
+Feito na Fase 3: bloqueia e-mail, WhatsApp e registro de ligação, sem escape por
+parâmetro.
 
 ---
 
-Ordem recomendada: **1 ✅ → 2 ✅ → 3 ✅ → 5 → 4**. A fase 4 é a única que depende de
+Ordem recomendada: **1 ✅ → 2 ✅ → 3 ✅ → 5 ✅ → 4**. A fase 4 é a única que depende de
 decisão comercial (qual CRM), o resto é técnico e independente.
 
 ## Canal: um vocabulário, não dois
