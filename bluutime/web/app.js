@@ -3043,3 +3043,358 @@ async function abaConsumo() {
     });
   });
 }
+
+/* ── Modelos de mensagem ───────────────────────────────────────────────
+ *
+ * Eram 5 rotas prontas desde a fase 1 e sem tela — montar cadência de e-mail ou
+ * WhatsApp exigia chamar a API na mão.
+ */
+const VARIAVEIS = [
+  ["primeiro_nome", "Caio"], ["nome", "Caio Emiliano"], ["empresa", "Omeco"],
+  ["razao_social", "OMECO IND. LTDA"], ["cargo", "Sócio-Administrador"],
+  ["cidade", "Curitiba"], ["estado", "PR"], ["cnpj", "76485390000107"],
+  ["email", "caio@omeco.com.br"], ["telefone", "(41) 99923-5178"],
+  ["remetente", "Felipe Oliveira"], ["remetente_email", "felipe@blu.com.br"],
+];
+
+const CANAL_PILL = { EMAIL: "blue", WHATSAPP: "green", SOCIAL: "grey" };
+
+PAGES["modelos-mensagem"] = {
+  area: "Prospecção", title: "Modelos de mensagem",
+  async render() {
+    view.innerHTML = `
+      <div class="toolbar">
+        <span class="text-muted text-size-small">
+          O texto de cada passo de e-mail, WhatsApp ou social. Use
+          <code>{{primeiro_nome}}</code> e companhia — a pré-visualização mostra
+          o resultado com um lead de verdade.
+        </span>
+        <span class="spacer"></span>
+        <button class="btn btn-main btn-xs" id="tmNovo">Novo modelo</button>
+      </div>
+      <div id="tmOut">${LOADING}</div>`;
+    document.getElementById("tmNovo").onclick = () => editarModelo(null);
+    await listarModelosMensagem();
+  },
+};
+
+async function listarModelosMensagem() {
+  const out = document.getElementById("tmOut");
+  try {
+    const modelos = await api("/api/flow/templates");
+    if (!modelos.length) {
+      out.innerHTML = panel("Modelos", emptyState(
+        "Nenhum modelo ainda. Sem modelo, um passo de e-mail não tem o que enviar."));
+      return;
+    }
+    const rows = modelos.map((t) => ({ cells: [
+      `<strong>${h(t.name)}</strong>`,
+      `<span class="pill ${CANAL_PILL[t.channel] || "grey"}">${h(t.channel)}</span>`,
+      h(t.subject || "—"),
+      t.variables.length
+        ? t.variables.map((v) => `<code class="text-size-small">${h(v)}</code>`).join(" ")
+        : `<span class="text-muted">sem variável</span>`,
+      `<button class="btn btn-default btn-xs tm-ver" data-id="${t.id}">Pré-visualizar</button>
+       <button class="btn btn-default btn-xs tm-edit" data-id="${t.id}">Editar</button>
+       <button class="btn btn-default btn-xs tm-del" data-id="${t.id}" data-nome="${h(t.name)}">Excluir</button>`,
+    ] }));
+    out.innerHTML = panel(`${modelos.length} modelos`,
+      table(["Nome", "Canal", "Assunto", "Variáveis", ""], rows, { scroll: true }));
+
+    const acha = (id) => modelos.find((t) => String(t.id) === id);
+    out.querySelectorAll(".tm-ver").forEach((b) => {
+      b.onclick = () => preverModelo(b.dataset.id);
+    });
+    out.querySelectorAll(".tm-edit").forEach((b) => {
+      b.onclick = () => editarModelo(acha(b.dataset.id));
+    });
+    out.querySelectorAll(".tm-del").forEach((b) => {
+      b.onclick = () => confirmDialog("Excluir modelo",
+        `Excluir “${b.dataset.nome}”? Se algum passo de cadência usar este modelo, ele é apenas desativado.`,
+        async () => {
+          const r = await api(`/api/flow/templates/${b.dataset.id}`, { method: "DELETE" });
+          toast(r.deactivated
+            ? `Desativado — ${r.usedBySteps} passo(s) ainda apontam para ele.`
+            : "Modelo excluído.", "ok");
+          go("modelos-mensagem");
+        });
+    });
+  } catch (e) {
+    out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+  }
+}
+
+function editarModelo(t) {
+  const novo = !t;
+  const m = modal({
+    wide: true,
+    title: novo ? "Novo modelo" : `Editar “${t.name}”`,
+    body: `
+      <div class="field-row">
+        <div class="field"><label>Nome</label>
+          <input class="form-control" id="tmNome" value="${h(t ? t.name : "")}"></div>
+        <div class="field"><label>Canal</label>
+          <select class="form-control" id="tmCanal"${novo ? "" : " disabled"}>
+            ${["EMAIL", "WHATSAPP", "SOCIAL"].map((c) =>
+              `<option value="${c}"${t && t.channel === c ? " selected" : ""}>${c}</option>`).join("")}
+          </select>
+          ${novo ? "" : `<span class="text-muted text-size-small">
+            O canal não muda depois: passos de cadência já apontam para ele.</span>`}</div>
+      </div>
+      <div class="field" id="tmAssuntoBox">
+        <label>Assunto <span class="text-grey">(só e-mail)</span></label>
+        <input class="form-control" id="tmAssunto" value="${h(t ? t.subject : "")}"></div>
+      <div class="field"><label>Mensagem</label>
+        <textarea class="form-control" id="tmCorpo" style="min-height:190px">${h(t ? t.body : "")}</textarea></div>
+      <div class="field">
+        <label class="text-muted text-size-small">Clique para inserir no cursor</label><br>
+        ${VARIAVEIS.map(([v, ex]) => `<button type="button" class="btn btn-default btn-xs mr-10 mb-10"
+          data-var="${v}" title="ex.: ${h(ex)}">{{${v}}}</button>`).join("")}
+      </div>`,
+    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+             <button class="btn btn-main btn-sm" data-ok>Salvar</button>`,
+  });
+
+  const corpo = m.root.querySelector("#tmCorpo");
+  const assunto = m.root.querySelector("#tmAssunto");
+  const canal = m.root.querySelector("#tmCanal");
+  let ultimo = corpo;
+  [corpo, assunto].forEach((el) => { el.onfocus = () => { ultimo = el; }; });
+
+  const soEmail = () => {
+    m.root.querySelector("#tmAssuntoBox").style.display =
+      canal.value === "EMAIL" ? "" : "none";
+  };
+  canal.onchange = soEmail;
+  soEmail();
+
+  m.root.querySelectorAll("[data-var]").forEach((b) => {
+    b.onclick = () => {
+      // Insere no ponto do cursor, não no fim: escrever o texto e depois ter de
+      // recortar a variável para o lugar certo é o que torna chip inútil.
+      const el = ultimo;
+      const ini = el.selectionStart ?? el.value.length;
+      const fim = el.selectionEnd ?? el.value.length;
+      const token = `{{${b.dataset.var}}}`;
+      el.value = el.value.slice(0, ini) + token + el.value.slice(fim);
+      el.focus();
+      el.setSelectionRange(ini + token.length, ini + token.length);
+    };
+  });
+
+  m.root.querySelector("[data-cancel]").onclick = m.close;
+  m.root.querySelector("[data-ok]").onclick = async () => {
+    const nome = m.root.querySelector("#tmNome").value.trim();
+    if (!nome) return toast("Dê um nome ao modelo.", "err");
+    if (!corpo.value.trim()) return toast("A mensagem está vazia.", "err");
+    const body = { name: nome, subject: assunto.value, body: corpo.value };
+    try {
+      if (novo) {
+        await api("/api/flow/templates", { method: "POST",
+          body: { ...body, channel: canal.value, createdById: state.me.id } });
+      } else {
+        await api(`/api/flow/templates/${t.id}`, { method: "PATCH", body });
+      }
+      m.close();
+      toast("Modelo salvo.", "ok");
+      go("modelos-mensagem");
+    } catch (e) { toast(e.message, "err"); }
+  };
+}
+
+async function preverModelo(tid) {
+  try {
+    const p = await api(`/api/flow/templates/${tid}/preview`, { method: "POST", body: {} });
+    modal({
+      wide: true,
+      title: `Como fica para ${p.leadName}`,
+      body: `
+        ${p.missing.length ? `<div class="alert alert-info alert-styled-left">
+          <strong>Sem valor para este lead:</strong> ${p.missing.map(h).join(", ")}.
+          A variável sai literal na mensagem.</div>` : ""}
+        ${p.subject ? `<div class="field"><label>Assunto</label>
+          <div class="json-box">${h(p.subject)}</div></div>` : ""}
+        <div class="field"><label>Mensagem</label>
+          <div class="json-box" style="white-space:pre-wrap">${h(p.body)}</div></div>`,
+    });
+  } catch (e) { toast(e.message, "err"); }
+}
+
+/* ── Envio: canais, entregas e trilha ──────────────────────────────────
+ *
+ * Toda a fase 3 respondia só por API. `POST /envio/teste` é o que confere a
+ * configuração antes de encostar em lead real — e era o que não tinha botão.
+ */
+const ESTADO_PILL = {
+  CONNECTED: "green", CONNECTING: "amber", DISCONNECTED: "red",
+  UNREACHABLE: "red", NOT_CONFIGURED: "grey",
+};
+
+PAGES["envio"] = {
+  area: "Prospecção", title: "Canais e entregas",
+  async render() {
+    const aba = state.envioAba || "canais";
+    view.innerHTML = `
+      <ul class="nav nav-tabs">
+        ${[["canais", "Canais"], ["entregas", "Entregas"], ["trilha", "Trilha de acesso"]]
+          .map(([k, t]) => `<li${aba === k ? " class=\"active\"" : ""}><a data-eaba="${k}">${t}</a></li>`).join("")}
+      </ul>
+      <div id="enOut">${LOADING}</div>`;
+    view.querySelectorAll("[data-eaba]").forEach((a) => {
+      a.onclick = () => { state.envioAba = a.dataset.eaba; go("envio"); };
+    });
+    try {
+      await ({ canais: abaCanais, entregas: abaEntregas, trilha: abaTrilha }[aba])();
+    } catch (e) {
+      document.getElementById("enOut").innerHTML =
+        `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+    }
+  },
+};
+
+async function abaCanais() {
+  const out = document.getElementById("enOut");
+  const r = await api("/api/envio/canais");
+  out.innerHTML = `
+    <div class="alert ${r.sendingEnabled ? "alert-success" : "alert-info"} alert-styled-left">
+      ${r.sendingEnabled
+        ? "<strong>Envio ligado.</strong> As mensagens saem de verdade para os leads."
+        : `<strong>Envio desligado.</strong> Tudo volta como <code>SIMULATED</code> e fica
+           registrado — nada chega a lead nenhum. Para ligar, defina
+           <code>BLUUTIME_SEND=1</code> no <code>.env</code>.`}
+    </div>
+    ${r.channels.map((c) => panel(h(c.label), `
+      <div class="filter-row" style="grid-template-columns:repeat(3,1fr)">
+        <div><label class="text-muted text-size-small">Estado</label><br>
+          <span class="pill ${ESTADO_PILL[c.state] || "grey"}">${h(c.state)}</span></div>
+        <div><label class="text-muted text-size-small">Configurado</label><br>
+          ${c.configured ? `<span class="pill green">sim</span>`
+                         : `<span class="pill red">não</span>`}</div>
+        <div><label class="text-muted text-size-small">
+          ${c.channel === "EMAIL" ? "Remetente" : "Instância"}</label><br>
+          <code>${h(c.from || c.instance || "—")}</code></div>
+      </div>
+      ${c.reason ? `<div class="alert alert-info alert-styled-left mt-10">${h(c.reason)}</div>` : ""}
+      <div class="mt-10">
+        <button class="btn btn-default btn-sm en-teste" data-canal="${c.channel}">
+          Enviar teste para mim</button>
+      </div>`)).join("")}`;
+
+  out.querySelectorAll(".en-teste").forEach((b) => {
+    b.onclick = () => testarCanal(b.dataset.canal);
+  });
+}
+
+function testarCanal(canal) {
+  const eEmail = canal === "EMAIL";
+  const m = modal({
+    title: `Teste de ${canal}`,
+    body: `<div class="alert alert-info alert-styled-left">
+        Manda para o destino que você informar — use o seu, não o de um lead.
+      </div>
+      <div class="field"><label>${eEmail ? "E-mail" : "Telefone com DDD"}</label>
+        <input class="form-control" id="etDest" placeholder="${eEmail ? "voce@blusalesgroup.com.br" : "41999999999"}"></div>
+      <div class="field"><label>Mensagem</label>
+        <textarea class="form-control" id="etCorpo" style="min-height:90px">Teste do Bluutime.</textarea></div>`,
+    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+             <button class="btn btn-main btn-sm" data-ok>Enviar</button>`,
+  });
+  m.root.querySelector("[data-cancel]").onclick = m.close;
+  m.root.querySelector("[data-ok]").onclick = async () => {
+    const to = m.root.querySelector("#etDest").value.trim();
+    if (!to) return toast("Informe o destino.", "err");
+    try {
+      const r = await api("/api/envio/teste", { method: "POST", body: {
+        channel: canal, to, body: m.root.querySelector("#etCorpo").value } });
+      m.close();
+      modal({ title: `Resultado: ${r.status}`, body: `
+        <div class="alert ${r.status === "SENT" ? "alert-success" : "alert-info"} alert-styled-left">
+          ${r.status === "SENT"
+            ? "Aceito pelo provedor. Confira se chegou."
+            : h(r.error || "Nada saiu.")}
+        </div>
+        <div class="json-box">${h(JSON.stringify(r, null, 2))}</div>` });
+    } catch (e) { toast(e.message, "err"); }
+  };
+}
+
+const STATUS_PILL = { SENT: "green", SIMULATED: "blue", BLOCKED: "amber", FAILED: "red" };
+
+async function abaEntregas() {
+  const out = document.getElementById("enOut");
+  const f = state.entregaFiltro || {};
+  const qs = new URLSearchParams(
+    Object.entries(f).filter(([, v]) => v)).toString();
+  const r = await api(`/api/envio/entregas${qs ? "?" + qs : ""}`);
+  const rows = r.data.map((d) => ({ cells: [
+    fmtDateTime(d.createdAt),
+    `<span class="pill ${STATUS_PILL[d.status] || "grey"}">${h(d.status)}</span>`,
+    h(d.channel),
+    d.lead ? h(d.lead.name) : `<span class="text-muted">—</span>`,
+    h(d.to || "—"),
+    h(d.subject || "—"),
+    d.error ? `<span class="text-muted text-size-small">${h(d.error)}</span>` : "—",
+  ] }));
+  out.innerHTML = `
+    <div class="toolbar">
+      <select class="form-control" id="efStatus">
+        <option value="">Todos os status</option>
+        ${["SENT", "SIMULATED", "BLOCKED", "FAILED"].map((s) =>
+          `<option value="${s}"${f.status === s ? " selected" : ""}>${s}</option>`).join("")}
+      </select>
+      <select class="form-control" id="efCanal">
+        <option value="">Todos os canais</option>
+        ${["EMAIL", "WHATSAPP"].map((c) =>
+          `<option value="${c}"${f.channel === c ? " selected" : ""}>${c}</option>`).join("")}
+      </select>
+      <span class="spacer text-muted text-size-small">
+        É aqui que se responde “por que este lead não recebeu nada?”.</span>
+    </div>
+    ${panel(`${r.data.length} tentativas`, rows.length
+      ? table(["Quando", "Status", "Canal", "Lead", "Destino", "Assunto", "Motivo"], rows, { scroll: true })
+      : emptyState("Nenhuma tentativa de envio ainda."))}`;
+
+  const aplica = () => {
+    state.entregaFiltro = {
+      status: document.getElementById("efStatus").value,
+      channel: document.getElementById("efCanal").value,
+    };
+    go("envio");
+  };
+  document.getElementById("efStatus").onchange = aplica;
+  document.getElementById("efCanal").onchange = aplica;
+}
+
+async function abaTrilha() {
+  const out = document.getElementById("enOut");
+  const acao = state.trilhaAcao || "";
+  const r = await api(`/api/envio/auditoria${acao ? `?action=${acao}` : ""}`);
+  const rows = r.data.map((l) => ({ cells: [
+    fmtDateTime(l.at),
+    h(l.actor),
+    `<span class="pill ${l.level === "admin" ? "amber" : "grey"}">${h(l.level)}</span>`,
+    `<code>${h(l.action)}</code>`,
+    h(l.subject || "—"),
+    l.status === 200 ? `<span class="pill green">200</span>`
+                     : `<span class="pill red">${l.status}</span>`,
+  ] }));
+  out.innerHTML = `
+    <div class="alert alert-info alert-styled-left">
+      Quem acessou dado pessoal de quem. O documento aparece <strong>mascarado</strong>:
+      a trilha existe para provar o acesso, não para republicar o CPF.
+    </div>
+    <div class="toolbar">
+      <select class="form-control" id="trAcao">
+        <option value="">Todas as ações</option>
+        ${[...new Set(r.actions)].map((a) =>
+          `<option value="${a}"${acao === a ? " selected" : ""}>${a}</option>`).join("")}
+      </select>
+      <span class="spacer"></span>
+    </div>
+    ${panel(`${r.data.length} acessos`, rows.length
+      ? table(["Quando", "Quem", "Perfil", "Ação", "Alvo", "Resultado"], rows, { scroll: true })
+      : emptyState("Nenhum acesso a dado pessoal registrado."))}`;
+  document.getElementById("trAcao").onchange = (e) => {
+    state.trilhaAcao = e.target.value; go("envio");
+  };
+}
