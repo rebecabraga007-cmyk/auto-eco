@@ -11,10 +11,10 @@ Toda saída passa por aqui, e por três travas antes do provedor:
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from .. import agenda, channels, render, serial
+from .. import agenda, auditoria, channels, perm, render, serial
 from ..db import get_db
-from ..models import (CadenceStep, Conversation, Delivery, Lead, LeadActivity,
-                      Message, Template, User, channel_of)
+from ..models import (AuditLog, CadenceStep, Conversation, Delivery, Lead,
+                      LeadActivity, Message, Template, User, channel_of)
 
 router = APIRouter(prefix="/api/envio")
 
@@ -23,6 +23,30 @@ router = APIRouter(prefix="/api/envio")
 async def canais():
     """Estado real de cada canal — sem `CONNECTED` inventado."""
     return {"sendingEnabled": channels.envio_ligado(), "channels": await channels.states()}
+
+
+@router.get("/quem-sou-eu")
+def quem_sou_eu(db: Session = Depends(get_db)):
+    """O nível efetivo do usuário — é isto que a UI usa para esconder botão."""
+    return perm.ator(db).as_dict()
+
+
+@router.get("/auditoria")
+def trilha(action: str | None = None, actor: str | None = None,
+           limit: int = 100, db: Session = Depends(get_db)):
+    """Quem acessou dado pessoal de quem. Só gestor — é a trilha, não o dado."""
+    perm.ator(db).exigir("gestor", "ver a trilha de auditoria")
+    q = db.query(AuditLog)
+    if action:
+        q = q.filter(AuditLog.action == action.upper())
+    if actor:
+        q = q.filter(AuditLog.actor_email.ilike(f"%{actor}%"))
+    rows = q.order_by(AuditLog.at.desc()).limit(min(limit, 500)).all()
+    return {"data": [{
+        "id": r.id, "at": serial.iso(r.at), "actor": r.actor_email,
+        "level": r.actor_level, "action": r.action, "subject": r.subject,
+        "path": r.path, "status": r.status, "detail": r.detail} for r in rows],
+        "actions": [nome for _, nome in auditoria.ACOES]}
 
 
 def _pode_enviar(lead: Lead, canal: str, fora_da_janela: bool) -> str:

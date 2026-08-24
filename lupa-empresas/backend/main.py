@@ -45,6 +45,7 @@ import rais
 import serasa
 import dossie
 import mistral
+import workapi
 
 # Base local de CPF (JBR_PF) — modulo compartilhado em ../../jbr_base.
 _JBR = os.path.join(
@@ -140,35 +141,100 @@ def _enrich_qsa_cpf(company: dict) -> None:
 
 
 @app.get("/api/person/name-search")
-def person_name_search(
-    q: str = "", broad: bool = False, limit: int = 40, offset: int = 0
+async def person_name_search(
+    q: str = "", broad: bool = False, limit: int = 40, offset: int = 0, uf: str = ""
 ):
-    """Busca pessoas por nome na base JBR. broad=true usa LIKE (nomes compostos).
+    """Busca pessoas por nome em JBR (local) + WorkAPI (online). broad=true usa LIKE.
 
-    Retorna 'total' = total de matches disponíveis (para 'Ver mais'/'Buscar todos').
+    Parâmetros:
+    - q: nome (obrigatório)
+    - broad: bool — LIKE em vez de match exato (nomes compostos)
+    - limit: máximo de resultados (padrão 40)
+    - offset: para paginação (JBR só)
+    - uf: filtro opcional por estado (deduplica + valida por localização)
+
+    Retorna 'total' = total de matches (JBR só). JBR é instantâneo e tem CPF completo;
+    WorkAPI complementa com dados mais frescos e localização. Deduplica por CPF quando
+    ambos têm, ou por nome quando só tem mascarado. uf filtra por estado.
     """
-    if not _cpf_ready():
-        return {"status": "unavailable", "message": "Base JBR ainda carregando."}
-    if not q.strip():
+    if not q or not q.strip():
         return {"status": "error", "message": "Parâmetro q obrigatório."}
+
+    q = q.strip()
+    uf = (uf or "").strip().upper()
+    jbr_ready = _cpf_ready()
+
+    # Chama JBR e WorkAPI em paralelo
+    jbr_res = None
+    workapi_res = None
     try:
-        q = q.strip()
-        if broad:
-            pessoas = cpf_lookup.by_name_broad(q, limit=limit, offset=offset)
-            total = cpf_lookup.count_name_broad(q)
-        else:
-            pessoas = cpf_lookup.by_name(q, limit=limit)
-            total = len(pessoas)
-        return {
-            "status": "ok",
-            "total": total,
-            "returned": len(pessoas),
-            "offset": offset,
-            "broad": broad,
-            "pessoas": pessoas,
-        }
+        if jbr_ready:
+            if broad:
+                jbr_pessoas = cpf_lookup.by_name_broad(q, limit=limit, offset=offset)
+                jbr_total = cpf_lookup.count_name_broad(q)
+            else:
+                jbr_pessoas = cpf_lookup.by_name(q, limit=limit)
+                jbr_total = len(jbr_pessoas)
+            jbr_res = {"pessoas": jbr_pessoas, "total": jbr_total}
     except Exception as exc:
-        return {"status": "error", "message": str(exc)[:120]}
+        jbr_res = {"pessoas": [], "total": 0, "erro": str(exc)[:80]}
+
+    if workapi.enabled():
+        wa_res = await workapi.nome_search(q, limit=limit)
+        if wa_res.get("status") == "ok":
+            workapi_res = wa_res.get("pessoas", [])
+
+    # Mescla: por CPF quando disponível, senão por nome
+    por_cpf = {}
+    ordem = []
+
+    if jbr_res:
+        for p in jbr_res.get("pessoas") or []:
+            cpf = p.get("cpf") or ""
+            chave = cpf or ("nome:" + (p.get("nome") or "").upper())
+            if chave not in por_cpf:
+                por_cpf[chave] = {"fonte": "JBR", **p}
+                ordem.append(chave)
+
+    if workapi_res:
+        for p in workapi_res:
+            # WorkAPI tem CPF mascarado tipo "347*****821" — usamos como é
+            cpf = p.get("cpf") or ""
+            # Tenta casar: se já temos JBR com esse CPF, enriquece
+            chave = cpf or ("nome:" + (p.get("nome") or "").upper())
+            if chave in por_cpf:
+                # Junta info: WorkAPI tem endereco, data_nascimento etc que JBR pode não ter
+                atual = por_cpf[chave]
+                for k, v in p.items():
+                    if v and not atual.get(k):
+                        atual[k] = v
+                if "WorkAPI" not in (atual.get("fonte") or ""):
+                    atual["fonte"] = (atual.get("fonte") or "JBR") + " + WorkAPI"
+            else:
+                por_cpf[chave] = {"fonte": "WorkAPI", **p}
+                ordem.append(chave)
+
+    resultado = [por_cpf[k] for k in ordem]
+
+    # Filtro por UF (se especificado)
+    if uf:
+        resultado = [p for p in resultado if (p.get("endereco", {}).get("uf") or "").upper() == uf]
+
+    total_jbr = jbr_res.get("total", 0) if jbr_res else 0
+
+    return {
+        "status": "ok",
+        "total": total_jbr,
+        "returned": len(resultado),
+        "offset": offset,
+        "broad": broad,
+        "uf_filtro": uf or None,
+        "pessoas": resultado,
+        "fontes": {
+            "jbr": "ok" if jbr_ready else "unavailable",
+            "workapi": "ok" if workapi_res else "unavailable",
+        }
+    }
 
 
 @app.get("/api/person/{cpf}/mk")

@@ -324,6 +324,26 @@ class Webhook(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class AuditLog(Base):
+    """Quem olhou o dado pessoal de quem, e quando.
+
+    O produto lê CPF, telefone, endereço e renda de pessoa física a partir de
+    bases de terceiros. A LGPD trata isso como tratamento de dado pessoal, e
+    tratamento sem registro é o que não dá para explicar depois. Só as consultas
+    que tocam pessoa entram aqui — listar cadência não é dado pessoal.
+    """
+    __tablename__ = "audit_log"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    actor_email: Mapped[str] = mapped_column(String(160), default="", index=True)
+    actor_level: Mapped[str] = mapped_column(String(12), default="")
+    action: Mapped[str] = mapped_column(String(60), default="", index=True)
+    subject: Mapped[str] = mapped_column(String(80), default="", index=True)  # CPF/CNPJ/telefone
+    path: Mapped[str] = mapped_column(String(200), default="")
+    status: Mapped[int] = mapped_column(Integer, default=200)
+    detail: Mapped[str] = mapped_column(String(240), default="")
+
+
 class Integration(Base):
     __tablename__ = "integration"
     id: Mapped[int] = mapped_column(primary_key=True)

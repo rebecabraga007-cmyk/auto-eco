@@ -22,7 +22,8 @@ import auth as capiblu_auth  # noqa: E402  — vive em lupa-empresas/backend
 
 from .capiblu_client import capiblu_app, capiblu_error  # noqa: E402
 from .migrate import run as run_migrations  # noqa: E402
-from . import tick  # noqa: E402
+from . import auditoria, perm, tick  # noqa: E402
+from .db import SessionLocal  # noqa: E402
 from .routers import (analytics, capiblu, core, dialer, envio,  # noqa: E402
                       flow, meetime, whatsapp)
 from .seed import seed_if_empty  # noqa: E402
@@ -85,6 +86,19 @@ async def sessao(request: Request, call_next):
             capiblu_auth.registrar_consumo(user["id"])
 
     response = await call_next(request)
+
+    # Auditoria no middleware, e não nas rotas: rota nova nasce auditada.
+    acao = auditoria.acao_de(path) if protected and user else ""
+    if acao:
+        db = SessionLocal()
+        try:
+            await asyncio.to_thread(
+                auditoria.registrar, path=path, acao=acao, ator=perm.ator(db),
+                status=response.status_code,
+                detail=request.method + " " + (request.url.query or "")[:120])
+        finally:
+            db.close()
+
     if user and capiblu_auth.deve_renovar(request):
         capiblu_auth.renovar_sessao(response, user, request)
     if path == "/" or path.endswith((".html", ".js", ".css")):

@@ -12,7 +12,7 @@ from ..db import get_db
 from ..models import (Activity, Cadence, CadenceStep, CadenceUser, Client,
                       CustomField, Lead, LeadActivity, LeadBase, LeadFieldValue,
                       LostReason, Template, User, channel_of)
-from .. import agenda, render, serial
+from .. import agenda, perm, render, serial
 
 router = APIRouter(prefix="/api/flow")
 
@@ -71,6 +71,7 @@ def get_cadence(cid: int, db: Session = Depends(get_db)):
 
 @router.post("/cadences")
 def create_cadence(payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "criar cadência")
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "Nome da cadência é obrigatório.")
@@ -90,6 +91,7 @@ def create_cadence(payload: dict = Body(...), db: Session = Depends(get_db)):
 
 @router.patch("/cadences/{cid}")
 def update_cadence(cid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "alterar cadência")
     c = db.get(Cadence, cid)
     if not c:
         raise HTTPException(404, "Cadência não encontrada.")
@@ -108,6 +110,7 @@ def update_cadence(cid: int, payload: dict = Body(...), db: Session = Depends(ge
 
 @router.delete("/cadences/{cid}")
 def delete_cadence(cid: int, db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "excluir cadência")
     c = db.get(Cadence, cid)
     if not c:
         raise HTTPException(404, "Cadência não encontrada.")
@@ -323,7 +326,9 @@ def list_leads(status: str | None = None, cadence_id: int | None = None,
                lead_base_id: int | None = None, q: str | None = None,
                page: int = 1, limit: int = Query(50, le=500),
                db: Session = Depends(get_db)):
-    query = db.query(Lead)
+    # SDR vê só a própria carteira; gestor e admin veem tudo. Antes disso,
+    # qualquer conta listava os leads da empresa inteira.
+    query = perm.escopo_leads(db.query(Lead), perm.ator(db), Lead.sdr_id)
     if status:
         query = query.filter(Lead.status.in_(status.split(",")))
     if cadence_id:
@@ -462,6 +467,7 @@ def update_lead(lid: int, payload: dict = Body(...), db: Session = Depends(get_d
 
 @router.post("/leads/bulk")
 def bulk_action(payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "ação em massa sobre leads")
     """Ações em massa da lista de leads (transferir, trocar cadência, perder, apagar)."""
     ids = payload.get("leadIds") or []
     action = payload.get("action")
@@ -611,6 +617,7 @@ def import_base(payload: dict = Body(...), db: Session = Depends(get_db)):
 
 @router.delete("/lead-bases/{bid}")
 def delete_base(bid: int, db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "excluir base de leads")
     b = db.get(LeadBase, bid)
     if not b:
         raise HTTPException(404, "Base não encontrada.")
@@ -633,6 +640,7 @@ def queue(sdr_id: int | None = None, client_id: int | None = None,
              .filter(LeadActivity.status == "PENDING",
                      Lead.status.in_(["EXECUTING", "WAITING", "ON_EXTRA_ACTIVITY"]),
                      LeadActivity.scheduled_at <= now + timedelta(days=1)))
+    query = perm.escopo_leads(query, perm.ator(db), LeadActivity.user_id)
     if sdr_id:
         query = query.filter(LeadActivity.user_id == sdr_id)
     if client_id:
