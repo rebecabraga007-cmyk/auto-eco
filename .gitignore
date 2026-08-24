@@ -26,3 +26,6 @@ relatorio_automacao_extraido.txt
 
 # banco local do Bluutime (dados reais importados do Meetime)
 bluutime/bluutime.db
+
+# Transcricoes e exports de trabalho — carregam CPF real e segredo de ambiente.
+exports/
