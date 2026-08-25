@@ -15,7 +15,7 @@ def enabled() -> bool:
 
 
 async def nome_search(q: str, limit: int = 40) -> dict:
-    """Busca pessoas por nome na WorkAPI (database-nome).
+    """Busca pessoas por nome na WorkAPI (intelgrax-nomev2).
 
     Retorna {status, pessoas:[{nome, cpf, dataNascimento, sexo, nomeMae,
     situacaoCadastral, endereco:{logradouro, bairro, municipio, uf, cep}}]}.
@@ -29,9 +29,9 @@ async def nome_search(q: str, limit: int = 40) -> dict:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             # WorkAPI não expõe parâmetros de limit/offset — a resposta traz o que acha
             r = await client.get(
-                f"{WORKAPI_BASE}/database-nome",
+                f"{WORKAPI_BASE}/intelgrax-nomev2",
                 headers={"x-api-key": WORKAPI_KEY},
-                params={"nome": q.strip()},
+                params={"name": q.strip()},
             )
             r.raise_for_status()
             data = r.json()
