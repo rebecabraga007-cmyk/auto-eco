@@ -103,15 +103,15 @@ não um sucesso silencioso:
 
 | Canal | Estado |
 |---|---|
-| WhatsApp | Evolution API: envio, estado real da instância, webhook de entrada casando pelos últimos 8 dígitos, `fromMe` descartado |
+| WhatsApp | **wuzapi (whatsmeow)**: envio, estado real da sessão, pareamento por QR na própria tela, webhook casando pelos últimos 8 dígitos, `fromMe` descartado. A Evolution segue no código como alternativa (`WHATSAPP_PROVIDER=evolution`) |
 | E-mail | SMTP com `Message-ID` guardado para casar a resposta depois; rastreio de abertura preparado e **desligado** |
 | Telefonia | Continua registrando resultado — discar depende de escolher provedor, que é decisão comercial |
 
 ### O freio de mão
 
 Ter credencial não basta: enquanto `BLUUTIME_SEND != 1`, tudo volta `SIMULATED`.
-Sem isso, no dia em que alguém colar a chave da Evolution no `.env`, a cadência
-inteira dispararia para leads reais sem ninguém ter decidido isso.
+Sem isso, no dia em que alguém parear um número ou colar as credenciais de SMTP,
+a cadência inteira dispararia para leads reais sem ninguém ter decidido isso.
 
 ### O bug que o teste pegou
 
@@ -124,11 +124,27 @@ marca no cadastro dele: ato deliberado e auditável.
 Esse sinal vinha da Assertiva, era guardado e **nunca consultado**. Agora
 bloqueia em e-mail, WhatsApp e no registro de ligação.
 
-## Fase 4 — Saída e integrações
+## Fase 4 — Saída e integrações ⏳
 
-- Entrega de webhook com reenvio e assinatura HMAC (o modelo `Webhook` existe, nada dispara)
-- Sincronia com um CRM de verdade — Ploomes é o que a BLU usa
-- Token de API com escopo, no padrão que o CapiBLU já tem
+**Webhooks de saída: ✅ feito.** O disparo anterior era `httpx.post` com
+`except: pass` dentro do request — bloqueava a resposta enquanto o receptor
+pensava, perdia o evento na primeira falha e mandava o segredo em texto para todo
+receptor. Agora a entrega é enfileirada, assinada em HMAC-SHA256 e repetida com
+espera crescente (1min · 5min · 30min · 2h · 6h). 4xx que não seja 408/429
+desiste na hora: erro de payload não melhora com repique.
+
+Sete eventos assináveis, `WebhookDelivery` registrando cada tentativa, e reenvio
+manual do que desistiu. Verificado com um receptor que confere a assinatura como
+um CRM faria.
+
+Um bug que o teste pegou: em `lead_outcome` o disparo ficava **depois** do
+`db.commit()`. Funcionava quando fazia HTTP na hora, mas agora que só grava na
+fila a linha se perdia — o evento real nunca chegava.
+
+**Falta:**
+
+- Sincronia com CRM — depende de decisão comercial (qual, e como mapear)
+- Token de API com escopo já existe em `auth.py`, falta expor no Bluutime
 
 ## Fase 5 — Governança ✅
 

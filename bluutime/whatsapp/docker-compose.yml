@@ -1,0 +1,61 @@
+# WhatsApp do Bluutime — wuzapi, um REST fino em cima do whatsmeow.
+#
+# Substituiu a Evolution API. O whatsmeow é a biblioteca que o próprio WhatsApp
+# Web usa por baixo, e o wuzapi é uma casca fina sobre ela — menos superfície
+# para quebrar quando o WhatsApp muda algo. A Evolution v2.1.1 do blueprint do
+# Render é o exemplo: ficou presa numa versão de cliente que o WhatsApp já não
+# aceita e nem chegava a gerar QR.
+#
+# O provedor da Evolution continua no código (`WHATSAPP_PROVIDER=evolution`),
+# porque voltar custa uma variável e nenhuma linha nova.
+#
+# Sobe com:  bash bluutime/whatsapp/subir.sh
+
+services:
+  wuzapi:
+    image: ${WUZAPI_IMAGE:-asternic/wuzapi:latest}
+    container_name: bluutime-wuzapi
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # Token de administração — cria e remove usuários. Não é o que envia
+      # mensagem: esse é o token do usuário, que vai em WUZAPI_TOKEN.
+      WUZAPI_ADMIN_TOKEN: ${WUZAPI_ADMIN_TOKEN}
+      DB_USER: wuzapi
+      DB_PASSWORD: wuzapi
+      DB_NAME: wuzapi
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      TZ: America/Sao_Paulo
+      # Nome que aparece em "Aparelhos conectados" no celular.
+      SESSION_DEVICE_NAME: Bluutime
+    volumes:
+      - wuzapi_files:/app/files
+      - wuzapi_dbdata:/app/dbdata
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: bluutime-wuzapi-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wuzapi
+      POSTGRES_PASSWORD: wuzapi
+      POSTGRES_DB: wuzapi
+    volumes:
+      - wuzapi_pg:/var/lib/postgresql/data
+    healthcheck:
+      # O wuzapi roda migração na subida; sem esperar o banco ficar pronto ele
+      # morre no boot e o contêiner entra em laço de reinício.
+      test: ["CMD-SHELL", "pg_isready -U wuzapi -d wuzapi"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  wuzapi_files:
+  wuzapi_dbdata:
+  wuzapi_pg:

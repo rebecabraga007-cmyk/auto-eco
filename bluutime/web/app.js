@@ -3418,11 +3418,19 @@ async function abaCanais() {
       <div class="mt-10">
         <button class="btn btn-default btn-sm en-teste" data-canal="${c.channel}">
           Enviar teste para mim</button>
-      </div>`)).join("")}`;
+        ${c.channel === "WHATSAPP" && c.configured && c.state !== "CONNECTED"
+          ? `<button class="btn btn-main btn-sm ml-5" id="waParear">Parear número</button>`
+          : ""}
+        ${c.channel === "WHATSAPP" && c.state === "CONNECTED"
+          ? `<span class="text-muted text-size-small ml-5">Número pareado.</span>` : ""}
+      </div>
+      ${c.channel === "WHATSAPP" ? `<div id="waQr" class="mt-10"></div>` : ""}`)).join("")}`;
 
   out.querySelectorAll(".en-teste").forEach((b) => {
     b.onclick = () => testarCanal(b.dataset.canal);
   });
+  const parear = document.getElementById("waParear");
+  if (parear) parear.onclick = () => parearWhatsapp();
 }
 
 function testarCanal(canal) {
@@ -3871,4 +3879,60 @@ function renderPertence(r, phone, doc) {
       ${compartilhada ? " <strong>Atenção:</strong> a linha aparece para mais de um documento." : ""}
     </div>
     ${tabelaGenerica(r)}`, { subtitle: "Consulta paga" });
+}
+
+/** Pareia o WhatsApp: abre a sessão, mostra o QR e acompanha até conectar.
+ *
+ * O QR do whatsmeow expira em cerca de 40s e a sessão cai junto — por isso a
+ * tela renova sozinha em vez de deixar um código morto na frente do usuário.
+ */
+async function parearWhatsapp() {
+  const alvo = document.getElementById("waQr");
+  const btn = document.getElementById("waParear");
+  if (btn) { btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> conectando…`; }
+  alvo.innerHTML = `<div class="alert alert-info alert-styled-left">
+    <span class="spinner"></span> Abrindo a sessão…</div>`;
+
+  try {
+    await api("/api/envio/whatsapp/conectar", { method: "POST", body: {} });
+  } catch (e) {
+    alvo.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+    if (btn) { btn.disabled = false; btn.textContent = "Parear número"; }
+    return;
+  }
+
+  let tentativas = 0;
+  const buscar = async () => {
+    // Para se o usuário saiu da tela — senão o laço segue consultando à toa.
+    if (!document.getElementById("waQr")) return;
+    let q = {};
+    try { q = await api("/api/envio/whatsapp/qrcode"); } catch { /* segue tentando */ }
+
+    if (q.qrcode) {
+      alvo.innerHTML = `
+        <div class="alert alert-info alert-styled-left">
+          No celular: <strong>WhatsApp → Aparelhos conectados → Conectar um aparelho</strong>.
+          Aparece como <strong>Bluutime</strong>. O código renova sozinho.
+        </div>
+        <div style="text-align:center;padding:10px">
+          <img src="${h(q.qrcode)}" alt="QR Code" style="width:260px;height:260px">
+        </div>`;
+    } else if (tentativas === 0) {
+      alvo.innerHTML = `<div class="alert alert-info alert-styled-left">
+        <span class="spinner"></span> Gerando o código…</div>`;
+    }
+
+    // Conectou? Aí a tela inteira recarrega para refletir o estado novo.
+    const est = await api("/api/envio/canais").catch(() => null);
+    const wa = est && est.channels.find((c) => c.channel === "WHATSAPP");
+    if (wa && wa.state === "CONNECTED") {
+      toast("WhatsApp pareado.", "ok");
+      go("envio");
+      return;
+    }
+    if (++tentativas < 40) setTimeout(buscar, 3000);
+    else alvo.innerHTML = `<div class="alert alert-info alert-styled-left">
+      Tempo esgotado sem parear. Clique em “Parear número” para tentar de novo.</div>`;
+  };
+  buscar();
 }

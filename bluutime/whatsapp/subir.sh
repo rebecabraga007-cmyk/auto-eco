@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sobe a Evolution API do Bluutime.
+# Sobe o WhatsApp do Bluutime (wuzapi/whatsmeow).
 #
 # O `--env-file` aponta para o .env do CapiBLU de propósito: a chave mora num
 # lugar só, que já está no .gitignore. Sem isso o Compose procuraria um .env ao
@@ -14,8 +14,8 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "Não achei $ENV_FILE" >&2
   exit 1
 fi
-if ! grep -q "^EVOLUTION_API_KEY=." "$ENV_FILE"; then
-  echo "EVOLUTION_API_KEY está vazia em $ENV_FILE" >&2
+if ! grep -q "^WUZAPI_ADMIN_TOKEN=." "$ENV_FILE"; then
+  echo "WUZAPI_ADMIN_TOKEN está vazia em $ENV_FILE" >&2
   exit 1
 fi
 

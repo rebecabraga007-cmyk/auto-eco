@@ -25,6 +25,27 @@ async def canais():
     return {"sendingEnabled": channels.envio_ligado(), "channels": await channels.states()}
 
 
+@router.post("/whatsapp/conectar")
+async def whatsapp_conectar():
+    """Abre a sessão do WhatsApp. No wuzapi isso é explícito, ao contrário da
+    Evolution, que reconecta sozinha."""
+    ch = channels.get("WHATSAPP")
+    if not hasattr(ch, "connect"):
+        raise HTTPException(400, f"O provedor {channels.provedor_whatsapp()} "
+                                 "não expõe conexão manual.")
+    return await ch.connect()
+
+
+@router.get("/whatsapp/qrcode")
+async def whatsapp_qrcode():
+    """QR para parear o número. Vem vazio quando a sessão já está logada."""
+    ch = channels.get("WHATSAPP")
+    if not hasattr(ch, "qrcode"):
+        raise HTTPException(400, f"O provedor {channels.provedor_whatsapp()} "
+                                 "não expõe QR Code por aqui.")
+    return await ch.qrcode()
+
+
 @router.get("/quem-sou-eu")
 def quem_sou_eu(db: Session = Depends(get_db)):
     """O nível efetivo do usuário — é isto que a UI usa para esconder botão."""

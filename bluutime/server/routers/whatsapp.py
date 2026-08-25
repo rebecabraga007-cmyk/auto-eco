@@ -106,6 +106,38 @@ async def send_message(cid: int, payload: dict = Body(...), db: Session = Depend
             "sentAt": iso(m.sent_at), **r.as_dict()}
 
 
+def _ler_entrada(payload: dict) -> tuple[str, str, bool]:
+    """Extrai `(texto, número, é do próprio número)` do webhook.
+
+    Os dois provedores mandam formatos diferentes e a rota atende os dois, para
+    trocar `WHATSAPP_PROVIDER` não exigir mexer aqui:
+
+    - **wuzapi/whatsmeow**: `{"type":"Message","event":{"Info":{...},"Message":{...}}}`,
+      com `Info.Sender` no formato `5541999998888:12@s.whatsapp.net` — o `:12`
+      é o identificador do aparelho no multidevice e precisa sair.
+    - **Evolution**: `{"data":{"key":{...},"message":{...}}}`.
+    """
+    # wuzapi
+    evento = payload.get("event")
+    if isinstance(evento, dict) and ("Info" in evento or "Message" in evento):
+        info = evento.get("Info") or {}
+        msg = evento.get("Message") or {}
+        texto = (msg.get("conversation")
+                 or (msg.get("extendedTextMessage") or {}).get("text") or "").strip()
+        remetente = str(info.get("Sender") or info.get("Chat") or "")
+        numero = remetente.split("@")[0].split(":")[0]
+        return texto, numero, bool(info.get("IsFromMe"))
+
+    # Evolution
+    data = payload.get("data") or {}
+    key = data.get("key") or {}
+    msg = data.get("message") or {}
+    texto = (msg.get("conversation")
+             or (msg.get("extendedTextMessage") or {}).get("text") or "").strip()
+    numero = (key.get("remoteJid") or "").split("@")[0].split(":")[0]
+    return texto, numero, bool(key.get("fromMe"))
+
+
 @router.post("/webhook")
 async def webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
     """Mensagem que chega da Evolution API.
@@ -120,14 +152,9 @@ async def webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
     if esperado and payload.get("token") != esperado:
         raise HTTPException(401, "Token de webhook inválido.")
 
-    data = payload.get("data") or {}
-    key = data.get("key") or {}
-    if key.get("fromMe"):
+    texto, jid, proprio = _ler_entrada(payload)
+    if proprio:
         return {"ok": True, "ignored": "fromMe"}
-    msg = data.get("message") or {}
-    texto = (msg.get("conversation")
-             or (msg.get("extendedTextMessage") or {}).get("text") or "").strip()
-    jid = (key.get("remoteJid") or "").split("@")[0]
     if not texto or not jid:
         return {"ok": True, "ignored": "sem texto ou remetente"}
 

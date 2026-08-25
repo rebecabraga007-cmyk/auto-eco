@@ -9,25 +9,14 @@ Tudo vai no mesmo arquivo: **`lupa-empresas/.env`**.
 
 ## 1 · Bloqueia agora (o recurso existe e não funciona sem isto)
 
-### WhatsApp — Evolution API
+### ~~WhatsApp~~ — resolvido, nada a trazer
 
-Sem isto, `GET /api/envio/canais` reporta `NOT_CONFIGURED` e todo envio volta
-`SIMULATED`. A tela de Canais mostra exatamente o que falta.
+Trocado para **wuzapi (whatsmeow)**, que roda em contêiner nesta máquina. Os dois
+tokens foram gerados localmente e já estão no `.env` — **não há chave a pedir a
+ninguém**, ao contrário da Assertiva ou do Meetime.
 
-```bash
-EVOLUTION_API_URL=https://sua-evolution.exemplo.com
-EVOLUTION_API_KEY=
-EVOLUTION_INSTANCE=bluutime-blu
-EVOLUTION_WEBHOOK_TOKEN=          # você inventa; confere quem chama o webhook
-```
-
-**Onde conseguir:** a Evolution API é auto-hospedada. Se a BLU já usa uma (o
-`whatsapp-reader` sugere que sim), são a URL do painel, a `apikey` global e o
-nome da instância pareada por QR Code.
-
-**Documentação:** <https://doc.evolution-api.com> — as rotas que uso são
-`/instance/connectionState/{instance}`, `/message/sendText/{instance}` e
-`/chat/whatsappNumbers/{instance}`.
+Falta só parear o número, pela tela: Prospecção → Canais e entregas → Parear.
+Ver [`CANAIS.md`](CANAIS.md).
 
 ### E-mail — SMTP
 
@@ -159,9 +148,8 @@ depois de usar.
 
 ## Ordem sugerida
 
-1. **SMTP** — é o que destrava a cadência de e-mail, e provavelmente você já tem
-   as credenciais.
-2. **Evolution** — se a BLU já roda uma instância, são três linhas.
+1. **Parear o WhatsApp** — não depende de credencial nenhuma, só de escanear.
+2. **SMTP** — é o que destrava a cadência de e-mail, e provavelmente você já tem.
 3. Testar os dois com `BLUUTIME_SEND` **desligado**, depois ligar.
 4. **Decidir sobre o Ploomes** — e aí eu sigo a Fase 4.
 

@@ -11,39 +11,62 @@ BLUUTIME_SEND=1
 ```
 
 Ter credencial no `.env` **não basta**. Enquanto `BLUUTIME_SEND` não for `1`,
-todo envio volta `SIMULATED`. Sem isso, no dia em que alguém colar a chave da
-Evolution no `.env`, a cadência inteira dispararia para leads reais sem ninguém
-ter decidido isso.
+todo envio volta `SIMULATED`. Sem isso, no dia em que alguém parear um número ou
+colar as credenciais de SMTP, a cadência inteira dispararia para leads reais sem
+ninguém ter decidido isso.
 
 Confira o estado a qualquer momento em `GET /api/envio/canais`.
 
-## WhatsApp — Evolution API
+## WhatsApp — wuzapi (whatsmeow)
 
 ```bash
-EVOLUTION_API_URL=https://sua-evolution.exemplo.com
-EVOLUTION_API_KEY=...
-EVOLUTION_INSTANCE=bluutime-blu
-EVOLUTION_WEBHOOK_TOKEN=...        # opcional, mas recomendado
+WHATSAPP_PROVIDER=wuzapi
+WUZAPI_URL=http://localhost:8080
+WUZAPI_ADMIN_TOKEN=...       # gerado localmente; cria e remove usuários
+WUZAPI_TOKEN=...             # gerado localmente; é o que envia mensagem
 ```
 
-A instância é um número pareado por QR Code, e **ela cai sozinha** — celular sem
-bateria, sessão expirada, WhatsApp Web aberto noutro lugar. Por isso
-`GET /api/whatsapp/instances/state` pergunta ao provedor: `CONNECTED`,
-`CONNECTING`, `DISCONNECTED`, `UNREACHABLE` ou `NOT_CONFIGURED`.
+**Não há chave a solicitar a ninguém.** O wuzapi roda na sua máquina, então você
+é o dono — os dois tokens são gerados aqui, ao contrário da Assertiva ou do
+Meetime, que são credenciais de terceiro. Estão separados de propósito pelo
+próprio wuzapi: quem manda mensagem não deveria poder apagar usuários.
 
-Para receber resposta, aponte o webhook da Evolution para:
+Sobe com:
 
+```bash
+bash bluutime/whatsapp/subir.sh
 ```
-POST https://seu-bluutime/api/whatsapp/webhook
-```
 
-Essa rota fica **fora do login** — quem chama é o provedor, não o navegador —
-e por isso confere o `EVOLUTION_WEBHOOK_TOKEN`. Mensagem com `fromMe` é
-descartada: senão o que o SDR manda volta como se o lead tivesse respondido.
+Parear é pela tela: **Prospecção → Canais e entregas → Parear número**. O QR do
+whatsmeow expira em cerca de 40 s e a sessão cai junto, então a tela renova
+sozinha em vez de deixar um código morto na frente do usuário.
 
-O casamento com o lead é pelos **últimos 8 dígitos** do número. O nono dígito do
-celular e o DDI entram e saem conforme a origem do cadastro, então comparar a
-string inteira erra.
+O estado tem dois eixos e a tela mostra os dois traduzidos:
+
+| Estado | O que significa |
+|---|---|
+| `CONNECTED` | Socket aberto **e** número pareado — pronto |
+| `PAIRING` | Socket aberto, ninguém escaneou ainda |
+| `DISCONNECTED` | Sem socket |
+| `UNAUTHORIZED` | `WUZAPI_TOKEN` recusado |
+| `NOT_CONFIGURED` | Falta variável no `.env` |
+
+O webhook é registrado no próprio usuário do wuzapi, apontando para
+`/api/whatsapp/webhook` via `host.docker.internal`. A rota entende **os dois
+formatos** — wuzapi e Evolution —, então trocar de provedor não exige mexer nela.
+O casamento com o lead é pelos **últimos 8 dígitos**: o nono dígito do celular e
+o DDI entram e saem conforme a origem do cadastro.
+
+### Por que não a Evolution
+
+A Evolution continua no código (`WHATSAPP_PROVIDER=evolution`), porque voltar
+custa uma variável. Mas o whatsmeow é a biblioteca que o próprio WhatsApp Web
+usa por baixo, e o wuzapi é uma casca fina sobre ela — menos superfície para
+quebrar quando o WhatsApp muda algo.
+
+Isso não é teórico: a Evolution `v2.1.1` do blueprint do Render ficou presa numa
+versão de cliente que o WhatsApp já não aceita, entrava em laço de reconexão e
+**nem chegava a gerar QR**. Só voltou a funcionar na `v2.3.7`.
 
 ## E-mail — SMTP
 

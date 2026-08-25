@@ -11,19 +11,38 @@ import os
 from .base import STATUSES, Channel, SendResult
 from .email import Email
 from .whatsapp import WhatsApp
+from .wuzapi import Wuzapi
 
 _CHANNELS: dict[str, Channel] = {}
+
+# Duas implementações de WhatsApp, escolhidas por `WHATSAPP_PROVIDER`. A
+# Evolution ficou porque a troca custa uma variável e porque, se o wuzapi
+# tropeçar, dá para voltar sem mexer em código.
+PROVEDORES_WHATSAPP = {"wuzapi": Wuzapi, "evolution": WhatsApp}
 
 
 def envio_ligado() -> bool:
     return os.environ.get("BLUUTIME_SEND", "").strip() == "1"
 
 
+def provedor_whatsapp() -> str:
+    return (os.environ.get("WHATSAPP_PROVIDER") or "wuzapi").strip().lower()
+
+
 def get(channel: str) -> Channel | None:
     """Instância do canal — recriada quando o `.env` muda em desenvolvimento."""
     key = (channel or "").upper()
+    if key == "WHATSAPP":
+        nome = provedor_whatsapp()
+        cache = f"WHATSAPP:{nome}"
+        if cache not in _CHANNELS:
+            cls = PROVEDORES_WHATSAPP.get(nome)
+            if not cls:
+                return None
+            _CHANNELS[cache] = cls()
+        return _CHANNELS[cache]
     if key not in _CHANNELS:
-        cls = {"WHATSAPP": WhatsApp, "EMAIL": Email}.get(key)
+        cls = {"EMAIL": Email}.get(key)
         if not cls:
             return None
         _CHANNELS[key] = cls()
