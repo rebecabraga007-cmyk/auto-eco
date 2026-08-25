@@ -113,8 +113,9 @@ alguém ou mexer em grupo continua só pelo CapiBLU.
 O motor da Fase 1. `start` agenda em dia útil e fuso certo; `resume` retoma
 preservando o espaçamento; `reschedule` encaixa na janela.
 
-**Nota 6 e não 7** porque `resume` e `reschedule` são ações que o SDR precisa
-tomar no meio do dia — sem botão, o motor tem marcha ré e ninguém alcança.
+✅ **Feito.** `reschedule` virou "Adiar" e `resume` virou "Retomar cadência", que
+aparece só para lead com a cadência pausada por ter respondido — é o único caso
+em que existe algo a retomar.
 
 ### Análise — 4 rotas · nota 6
 
@@ -125,8 +126,10 @@ Testadas, com dado real: o painel traz Felipe Oliveira com 17 ganhos e 178
 perdas; `calculate-effort` calcula 259 leads necessários para a meta; ligações
 derrubadas devolve 32 KB.
 
-Duas têm tela parcial (Painel e Estatísticas mostram parte), mas
-`calculate-effort` e `dropped` não aparecem em lugar nenhum.
+✅ **Feito.** `calculate-effort` virou o painel "Para bater a meta" no dashboard —
+a meta diz onde chegar, o esforço diz quanto trabalho falta para lá. E
+`dropped-calls` virou o painel "Derrubadas" no painel de Ligações: 79 ligações
+que atenderam e caíram em até 10 s, o que é sinal de abordagem, não de linha.
 
 ### Relatórios — 1 rota · nota 6
 
@@ -139,8 +142,9 @@ devolve 404 para o que não conhece — sem a lista, é adivinhação.
 
 ### Troca de senha — 1 rota · nota 5
 
-`POST /api/auth/change-password` — funciona, sem tela. O usuário não consegue
-trocar a própria senha pelo Bluutime.
+✅ **Feito.** "Trocar minha senha", no menu do usuário. Pede a senha atual — é o
+que impede que uma sessão esquecida aberta vire troca de credencial por quem
+passar na mesa.
 
 ## 3–4 · Problema conhecido (3)
 
@@ -148,7 +152,7 @@ trocar a própria senha pelo Bluutime.
 |---|---|---|
 | `GET /api/meetime/status` | 3 → **7** ✅ | **Corrigido.** Percorria os 7 recursos em série com `sleep(0.6)` e repique em 429; passava de 25 s sem responder. Agora vão de três em três com prazo de 20 s — devolve em ~21 s, e o recurso que não responde a tempo volta como `"tempo esgotado"` em vez de segurar a resposta |
 | `GET /api/meetime/preview/{resource}` | 5 | Funciona (1.145 b), mas só aceita `users`, `cadences`, `leads`, `prospections`, `calls`, `webhooks`, `feedbacks` — sem tela, a lista é invisível |
-| `POST /api/meetime/sync` | 5 | A migração inteira, só por `curl`. Funcionou (1.200 leads, 2.984 ligações), mas leva 5 min sem nenhum progresso visível |
+| `POST /api/meetime/sync` | 5 → **8** ✅ | Ganhou tela (**Migração do Meetime**) com barra de progresso, comparação Meetime × Bluutime lado a lado e o botão "Completar junção", que preenche só quem ficou sem cadência — sem reimportar nada |
 
 ## Casos à parte (7)
 

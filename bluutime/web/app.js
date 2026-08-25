@@ -192,6 +192,8 @@ document.getElementById("loginForm").addEventListener("submit", async (e) => {
   }
 });
 
+document.getElementById("trocarMinhaSenha").addEventListener("click", trocarMinhaSenha);
+
 document.getElementById("logoutBtn").addEventListener("click", async () => {
   await api("/api/auth/logout", { method: "POST" }).catch(() => {});
   location.reload();
@@ -250,7 +252,12 @@ PAGES.dashboard = {
   area: "Dashboard", title: "Visão geral",
   async render() {
     const ref = todayISO();
-    const g = await api(`/api/flow/goals/${ref}/progress`);
+    // O esforço necessário vem junto: a meta sozinha diz onde chegar, o
+    // esforço diz quanto trabalho falta para lá — e era o que ninguém via.
+    const [g, esforco] = await Promise.all([
+      api(`/api/flow/goals/${ref}/progress`),
+      api(`/api/flow/goals/${ref}/calculate-effort`).catch(() => null),
+    ]);
     const pct = g.goal.opportunities ? Math.round((g.actual.won / g.goal.opportunities) * 100) : 0;
     const gapTone = g.gapPercent < 0 ? "#f44336" : "#00a443";
 
@@ -263,6 +270,14 @@ PAGES.dashboard = {
         r.activities, r.calls, r.meaningful] })),
       { empty: "Nenhum SDR com movimento no mês." });
 
+    const painelEsforco = esforco ? panel("Para bater a meta", grade([
+      campo("Leads necessários", esforco.leadsNeeded),
+      campo("Atividades necessárias", esforco.activitiesNeeded),
+      campo("Atividades por SDR/dia", esforco.activitiesPerUserPerDay),
+      campo("Dias úteis no mês", esforco.businessDays),
+    ], 4), { subtitle: `Meta de conversão: ${Math.round((esforco.conversionRateGoal || 0) * 100)}%`
+           }) : "";
+
     view.innerHTML = `
       <div class="dashboard-head">
         <h1>Visão geral</h1>
@@ -273,6 +288,7 @@ PAGES.dashboard = {
           <button class="btn-goal" id="editGoals">Editar metas</button>
         </div>
       </div>
+      ${painelEsforco}
       <div class="goal-card">
         <div>
           <div class="goal-number">${g.actual.won}</div>
@@ -463,6 +479,11 @@ PAGES.execucao = {
             : `<button class="btn btn-main btn-xs" data-exec="${a.id}">Executar</button>`}
           <button class="btn btn-default btn-xs" data-adiar="${a.id}">Adiar</button>
           <button class="btn btn-default btn-xs" data-skip="${a.id}">Ignorar</button>
+          ${a.lead.status === "ON_EXTRA_ACTIVITY"
+            // Só aparece para quem teve a cadência pausada por ter respondido —
+            // é o único caso em que existe algo a retomar.
+            ? `<button class="btn btn-default btn-xs" data-retomar="${a.lead.id}">Retomar cadência</button>`
+            : ""}
           <button class="btn btn-default btn-xs" data-lead="${a.lead.id}">Abrir lead</button>
         </div>
       </div>`).join("") : emptyState("Fila vazia — nada pendente para agora.");
@@ -516,6 +537,16 @@ PAGES.execucao = {
     });
     view.querySelectorAll("[data-adiar]").forEach((b) => {
       b.onclick = () => adiarAtividade(items.find((a) => String(a.id) === b.dataset.adiar));
+    });
+    view.querySelectorAll("[data-retomar]").forEach((b) => {
+      b.onclick = async () => {
+        try {
+          const r = await api(`/api/flow/execution/leads/${b.dataset.retomar}/resume`,
+            { method: "POST", body: {} });
+          toast(`${r.resumed} atividade(s) retomada(s).`, "ok");
+          go("execucao");
+        } catch (e) { toast(e.message, "err"); }
+      };
     });
     view.querySelectorAll("[data-lead]").forEach((b) => {
       b.onclick = () => openLeadModal(Number(b.dataset.lead));
@@ -1462,8 +1493,15 @@ function openClientForm(client) {
 PAGES.ligacoes = {
   area: "Ligações", title: "Painel de Ligações",
   async render() {
-    const o = (await api("/api/dialer/calls/statistics/overview")).data[0];
+    // Ligações derrubadas: conectou e caiu em até 10s. Não é falha técnica, é
+    // sinal de abordagem — e não aparecia em tela nenhuma.
+    const [ov, derrubadas] = await Promise.all([
+      api("/api/dialer/calls/statistics/overview"),
+      api("/api/dialer/calls/statistics/dropped").catch(() => ({ data: [] })),
+    ]);
+    const o = ov.data[0];
     const best = o.bestHourToCall;
+    const listaDerrubadas = derrubadas.data || [];
     view.innerHTML = `
       ${kpis([
         { value: o.totalCalls, label: "Ligações no período" },
@@ -1488,7 +1526,19 @@ PAGES.ligacoes = {
         <span><b>${o.totalLandline}</b>Fixo</span>
         <span><b>${fmtDuration(o.totalDurationInSeconds)}</b>Tempo total</span>
         <span><b>${o.averageDailyCallsPerRep}</b>Ligações/SDR/dia</span>
-      </div>`)}`;
+      </div>`)}
+      ${panel(`Derrubadas (${listaDerrubadas.length})`, listaDerrubadas.length
+        ? table(["Quando", "SDR", "Lead", "Empresa", "Número", "Duração"],
+            listaDerrubadas.slice(0, 60).map((c) => ({ cells: [
+              fmtDateTime(c.originStarted),
+              h((c.user || {}).name || "—"),
+              h(c.flowLeadName || "—"),
+              h(c.flowLeadCompany || "—"),
+              h(c.receiverPhone || "—"),
+              `${c.receiverConnectedDuration}s`,
+            ] })), { scroll: true })
+        : emptyState("Nenhuma ligação derrubada no período."),
+        { subtitle: "Atendeu e desligou em até 10 segundos — sinal de abordagem, não de linha." })}`;
   },
 };
 
@@ -1553,7 +1603,23 @@ PAGES.extrato = {
 PAGES.whatsapp = {
   area: "WhatsApp", title: "Conversas",
   async render() {
-    const list = await api("/api/whatsapp/conversations");
+    // Estado do canal junto: uma lista vazia por não haver conversa é bem
+    // diferente de uma lista vazia porque ninguém pareou o número, e antes as
+    // duas apareciam idênticas.
+    const [list, canais] = await Promise.all([
+      api("/api/whatsapp/conversations"),
+      api("/api/envio/canais").catch(() => null),
+    ]);
+    const wa = canais && canais.channels.find((c) => c.channel === "WHATSAPP");
+    const aviso = !wa ? "" : wa.state === "CONNECTED"
+      ? `<div class="alert alert-success alert-styled-left">
+           Número conectado${wa.instance ? ` · ${h(wa.instance)}` : ""}.
+           ${canais.sendingEnabled ? "" : "<strong>Envio desligado</strong> — mensagens ficam como SIMULATED."}
+         </div>`
+      : `<div class="alert alert-info alert-styled-left">
+           WhatsApp <strong>${h(wa.state)}</strong>. ${h(wa.reason || "")}
+           <a data-page="envio" style="cursor:pointer;text-decoration:underline">Parear número</a>.
+         </div>`;
     const activeId = state.waActive || (list[0] && list[0].id);
     const rows = list.map((c) => `<div class="wa-row${c.id === activeId ? " active" : ""}" data-conv="${c.id}">
       <strong>${h(c.title)}</strong><br>
@@ -1577,7 +1643,7 @@ PAGES.whatsapp = {
         </div>`;
     }
 
-    view.innerHTML = `<div class="split">
+    view.innerHTML = `${aviso}<div class="split">
       ${panel("Conversas", `<div class="wa-list">${rows}</div>`)}
       <div class="panel panel-flat">${thread}</div>
     </div>`;
@@ -1731,10 +1797,17 @@ PAGES["capiblu-empresas"] = {
     if (perfil === "empresas") {
       const ufSel = document.getElementById("fUf");
       const munSel = document.getElementById("fMun");
+      // Sem UF escolhida, o combo fica vazio com um aviso em vez de despejar os
+      // 5.572 municípios do país: eram ~300 KB de DOM numa tela que, na
+      // prática, sempre começa por estado.
       const refreshMun = () => {
         const ufs = picked("fUf");
-        const list = ufs.length ? municipios.filter((m) => ufs.includes(m.uf)) : municipios;
-        munSel.innerHTML = list.slice(0, 4000)
+        if (!ufs.length) {
+          munSel.innerHTML = `<option value="" disabled>— escolha a UF primeiro —</option>`;
+          return;
+        }
+        const list = municipios.filter((m) => ufs.includes(m.uf));
+        munSel.innerHTML = list
           .map((m) => `<option value="${h(m.codigo)}">${h(m.descricao)}${ufs.length > 1 ? ` (${h(m.uf)})` : ""}</option>`).join("");
       };
       ufSel.onchange = refreshMun;
@@ -3935,4 +4008,136 @@ async function parearWhatsapp() {
       Tempo esgotado sem parear. Clique em “Parear número” para tentar de novo.</div>`;
   };
   buscar();
+}
+
+/** Trocar a própria senha. Pede a atual — é o que impede que uma sessão
+ *  esquecida aberta vire troca de credencial por quem passar na mesa. */
+function trocarMinhaSenha() {
+  const m = modal({
+    title: "Trocar minha senha",
+    body: `
+      <div class="field"><label>Senha atual</label>
+        <input class="form-control" id="msAtual" type="password"></div>
+      <div class="field"><label>Nova senha <span class="text-grey">(mínimo 8)</span></label>
+        <input class="form-control" id="msNova" type="password"></div>
+      <div class="field"><label>Repita a nova senha</label>
+        <input class="form-control" id="msRepete" type="password"></div>`,
+    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+             <button class="btn btn-main btn-sm" data-ok>Trocar</button>`,
+  });
+  m.root.querySelector("[data-cancel]").onclick = m.close;
+  m.root.querySelector("[data-ok]").onclick = async () => {
+    const v = (id) => m.root.querySelector(id).value;
+    if (v("#msNova").length < 8) return toast("A nova senha precisa de ao menos 8 caracteres.", "err");
+    if (v("#msNova") !== v("#msRepete")) return toast("As duas não são iguais.", "err");
+    try {
+      await api("/api/auth/change-password", { method: "POST", body: {
+        senha_atual: v("#msAtual"), nova_senha: v("#msNova") } });
+      m.close();
+      toast("Senha alterada.", "ok");
+    } catch (e) { toast(e.message, "err"); }
+  };
+}
+
+/* ── Migração do Meetime ───────────────────────────────────────────────
+ *
+ * Antes só existia por `curl`, e levava cinco minutos sem mostrar nada — quem
+ * disparava não sabia se estava andando ou travado.
+ */
+PAGES["migracao"] = {
+  area: "Configurações", title: "Migração do Meetime",
+  async render() {
+    view.innerHTML = `
+      <div class="alert alert-info alert-styled-left">
+        A junção entre lead e cadência custa <strong>uma consulta por lead</strong> —
+        é a única exata que a API v2 oferece. Por isso a migração tem teto e
+        “Completar” existe: ele preenche só quem ficou de fora, sem reimportar nada.
+      </div>
+      <div id="mgProgresso"></div>
+      <div id="mgStatus">${LOADING}</div>`;
+    // O progresso vem primeiro e sem `await`: `renderStatusMigracao` consulta a
+    // API do Meetime e leva ~20s, e a barra é justamente o que não pode esperar.
+    acompanharProgresso();
+    await renderStatusMigracao();
+  },
+};
+
+async function renderStatusMigracao() {
+  const el = document.getElementById("mgStatus");
+  let s;
+  try {
+    s = await api("/api/meetime/status");
+  } catch (e) {
+    el.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+    return;
+  }
+  if (!s.configured) {
+    el.innerHTML = `<div class="alert alert-info alert-styled-left">${h(s.message)}</div>`;
+    return;
+  }
+  const remoto = s.remote || {};
+  const local = s.imported || {};
+  // Os dois lados juntos: só assim dá para ver o que ainda não veio.
+  const linhas = Object.keys(remoto).map((k) => ({ cells: [
+    h(k),
+    typeof remoto[k] === "number" ? remoto[k].toLocaleString("pt-BR") : `<span class="text-muted">${h(remoto[k])}</span>`,
+    local[k] != null ? local[k].toLocaleString("pt-BR") : "—",
+  ] }));
+  el.innerHTML = panel("Meetime × Bluutime",
+    table(["Recurso", "No Meetime", "Importado aqui"], linhas),
+    { subtitle: `${h(s.baseUrl)} · "tempo esgotado" é recurso que não respondeu no prazo, não erro`,
+      actions: `<button class="btn btn-default btn-xs" id="mgCompletar">Completar junção</button>
+                <button class="btn btn-main btn-xs ml-5" id="mgSync">Migrar de novo</button>` });
+
+  document.getElementById("mgCompletar").onclick = async (e) => {
+    e.currentTarget.disabled = true;
+    try {
+      const r = await api("/api/meetime/completar-juncao", { method: "POST", body: { limite: 1000 } });
+      toast(r.pendentes === 0 ? "Nada a completar."
+        : `${r.atualizados} de ${r.processados} completados.`, "ok");
+    } catch (err) { toast(err.message, "err"); }
+    go("migracao");
+  };
+  document.getElementById("mgSync").onclick = () => confirmDialog(
+    "Migrar de novo",
+    "Reimporta tudo do Meetime. Registros existentes são atualizados pelo meetime_id, não duplicados. Leva alguns minutos.",
+    async () => {
+      api("/api/meetime/sync", { method: "POST", body: { maxLeads: 1500, maxProspections: 1500 } })
+        .then(() => { toast("Migração concluída.", "ok"); go("migracao"); })
+        .catch((e) => toast(e.message, "err"));
+      // Não espera a resposta: a barra é que acompanha, senão a tela congela.
+      toast("Migração iniciada.", "ok");
+      acompanharProgresso();
+    });
+}
+
+/** Consulta o progresso enquanto houver tarefa rodando. */
+async function acompanharProgresso() {
+  const el = document.getElementById("mgProgresso");
+  if (!el) return;
+  let p;
+  try { p = await api("/api/meetime/progresso"); } catch { return; }
+
+  if (!p || p.estado === "PARADO") { el.innerHTML = ""; return; }
+
+  const barra = p.percentual != null ? `
+    <div style="height:8px;background:#eee;border-radius:4px;margin-top:8px">
+      <div style="height:8px;width:${p.percentual}%;border-radius:4px;background:#00a443;
+                  transition:width .4s"></div>
+    </div>
+    <div class="text-muted text-size-small mt-10">
+      ${p.feito.toLocaleString("pt-BR")} de ${p.total.toLocaleString("pt-BR")} · ${p.percentual}%
+    </div>` : "";
+
+  const tom = p.estado === "ERRO" ? "alert-info" : p.estado === "PRONTO" ? "alert-success" : "alert-info";
+  el.innerHTML = panel(h(p.titulo || "Migração"), `
+    <div class="alert ${tom} alert-styled-left">
+      ${p.estado === "RODANDO" ? `<span class="spinner"></span> ` : ""}
+      <strong>${h(p.estado)}</strong> · ${h(p.etapa || "")} · ${p.segundos}s
+      ${p.erro ? `<br>${h(p.erro)}` : ""}
+    </div>
+    ${barra}
+    ${p.resultado ? `<div class="json-box mt-10">${h(JSON.stringify(p.resultado, null, 2))}</div>` : ""}`);
+
+  if (p.estado === "RODANDO") setTimeout(acompanharProgresso, 2000);
 }

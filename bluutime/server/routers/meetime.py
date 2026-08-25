@@ -11,10 +11,10 @@ import re
 from datetime import datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from .. import meetime_api, serial
+from .. import meetime_api, perm, progresso, serial
 from ..db import get_db
 from ..models import (Cadence, CadenceUser, Call, Client, Company, Lead,
                       LeadBase, LostReason, Team, User, Webhook)
@@ -116,11 +116,75 @@ async def preview(resource: str, limit: int = Query(5, le=50)):
         raise HTTPException(502, str(exc))
 
 
+@router.get("/progresso")
+def progresso_sync():
+    """Como está a migração agora. A tela consulta enquanto a barra anda."""
+    return progresso.ler("meetime-sync") or {"estado": "PARADO"}
+
+
+@router.post("/completar-juncao")
+async def completar_juncao(payload: dict = Body(default={}),
+                           db: Session = Depends(get_db)):
+    """Preenche cadência e SDR nos leads que ficaram sem.
+
+    A migração limita quantas prospecções busca, porque a junção custa **uma
+    consulta por lead** — é a única exata que a API oferece. Quem sobra fica sem
+    cadência. Aqui os que faltam são completados sem tocar no resto: nada de
+    `reset`, nada de reimportar.
+    """
+    if not meetime_api.enabled():
+        raise HTTPException(400, "MEETIME_TOKEN não configurado.")
+    perm.ator(db).exigir("gestor", "completar a migração")
+
+    # Cadência **ou** SDR em falta: um lead pode ter ganhado a cadência numa
+    # passada anterior e continuar sem dono.
+    faltando = (db.query(Lead)
+                .filter(Lead.meetime_id != "",
+                        or_(Lead.cadence_id.is_(None), Lead.sdr_id.is_(None)))
+                .limit(min(int(payload.get("limite", 1000)), 6000)).all())
+    if not faltando:
+        return {"ok": True, "pendentes": 0, "mensagem": "Nada a completar."}
+
+    progresso.iniciar("meetime-sync", f"Completando {len(faltando)} leads")
+    ids = [l.meetime_id for l in faltando]
+    try:
+        prosp = await meetime_api.prospections_for_leads(
+            ids, progress=lambda f, t: progresso.etapa(
+                "meetime-sync", "Buscando prospecção por lead", f, t))
+    except Exception as exc:
+        progresso.concluir("meetime-sync", erro=str(exc))
+        raise HTTPException(502, f"Falha ao consultar o Meetime: {exc}"[:200])
+
+    cad_por_meetime = {c.meetime_id: c.id for c in db.query(Cadence).all() if c.meetime_id}
+    user_por_meetime = {u.meetime_id: u.id for u in db.query(User).all() if u.meetime_id}
+    atualizados = sem_prospeccao = 0
+    for lead in faltando:
+        p = prosp.get(str(lead.meetime_id))
+        if not p:
+            sem_prospeccao += 1
+            continue
+        lead.cadence_id = cad_por_meetime.get(str(p.get("cadence_id") or ""))
+        # `owner_id`, não `user_id` — é o nome que a prospecção usa para o dono,
+        # e o mesmo que a migração completa consulta.
+        lead.sdr_id = user_por_meetime.get(str(p.get("owner_id") or ""))
+        novo = STATUS_MAP.get(p.get("status") or "", "")
+        if novo:
+            lead.status = novo
+        atualizados += 1
+    db.commit()
+
+    resultado = {"ok": True, "processados": len(faltando), "atualizados": atualizados,
+                 "semProspeccao": sem_prospeccao}
+    progresso.concluir("meetime-sync", resultado)
+    return resultado
+
+
 @router.post("/sync")
 async def sync(payload: dict = Body(default={}), db: Session = Depends(get_db)):
     """Importa a operação real. `reset=true` apaga antes o que veio do seed."""
     if not meetime_api.enabled():
         raise HTTPException(400, "MEETIME_TOKEN não configurado.")
+    progresso.iniciar("meetime-sync", "Migração do Meetime")
 
     max_leads = min(int(payload.get("maxLeads", 1500)), 12000)
     max_calls = min(int(payload.get("maxCalls", 2000)), 20000)
@@ -147,7 +211,9 @@ async def sync(payload: dict = Body(default={}), db: Session = Depends(get_db)):
         webhooks_raw = await pull("webhooks", 100)
         live_leads = [str(l["id"]) for l in leads_raw if not l.get("lead_deleted_date")]
         prospections_by_lead = await meetime_api.prospections_for_leads(
-            live_leads[:max_prospections])
+            live_leads[:max_prospections],
+            progress=lambda feito, total: progresso.etapa(
+                "meetime-sync", "Juntando lead com prospecção", feito, total))
     except PermissionError as exc:
         raise HTTPException(403, str(exc))
     if not users_raw and not cadences_raw and not leads_raw:
