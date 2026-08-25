@@ -1,0 +1,105 @@
+# Evolution API local, para o Bluutime.
+#
+# Por que local e não o `wbd-evolution` do Render: aquele serviço nunca subiu —
+# o único deploy falhou em 17/07/2026 e o Render responde `x-render-routing:
+# no-deploy`, ou seja, não há versão publicada para rotear. Como o Bluutime roda
+# só nesta máquina, subir aqui evita custo de banco no Render e não mexe na
+# infraestrutura da equipe.
+#
+# Sobe com:  docker compose -f bluutime/evolution/docker-compose.yml up -d
+
+services:
+  evolution:
+    # Mesma versão que o blueprint do Render usava — se um dia a equipe quiser
+    # publicar de novo, o comportamento é o mesmo que já foi testado aqui.
+    image: evoapicloud/evolution-api:v2.1.1
+    container_name: bluutime-evolution
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      SERVER_URL: http://localhost:8080
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}
+
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:evolution@postgres:5432/evolution?schema=public
+      DATABASE_CONNECTION_CLIENT_NAME: bluutime
+      # O que guardar no banco. `MESSAGE_UPDATE` e `CONTACTS` ficam ligados
+      # porque é deles que sai o histórico da conversa no Bluutime.
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
+      DATABASE_SAVE_MESSAGE_UPDATE: "true"
+      DATABASE_SAVE_DATA_CONTACTS: "true"
+      DATABASE_SAVE_DATA_CHATS: "true"
+
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/6
+      CACHE_REDIS_PREFIX_KEY: bluutime
+      CACHE_LOCAL_ENABLED: "false"
+
+      # Webhook global apontando para o Bluutime. `host.docker.internal` é como
+      # o contêiner alcança o servidor rodando fora dele, no Windows.
+      WEBHOOK_GLOBAL_URL: http://host.docker.internal:8020/api/whatsapp/webhook
+      WEBHOOK_GLOBAL_ENABLED: "true"
+      WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS: "false"
+      # Só o evento de mensagem recebida. Ligar tudo faria o Bluutime receber
+      # presença, digitação e atualização de contato — ruído que a rota descarta
+      # de qualquer forma.
+      WEBHOOK_EVENTS_MESSAGES_UPSERT: "true"
+      WEBHOOK_EVENTS_CONNECTION_UPDATE: "true"
+      WEBHOOK_EVENTS_QRCODE_UPDATED: "false"
+      WEBHOOK_EVENTS_MESSAGES_SET: "false"
+      WEBHOOK_EVENTS_MESSAGES_UPDATE: "false"
+      WEBHOOK_EVENTS_SEND_MESSAGE: "false"
+      WEBHOOK_EVENTS_CONTACTS_SET: "false"
+      WEBHOOK_EVENTS_CONTACTS_UPSERT: "false"
+      WEBHOOK_EVENTS_PRESENCE_UPDATE: "false"
+      WEBHOOK_EVENTS_CHATS_SET: "false"
+      WEBHOOK_EVENTS_CHATS_UPDATE: "false"
+      WEBHOOK_EVENTS_CHATS_DELETE: "false"
+      WEBHOOK_EVENTS_TYPEBOT_START: "false"
+      WEBHOOK_EVENTS_TYPEBOT_CHANGE_STATUS: "false"
+
+      LOG_LEVEL: ERROR,WARN,INFO
+      LOG_COLOR: "true"
+      DEL_INSTANCE: "false"
+      QRCODE_LIMIT: "30"
+      LANGUAGE: pt-BR
+    volumes:
+      - evolution_instances:/evolution/instances
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: bluutime-evolution-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: evolution
+      POSTGRES_DB: evolution
+    volumes:
+      - evolution_pg:/var/lib/postgresql/data
+    healthcheck:
+      # A Evolution roda migração na subida; sem esperar o banco ficar pronto
+      # ela morre no boot e o contêiner entra em laço de reinício.
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    container_name: bluutime-evolution-cache
+    restart: unless-stopped
+    volumes:
+      - evolution_redis:/data
+
+volumes:
+  evolution_instances:
+  evolution_pg:
+  evolution_redis:
