@@ -11,7 +11,7 @@ Toda saída passa por aqui, e por três travas antes do provedor:
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from .. import agenda, auditoria, channels, perm, render, serial
+from .. import agenda, auditoria, channels, perm, render, serial, webhooks
 from ..db import get_db
 from ..models import (AuditLog, CadenceStep, Conversation, Delivery, Lead,
                       LeadActivity, Message, Template, User, channel_of)
@@ -160,6 +160,10 @@ async def enviar_atividade(aid: int, payload: dict = Body(default={}),
         if lead.status == "WAITING":
             lead.status = "EXECUTING"
 
+    if resultado.status == "SENT":
+        webhooks.enfileirar(db, "MESSAGE.SENT", {
+            "leadId": lead.id, "leadName": lead.name, "channel": canal,
+            "to": destino, "subject": assunto, "providerId": resultado.provider_id})
     db.commit()
     return {"delivery": {"id": entrega.id, **resultado.as_dict()},
             "activityStatus": act.status,

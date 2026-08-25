@@ -14,7 +14,7 @@ import traceback
 
 from sqlalchemy import func
 
-from . import agenda
+from . import agenda, webhooks
 from .db import SessionLocal
 from .models import Cadence, Lead, LeadActivity, LostReason
 
@@ -89,6 +89,9 @@ def run_once() -> dict:
         db.flush()
         report["closed"] = close_finished_cadences(db)
         db.commit()
+        # Entrega o que estiver vencido na fila de webhooks — inclusive os
+        # eventos que o próprio fechamento de cadência acabou de gerar.
+        report["webhooks"] = webhooks.despachar(db)
         return report
     except Exception:
         db.rollback()

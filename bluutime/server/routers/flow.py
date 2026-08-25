@@ -12,7 +12,7 @@ from ..db import get_db
 from ..models import (Activity, Cadence, CadenceStep, CadenceUser, Client,
                       CustomField, Lead, LeadActivity, LeadBase, LeadFieldValue,
                       LostReason, Template, User, channel_of)
-from .. import agenda, perm, render, serial
+from .. import agenda, perm, render, serial, webhooks
 
 router = APIRouter(prefix="/api/flow")
 
@@ -692,6 +692,7 @@ def execute_activity(aid: int, payload: dict = Body(default={}),
                           LeadActivity.status == "PENDING")
                   .update({"status": "PAUSED"}, synchronize_session=False))
         lead.status = "ON_EXTRA_ACTIVITY"
+        _fire_webhooks(db, "LEAD.REPLIED", serial.lead(lead))
     db.commit()
     return {"ok": True, "pausedActivities": paused,
             "activity": serial.lead_activity(a, datetime.utcnow()),
@@ -751,8 +752,10 @@ def lead_outcome(lid: int, payload: dict = Body(...), db: Session = Depends(get_
         lead.annotations = payload["annotations"]
     db.query(LeadActivity).filter_by(lead_id=lid, status="PENDING").update(
         {"status": "SKIPPED", "done_at": now})
-    db.commit()
+    # Enfileira ANTES do commit: `_fire_webhooks` agora só grava na fila, então
+    # precisa entrar na mesma transação — depois do commit a linha se perderia.
     _fire_webhooks(db, f"LEAD.{outcome}", serial.lead(lead))
+    db.commit()
     return {"ok": True, "lead": serial.lead(lead)}
 
 
@@ -777,16 +780,10 @@ def reschedule(aid: int, payload: dict = Body(...), db: Session = Depends(get_db
 
 
 def _fire_webhooks(db: Session, event: str, data: dict) -> None:
-    """Entrega best-effort — um webhook fora do ar não pode derrubar a operação."""
-    import httpx
-    from ..models import Webhook
-    hooks = db.query(Webhook).filter(Webhook.enabled,
-                                     Webhook.events.contains(event.split(".")[0])).all()
-    for h in hooks:
-        if event not in h.events.split(","):
-            continue
-        try:
-            httpx.post(h.target_url, json={"event": event, "data": data},
-                       headers={"X-Bluutime-Secret": h.secret}, timeout=5)
-        except Exception:
-            pass
+    """Enfileira o evento; quem entrega é o tick.
+
+    Antes isto fazia `httpx.post` aqui mesmo: o SDR marcava um lead como ganho e
+    ficava esperando o CRM de terceiro responder, e se ele estivesse fora do ar
+    o evento sumia num `except: pass`.
+    """
+    webhooks.enfileirar(db, event, data)

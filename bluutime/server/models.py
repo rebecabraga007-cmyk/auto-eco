@@ -324,6 +324,29 @@ class Webhook(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class WebhookDelivery(Base):
+    """Cada tentativa de entregar um evento a um webhook.
+
+    Sem isto, "o CRM não recebeu o lead ganho" não tem como ser investigado: o
+    envio anterior era `httpx.post` com `except: pass`, então falha sumia sem
+    deixar rastro. Aqui a tentativa fica registrada e pode ser repetida.
+    """
+    __tablename__ = "webhook_delivery"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    webhook_id: Mapped[int] = mapped_column(ForeignKey("webhook.id", ondelete="CASCADE"))
+    event: Mapped[str] = mapped_column(String(40), index=True)
+    payload: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(12), default="PENDING", index=True)
+    # PENDING (na fila) · SENT · FAILED (esgotou as tentativas)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    response_code: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str] = mapped_column(String(240), default="")
+    next_try_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime)
+    webhook: Mapped["Webhook"] = relationship()
+
+
 class AuditLog(Base):
     """Quem olhou o dado pessoal de quem, e quando.
 
