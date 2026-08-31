@@ -2420,7 +2420,7 @@ async def index():
         "service": "capiblu-data",
         "mensagem": "Este é o serviço de DADOS interno do CapiBLU (uso via proxy). "
                     "Para acessar a plataforma, use o app online.",
-        "app": "https://capiblu-app.onrender.com",
+        "app": "https://app.capiblu.net",
     })
 
 

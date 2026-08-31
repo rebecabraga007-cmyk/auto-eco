@@ -8,7 +8,7 @@ Documentação técnica · Arquitetura REST · JSON · Autenticação por API To
 | **Arquitetura** | REST / HTTP |
 | **Autenticação** | API Token (Bearer) |
 | **Formato** | JSON |
-| **URL base** | `https://capiblu-app.onrender.com/api/v1` |
+| **URL base** | `https://app.capiblu.net/api/v1` |
 
 ---
 
