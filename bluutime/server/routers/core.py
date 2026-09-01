@@ -5,6 +5,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from .. import perm
 from ..db import get_db
 from ..models import (Client, Company, CustomField, Goal, Holiday, Integration,
                       LostReason, Team, User, Webhook)
@@ -44,7 +45,7 @@ def me(db: Session = Depends(get_db)):
     u = (db.query(User).filter(func.lower(User.email) == (email or "").lower()).first()
          or db.query(User).filter(User.roles.contains("ADMINISTRATOR")).first())
     c = _company(db)
-    return {**user_full(u), "companyId": c.id,
+    return {**user_full(u), "companyId": c.id, "nivel": perm.ator(db).nivel,
             "modules": c.modules.split(","), "addOns": c.add_ons.split(",") if c.add_ons else []}
 
 
@@ -77,6 +78,9 @@ def list_users(db: Session = Depends(get_db)):
 
 @router.post("/users")
 def create_user(payload: dict = Body(...), db: Session = Depends(get_db)):
+    # Cria conta e define papel (inclusive ADMINISTRATOR) — só quem já
+    # administra a plataforma pode fazer isso, senão qualquer SDR se promove.
+    perm.ator(db).exigir("admin", "gerenciar usuários")
     email = (payload.get("email") or "").strip().lower()
     if not email or not payload.get("name"):
         raise HTTPException(400, "Nome e e-mail são obrigatórios.")
@@ -92,6 +96,7 @@ def create_user(payload: dict = Body(...), db: Session = Depends(get_db)):
 
 @router.patch("/users/{uid}")
 def update_user(uid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("admin", "gerenciar usuários")
     u = db.get(User, uid)
     if not u:
         raise HTTPException(404, "Usuário não encontrado.")
@@ -135,6 +140,7 @@ def list_clients(db: Session = Depends(get_db)):
 
 @router.post("/clients")
 def create_client(payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "cadastrar cliente")
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "Nome do cliente é obrigatório.")
@@ -149,6 +155,7 @@ def create_client(payload: dict = Body(...), db: Session = Depends(get_db)):
 
 @router.patch("/clients/{cid}")
 def update_client(cid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "editar cliente")
     c = db.get(Client, cid)
     if not c:
         raise HTTPException(404, "Cliente não encontrado.")
@@ -161,6 +168,7 @@ def update_client(cid: int, payload: dict = Body(...), db: Session = Depends(get
 
 @router.delete("/clients/{cid}")
 def delete_client(cid: int, db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "excluir cliente")
     c = db.get(Client, cid)
     if not c:
         raise HTTPException(404, "Cliente não encontrado.")
@@ -187,6 +195,7 @@ def lost_reasons(db: Session = Depends(get_db)):
 
 @router.post("/flow/lost-reasons")
 def create_lost_reason(payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "cadastrar motivo de perda")
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "Nome obrigatório.")
@@ -198,6 +207,7 @@ def create_lost_reason(payload: dict = Body(...), db: Session = Depends(get_db))
 
 @router.delete("/flow/lost-reasons/{rid}")
 def delete_lost_reason(rid: int, db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "excluir motivo de perda")
     r = db.get(LostReason, rid)
     if r:
         db.delete(r)
@@ -219,6 +229,7 @@ def lead_fields(db: Session = Depends(get_db)):
 
 @router.post("/flow/new-lead-fields")
 def create_field(payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "criar campo personalizado")
     ident = (payload.get("identifier") or "").strip()
     if not ident or not payload.get("name"):
         raise HTTPException(400, "Nome e identificador são obrigatórios.")
@@ -240,6 +251,7 @@ def holidays(db: Session = Depends(get_db)):
 
 @router.post("/flow/configuration/holidays")
 def add_holiday(payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "cadastrar feriado")
     try:
         day = date.fromisoformat(payload["date"])
     except (KeyError, ValueError):
@@ -260,6 +272,7 @@ def integrations(db: Session = Depends(get_db)):
 
 @router.patch("/integrations/{key}")
 def toggle_integration(key: str, payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "ligar/desligar integração")
     i = db.query(Integration).filter_by(key=key).first()
     if not i:
         raise HTTPException(404, "Integração não encontrada.")
@@ -278,6 +291,7 @@ def webhooks(db: Session = Depends(get_db)):
 
 @router.post("/webhooks")
 def create_webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "cadastrar webhook")
     url = (payload.get("targetUrl") or "").strip()
     if not url.startswith("http"):
         raise HTTPException(400, "URL inválida.")
@@ -290,6 +304,7 @@ def create_webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
 
 @router.delete("/webhooks/{wid}")
 def delete_webhook(wid: int, db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "excluir webhook")
     w = db.get(Webhook, wid)
     if w:
         db.delete(w)
@@ -324,6 +339,7 @@ def goals(ref: str, db: Session = Depends(get_db)):
 
 @router.put("/flow/goals/{ref}")
 def set_goals(ref: str, payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "definir metas do time")
     d = date.fromisoformat(ref) if ref else date.today()
     month = date(d.year, d.month, 1)
     for item in payload.get("usersGoals", []):

@@ -229,10 +229,22 @@ window.addEventListener("hashchange", () => {
 });
 
 /* ── boot ────────────────────────────────────────────────────────────── */
+const NIVEIS = ["sdr", "gestor", "admin"];
+
+/** Esconde do menu o que o nível da sessão não alcança — a rota já bloqueia
+ *  no servidor, isto só evita mostrar um link que vai dar 403. */
+function aplicarPermissoesNav(nivel) {
+  const meu = NIVEIS.indexOf(nivel);
+  document.querySelectorAll("[data-min]").forEach((el) => {
+    el.hidden = NIVEIS.indexOf(el.dataset.min) > meu;
+  });
+}
+
 async function boot() {
   state.me = await api("/api/me");
   document.getElementById("navUser").textContent = state.me.name;
   document.getElementById("navAvatar").textContent = state.me.initials || "·";
+  aplicarPermissoesNav(state.me.nivel || "sdr");
   document.body.classList.remove("app-loading");
   loginShell.classList.add("hidden");
   const [clients, users, cadences, reasons] = await Promise.all([
@@ -4996,27 +5008,36 @@ function renderPessoa(r, bloco) {
 }
 
 function renderMk(r) {
-  const p = r.pessoa || r.dados || r;
+  // A resposta de verdade do integrax-cpf vem em r.data (não r.dados) — e
+  // nome/cpf/renda/score ficam um nível abaixo, em DadosBasicos/DadosEconomicos.
+  // As listas (telefones, enderecos, empresas, vizinhos, beneficios) já vêm
+  // soltas no nível de cima, então essas continuam batendo direto.
+  const p = r.pessoa || r.data || r.dados || r;
+  const basicos = p.DadosBasicos || {};
+  const economicos = p.DadosEconomicos || {};
   const tels = p.telefones || r.telefones || [];
   const ends = p.enderecos || r.enderecos || [];
   const mails = p.emails || r.emails || [];
   // Quatro blocos que vêm no mesmo payload e antes eram descartados.
   const empresas = p.empresas || r.empresas || p.qsa || r.qsa || [];
   const vizinhos = p.vizinhos || r.vizinhos || [];
-  const consumo = p.perfil_consumo || r.perfil_consumo || p.consumo || [];
-  const beneficios = (p.beneficios || r.beneficios || []).filter((b) => b && (b.valor || b.recebimento || b.beneficio));
-  const cpf = String(p.cpf || "").replace(/\D/g, "");
+  const consumo = p.perfilConsumo || p.perfil_consumo || r.perfil_consumo || {};
+  const beneficios = (p.beneficios || r.beneficios || []).filter((b) => b && (b.valor || b.recebimento || b.beneficio || b.totalRecebido));
+  const nome = basicos.nome || p.nome || "";
+  const cpf = String(basicos.cpf || p.cpf || "").replace(/\D/g, "");
+  const situacao = (basicos.situacaoCadastral || {}).descricaoSituacaoCadastral || p.situacao_cpf || p.situacao;
+  const score = (economicos.score || {}).scoreCSB || p.score;
 
   const bloco = (titulo, corpo, extra = "") => corpo
     ? `<div class="sub-block"><h4>${h(titulo)}${extra}</h4>${corpo}</div>` : "";
 
   return `
     ${grade([
-      campo("Nome", p.nome), campo("CPF", fmtCPF(p.cpf)),
-      campo("Nascimento", p.nascimento || p.data_nascimento),
-      campo("Mãe", p.nome_mae), campo("Renda estimada", p.renda),
-      campo("Score", p.score), campo("Escolaridade", p.escolaridade),
-      campo("Situação do CPF", p.situacao_cpf || p.situacao),
+      campo("Nome", nome), campo("CPF", fmtCPF(cpf)),
+      campo("Nascimento", basicos.dataNascimento || p.nascimento || p.data_nascimento),
+      campo("Mãe", basicos.nomeMae || p.nome_mae), campo("Renda estimada", economicos.renda || p.renda),
+      campo("Score", score), campo("Escolaridade", basicos.escolaridade || p.escolaridade),
+      campo("Situação do CPF", situacao),
     ])}
     ${bloco(`Telefones (${tels.length})`,
       tels.length ? table(["Número", "Tipo", "WhatsApp", "Confiança", "Atualizado"],
@@ -5028,9 +5049,9 @@ function renderMk(r) {
             t.whatsapp ? `<span class="pill green">sim</span>` : `<span class="text-muted">—</span>`,
             `<span id="tp-${h(cpf)}-${i}">${num && cpf
               ? `<a data-posse="${h(num)}" data-doc="${h(cpf)}" data-cel="tp-${h(cpf)}-${i}"
-                    data-nome="${h(p.nome || "")}">verificar</a>`
+                    data-nome="${h(nome)}">verificar</a>`
               : '<span class="text-muted">—</span>'}</span>`,
-            h(t.atualizacao || t.data || "—"),
+            h(t.atualizacao || t.data || t.status || "—"),
           ] };
         }), { scroll: true }) : "",
       tels.length && cpf ? `<button class="btn btn-default btn-xs" data-posse-todos="${h(cpf)}">Verificar todos</button>` : "")}
@@ -5045,9 +5066,9 @@ function renderMk(r) {
       ? table(["Razão social", "CNPJ", "Participação", ""], empresas.slice(0, 12).map((e) => {
           const doc = String(e.cnpj || e.documento || "").replace(/\D/g, "");
           return { cells: [
-            `<strong>${h(e.razao_social || e.nome || e.empresa || "—")}</strong>`,
+            `<strong>${h(e.razao_social || e.nome || e.empresa || e.relacao || "—")}</strong>`,
             fmtCNPJ(doc),
-            h(e.qualificacao || e.participacao || e.cargo || "—"),
+            h(e.qualificacao || e.participacao || e.cargo || e.tipoRelacao || "—"),
             doc ? `<a data-ficha="${h(doc)}">Abrir ficha</a>` : "",
           ] };
         }), { scroll: true }) : "")}
@@ -5056,17 +5077,15 @@ function renderMk(r) {
           h(v.nome || "—"), fmtCPF(v.cpf),
           h((v.telefones && v.telefones[0] && (v.telefones[0].display || v.telefones[0].numero)) || v.telefone || "—"),
         ] })), { scroll: true }) : "")}
-    ${bloco("Perfil de consumo", consumo.length
-      ? `<div class="tag-wrap">${consumo.slice(0, 24).map((c) => {
-          const nome = typeof c === "string" ? c : (c.descricao || c.nome || "");
-          const confirmado = typeof c === "object" && (c.confirmado || c.tipo === "confirmado");
-          return `<span class="pill ${confirmado ? "green" : "grey"}">${h(nome)}</span>`;
-        }).join(" ")}</div>
-        <div class="help-block">Verde é confirmado; cinza, provável.</div>` : "")}
+    ${bloco("Perfil de consumo", Object.keys(consumo).length
+      ? `<div class="tag-wrap">${Object.entries(consumo)
+          .filter(([k, v]) => k.startsWith("possui_") && v === true)
+          .map(([k]) => `<span class="pill green">${h(k.replace(/^possui_/, "").replace(/_/g, " "))}</span>`).join(" ")}</div>
+        <div class="help-block">Sinais de consumo confirmados pela base.</div>` : "")}
     ${bloco(`Benefícios (${beneficios.length})`, beneficios.length
       ? table(["Benefício", "Situação", "Valor"], beneficios.slice(0, 8).map((b) => ({ cells: [
           h(b.beneficio || b.descricao || "—"), h(b.situacao || b.recebimento || "—"),
-          h(b.valor ? fmtMoney(Number(b.valor)) : "—"),
+          h(b.totalRecebido || (b.valor ? fmtMoney(Number(b.valor)) : "—")),
         ] })), { scroll: true }) : "")}`;
 }
 

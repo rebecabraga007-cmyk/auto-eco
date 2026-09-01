@@ -9,10 +9,10 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from .. import perm, serial
 from ..db import get_db
 from ..models import (Cadence, Call, Client, Goal, Lead, LeadActivity, LeadBase,
                       LostReason, User)
-from .. import serial
 
 router = APIRouter(prefix="/api")
 
@@ -26,7 +26,10 @@ def _month_range(ref: str | None) -> tuple[datetime, datetime]:
 
 @router.get("/flow/control-panel")
 def control_panel(client_id: int | None = None, db: Session = Depends(get_db)):
-    """Painel de controle diário: uma linha por SDR, como no Meetime."""
+    """Painel de controle diário: uma linha por SDR, como no Meetime.
+
+    É a visão do gestor — dado de todo o time, não só do próprio SDR."""
+    perm.ator(db).exigir("gestor", "ver o painel de controle")
     now = datetime.utcnow()
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     rows = []

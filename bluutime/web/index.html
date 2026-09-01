@@ -28,7 +28,7 @@
 <div class="navbar navbar-lg navbar-fixed-top navbar-inverse navbar-component">
   <div class="navbar-boxed">
     <div class="navbar-header">
-      <a class="navbar-brand" data-page="dashboard"><img src="assets/logo-inverse.png" alt="Bluutime"></a>
+      <a class="navbar-brand" data-page="dashboard"><img src="assets/logo-blu-inverse.png" alt="Bluutime"></a>
     </div>
     <div class="navbar-collapse collapse">
       <ul class="nav navbar-nav">
@@ -38,7 +38,7 @@
         <li class="dropdown">
           <a><span class="nav-icon position-left">◎</span><span class="text-semibold">Prospecção</span><span class="caret"></span></a>
           <ul class="dropdown-menu dropdown-content">
-            <li><a data-page="painel">Painel de controle <span class="label label-success ml-5">Novo</span></a></li>
+            <li data-min="gestor"><a data-page="painel">Painel de controle <span class="label label-success ml-5">Novo</span></a></li>
             <li><a data-page="execucao">Execução</a></li>
             <li><a data-page="leads">Leads</a></li>
             <li><a data-page="cadencias">Cadências</a></li>
@@ -46,7 +46,7 @@
             <li><a data-page="bases">Bases de leads</a></li>
             <li><a data-page="modelos-mensagem">Modelos de mensagem</a></li>
             <li><a data-page="envio">Canais e entregas</a></li>
-            <li><a data-page="clientes">Clientes <span class="label label-success ml-5">Novo</span></a></li>
+            <li data-min="gestor"><a data-page="clientes">Clientes <span class="label label-success ml-5">Novo</span></a></li>
             <li class="divider"></li>
             <li><a data-page="ajustes">Ajustes</a></li>
           </ul>
@@ -97,9 +97,9 @@
         <li class="dropdown">
           <a><span class="nav-icon position-left">⚙</span><span class="text-semibold">Integrações</span><span class="caret"></span></a>
           <ul class="dropdown-menu dropdown-content">
-            <li><a data-page="integracoes">Integrações e webhooks</a></li>
-            <li><a data-page="usuarios">Usuários e times</a></li>
-            <li><a data-page="financeiro">Financeiro</a></li>
+            <li data-min="gestor"><a data-page="integracoes">Integrações e webhooks</a></li>
+            <li data-min="admin"><a data-page="usuarios">Usuários e times</a></li>
+            <li data-min="gestor"><a data-page="financeiro">Financeiro</a></li>
           </ul>
         </li>
       </ul>
@@ -107,7 +107,7 @@
         <li class="dropdown dropdown-user">
           <a><span class="avatar" id="navAvatar">·</span><span class="navbar-user-name" id="navUser">…</span><span class="caret"></span></a>
           <ul class="dropdown-menu dropdown-menu-right">
-            <li><a data-page="usuarios">Usuários</a></li>
+            <li data-min="admin"><a data-page="usuarios">Usuários</a></li>
             <li><a data-page="contas">Contas de acesso</a></li>
             <li><a data-page="migracao">Migração do Meetime</a></li>
             <li><a id="trocarMinhaSenha">Trocar minha senha</a></li>

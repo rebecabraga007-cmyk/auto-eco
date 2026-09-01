@@ -25,6 +25,20 @@ from .flow import _schedule_cadence
 
 router = APIRouter(prefix="/api/capiblu")
 
+
+def _proxy_erro(code: int, data, fallback: str) -> HTTPException:
+    """Traduz uma falha do serviço de dados em erro do Bluutime.
+
+    Nunca repassa 5xx cru pro cliente: o Cloudflare troca o corpo de qualquer
+    resposta 5xx pela própria página de erro (HTML), e o front nunca chega a
+    ver a mensagem real — só o dono do domínio vê isso testando em 127.0.0.1
+    direto. Rebaixar pra 4xx faz a mensagem de verdade atravessar o túnel.
+    """
+    status = code if code < 500 else 400
+    msg = data.get("detail") or data.get("message") if isinstance(data, dict) else None
+    return HTTPException(status, msg or fallback)
+
+
 TOOLS = [
     {"key": "empresas", "name": "Prospecção B2B", "area": "Empresas",
      "path": "/api/companies/search", "cost": "grátis (base RFB local)",
@@ -111,7 +125,7 @@ async def empresas(uf: str = "", municipio: str = "", cnae: str = "", porte: str
     code, data = await post("/api/companies/search",
                             json={"filtros": filtros, "limite": limite, "offset": offset})
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha na busca de empresas."))
+        raise _proxy_erro(code, data, "Falha na busca de empresas.")
     return data
 
 
@@ -119,7 +133,7 @@ async def empresas(uf: str = "", municipio: str = "", cnae: str = "", porte: str
 async def empresa(cnpj: str):
     code, data = await get(f"/api/company/{cnpj}")
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha ao consultar o CNPJ."))
+        raise _proxy_erro(code, data, "Falha ao consultar o CNPJ.")
     return data
 
 
@@ -147,7 +161,7 @@ async def empresa_bloco(cnpj: str, bloco: str, request: Request):
     code, data = await get(f"/api/company/{cnpj}/{path}",
                            params=dict(request.query_params), timeout=180.0)
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha na consulta."))
+        raise _proxy_erro(code, data, "Falha na consulta.")
     return data
 
 
@@ -157,7 +171,7 @@ async def pessoas(q: str, broad: bool = False, limit: int = Query(40, le=200),
     code, data = await get("/api/person/name-search",
                            params={"q": q, "broad": broad, "limit": limit, "offset": offset})
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha na busca por nome."))
+        raise _proxy_erro(code, data, "Falha na busca por nome.")
     return data
 
 
@@ -165,7 +179,7 @@ async def pessoas(q: str, broad: bool = False, limit: int = Query(40, le=200),
 async def pessoa(cpf: str):
     code, data = await get(f"/api/person/{cpf}")
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha ao consultar o CPF."))
+        raise _proxy_erro(code, data, "Falha ao consultar o CPF.")
     return data
 
 
@@ -176,7 +190,7 @@ async def pessoa_bloco(cpf: str, bloco: str):
         raise HTTPException(404, "Bloco desconhecido.")
     code, data = await get(f"/api/person/{cpf}/{bloco}")
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha na consulta."))
+        raise _proxy_erro(code, data, "Falha na consulta.")
     return data
 
 
@@ -184,7 +198,7 @@ async def pessoa_bloco(cpf: str, bloco: str):
 async def telefone(numero: str):
     code, data = await get(f"/api/phone/{numero}/reverse")
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha na consulta reversa."))
+        raise _proxy_erro(code, data, "Falha na consulta reversa.")
     return data
 
 
@@ -192,7 +206,7 @@ async def telefone(numero: str):
 async def telefone_pertence(numero: str, documento: str):
     code, data = await get(f"/api/phone/{numero}/pertence/{documento}")
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha na validação."))
+        raise _proxy_erro(code, data, "Falha na validação.")
     return data
 
 
@@ -200,7 +214,7 @@ async def telefone_pertence(numero: str, documento: str):
 async def telefone_donodozap(numero: str, nome: str = ""):
     code, data = await get(f"/api/phone/{numero}/donodozap", params={"nome": nome} if nome else None)
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha na consulta ao DonoDoZap."))
+        raise _proxy_erro(code, data, "Falha na consulta ao DonoDoZap.")
     return data
 
 
@@ -211,7 +225,7 @@ ASSERTIVA_CAMPO = {"cpf": "cpf", "cnpj": "cnpj", "telefone": "telefone", "email"
 async def assertiva_status():
     code, data = await get("/api/assertiva/status")
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha ao consultar status da Assertiva."))
+        raise _proxy_erro(code, data, "Falha ao consultar status da Assertiva.")
     return data
 
 
@@ -219,7 +233,7 @@ async def assertiva_status():
 async def assertiva_nome(payload: dict = Body(default={})):
     code, data = await post("/api/assertiva/nome", json=payload)
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha na busca por nome."))
+        raise _proxy_erro(code, data, "Falha na busca por nome.")
     return data
 
 
@@ -230,7 +244,7 @@ async def assertiva_consulta(tipo: str, q: str = Query(...)):
         raise HTTPException(404, "Tipo de consulta Assertiva desconhecido.")
     code, data = await get(f"/api/assertiva/{tipo}", params={campo: q})
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha na consulta Assertiva."))
+        raise _proxy_erro(code, data, "Falha na consulta Assertiva.")
     return data
 
 
@@ -238,7 +252,7 @@ async def assertiva_consulta(tipo: str, q: str = Query(...)):
 async def lookups(tipo: str):
     code, data = await get("/api/cnpj/lookup", params={"tipo": tipo})
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha ao carregar a lista."))
+        raise _proxy_erro(code, data, "Falha ao carregar a lista.")
     return data
 
 
@@ -436,7 +450,7 @@ def _unwrap(code: int, data: dict, fallback: str) -> dict:
     trata como sucesso e mostra tabela vazia sem dizer o porquê.
     """
     if code >= 400:
-        raise HTTPException(code, data.get("detail") or fallback)
+        raise _proxy_erro(code, data, fallback)
     if isinstance(data, dict) and data.get("status") == "error":
         raise HTTPException(422, data.get("message") or fallback)
     return data
@@ -494,7 +508,7 @@ async def prospect_preview(payload: dict = Body(...)):
                             json={"filtros": filtros, "limite": limite, "offset": offset},
                             timeout=180.0)
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha na busca."))
+        raise _proxy_erro(code, data, "Falha na busca.")
     empresas = data.get("empresas") or []
     return {"total": data.get("total", len(empresas)),
             "totalAprox": bool(data.get("total_aprox")),
@@ -512,7 +526,7 @@ async def prospect_pessoas(payload: dict = Body(...)):
                             json={"filtros": filtros, "limite": limite, "offset": offset},
                             timeout=180.0)
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha na busca de pessoas."))
+        raise _proxy_erro(code, data, "Falha na busca de pessoas.")
     return data
 
 
@@ -531,7 +545,7 @@ async def prospect_cobertura(payload: dict = Body(...)):
                             json={"cnpjs": cnpjs, "cargos": payload.get("cargos", "")},
                             timeout=300.0)
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha ao medir cobertura."))
+        raise _proxy_erro(code, data, "Falha ao medir cobertura.")
     return data
 
 
@@ -656,7 +670,7 @@ async def enrich_lead(lid: int, db: Session = Depends(get_db)):
     code, data = await get(f"/api/company/{lead.cnpj}/leads",
                            params={"decisores": True, "max_decisores": 5}, timeout=180.0)
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha ao enriquecer."))
+        raise _proxy_erro(code, data, "Falha ao enriquecer.")
     company = data.get("empresa") or {}
     contacts = data.get("contatos") or []
     changed = []
@@ -698,7 +712,7 @@ async def validate_phone(lid: int, db: Session = Depends(get_db)):
     digits = "".join(ch for ch in number if ch.isdigit())[-11:]
     code, data = await get(f"/api/phone/{digits}/pertence/{doc}")
     if code >= 400:
-        raise HTTPException(code, data.get("detail", "Falha na validação."))
+        raise _proxy_erro(code, data, "Falha na validação.")
     return data
 
 

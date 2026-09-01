@@ -350,7 +350,22 @@ async def company_contacts(cnpj: str):
 
 @app.get("/api/company/{cnpj}")
 async def company(cnpj: str):
-    """Dados completos da empresa via BrasilAPI. NAO faz scraping."""
+    """Dados completos da empresa. Base local (RFB) primeiro — instantânea e
+    já traz o QSA, sem gastar rede. BrasilAPI só entra se a base local não
+    tiver a empresa (mesmo padrão de /api/company/{cnpj}/leads e afins)."""
+    digits = re.sub(r"\D", "", cnpj or "")
+    if len(digits) != 14:
+        return JSONResponse(status_code=400,
+                            content={"status": "error", "message": "CNPJ invalido (precisa de 14 digitos)."})
+    if _cnpj_local():
+        loc = cnpj_lookup.by_cnpj(digits)
+        if loc.get("status") == "ok":
+            data = loc["company"]
+            _enrich_qsa_cpf(data)
+            return {"status": "ok", "company": data}
+        if loc.get("status") == "not_found":
+            return JSONResponse(status_code=404,
+                                content={"status": "error", "message": "CNPJ nao encontrado na base local."})
     try:
         data = await brasilapi.fetch_company(cnpj)
         _enrich_qsa_cpf(data)
