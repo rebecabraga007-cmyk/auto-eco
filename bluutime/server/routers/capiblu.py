@@ -196,6 +196,44 @@ async def telefone_pertence(numero: str, documento: str):
     return data
 
 
+@router.get("/telefones/{numero}/donodozap")
+async def telefone_donodozap(numero: str, nome: str = ""):
+    code, data = await get(f"/api/phone/{numero}/donodozap", params={"nome": nome} if nome else None)
+    if code >= 400:
+        raise HTTPException(code, data.get("detail", "Falha na consulta ao DonoDoZap."))
+    return data
+
+
+ASSERTIVA_CAMPO = {"cpf": "cpf", "cnpj": "cnpj", "telefone": "telefone", "email": "email"}
+
+
+@router.get("/assertiva/status")
+async def assertiva_status():
+    code, data = await get("/api/assertiva/status")
+    if code >= 400:
+        raise HTTPException(code, data.get("detail", "Falha ao consultar status da Assertiva."))
+    return data
+
+
+@router.post("/assertiva/nome")
+async def assertiva_nome(payload: dict = Body(default={})):
+    code, data = await post("/api/assertiva/nome", json=payload)
+    if code >= 400:
+        raise HTTPException(code, data.get("detail", "Falha na busca por nome."))
+    return data
+
+
+@router.get("/assertiva/{tipo}")
+async def assertiva_consulta(tipo: str, q: str = Query(...)):
+    campo = ASSERTIVA_CAMPO.get(tipo)
+    if not campo:
+        raise HTTPException(404, "Tipo de consulta Assertiva desconhecido.")
+    code, data = await get(f"/api/assertiva/{tipo}", params={campo: q})
+    if code >= 400:
+        raise HTTPException(code, data.get("detail", "Falha na consulta Assertiva."))
+    return data
+
+
 @router.get("/lookups/{tipo}")
 async def lookups(tipo: str):
     code, data = await get("/api/cnpj/lookup", params={"tipo": tipo})

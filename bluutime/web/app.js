@@ -1795,23 +1795,9 @@ PAGES["capiblu-empresas"] = {
     });
 
     if (perfil === "empresas") {
-      const ufSel = document.getElementById("fUf");
-      const munSel = document.getElementById("fMun");
-      // Sem UF escolhida, o combo fica vazio com um aviso em vez de despejar os
-      // 5.572 municípios do país: eram ~300 KB de DOM numa tela que, na
-      // prática, sempre começa por estado.
-      const refreshMun = () => {
-        const ufs = picked("fUf");
-        if (!ufs.length) {
-          munSel.innerHTML = `<option value="" disabled>— escolha a UF primeiro —</option>`;
-          return;
-        }
-        const list = municipios.filter((m) => ufs.includes(m.uf));
-        munSel.innerHTML = list
-          .map((m) => `<option value="${h(m.codigo)}">${h(m.descricao)}${ufs.length > 1 ? ` (${h(m.uf)})` : ""}</option>`).join("");
-      };
-      ufSel.onchange = refreshMun;
-      refreshMun();
+      // Município, avançado, resumo de filtros e estimativa de custo vivem
+      // em bindEmpresaFilters — a tela só liga os dois botões.
+      bindEmpresaFilters();
       document.getElementById("doSearch").onclick = () => runB2B(0);
       document.getElementById("doCobertura").onclick = testarCobertura;
     } else {
@@ -1820,95 +1806,318 @@ PAGES["capiblu-empresas"] = {
   },
 };
 
+/* Chips e tokens escrevem num <select multiple> escondido de mesmo id —
+   assim `picked()` e o código que já ouvia esses campos continuam valendo. */
+const chipsSync = (id, itens, selecionados, { compact = false } = {}) => `
+  <div class="chip-grid${compact ? " compact" : ""}" data-chips="${id}">
+    ${itens.map(([v, t]) => `<button type="button" class="chip${selecionados.includes(v) ? " active" : ""}"
+      data-v="${h(v)}">${h(t)}</button>`).join("")}
+  </div>
+  <select id="${id}" multiple hidden>
+    ${itens.map(([v]) => `<option value="${h(v)}"${selecionados.includes(v) ? " selected" : ""}></option>`).join("")}
+  </select>`;
+
+const tokenField = (id, itens, selecionados, placeholder) => `
+  <div class="token-field" data-token="${id}">
+    ${selecionados.map((v) => {
+      const item = itens.find((i) => String(i.codigo) === String(v));
+      return `<span class="token"><b>${h(item ? `${item.codigo} ${item.descricao}` : v)}</b><span data-rm="${h(v)}">×</span></span>`;
+    }).join("")}
+    <input type="text" list="dl-${id}" placeholder="${h(placeholder)}">
+    <select id="${id}" multiple>
+      ${selecionados.map((v) => `<option value="${h(v)}" selected></option>`).join("")}
+    </select>
+  </div>
+  <datalist id="dl-${id}">
+    ${itens.slice(0, 1600).map((i) => `<option value="${h(i.codigo)}">${h(i.codigo)} — ${h(i.descricao)}</option>`).join("")}
+  </datalist>`;
+
+/* Delegação: chips e tokens sobrevivem a qualquer re-render da tela. */
+document.addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip-grid[data-chips] .chip");
+  if (chip) {
+    const grade = chip.closest("[data-chips]");
+    const sel = document.getElementById(grade.dataset.chips);
+    const opt = [...sel.options].find((o) => o.value === chip.dataset.v);
+    if (!opt) return;
+    // "Todos" (valor vazio) é exclusivo: limpa o resto.
+    if (chip.dataset.v === "") {
+      [...sel.options].forEach((o) => { o.selected = false; });
+      grade.querySelectorAll(".chip").forEach((c) => c.classList.remove("active"));
+      opt.selected = true; chip.classList.add("active");
+    } else {
+      opt.selected = !opt.selected;
+      chip.classList.toggle("active", opt.selected);
+      const todos = grade.querySelector('.chip[data-v=""]');
+      if (todos) { todos.classList.remove("active"); const o = [...sel.options][0]; if (o && o.value === "") o.selected = false; }
+    }
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    atualizarResumoB2B();
+    return;
+  }
+  const rm = e.target.closest(".token-field [data-rm]");
+  if (rm) {
+    const campo = rm.closest("[data-token]");
+    const sel = document.getElementById(campo.dataset.token);
+    [...sel.options].filter((o) => o.value === rm.dataset.rm).forEach((o) => o.remove());
+    rm.closest(".token").remove();
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    atualizarResumoB2B();
+  }
+});
+
+document.addEventListener("change", (e) => {
+  const campo = e.target.closest(".token-field[data-token]");
+  if (!campo || e.target.tagName !== "INPUT") return;
+  const valor = e.target.value.trim();
+  if (!valor) return;
+  const codigo = valor.split(/[\s—-]/)[0].trim();
+  const sel = document.getElementById(campo.dataset.token);
+  if ([...sel.options].some((o) => o.value === codigo)) { e.target.value = ""; return; }
+  const dl = document.getElementById(`dl-${campo.dataset.token}`);
+  const achado = dl && [...dl.options].find((o) => o.value === codigo);
+  if (!achado) return toast("Escolha um item da lista.", "err");
+  sel.insertAdjacentHTML("beforeend", `<option value="${h(codigo)}" selected></option>`);
+  e.target.insertAdjacentHTML("beforebegin",
+    `<span class="token"><b>${h(achado.textContent)}</b><span data-rm="${h(codigo)}">×</span></span>`);
+  e.target.value = "";
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+  atualizarResumoB2B();
+});
+
+/** Faixa que diz o que está filtrando — some a dúvida depois de rolar. */
+function atualizarResumoB2B() {
+  const alvo = document.getElementById("fResumo");
+  if (!alvo) return;
+  const rotulo = (id, prefixo) => {
+    const sel = document.getElementById(id);
+    if (!sel) return [];
+    return [...sel.selectedOptions].filter((o) => o.value).map((o) => ({
+      id, valor: o.value, texto: `${prefixo}${o.textContent ? o.textContent.slice(0, 34) : o.value}`,
+    }));
+  };
+  const g = (id) => (document.getElementById(id)?.value || "").trim();
+  const itens = [
+    ...rotulo("fUf", ""), ...rotulo("fSituacao", ""), ...rotulo("fPorte", "porte "),
+    ...rotulo("fCnae", "CNAE "), ...rotulo("fNatureza", "nat. "), ...rotulo("fMun", ""),
+  ];
+  const livres = [["fTexto", ""], ["fSetor", "setor "], ["fCnpj", "CNPJ "],
+    ["fCapMin", "capital ≥ "], ["fCapMax", "capital ≤ "], ["fFundDe", "fundada ≥ "], ["fFundAte", "fundada ≤ "]];
+  livres.forEach(([id, pre]) => { if (g(id)) itens.push({ id, valor: "", texto: pre + g(id) }); });
+
+  const avancados = ["fPorte", "fCapMin", "fCapMax", "fFundDe", "fFundAte", "fTexto", "fSetor",
+    "fCnpj", "fMei", "fEstab", "fNatureza", "fTipo", "fMun"]
+    .filter((id) => {
+      const el = document.getElementById(id);
+      if (!el) return false;
+      return el.multiple ? [...el.selectedOptions].some((o) => o.value) : !!(el.value || "").trim();
+    }).length;
+  const contador = document.getElementById("fAvCount");
+  if (contador) {
+    contador.textContent = avancados ? `${avancados} ativo${avancados > 1 ? "s" : ""}` : "nenhum ativo";
+    contador.className = avancados ? "pill green" : "pill grey";
+  }
+
+  alvo.innerHTML = itens.length
+    ? itens.map((i) => `<span class="token"><b>${h(i.texto)}</b><span data-limpa="${h(i.id)}"
+        data-valor="${h(i.valor)}">×</span></span>`).join("") +
+      `<span class="spacer" style="margin-left:auto"></span>
+       <a id="fLimparTudo">limpar tudo</a>`
+    : `<span class="text-muted text-size-small">Nenhum filtro — a busca traz as empresas mais recentes.</span>`;
+
+  alvo.querySelectorAll("[data-limpa]").forEach((x) => {
+    x.onclick = () => {
+      const el = document.getElementById(x.dataset.limpa);
+      if (!el) return;
+      if (el.multiple) {
+        [...el.options].filter((o) => o.value === x.dataset.valor).forEach((o) => {
+          o.selected = false;
+          if (el.closest(".token-field")) o.remove();
+        });
+        const grade = document.querySelector(`[data-chips="${x.dataset.limpa}"]`);
+        if (grade) grade.querySelectorAll(`.chip[data-v="${x.dataset.valor}"]`).forEach((c) => c.classList.remove("active"));
+        const campo = el.closest(".token-field");
+        if (campo) campo.querySelectorAll(`[data-rm="${x.dataset.valor}"]`).forEach((r) => r.closest(".token").remove());
+      } else { el.value = ""; }
+      atualizarResumoB2B();
+    };
+  });
+  const tudo = document.getElementById("fLimparTudo");
+  if (tudo) tudo.onclick = () => { state.b2bFilters = { situacao: ["ATIVA"], com_telefone: true }; go("capiblu-empresas"); };
+}
+
+/** Filtro B2B: três decisões na frente, o resto atrás de um link com contador.
+ *
+ * A versão anterior despejava 18 controles em quatro grades sempre abertas,
+ * quatro deles <select multiple size=5> — com 1300 CNAEs numa caixa de cinco
+ * linhas. Aqui UF, CNAE e situação ficam visíveis; o resto é avançado.
+ */
 function empresaFilters(f, { cnaes, naturezas }) {
+  const arr = (v) => Array.isArray(v) ? v.map(String) : v ? [String(v)] : [];
   return `
-    <div class="filter-row" style="grid-template-columns:repeat(4,1fr)">
-      <div><label class="text-muted text-size-small">UF <span class="text-grey">(múltipla)</span></label>
-        ${multi("fUf", UFS, { size: 5 })}</div>
-      <div><label class="text-muted text-size-small">Município</label>
-        <select class="form-control" id="fMun" multiple size="5"></select></div>
-      <div><label class="text-muted text-size-small">CNAE <span class="text-grey">(múltiplo)</span></label>
-        ${multi("fCnae", cnaes, { size: 5 })}</div>
-      <div><label class="text-muted text-size-small">Natureza jurídica</label>
-        ${multi("fNatureza", naturezas, { size: 5 })}</div>
-    </div>
-    <div class="filter-row mt-10" style="grid-template-columns:repeat(4,1fr)">
-      <div><label class="text-muted text-size-small">CNPJ exato <span class="text-grey">(ignora o resto)</span></label>
-        <input class="form-control" id="fCnpj" placeholder="06990590000123"></div>
-      <div><label class="text-muted text-size-small">Texto livre</label>
-        <input class="form-control" id="fTexto" value="${h(f.texto || "")}"></div>
-      <div><label class="text-muted text-size-small">Onde procurar o texto</label>
-        <select class="form-control" id="fEscopo" multiple size="4">
-          <option value="razao" selected>Razão social</option>
-          <option value="fantasia" selected>Nome fantasia</option>
-          <option value="cnae">Descrição do CNAE</option>
-          <option value="natureza">Natureza jurídica</option>
-        </select></div>
-      <div><label class="text-muted text-size-small">Setor <span class="text-grey">(por descrição de CNAE)</span></label>
-        <input class="form-control" id="fSetor" placeholder="transporte rodoviário"></div>
-    </div>
-    <div class="filter-row mt-10" style="grid-template-columns:repeat(5,1fr)">
-      <div><label class="text-muted text-size-small">Porte</label>
-        <select class="form-control" id="fPorte">
-          ${PORTES.map(([v, t]) => `<option value="${v}"${f.porte === v ? " selected" : ""}>${t}</option>`).join("")}
-        </select></div>
+    <div class="filter-row" style="grid-template-columns:1.1fr 1.4fr .9fr">
+      <div><label class="text-muted text-size-small">Estado <span class="text-grey">(clique para marcar)</span></label>
+        ${chipsSync("fUf", UFS.map((u) => [u, u]), arr(f.uf), { compact: true })}</div>
+      <div><label class="text-muted text-size-small">CNAE <span class="text-grey">— busque por código ou descrição</span></label>
+        ${tokenField("fCnae", cnaes, arr(f.cnae), "digitar código ou atividade…")}</div>
       <div><label class="text-muted text-size-small">Situação cadastral</label>
-        <select class="form-control" id="fSituacao">
-          ${SITUACOES.map(([v, t]) => `<option value="${v}"${(f.situacao || ["ATIVA"])[0] === v ? " selected" : ""}>${t}</option>`).join("")}
-        </select></div>
-      <div><label class="text-muted text-size-small">Capital mínimo</label>
-        <input class="form-control" type="number" id="fCapMin" value="${h(f.capital_min || "")}"></div>
-      <div><label class="text-muted text-size-small">Capital máximo</label>
-        <input class="form-control" type="number" id="fCapMax" value="${h(f.capital_max || "")}"></div>
-      <div><label class="text-muted text-size-small">Tipo de empresa</label>
-        <select class="form-control" id="fTipo">
-          <option value="">Todas</option>
-          <option value="privada">Privada</option>
-          <option value="publica">Pública</option>
-        </select></div>
+        ${chipsSync("fSituacao", SITUACOES.filter(([v]) => v), arr(f.situacao || ["ATIVA"]))}</div>
     </div>
-    <div class="filter-row mt-10" style="grid-template-columns:repeat(5,1fr)">
-      <div><label class="text-muted text-size-small">Fundada de</label>
-        <input class="form-control" type="date" id="fFundDe"></div>
-      <div><label class="text-muted text-size-small">Fundada até</label>
-        <input class="form-control" type="date" id="fFundAte"></div>
-      <div><label class="text-muted text-size-small">MEI</label>
-        <select class="form-control" id="fMei">
-          <option value="">Tanto faz</option>
-          <option value="optante">Somente MEI</option>
-          <option value="excluir">Excluir MEI</option>
-        </select></div>
-      <div><label class="text-muted text-size-small">Estabelecimento</label>
-        <select class="form-control" id="fEstab">
-          <option value="">Matriz e filial</option>
-          <option value="matriz">Somente matriz</option>
-          <option value="filial">Somente filial</option>
-        </select></div>
-      <div><label class="text-muted text-size-small">Por página</label>
-        <select class="form-control" id="fLimite">
-          ${[20, 50, 100, 200].map((n) => `<option value="${n}"${n === 50 ? " selected" : ""}>${n}</option>`).join("")}
-        </select></div>
-    </div>
-    <div class="toolbar mt-10" style="border:0;padding:0;background:none">
+
+    <div class="adv-toggle">
+      <a id="fAvToggle">▸ Filtros avançados</a>
+      <span class="pill grey" id="fAvCount">nenhum ativo</span>
+      <span class="text-muted text-size-small">porte, capital, fundação, MEI, matriz/filial, município, natureza, texto livre</span>
+      <span class="spacer" style="margin-left:auto"></span>
       <label><input type="checkbox" id="fTel"${f.com_telefone !== false ? " checked" : ""}> Só com telefone</label>
-      <label><input type="checkbox" id="fMail"> Só com e-mail</label>
+      <label><input type="checkbox" id="fMail"${f.com_email ? " checked" : ""}> Só com e-mail</label>
+    </div>
+
+    <div class="adv-body" id="fAvBody" hidden>
+      <div class="filter-row" style="grid-template-columns:repeat(3,1fr)">
+        <div><label class="text-muted text-size-small">Porte <span class="text-grey">(múltiplo)</span></label>
+          ${chipsSync("fPorte", PORTES.filter(([v]) => v), arr(f.porte))}</div>
+        <div><label class="text-muted text-size-small">Natureza jurídica</label>
+          ${tokenField("fNatureza", naturezas, arr(f.natureza), "digitar natureza…")}</div>
+        <div><label class="text-muted text-size-small">Município
+            <span class="text-grey" id="fMunAviso">— escolha uma UF primeiro</span></label>
+          <select class="form-control input-sm" id="fMun" multiple size="4" disabled></select></div>
+      </div>
+      <div class="filter-row mt-10" style="grid-template-columns:repeat(4,1fr)">
+        <div><label class="text-muted text-size-small">CNPJ exato <span class="text-grey">(ignora o resto)</span></label>
+          <input class="form-control input-sm" id="fCnpj" placeholder="06990590000123"></div>
+        <div><label class="text-muted text-size-small">Texto livre</label>
+          <input class="form-control input-sm" id="fTexto" value="${h(f.texto || "")}"></div>
+        <div><label class="text-muted text-size-small">Onde procurar o texto</label>
+          <select class="form-control input-sm" id="fEscopo" multiple size="4">
+            <option value="razao" selected>Razão social</option>
+            <option value="fantasia" selected>Nome fantasia</option>
+            <option value="cnae">Descrição do CNAE</option>
+            <option value="natureza">Natureza jurídica</option>
+          </select></div>
+        <div><label class="text-muted text-size-small">Setor <span class="text-grey">(descrição de CNAE)</span></label>
+          <input class="form-control input-sm" id="fSetor" placeholder="transporte rodoviário"></div>
+      </div>
+      <div class="filter-row mt-10" style="grid-template-columns:repeat(5,1fr)">
+        <div><label class="text-muted text-size-small">Capital mínimo</label>
+          <input class="form-control input-sm" type="number" id="fCapMin" value="${h(f.capital_min || "")}"></div>
+        <div><label class="text-muted text-size-small">Capital máximo</label>
+          <input class="form-control input-sm" type="number" id="fCapMax" value="${h(f.capital_max || "")}"></div>
+        <div><label class="text-muted text-size-small">Fundada de</label>
+          <input class="form-control input-sm" type="date" id="fFundDe" value="${h(f.fundada_de || "")}"></div>
+        <div><label class="text-muted text-size-small">Fundada até</label>
+          <input class="form-control input-sm" type="date" id="fFundAte" value="${h(f.fundada_ate || "")}"></div>
+        <div><label class="text-muted text-size-small">Tipo de empresa</label>
+          <select class="form-control input-sm" id="fTipo">
+            <option value="">Todas</option><option value="privada">Privada</option><option value="publica">Pública</option>
+          </select></div>
+      </div>
+      <div class="filter-row mt-10" style="grid-template-columns:repeat(2,1fr)">
+        <div><label class="text-muted text-size-small">MEI</label>
+          <select class="form-control input-sm" id="fMei">
+            <option value="">Tanto faz</option><option value="optante">Somente MEI</option><option value="excluir">Excluir MEI</option>
+          </select></div>
+        <div><label class="text-muted text-size-small">Estabelecimento</label>
+          <select class="form-control input-sm" id="fEstab">
+            <option value="">Matriz e filial</option><option value="matriz">Somente matriz</option><option value="filial">Somente filial</option>
+          </select></div>
+      </div>
+    </div>
+
+    <div class="filter-summary" id="fResumo"></div>
+
+    <div class="alert alert-info alert-styled-left" id="fCusto">
+      Buscar empresas é <strong>grátis</strong> — sai da base local da Receita.
+      <strong>Incluir decisores</strong> consome uma consulta Assertiva por decisor;
+      a estimativa aparece aqui quando você ligar a opção.
+    </div>
+
+    <div class="toolbar" style="margin-bottom:0">
+      <label><input type="checkbox" id="fDecisores"> Incluir decisores</label>
+      <select class="form-control input-sm" id="fModelo" style="min-width:170px">
+        <option value="">Atribuir custo ao modelo…</option>
+      </select>
+      <select class="form-control input-sm" id="fLimite" style="min-width:120px">
+        ${[20, 50, 100, 200].map((n) => `<option value="${n}"${n === 50 ? " selected" : ""}>${n} por página</option>`).join("")}
+      </select>
       <span class="spacer"></span>
       <button class="btn btn-default" id="doCobertura">Testar cobertura de decisores</button>
       <button class="btn btn-main" id="doSearch">Buscar empresas</button>
     </div>`;
 }
 
+/** Preenche o seletor de modelo (para atribuir o custo da busca) com os
+ *  modelos salvos em "Minha planilha" — melhor-esforço, sem modelo nenhum o
+ *  seletor só fica com o placeholder. */
+async function popularSelectModelo(sel) {
+  if (!sel) return;
+  try {
+    const r = await api("/api/capiblu/modelos");
+    const modelos = r.modelos || r.data || (Array.isArray(r) ? r : []);
+    modelos.forEach((m) => {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = m.nome || m.name || `Modelo ${m.id}`;
+      sel.appendChild(opt);
+    });
+  } catch { /* segue sem modelos no seletor */ }
+}
+
+/** Liga o avançado, o município e a estimativa de custo. Chamada pela tela
+ *  depois de inserir os filtros no DOM. */
+function bindEmpresaFilters() {
+  atualizarResumoB2B();
+  const toggle = document.getElementById("fAvToggle");
+  const corpo = document.getElementById("fAvBody");
+  if (toggle && corpo) toggle.onclick = () => {
+    corpo.hidden = !corpo.hidden;
+    toggle.textContent = (corpo.hidden ? "▸" : "▾") + " Filtros avançados";
+  };
+  const uf = document.getElementById("fUf");
+  const mun = document.getElementById("fMun");
+  const aviso = document.getElementById("fMunAviso");
+  const encherMunicipios = () => {
+    const ufs = [...(uf?.selectedOptions || [])].map((o) => o.value);
+    const lista = (state.municipios || []).filter((m) => !ufs.length || ufs.includes(m.uf));
+    if (!ufs.length) {
+      mun.innerHTML = ""; mun.disabled = true;
+      if (aviso) aviso.textContent = "— escolha uma UF primeiro";
+      return;
+    }
+    mun.disabled = false;
+    if (aviso) aviso.textContent = `— ${lista.length} na${ufs.length > 1 ? "s" : ""} UF${ufs.length > 1 ? "s" : ""} escolhida${ufs.length > 1 ? "s" : ""}`;
+    mun.innerHTML = lista.slice(0, 900).map((m) =>
+      `<option value="${h(m.codigo)}">${h(m.descricao)}</option>`).join("");
+  };
+  if (uf && mun) { uf.addEventListener("change", encherMunicipios); encherMunicipios(); }
+  [...document.querySelectorAll("#fAvBody input, #fAvBody select, #fResumo")].forEach((el) => {
+    el.addEventListener("change", atualizarResumoB2B);
+  });
+  const dec = document.getElementById("fDecisores");
+  const custo = document.getElementById("fCusto");
+  if (dec && custo) dec.onchange = () => {
+    const n = Number(document.getElementById("fLimite").value) || 50;
+    custo.innerHTML = dec.checked
+      ? `<strong>Atenção ao custo.</strong> Até ${n} empresas × 1 decisor ≈
+         <strong>${fmtMoney(n * 0.119)}</strong> na Assertiva. O gasto é registrado no modelo escolhido.`
+      : `Buscar empresas é <strong>grátis</strong> — sai da base local da Receita.
+         <strong>Incluir decisores</strong> consome uma consulta Assertiva por decisor;
+         a estimativa aparece aqui quando você ligar a opção.`;
+  };
+  popularSelectModelo(document.getElementById("fModelo"));
+}
+
 function collectEmpresaFilters() {
   const g = (id) => (document.getElementById(id)?.value || "").trim();
-  const mei = g("fMei"), estab = g("fEstab"), tipo = g("fTipo"), sit = g("fSituacao");
+  const mei = g("fMei"), estab = g("fEstab"), tipo = g("fTipo");
   const filtros = {
     cnpj: g("fCnpj").replace(/\D/g, ""),
     texto: g("fTexto"), setor: g("fSetor"),
     texto_escopo: picked("fEscopo"),
     uf: picked("fUf"), municipio: picked("fMun"),
     cnae: picked("fCnae"), natureza: picked("fNatureza"),
-    porte: g("fPorte") ? g("fPorte").split(",") : [],
-    situacao: sit ? [sit] : [],
+    porte: picked("fPorte"),
+    situacao: picked("fSituacao"),
     capital_min: Number(g("fCapMin")) || 0,
     capital_max: Number(g("fCapMax")) || 0,
     fundada_de: g("fFundDe"), fundada_ate: g("fFundAte"),
@@ -1919,10 +2128,12 @@ function collectEmpresaFilters() {
     somente_filial: estab === "filial",
     com_telefone: document.getElementById("fTel").checked,
     com_email: document.getElementById("fMail").checked,
+    com_decisores: !!document.getElementById("fDecisores")?.checked,
+    modelo_id: g("fModelo") || null,
   };
   Object.keys(filtros).forEach((k) => {
     const v = filtros[k];
-    if (v === "" || v === 0 || v === false || (Array.isArray(v) && !v.length)) delete filtros[k];
+    if (v === "" || v === 0 || v === false || v === null || (Array.isArray(v) && !v.length)) delete filtros[k];
   });
   return filtros;
 }
@@ -2231,101 +2442,953 @@ function showSemDecisor(res) {
   });
 }
 
+/* ── Procurar pessoa ────────────────────────────────────────────────────
+ *
+ * Três coisas que a versão anterior não fazia e que vinham do CapiBLU:
+ *  · exato e amplo são buscados **juntos** e viram abas com contagem, em vez
+ *    de um checkbox que substitui o resultado;
+ *  · filtros de sexo e faixa de nascimento rodam no cliente, sem nova consulta;
+ *  · o ranking pontua cada candidato contra as pistas que o SDR já tem — e a
+ *    fonte paga só é chamada para quem passou do limiar.
+ */
+const gente = {
+  q: "", sexo: "", anoMin: 0, anoMax: 0, pistas: "",
+  aba: "exatos",
+  exatos: [], exatosCpf: new Set(),
+  amplos: [], total: 0, buscados: 0,
+  scores: {},          // cpf -> { pct, bateu: [] }
+  mk: {},              // cpf -> payload do /mk (cache da sessão)
+  abertos: new Set(),  // cpf expandido
+  sel: new Set(),      // cpf selecionado
+  limiar: 40,
+  cpfDireto: "",       // busca direta por CPF, sem passar pelo nome
+  cpfAba: "mk",        // fonte ativa: mk (grátis) ou assertiva (paga)
+  cpfDados: {},        // fonte -> payload já consultado
+  modo: "nome",        // aba ativa do painel de busca: nome | cpf
+};
+
+const PAGINA_GENTE = 10;
+const CHAVE_RECENTES = "bluutime.gente.recentes";
+const CHAVE_AUTORANK = "bluutime.gente.autorank";
+
+/* O Mk não cobra, então pontuar os dez primeiros ao buscar é de graça e
+   poupa um clique. Fica ligado por padrão e desligável — em conexão ruim são
+   dez requisições que o SDR pode não querer esperar. */
+const autoRankLigado = () => localStorage.getItem(CHAVE_AUTORANK) !== "off";
+const definirAutoRank = (on) => {
+  try { localStorage.setItem(CHAVE_AUTORANK, on ? "on" : "off"); } catch (e) {}
+};
+
+/** As últimas oito buscas ficam no navegador — repetir a consulta de ontem
+ *  era redigitar o nome inteiro. O CapiBLU guarda no servidor (logBusca);
+ *  aqui basta o local, porque a lista é pessoal e descartável. */
+function lerRecentes() {
+  try { return JSON.parse(localStorage.getItem(CHAVE_RECENTES) || "[]"); }
+  catch (e) { return []; }
+}
+function guardarRecente(q, total) {
+  const lista = lerRecentes().filter((x) => x.q !== q);
+  lista.unshift({ q, total, quando: Date.now() });
+  try { localStorage.setItem(CHAVE_RECENTES, JSON.stringify(lista.slice(0, 8))); }
+  catch (e) { /* modo privado: segue sem histórico */ }
+}
+
+const pessoaFiltrada = (lista) => lista.filter((p) => {
+  if (gente.sexo && !String(p.sexo || "").toUpperCase().startsWith(gente.sexo)) return false;
+  const ano = parseInt(String(p.nascimento || "").slice(-4), 10);
+  if (gente.anoMin && !(ano >= gente.anoMin)) return false;
+  if (gente.anoMax && !(ano <= gente.anoMax)) return false;
+  return true;
+});
+
+const amplosSemExatos = () => pessoaFiltrada(gente.amplos.filter((p) => !gente.exatosCpf.has(p.cpf)));
+const listaAtual = () => gente.aba === "exatos" ? pessoaFiltrada(gente.exatos) : amplosSemExatos();
+
 PAGES["capiblu-gente"] = {
-  area: "CapiBLU", title: "Procurar GENTE",
+  area: "CapiBLU", title: "Procurar pessoa",
   async render() {
     view.innerHTML = `
-      ${panel("Buscar pessoa pelo nome", `
-        <div class="main-search">
+      ${panel("Procurar pessoa", `
+        <ul class="nav nav-tabs" id="pModo">
+          <li${gente.modo === "nome" ? ' class="active"' : ""}><a data-modo="nome">Não sei o CPF — buscar pelo nome</a></li>
+          <li${gente.modo === "cpf" ? ' class="active"' : ""}><a data-modo="cpf">Sei o CPF — buscar direto</a></li>
+        </ul>
+        <div id="buscaNome" class="main-search mt-10"${gente.modo === "nome" ? "" : " hidden"}>
           <div class="form-group has-feedback has-feedback-left">
-            <input class="form-control input-xlg" id="pName" placeholder="Nome completo ou parcial">
+            <input class="form-control input-xlg" id="pName" placeholder="Nome completo ou parcial"
+                   value="${h(gente.q)}">
             <div class="form-control-feedback">⌕</div>
-            <div class="help-block">Base local JBR — não gasta consulta. A busca ampla encontra nomes compostos parecidos.</div>
+            <div class="help-block" id="pHelp">Ao menos 3 caracteres. Busca exata e ampla saem juntas.</div>
           </div>
-          <div class="toolbar" style="border:0;padding:0;background:none">
-            <label><input type="checkbox" id="pBroad"> Busca ampla</label>
+          <div class="filter-row" style="grid-template-columns:repeat(4,minmax(140px,1fr))">
+            <div><label class="text-muted text-size-small">Sexo</label>
+              <div class="chip-grid" id="pSexo">
+                ${[["", "Todos"], ["F", "Feminino"], ["M", "Masculino"]].map(([v, t]) =>
+                  `<button type="button" class="chip${gente.sexo === v ? " active" : ""}" data-v="${v}">${t}</button>`).join("")}
+              </div></div>
+            <div><label class="text-muted text-size-small">Nascido de</label>
+              <input class="form-control input-sm" id="pAnoMin" type="number" placeholder="1970"
+                     value="${gente.anoMin || ""}"></div>
+            <div><label class="text-muted text-size-small">até</label>
+              <input class="form-control input-sm" id="pAnoMax" type="number" placeholder="1990"
+                     value="${gente.anoMax || ""}"></div>
+            <div><label class="text-muted text-size-small">Pistas <span class="text-grey">— para o ranking</span></label>
+              <input class="form-control input-sm" id="pPistas" placeholder="cidade, telefone ou empresa"
+                     value="${h(gente.pistas)}"></div>
+          </div>
+          <div class="recentes" id="pRecentes"></div>
+          <div class="toolbar mt-10" style="border:0;padding:0;background:none">
+            <span class="text-muted text-size-small">Base local JBR — não gasta consulta.</span>
             <span class="spacer"></span>
-            <button class="btn btn-main btn-sm" id="pSearch">Buscar</button>
+            <button class="btn btn-main btn-sm" id="pSearch" ${gente.q.trim().length < 3 ? "disabled" : ""}>Buscar</button>
           </div>
-        </div>`, { subtitle: "Recursos do CapiBLU dentro do fluxo de prospecção" })}
-      <div id="genteOut"></div>`;
+          <div id="genteOut">${gente.exatos.length || gente.amplos.length ? "" : emptyState("Digite um nome para começar.")}</div>
+        </div>
+        <div id="buscaCpf" class="main-search mt-10"${gente.modo === "cpf" ? "" : " hidden"}>
+          <div class="form-group has-feedback has-feedback-left">
+            <input class="form-control input-xlg" id="pCpf" placeholder="CPF — só números" maxlength="14"
+                   value="${h(gente.cpfDireto)}">
+            <div class="form-control-feedback">⌕</div>
+          </div>
+          <div class="toolbar mt-10" style="border:0;padding:0;background:none">
+            <span class="text-muted text-size-small">Mk é grátis · Assertiva cobra por CPF</span>
+            <span class="spacer"></span>
+            <button class="btn btn-main btn-sm" id="pCpfGo">Consultar</button>
+          </div>
+          <div id="cpfDiretoOut"></div>
+        </div>`, { subtitle: "Recursos do CapiBLU dentro do fluxo de prospecção" })}`;
 
-    const run = async () => {
-      const q = document.getElementById("pName").value.trim();
-      if (q.length < 3) return toast("Digite ao menos 3 caracteres.", "err");
-      const out = document.getElementById("genteOut");
-      out.innerHTML = LOADING;
-      try {
-        const r = await api(`/api/capiblu/pessoas?q=${encodeURIComponent(q)}&broad=${document.getElementById("pBroad").checked}`);
-        const pessoas = r.pessoas || [];
-        const rows = pessoas.map((p) => ({ cells: [
-          `<strong>${h(p.nome || "—")}</strong>`, h(p.cpf || "—"),
-          h(p.nascimento || "—"), h(p.sexo || "—"),
-          `<button class="btn btn-default btn-xs" data-pdet="${h(p.cpf || "")}">Detalhes</button>
-           <button class="btn btn-default btn-xs" data-plead="${h(p.cpf || "")}" data-pnome="${h(p.nome || "")}">Virar lead</button>`,
-        ] }));
-        out.innerHTML = panel(`${r.total || pessoas.length} pessoas`,
-          table(["Nome", "CPF", "Nascimento", "Sexo", ""], rows, { scroll: true }),
-          { subtitle: r.status === "unavailable" ? r.message : "" });
-        out.querySelectorAll("[data-pdet]").forEach((b) => { b.onclick = () => openPersonModal(b.dataset.pdet); });
-        out.querySelectorAll("[data-plead]").forEach((b) => {
-          b.onclick = () => openLeadForm({ name: b.dataset.pnome, cpf: b.dataset.pdet });
-        });
-      } catch (e) { out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`; }
+    document.getElementById("pModo").onclick = (e) => {
+      const a = e.target.closest("[data-modo]"); if (!a) return;
+      const novo = a.dataset.modo;
+      if (novo === gente.modo) return;
+      gente.modo = novo;
+      document.querySelectorAll("#pModo > li").forEach((li) => li.classList.remove("active"));
+      a.closest("li").classList.add("active");
+      document.getElementById("buscaNome").hidden = gente.modo !== "nome";
+      document.getElementById("buscaCpf").hidden = gente.modo !== "cpf";
+      if (gente.modo === "cpf") {
+        // limpa os restos da busca por nome
+        gente.exatos = []; gente.amplos = []; gente.exatosCpf = new Set();
+        gente.abertos = new Set(); gente.sel = new Set(); gente.scores = {};
+        gente.q = ""; document.getElementById("pName").value = "";
+        document.getElementById("genteOut").innerHTML = emptyState("Digite um nome para começar.");
+      } else {
+        // limpa os restos da busca por CPF
+        gente.cpfDireto = ""; gente.cpfDados = {};
+        document.getElementById("pCpf").value = "";
+        document.getElementById("cpfDiretoOut").innerHTML = "";
+      }
     };
-    document.getElementById("pSearch").onclick = run;
-    document.getElementById("pName").onkeydown = (e) => { if (e.key === "Enter") run(); };
+
+    document.getElementById("pCpfGo").onclick = buscarCpfDireto;
+    document.getElementById("pCpf").onkeydown = (e) => { if (e.key === "Enter") buscarCpfDireto(); };
+    if (gente.cpfDireto) renderCpfDireto();
+
+    const nome = document.getElementById("pName");
+    const btn = document.getElementById("pSearch");
+    nome.oninput = () => { gente.q = nome.value; btn.disabled = gente.q.trim().length < 3; };
+    nome.onkeydown = (e) => { if (e.key === "Enter" && !btn.disabled) buscarGente(); };
+    btn.onclick = buscarGente;
+
+    document.getElementById("pSexo").onclick = (e) => {
+      const b = e.target.closest(".chip"); if (!b) return;
+      gente.sexo = b.dataset.v; go("capiblu-gente");
+    };
+    const num = (id, key) => {
+      document.getElementById(id).onchange = (e) => {
+        gente[key] = parseInt(e.target.value, 10) || 0;
+        if (gente.exatos.length || gente.amplos.length) renderGente();
+      };
+    };
+    num("pAnoMin", "anoMin"); num("pAnoMax", "anoMax");
+    document.getElementById("pPistas").onchange = (e) => { gente.pistas = e.target.value; };
+    renderRecentes();
+
+    if (gente.exatos.length || gente.amplos.length) renderGente();
   },
 };
 
-function openPersonModal(cpf) {
-  const m = modal({
-    title: `CPF ${cpf}`, wide: true,
-    body: `<div class="toolbar" style="margin:0 0 14px">
-        <button class="btn btn-default btn-xs" data-block="">Cadastro</button>
-        <button class="btn btn-default btn-xs" data-block="mk">Perfil completo (Mk)</button>
-        <button class="btn btn-default btn-xs" data-block="vinculos">Vínculos (RAIS)</button>
-        <button class="btn btn-default btn-xs" data-block="parentes">Parentes</button>
-        <button class="btn btn-default btn-xs" data-block="contacts">Contatos (Serasa)</button>
-      </div><div id="pOut">${emptyState("Escolha o que consultar.")}</div>`,
-  });
-  m.root.querySelectorAll("[data-block]").forEach((b) => {
-    b.onclick = async () => {
-      const out = m.root.querySelector("#pOut");
-      out.innerHTML = `<span class="spinner"></span> consultando…`;
-      const path = b.dataset.block ? `/api/capiblu/pessoas/${cpf}/${b.dataset.block}` : `/api/capiblu/pessoas/${cpf}`;
-      try {
-        const r = await api(path);
-        out.innerHTML = renderPessoa(r, b.dataset.block);
-      } catch (e) { out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`; }
+function renderRecentes() {
+  const alvo = document.getElementById("pRecentes");
+  if (!alvo) return;
+  const lista = lerRecentes();
+  alvo.innerHTML = lista.length
+    ? `<span class="text-muted text-size-small">Últimas buscas:</span>
+       ${lista.map((x) => `<button type="button" class="chip" data-rec="${h(x.q)}"
+          title="${x.total} resultado(s)">${h(x.q)}</button>`).join("")}`
+    : "";
+  alvo.querySelectorAll("[data-rec]").forEach((b) => {
+    b.onclick = () => {
+      document.getElementById("pName").value = b.dataset.rec;
+      gente.q = b.dataset.rec;
+      document.getElementById("pSearch").disabled = false;
+      buscarGente();
     };
   });
+}
+
+async function buscarGente() {
+  const q = document.getElementById("pName").value.trim();
+  if (q.length < 3) return;
+  gente.q = q;
+  gente.pistas = document.getElementById("pPistas").value.trim();
+  gente.exatos = []; gente.amplos = []; gente.exatosCpf = new Set();
+  gente.total = 0; gente.buscados = 0; gente.scores = {};
+  gente.abertos = new Set(); gente.sel = new Set(); gente.aba = "exatos";
+
+  const out = document.getElementById("genteOut");
+  out.innerHTML = LOADING;
+  const pedir = (broad, limite, offset) =>
+    api(`/api/capiblu/pessoas?q=${encodeURIComponent(q)}&broad=${broad}&limit=${limite}&offset=${offset}`)
+      .catch((e) => ({ status: "error", message: e.message, pessoas: [] }));
+
+  // As duas buscas saem juntas: a exata é curta, a ampla vem paginada.
+  const [ex, am] = await Promise.all([pedir(false, 100, 0), pedir(true, PAGINA_GENTE, 0)]);
+  if (ex.status === "error" && am.status === "error") {
+    out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(ex.message || am.message)}</div>`;
+    return;
+  }
+  gente.exatos = ex.pessoas || [];
+  gente.exatosCpf = new Set(gente.exatos.map((p) => p.cpf));
+  gente.amplos = am.pessoas || [];
+  gente.buscados = gente.amplos.length;
+  gente.total = am.total || gente.amplos.length;
+  if (!gente.exatos.length && gente.amplos.length) gente.aba = "amplos";
+  guardarRecente(q, gente.exatos.length + gente.total);
+  renderRecentes();
+  renderGente();
+  if (autoRankLigado()) calcularRanking(10, true);
+}
+
+async function carregarMaisAmplos(qtd) {
+  const restante = gente.total - gente.buscados;
+  const n = qtd === "todos" ? restante : Math.min(qtd, restante);
+  if (n <= 0) return;
+  const info = document.getElementById("gPagInfo");
+  if (info) info.innerHTML = `<span class="spinner"></span> carregando…`;
+  try {
+    const r = await api(`/api/capiblu/pessoas?q=${encodeURIComponent(gente.q)}&broad=true&limit=${n}&offset=${gente.buscados}`);
+    const novos = (r.pessoas || []).filter((p) => !gente.amplos.some((x) => x.cpf === p.cpf));
+    gente.amplos = gente.amplos.concat(novos);
+    gente.buscados += (r.pessoas || []).length;
+    if (r.total) gente.total = r.total;
+    if (!novos.length) gente.total = gente.buscados; // servidor sem offset: para de prometer mais
+    renderGente();
+  } catch (e) { toast(e.message, "err"); renderGente(); }
+}
+
+/* Pontuação: quanto do que o SDR já sabe aparece no perfil do candidato.
+   Tudo vem do Mk, que é grátis — a Assertiva só entra acima do limiar. */
+function normalizar(s) {
+  return String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+function achatar(obj, nivel = 0) {
+  if (obj == null || nivel > 4) return "";
+  if (typeof obj !== "object") return " " + obj;
+  return Object.values(obj).map((v) => achatar(v, nivel + 1)).join(" ");
+}
+function pontuarPessoa(pessoa, payload) {
+  const texto = normalizar(achatar(payload));
+  const soDigitos = texto.replace(/[^0-9]/g, "");
+  const pistas = gente.pistas.split(/[,;]+/).map((x) => x.trim()).filter((x) => x.length > 2);
+  const bateu = [];
+  let pontos = 0;
+  pistas.forEach((pista) => {
+    const digitos = pista.replace(/\D/g, "");
+    const alvo = digitos.length >= 8 ? digitos : normalizar(pista);
+    const onde = digitos.length >= 8 ? soDigitos : texto;
+    if (alvo && onde.includes(alvo)) { pontos += 30; bateu.push(pista); }
+  });
+  // Sinais que não dependem de pista: ter telefone, ter e-mail, cadastro ativo.
+  const p = payload.pessoa || payload.dados || payload || {};
+  if ((p.telefones || payload.telefones || []).length) { pontos += 14; bateu.push("tem telefone"); }
+  if ((p.emails || payload.emails || []).length) { pontos += 6; bateu.push("tem e-mail"); }
+  if (/ativ/.test(normalizar(p.situacao_cpf || p.situacao))) { pontos += 6; bateu.push("CPF ativo"); }
+  if (gente.exatosCpf.has(pessoa.cpf)) { pontos += 14; bateu.push("nome exato"); }
+  const max = pistas.length * 30 + 40;
+  return { pct: Math.min(100, Math.round((pontos / (max || 40)) * 100)), bateu };
+}
+
+async function calcularRanking(quantos, silencioso) {
+  const lista = listaAtual().slice(0, quantos);
+  if (!lista.length) return;
+  const b = document.getElementById("gRank");
+  if (b) { b.disabled = true; b.innerHTML = `<span class="spinner"></span> pontuando…`; }
+  for (const p of lista) {
+    if (gente.scores[p.cpf]) continue;
+    try {
+      const r = gente.mk[p.cpf] || await api(`/api/capiblu/pessoas/${p.cpf}/mk`);
+      gente.mk[p.cpf] = r;
+      gente.scores[p.cpf] = pontuarPessoa(p, r);
+    } catch (e) { gente.scores[p.cpf] = { pct: null, bateu: [] }; }
+  }
+  renderGente();
+  if (!silencioso) toast(`${lista.length} candidato(s) pontuado(s) — sem custo.`, "ok");
+}
+
+const scorePill = (sc) => {
+  if (!sc || sc.pct == null) return `<span class="pill grey">—</span>`;
+  const tom = sc.pct >= 70 ? "green" : sc.pct >= 40 ? "amber" : "grey";
+  return `<span class="pill ${tom}">${sc.pct}%</span>`;
+};
+
+const primeiroTelefone = (payload) => {
+  const p = (payload && (payload.pessoa || payload.dados || payload)) || {};
+  const t = (p.telefones || (payload && payload.telefones) || [])[0];
+  return t ? (t.display || t.numero || t.telefone || "") : "";
+};
+
+function renderGente() {
+  const out = document.getElementById("genteOut");
+  const lista = listaAtual();
+  const visiveis = lista.slice(0, Math.max(PAGINA_GENTE, gente.buscados));
+  const nExatos = pessoaFiltrada(gente.exatos).length;
+
+  const linhas = visiveis.map((p) => {
+    const sc = gente.scores[p.cpf];
+    const mk = gente.mk[p.cpf];
+    const tel = primeiroTelefone(mk);
+    const aberto = gente.abertos.has(p.cpf);
+    const conf = mk
+      ? (tel ? `<span class="pill blue" data-verif="${h(p.cpf)}">verificar</span>`
+             : `<span class="pill grey">sem telefone</span>`)
+      : `<span class="text-muted">—</span>`;
+    return `
+      <tr${aberto ? ' class="row-open"' : ""}>
+        <td class="check-cell"><input type="checkbox" data-sel="${h(p.cpf)}"${gente.sel.has(p.cpf) ? " checked" : ""}></td>
+        <td>${scorePill(sc)}</td>
+        <td>
+          <div class="lead-media">
+            <span class="lead-avatar-dot${sc && sc.pct >= 70 ? " success" : ""}">${h((p.nome || "?").slice(0, 2).toUpperCase())}</span>
+            <div style="min-width:0">
+              <strong>${h(p.nome || "—")}</strong>
+              <div class="text-muted text-size-small">${h(p.sexo === "F" ? "feminino" : p.sexo === "M" ? "masculino" : p.sexo || "—")} · ${h(p.nascimento || "—")}</div>
+            </div>
+          </div>
+        </td>
+        <td class="nowrap">${fmtCPF(p.cpf)}</td>
+        <td class="nowrap">${tel ? h(tel) : '<span class="text-muted">—</span>'}</td>
+        <td id="conf-${h(p.cpf)}">${conf}</td>
+        <td class="nowrap">
+          <button class="btn btn-main btn-xs" data-plead="${h(p.cpf)}" data-pnome="${h(p.nome || "")}">Virar lead</button>
+          <button class="btn btn-default btn-xs" data-pabrir="${h(p.cpf)}">${aberto ? "Fechar ▴" : "Abrir ▾"}</button>
+        </td>
+      </tr>
+      ${aberto ? `<tr class="row-detail"><td colspan="7">${detalhePessoa(p)}</td></tr>` : ""}`;
+  }).join("");
+
+  const restante = gente.aba === "amplos" ? gente.total - gente.buscados : 0;
+  const paginacao = `
+    <div class="table-foot">
+      <span class="text-muted text-size-small" id="gPagInfo">
+        Mostrando ${visiveis.length}${gente.aba === "amplos" ? ` de ${gente.total}` : ""}
+        ${nExatos ? ` · ${nExatos} com nome exato` : ""}
+      </span>
+      <span class="nowrap">
+        ${restante > 0 ? [10, 25, 50].filter((n) => n <= restante)
+            .map((n) => `<button class="btn btn-default btn-xs" data-mais="${n}">+${n}</button>`).join(" ") : ""}
+        ${restante > 0 ? `<button class="btn btn-default btn-xs" data-mais="todos">Todos os ${gente.total}</button>` : ""}
+      </span>
+    </div>`;
+
+  out.innerHTML = `
+    <div class="panel panel-flat">
+      <ul class="nav nav-tabs">
+        <li${gente.aba === "exatos" ? ' class="active"' : ""}><a data-aba="exatos">Nome exato
+          <span class="badge${gente.aba === "exatos" ? " badge-success" : ""}">${nExatos}</span></a></li>
+        <li${gente.aba === "amplos" ? ' class="active"' : ""}><a data-aba="amplos">Outros sobrenomes
+          <span class="badge${gente.aba === "amplos" ? " badge-success" : ""}">${gente.total}</span></a></li>
+      </ul>
+      <div class="toolbar" style="margin:0;border-width:0 0 1px;border-radius:0">
+        <button class="btn btn-default btn-xs" id="gRank">Calcular ranking</button>
+        <span class="text-muted text-size-small">puxar</span>
+        <input class="form-control input-sm" id="gRankQtd" type="number" value="20" min="1" max="200" style="width:64px;min-width:0">
+        <span class="text-muted text-size-small">Assertiva só acima de</span>
+        <input class="form-control input-sm" id="gLimiar" type="number" value="${gente.limiar}" min="0" max="100" style="width:58px;min-width:0">
+        <span class="text-muted text-size-small">%</span>
+        <label class="text-muted text-size-small" title="Pontua os 10 primeiros ao buscar — o Mk não cobra">
+          <input type="checkbox" id="gAuto"${autoRankLigado() ? " checked" : ""}> automático</label>
+        <span class="spacer"></span>
+        <button class="btn btn-default btn-xs" id="gExport">Exportar XLSX</button>
+        <span class="text-muted text-size-small">Mk é grátis · Assertiva cobra por CPF</span>
+      </div>
+      <div class="selbar${gente.sel.size ? " on" : ""}">
+        <strong>${gente.sel.size}</strong> selecionada(s)
+        <span class="spacer"></span>
+        <button class="btn btn-main btn-xs" id="gLote">Virar leads</button>
+        <button class="btn btn-default btn-xs" id="gLimpar">Limpar</button>
+      </div>
+      ${lista.length ? `<div class="table-responsive"><table class="table table-striped table-hover">
+        <thead><tr>
+          <th class="check-cell"><input type="checkbox" id="gTodas"></th>
+          <th style="width:64px">SCORE</th><th style="min-width:260px">PESSOA</th>
+          <th>CPF</th><th>TELEFONE</th><th>CONFIANÇA</th><th></th>
+        </tr></thead>
+        <tbody>${linhas}</tbody></table></div>${paginacao}`
+        : emptyState("Nenhum resultado com esses filtros.")}
+    </div>`;
+
+  out.querySelectorAll("[data-aba]").forEach((a) => {
+    a.onclick = () => { gente.aba = a.dataset.aba; renderGente(); };
+  });
+  out.querySelectorAll("[data-mais]").forEach((b) => {
+    b.onclick = () => carregarMaisAmplos(b.dataset.mais === "todos" ? "todos" : Number(b.dataset.mais));
+  });
+  document.getElementById("gRank").onclick = () => {
+    gente.limiar = Number(document.getElementById("gLimiar").value) || 0;
+    calcularRanking(Number(document.getElementById("gRankQtd").value) || 20);
+  };
+  out.querySelectorAll("[data-pabrir]").forEach((b) => {
+    b.onclick = () => abrirPessoa(b.dataset.pabrir);
+  });
+  out.querySelectorAll("[data-plead]").forEach((b) => {
+    b.onclick = () => openLeadForm({ name: b.dataset.pnome, cpf: b.dataset.plead });
+  });
+  out.querySelectorAll("[data-sel]").forEach((c) => {
+    c.onchange = () => {
+      c.checked ? gente.sel.add(c.dataset.sel) : gente.sel.delete(c.dataset.sel);
+      renderGente();
+    };
+  });
+  const todas = document.getElementById("gTodas");
+  if (todas) todas.onchange = () => {
+    visiveis.forEach((p) => todas.checked ? gente.sel.add(p.cpf) : gente.sel.delete(p.cpf));
+    renderGente();
+  };
+  const auto = document.getElementById("gAuto");
+  if (auto) auto.onchange = () => definirAutoRank(auto.checked);
+  const exportar = document.getElementById("gExport");
+  if (exportar) exportar.onclick = async () => {
+    // Exporta o que está na tela — com score e telefone quando já pontuado.
+    const alvo = gente.sel.size
+      ? [...gente.exatos, ...gente.amplos].filter((p) => gente.sel.has(p.cpf))
+      : visiveis;
+    if (!alvo.length) return toast("Nada para exportar.", "err");
+    exportar.disabled = true;
+    try {
+      await apiDownload("/api/capiblu/export/pessoas", {
+        method: "POST",
+        body: {
+          columns: ["Nome", "CPF", "Nascimento", "Sexo", "Score", "Telefone"],
+          rows: alvo.map((p) => ({
+            Nome: p.nome || "", CPF: fmtCPF(p.cpf), Nascimento: p.nascimento || "",
+            Sexo: p.sexo || "",
+            Score: gente.scores[p.cpf] && gente.scores[p.cpf].pct != null
+              ? `${gente.scores[p.cpf].pct}%` : "",
+            Telefone: primeiroTelefone(gente.mk[p.cpf]) || "",
+          })),
+        },
+        fallbackName: `pessoas-${gente.q.replace(/\s+/g, "-").toLowerCase()}.xlsx`,
+      });
+      toast(`${alvo.length} linha(s) exportada(s).`, "ok");
+    } catch (e) { toast(e.message, "err"); }
+    exportar.disabled = false;
+  };
+  const limpar = document.getElementById("gLimpar");
+  if (limpar) limpar.onclick = () => { gente.sel = new Set(); renderGente(); };
+  const lote = document.getElementById("gLote");
+  if (lote) lote.onclick = () => {
+    const nomes = [...gente.sel].map((cpf) => {
+      const p = [...gente.exatos, ...gente.amplos].find((x) => x.cpf === cpf) || {};
+      return { name: p.nome, cpf };
+    });
+    if (!nomes.length) return toast("Selecione ao menos uma pessoa.", "err");
+    openLeadLote(nomes);
+  };
+  out.querySelectorAll("[data-verif]").forEach((s) => {
+    s.onclick = () => verificarPosse(s.dataset.verif);
+  });
+}
+
+/** Abre a pessoa na própria linha — sem modal, sem rolagem aninhada. */
+async function abrirPessoa(cpf) {
+  if (gente.abertos.has(cpf)) { gente.abertos.delete(cpf); return renderGente(); }
+  gente.abertos.add(cpf);
+  gente.blocoAtivo = gente.blocoAtivo || {};
+  gente.blocoAtivo[cpf] = gente.blocoAtivo[cpf] || "mk";
+  renderGente();
+  if (!gente.mk[cpf]) {
+    try {
+      gente.mk[cpf] = await api(`/api/capiblu/pessoas/${cpf}/mk`);
+    } catch (e) { gente.mk[cpf] = { status: "error", message: e.message }; }
+    renderGente();
+  }
+}
+
+const BLOCOS_PESSOA = [
+  ["mk", "Perfil (Mk)", false],
+  ["vinculos", "Vínculos (RAIS)", false],
+  ["parentes", "Parentes", false],
+  ["contacts", "Contatos (Serasa)", true],
+];
+
+function detalhePessoa(p) {
+  const cpf = p.cpf;
+  gente.blocoAtivo = gente.blocoAtivo || {};
+  const ativo = gente.blocoAtivo[cpf] || "mk";
+  const dados = (gente.blocos && gente.blocos[cpf] && gente.blocos[cpf][ativo])
+    || (ativo === "mk" ? gente.mk[cpf] : null);
+  const pago = (BLOCOS_PESSOA.find(([k]) => k === ativo) || [])[2];
+  return `
+    <div class="detail-box">
+      <ul class="nav nav-tabs">
+        ${BLOCOS_PESSOA.map(([k, t, cobra]) => `<li${ativo === k ? ' class="active"' : ""}>
+          <a data-bloco="${k}" data-cpf="${h(cpf)}">${t}${cobra ? ' <span class="pill amber">paga</span>' : ""}</a></li>`).join("")}
+        <li><a data-dossie="${h(cpf)}">Dossiê PDF <span class="pill amber">paga</span></a></li>
+      </ul>
+      <div class="detail-body">
+        ${pago && !dados ? `<div class="alert alert-info alert-styled-left">
+            Este bloco <strong>gasta consulta</strong>. Carrega só quando você pedir.
+            <button class="btn btn-main btn-xs ml-5" data-carregar="${h(cpf)}">Consultar agora</button>
+          </div>` : dados ? renderPessoa(dados, ativo === "mk" ? "mk" : ativo)
+                          : `<span class="spinner"></span> <span class="text-muted ml-5">consultando…</span>`}
+        ${ativo === "mk" && gente.scores[cpf] && gente.scores[cpf].bateu.length
+          ? `<div class="detail-note">Bateu em: ${gente.scores[cpf].bateu.map(h).join(" · ")}.</div>` : ""}
+      </div>
+    </div>`;
+}
+
+/* Delegação: as abas do detalhe são recriadas a cada render. */
+document.addEventListener("click", async (e) => {
+  const aba = e.target.closest("[data-bloco]");
+  if (aba) {
+    const { bloco, cpf } = aba.dataset;
+    gente.blocoAtivo = gente.blocoAtivo || {};
+    gente.blocoAtivo[cpf] = bloco;
+    renderGente();
+    const cobra = (BLOCOS_PESSOA.find(([k]) => k === bloco) || [])[2];
+    if (!cobra) carregarBlocoPessoa(cpf, bloco);
+    return;
+  }
+  const carregar = e.target.closest("[data-carregar]");
+  if (carregar) {
+    const cpf = carregar.dataset.carregar;
+    carregarBlocoPessoa(cpf, gente.blocoAtivo[cpf]);
+    return;
+  }
+  const dossie = e.target.closest("[data-dossie]");
+  if (dossie) {
+    state.dossieDoc = dossie.dataset.dossie;
+    go("capiblu-dossie");
+  }
+});
+
+async function carregarBlocoPessoa(cpf, bloco) {
+  gente.blocos = gente.blocos || {};
+  gente.blocos[cpf] = gente.blocos[cpf] || {};
+  if (gente.blocos[cpf][bloco]) return;
+  if (bloco === "mk" && gente.mk[cpf]) { gente.blocos[cpf].mk = gente.mk[cpf]; return renderGente(); }
+  try {
+    const r = await api(`/api/capiblu/pessoas/${cpf}/${bloco}`);
+    gente.blocos[cpf][bloco] = r;
+    if (bloco === "mk") gente.mk[cpf] = r;
+  } catch (e) {
+    gente.blocos[cpf][bloco] = { status: "error", message: e.message };
+  }
+  renderGente();
+}
+
+/** Busca direta por CPF — a contraparte de "procure pelo nome" para quem já
+ *  tem o documento em mãos. A fonte é escolhida na aba: Mk carrega na hora
+ *  (grátis), Assertiva só quando pedida (gasta consulta). */
+async function buscarCpfDireto() {
+  const cpf = document.getElementById("pCpf").value.replace(/\D/g, "");
+  if (cpf.length !== 11) return toast("CPF precisa ter 11 dígitos.", "err");
+  gente.cpfDireto = cpf;
+  gente.cpfAba = "mk";
+  gente.cpfDados = {};
+  renderCpfDireto();
+  await carregarCpfDireto("mk");
+}
+
+async function carregarCpfDireto(fonte) {
+  if (gente.cpfDados[fonte]) return renderCpfDireto();
+  gente.cpfDados[fonte] = { loading: true };
+  renderCpfDireto();
+  try {
+    const r = fonte === "assertiva"
+      ? await api(`/api/capiblu/assertiva/cpf?q=${gente.cpfDireto}`)
+      : await api(`/api/capiblu/pessoas/${gente.cpfDireto}/mk`);
+    gente.cpfDados[fonte] = r;
+  } catch (e) {
+    gente.cpfDados[fonte] = { status: "error", message: e.message };
+  }
+  renderCpfDireto();
+}
+
+function renderCpfDireto() {
+  const out = document.getElementById("cpfDiretoOut");
+  if (!out) return;
+  if (!gente.cpfDireto) { out.innerHTML = ""; return; }
+  const ativo = gente.cpfAba;
+  const dados = gente.cpfDados[ativo];
+  const carregando = dados && dados.loading;
+  out.innerHTML = `
+    <div class="detail-box mt-10">
+      <ul class="nav nav-tabs">
+        <li${ativo === "mk" ? ' class="active"' : ""}><a data-cpfaba="mk">Perfil (Mk)</a></li>
+        <li${ativo === "assertiva" ? ' class="active"' : ""}><a data-cpfaba="assertiva">Assertiva <span class="pill amber">paga</span></a></li>
+      </ul>
+      <div class="detail-body">
+        ${ativo === "assertiva" && !dados
+          ? `<div class="alert alert-info alert-styled-left">
+               Esta consulta <strong>gasta crédito</strong> na Assertiva.
+               <button class="btn btn-main btn-xs ml-5" id="cpfCarregarAssertiva">Consultar agora</button>
+             </div>`
+          : carregando
+            ? `<span class="spinner"></span> <span class="text-muted ml-5">consultando…</span>`
+            : dados
+              ? (ativo === "mk" ? renderPessoa(dados, "mk") : renderAssertiva(dados, "cpf", gente.cpfDireto))
+              : `<span class="spinner"></span> <span class="text-muted ml-5">consultando…</span>`}
+      </div>
+    </div>`;
+  out.querySelectorAll("[data-cpfaba]").forEach((a) => {
+    a.onclick = () => {
+      gente.cpfAba = a.dataset.cpfaba;
+      renderCpfDireto();
+    };
+  });
+  const btnAssertiva = document.getElementById("cpfCarregarAssertiva");
+  if (btnAssertiva) btnAssertiva.onclick = () => carregarCpfDireto("assertiva");
+}
+
+/** Confiança do telefone na própria linha: pertence + linha compartilhada. */
+async function verificarPosse(cpf) {
+  const cel = document.getElementById(`conf-${cpf}`);
+  const tel = primeiroTelefone(gente.mk[cpf]).replace(/\D/g, "");
+  if (!tel) return;
+  if (cel) cel.innerHTML = `<span class="spinner"></span>`;
+  try {
+    const pessoa = [...gente.exatos, ...gente.amplos].find((x) => x.cpf === cpf) || {};
+    await posseNaCelula(tel, cpf, `conf-${cpf}`, pessoa.nome || "");
+  } catch (e) {
+    if (cel) cel.innerHTML = `<span class="pill grey" title="${h(e.message)}">n/d</span>`;
+  }
+}
+
+/** Vira várias pessoas em leads de uma vez, na mesma cadência. */
+function openLeadLote(pessoas) {
+  const m = modal({
+    title: `Virar ${pessoas.length} pessoa(s) em lead`,
+    body: `<div class="alert alert-info alert-styled-left">
+        Os leads entram sem telefone confirmado; a validação continua disponível na ficha de cada um.
+      </div>
+      <div class="field"><label>Cliente</label>
+        <select class="form-control" id="loteClient">${options(state.clients, "", { blank: "— sem cliente —" })}</select></div>
+      <div class="field"><label>Cadência</label>
+        <select class="form-control" id="loteCad">${options(state.cadences, "", { blank: "— sem cadência —" })}</select></div>
+      <div class="field"><label>SDR responsável</label>
+        <select class="form-control" id="loteSdr">${options(state.users, state.me && state.me.id)}</select></div>`,
+    footer: `<button class="btn btn-default" id="loteCancel">Cancelar</button>
+             <button class="btn btn-main" id="loteOk">Criar leads</button>`,
+  });
+  m.root.querySelector("#loteCancel").onclick = () => m.close();
+  m.root.querySelector("#loteOk").onclick = async () => {
+    const body = {
+      client_id: m.root.querySelector("#loteClient").value || null,
+      cadence_id: m.root.querySelector("#loteCad").value || null,
+      sdr_id: m.root.querySelector("#loteSdr").value || null,
+    };
+    const btn = m.root.querySelector("#loteOk");
+    btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> criando…`;
+    let ok = 0;
+    for (const p of pessoas) {
+      try {
+        await api("/api/flow/leads", { method: "POST", body: { name: p.name, cpf: p.cpf, ...body } });
+        ok += 1;
+      } catch (e) { /* segue: o relatório final diz quantos entraram */ }
+    }
+    m.close();
+    toast(`${ok} de ${pessoas.length} lead(s) criado(s).`, ok ? "ok" : "err");
+    gente.sel = new Set();
+    renderGente();
+  };
+}
+
+/* ── Vínculo empregatício ──────────────────────────────────────────────
+ *
+ * Uma tela responde as duas perguntas, trocando só o título e a fonte:
+ * "quem trabalha nessa empresa" (RAIS pelo CNPJ) e "onde essa pessoa
+ * trabalhou" (RAIS pelo CPF). Eram dois caminhos separados e o SDR precisa
+ * pular de um para o outro no meio da investigação.
+ */
+PAGES["capiblu-vinculos"] = {
+  area: "CapiBLU", title: "Vínculo empregatício",
+  async render() {
+    const modo = state.vinModo || "empresa";
+    const doc = state.vinDoc || "";
+    const porEmpresa = modo === "empresa";
+    view.innerHTML = `
+      <div class="panel panel-flat">
+        <ul class="nav nav-tabs">
+          <li${porEmpresa ? ' class="active"' : ""}><a data-vinmodo="empresa">Quem trabalha nessa empresa</a></li>
+          <li${!porEmpresa ? ' class="active"' : ""}><a data-vinmodo="pessoa">Onde essa pessoa trabalhou</a></li>
+        </ul>
+        <div class="panel-body">
+          <div class="alert alert-info alert-styled-left">
+            ${porEmpresa
+              ? "Quadro que a empresa declarou na RAIS — nome, CPF e admissão de cada um. Clique em alguém para abrir a pessoa."
+              : "Empregos que a pessoa acumulou na RAIS, com cargo e período. Clique na empresa para abrir a ficha."}
+            <strong>Gasta consulta.</strong>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>${porEmpresa ? "CNPJ da empresa" : "CPF da pessoa"}</label>
+              <input class="form-control input-xlg" id="vinDoc" value="${h(doc)}"
+                     placeholder="${porEmpresa ? "76.485.390/0001-07" : "somente números"}"></div>
+            <div class="field" style="align-self:end">
+              <button class="btn btn-main" id="vinGo">Consultar</button>
+              <button class="btn btn-default ml-5" id="vinExport" hidden>Exportar XLSX</button></div>
+          </div>
+        </div>
+      </div>
+      <div id="vinOut">${doc ? LOADING : emptyState(porEmpresa ? "Informe um CNPJ." : "Informe um CPF.")}</div>`;
+
+    view.querySelectorAll("[data-vinmodo]").forEach((a) => {
+      a.onclick = () => {
+        state.vinModo = a.dataset.vinmodo;
+        state.vinDoc = "";
+        go("capiblu-vinculos");
+      };
+    });
+
+    const consultar = async () => {
+      const limpo = document.getElementById("vinDoc").value.replace(/\D/g, "");
+      const minimo = porEmpresa ? 14 : 11;
+      if (limpo.length !== minimo) {
+        return toast(porEmpresa ? "CNPJ precisa de 14 dígitos." : "CPF precisa de 11 dígitos.", "err");
+      }
+      state.vinDoc = limpo;
+      const out = document.getElementById("vinOut");
+      out.innerHTML = LOADING;
+      try {
+        const r = porEmpresa
+          ? await api(`/api/capiblu/empresas/${limpo}/employees`)
+          : await api(`/api/capiblu/pessoas/${limpo}/vinculos`);
+        state.vinDados = r;
+        out.innerHTML = porEmpresa ? renderQuadro(r, limpo) : panel("Vínculos da pessoa", renderVinculos(r),
+          { subtitle: `CPF ${fmtCPF(limpo)} · consulta paga` });
+        const exp = document.getElementById("vinExport");
+        if (exp) exp.hidden = false;
+      } catch (e) {
+        out.innerHTML = `<div class="alert alert-warning alert-styled-left">${h(e.message)}</div>`;
+      }
+    };
+    document.getElementById("vinGo").onclick = consultar;
+    document.getElementById("vinDoc").onkeydown = (e) => { if (e.key === "Enter") consultar(); };
+    document.getElementById("vinExport").onclick = async () => {
+      const r = state.vinDados || {};
+      const lista = r.funcionarios || r.employees || r.vinculos || r.data || [];
+      if (!lista.length) return toast("Nada para exportar.", "err");
+      try {
+        await apiDownload("/api/capiblu/export/vinculos", {
+          method: "POST", body: { rows: lista },
+          fallbackName: `vinculos-${state.vinDoc}.xlsx`,
+        });
+        toast(`${lista.length} linha(s) exportada(s).`, "ok");
+      } catch (e) { toast(e.message, "err"); }
+    };
+    if (doc) consultar();
+  },
+};
+
+/** Quadro de funcionários declarado pela empresa. Cada linha é uma pessoa
+ *  que pode virar lead — é isso que o CapiBLU não fazia. */
+function renderQuadro(r, cnpj) {
+  const lista = r.funcionarios || r.employees || r.data || r.registros || [];
+  if (!lista.length) {
+    return panel("Quadro de funcionários",
+      emptyState("Nada declarado na RAIS para este CNPJ — comum em micro empresa."),
+      { subtitle: `CNPJ ${fmtCNPJ(cnpj)}` });
+  }
+  const rows = lista.map((f) => {
+    const cpf = String(f.cpf || f.documento || "").replace(/\D/g, "");
+    const adm = f.admissao || f.data_admissao || f.inicio;
+    return { cells: [
+      `<strong>${h(f.nome || "—")}</strong>`,
+      cpf ? fmtCPF(cpf) : '<span class="text-muted">—</span>',
+      h(f.cargo || f.ocupacao || f.funcao || "—"),
+      h(adm ? (fmtDate(adm) === "—" ? adm : fmtDate(adm)) : "—"),
+      h(f.salario ? fmtMoney(Number(f.salario)) : "—"),
+      cpf ? `<button class="btn btn-default btn-xs" data-vinpessoa="${h(cpf)}">Ver pessoa</button>
+             <button class="btn btn-main btn-xs" data-vinlead="${h(cpf)}"
+                     data-vinnome="${h(f.nome || "")}">Virar lead</button>` : "",
+    ] };
+  });
+  const painel = panel(`${lista.length} pessoa(s) no quadro`,
+    table(["Nome", "CPF", "Cargo", "Admissão", "Salário", ""], rows, { scroll: true }),
+    { subtitle: `CNPJ ${fmtCNPJ(cnpj)} · declarado na RAIS · consulta paga` });
+  setTimeout(() => {
+    document.querySelectorAll("[data-vinpessoa]").forEach((b) => {
+      b.onclick = () => {
+        state.vinModo = "pessoa";
+        state.vinDoc = b.dataset.vinpessoa;
+        go("capiblu-vinculos");
+      };
+    });
+    document.querySelectorAll("[data-vinlead]").forEach((b) => {
+      b.onclick = () => openLeadForm({ name: b.dataset.vinnome, cpf: b.dataset.vinlead });
+    });
+  }, 0);
+  return painel;
+}
+
+/* ── Consulta Assertiva ────────────────────────────────────────────────
+ *
+ * Todas as consultas aqui são pagas — por isso o tipo é escolhido antes, o
+ * aviso de custo é fixo, e o status da credencial aparece na abertura, não
+ * depois de a consulta falhar.
+ */
+const ASSERTIVA_TIPOS = [
+  ["cpf", "CPF", "somente números", "Cadastro, endereços, telefones e e-mails do CPF."],
+  ["cnpj", "CNPJ", "somente números", "Cadastro da empresa e possíveis decisores."],
+  ["telefone", "Telefone", "DDD + número", "De quem é o número, pela Assertiva."],
+  ["email", "E-mail", "nome@dominio.com", "A quem pertence o e-mail."],
+  ["nome", "Nome", "nome completo", "Candidatos com esse nome. Aceita filtros."],
+];
+
+PAGES["capiblu-assertiva"] = {
+  area: "CapiBLU", title: "Consulta Assertiva",
+  async render() {
+    const tipo = state.asTipo || "cpf";
+    const meta = ASSERTIVA_TIPOS.find(([k]) => k === tipo) || ASSERTIVA_TIPOS[0];
+    view.innerHTML = `
+      <div class="panel panel-flat">
+        <ul class="nav nav-tabs">
+          ${ASSERTIVA_TIPOS.map(([k, t]) => `<li${tipo === k ? ' class="active"' : ""}>
+            <a data-astipo="${k}">${t}</a></li>`).join("")}
+        </ul>
+        <div class="panel-body">
+          <div class="alert alert-warning alert-styled-left">
+            <strong>Consulta paga.</strong> ${h(meta[3])}
+            Cada chamada é registrada no seu consumo — veja em
+            <a data-page="capiblu-consumo">Consumo e custo</a>.
+          </div>
+          <div id="asStatus" class="help-block">verificando a credencial…</div>
+          <div class="field-row">
+            <div class="field"><label>${h(meta[1])}</label>
+              <input class="form-control input-xlg" id="asQ" placeholder="${h(meta[2])}"></div>
+            <div class="field" style="align-self:end">
+              <button class="btn btn-main" id="asGo">Consultar</button></div>
+          </div>
+        </div>
+      </div>
+      <div id="asOut"></div>`;
+
+    view.querySelectorAll("[data-astipo]").forEach((a) => {
+      a.onclick = () => { state.asTipo = a.dataset.astipo; go("capiblu-assertiva"); };
+    });
+
+    api("/api/capiblu/assertiva/status").then((s) => {
+      const el = document.getElementById("asStatus");
+      if (!el) return;
+      const ok = s.status === "ok" || s.ativo || s.autenticado;
+      el.innerHTML = ok
+        ? `<span class="pill green">credencial ativa</span>`
+        : `<span class="pill amber">${h(s.message || s.detail || "credencial indisponível")}</span>`;
+    }).catch(() => {
+      const el = document.getElementById("asStatus");
+      if (el) el.innerHTML = `<span class="pill grey">status desconhecido</span>`;
+    });
+
+    const consultar = async () => {
+      const q = document.getElementById("asQ").value.trim();
+      if (!q) return toast("Informe o que consultar.", "err");
+      const out = document.getElementById("asOut");
+      out.innerHTML = LOADING;
+      try {
+        const r = tipo === "nome"
+          ? await api("/api/capiblu/assertiva/nome", { method: "POST", body: { nome: q } })
+          : await api(`/api/capiblu/assertiva/${tipo}?q=${encodeURIComponent(q)}`);
+        out.innerHTML = renderAssertiva(r, tipo, q);
+      } catch (e) {
+        out.innerHTML = `<div class="alert alert-warning alert-styled-left">${h(e.message)}</div>`;
+      }
+    };
+    document.getElementById("asGo").onclick = consultar;
+    document.getElementById("asQ").onkeydown = (e) => { if (e.key === "Enter") consultar(); };
+  },
+};
+
+/** A Assertiva devolve formato diferente por tipo — o que dá para reconhecer
+ *  vira tabela de gente; o resto cai no genérico, com o JSON à mão. */
+function renderAssertiva(r, tipo, q) {
+  const resp = r.resposta || r.data || r;
+  const pessoas = resp.pessoas || resp.candidatos || resp.resultados || [];
+  const corpo = pessoas.length
+    ? table(["Nome", "Documento", "Nascimento", "Cidade", ""],
+        pessoas.slice(0, 60).map((p) => {
+          const doc = String(p.cpf || p.cnpj || p.documento || "").replace(/\D/g, "");
+          return { cells: [
+            `<strong>${h(p.nome || p.razaoSocial || p.nomeOuRazaoSocial || "—")}</strong>`,
+            doc.length === 14 ? fmtCNPJ(doc) : fmtCPF(doc),
+            h(p.nascimento || p.dataNascimento || "—"),
+            h(p.cidade || p.municipio || "—"),
+            doc.length === 11
+              ? `<button class="btn btn-default btn-xs" data-pdet="${h(doc)}">Ver ficha</button>`
+              : doc ? `<a data-ficha="${h(doc)}">Abrir ficha</a>` : "",
+          ] };
+        }), { scroll: true })
+    : `${renderPessoa(r, "mk") || ""}
+       <div class="sub-block"><h4>Resposta completa</h4>
+         <div class="json-box">${h(JSON.stringify(r, null, 2))}</div></div>`;
+  const painel = panel(`Assertiva · ${h(tipo)} · ${h(q)}`, corpo,
+    { subtitle: "Consulta paga · registrada no consumo" });
+  setTimeout(() => {
+    document.querySelectorAll("[data-pdet]").forEach((b) => {
+      b.onclick = () => { state.dossieDoc = b.dataset.pdet; go("capiblu-dossie"); };
+    });
+  }, 0);
+  return painel;
 }
 
 PAGES["capiblu-telefone"] = {
   area: "CapiBLU", title: "De quem é este telefone",
   async render() {
+    const aba = state.telAba || "reverso";
     view.innerHTML = `
-      ${panel("Telefone reverso", `
-        <div class="field-row">
-          <div class="field"><label>Telefone com DDD</label>
-            <input class="form-control input-xlg" id="tPhone" placeholder="41999998888"></div>
-          <div class="field"><label>Validar contra um documento (opcional)</label>
-            <input class="form-control input-xlg" id="tDoc" placeholder="CPF ou CNPJ"></div>
+      <div class="panel panel-flat">
+        <ul class="nav nav-tabs">
+          <li${aba === "reverso" ? ' class="active"' : ""}><a data-taba="reverso">De quem é o número</a></li>
+          <li${aba === "posse" ? ' class="active"' : ""}><a data-taba="posse">Confirmar posse</a></li>
+        </ul>
+        <div class="panel-body">
+          <div class="alert alert-info alert-styled-left">
+            ${aba === "reverso"
+              ? "Traz todos os CPFs e CNPJs atrelados ao número. <strong>Gasta uma consulta.</strong>"
+              : "Responde se aquele número é mesmo daquele documento, e avisa quando a linha é compartilhada. <strong>Gasta uma consulta.</strong>"}
+          </div>
+          <div class="field-row">
+            <div class="field"><label>Telefone com DDD</label>
+              <input class="form-control input-xlg" id="tPhone" placeholder="41999998888"
+                     value="${h(state.telPhone || "")}"></div>
+            ${aba === "posse" ? `<div class="field"><label>CPF ou CNPJ</label>
+              <input class="form-control input-xlg" id="tDoc" placeholder="somente números"></div>` : ""}
+          </div>
+          <button class="btn btn-main" id="tGo">Consultar</button>
         </div>
-        <button class="btn btn-main" id="tGo">Consultar</button>
-        <span class="text-muted text-size-small ml-5">Gasta consulta</span>`)}
+      </div>
       <div id="telOut"></div>`;
+
+    view.querySelectorAll("[data-taba]").forEach((a) => {
+      a.onclick = () => {
+        state.telPhone = document.getElementById("tPhone").value;
+        state.telAba = a.dataset.taba;
+        go("capiblu-telefone");
+      };
+    });
+
     document.getElementById("tGo").onclick = async () => {
       const phone = document.getElementById("tPhone").value.replace(/\D/g, "");
-      const doc = document.getElementById("tDoc").value.replace(/\D/g, "");
+      const doc = (document.getElementById("tDoc")?.value || "").replace(/\D/g, "");
       if (phone.length < 10) return toast("Informe o telefone com DDD.", "err");
+      if (aba === "posse" && doc.length < 11) return toast("Informe o CPF ou CNPJ.", "err");
       const out = document.getElementById("telOut");
       out.innerHTML = LOADING;
       try {
-        const r = await api(doc ? `/api/capiblu/telefones/${phone}/pertence/${doc}`
-                                : `/api/capiblu/telefones/${phone}`);
-        out.innerHTML = doc ? renderPertence(r, phone, doc) : renderReverso(r, phone);
+        const r = await api(aba === "posse" ? `/api/capiblu/telefones/${phone}/pertence/${doc}`
+                                           : `/api/capiblu/telefones/${phone}`);
+        out.innerHTML = aba === "posse" ? renderPertence(r, phone, doc) : renderReverso(r, phone);
       } catch (e) { out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`; }
     };
   },
@@ -2634,8 +3697,12 @@ PAGES["capiblu-dossie"] = {
       </div>
       <div class="field-row">
         <div class="field"><label>Tipo</label>
-          <select class="form-control" id="dTipo"><option value="cnpj">CNPJ</option><option value="cpf">CPF</option></select></div>
-        <div class="field"><label>Documento</label><input class="form-control" id="dDoc"></div>
+          <select class="form-control" id="dTipo">
+            <option value="cnpj"${(state.dossieDoc || "").length === 14 ? " selected" : ""}>CNPJ</option>
+            <option value="cpf"${(state.dossieDoc || "").length === 11 ? " selected" : ""}>CPF</option>
+          </select></div>
+        <div class="field"><label>Documento</label>
+          <input class="form-control" id="dDoc" value="${h(state.dossieDoc || "")}"></div>
       </div>
       <div class="field">
         <label><input type="checkbox" id="dInsight"> Incluir resumo por IA</label><br>
@@ -3653,18 +4720,56 @@ const NIVEL_ROTULO = {
   1: ["green", "decide sozinho"], 2: ["blue", "decide na área"], 3: ["grey", "influencia"],
 };
 
+const fichaEmpresaBusca = { modo: "cnpj", texto: "", resultados: [] };
+
 PAGES["capiblu-empresa"] = {
   area: "CapiBLU", title: "Ficha da empresa",
   async render() {
     const cnpj = state.fichaCnpj || "";
     view.innerHTML = `
       ${panel("Consultar CNPJ", `
-        <div class="filter-row" style="grid-template-columns:3fr 1fr">
-          <div><input class="form-control input-xlg" id="fcCnpj"
-                      placeholder="76.485.390/0001-07" value="${h(cnpj)}"></div>
-          <div><button class="btn btn-main" style="width:100%" id="fcGo">Abrir ficha</button></div>
-        </div>`, { subtitle: "Cadastro e QSA vêm da base local da Receita — não gastam consulta." })}
-      <div id="fcOut">${cnpj ? LOADING : emptyState("Informe um CNPJ.")}</div>`;
+        <ul class="nav nav-tabs" id="feModo">
+          <li${fichaEmpresaBusca.modo === "cnpj" ? ' class="active"' : ""}><a data-modo="cnpj">Sei o CNPJ — buscar direto</a></li>
+          <li${fichaEmpresaBusca.modo === "nome" ? ' class="active"' : ""}><a data-modo="nome">Não sei o CNPJ — buscar pelo nome</a></li>
+        </ul>
+        <div id="buscaCnpj" class="mt-10"${fichaEmpresaBusca.modo === "cnpj" ? "" : " hidden"}>
+          <div class="filter-row" style="grid-template-columns:3fr 1fr">
+            <div><input class="form-control input-xlg" id="fcCnpj"
+                        placeholder="76.485.390/0001-07" value="${h(cnpj)}"></div>
+            <div><button class="btn btn-main" style="width:100%" id="fcGo">Abrir ficha</button></div>
+          </div>
+          <div id="fcOut" class="mt-10">${cnpj ? LOADING : emptyState("Informe um CNPJ.")}</div>
+        </div>
+        <div id="buscaNomeEmpresa" class="mt-10"${fichaEmpresaBusca.modo === "nome" ? "" : " hidden"}>
+          <div class="filter-row" style="grid-template-columns:3fr 1fr">
+            <div><input class="form-control input-xlg" id="feTexto" placeholder="Razão social ou nome fantasia"
+                        value="${h(fichaEmpresaBusca.texto)}"></div>
+            <div><button class="btn btn-main" style="width:100%" id="feGo">Buscar</button></div>
+          </div>
+          <div id="feOut" class="mt-10"></div>
+        </div>`, { subtitle: "Cadastro e QSA vêm da base local da Receita — não gastam consulta." })}`;
+
+    document.getElementById("feModo").onclick = (e) => {
+      const a = e.target.closest("[data-modo]"); if (!a) return;
+      const novo = a.dataset.modo;
+      if (novo === fichaEmpresaBusca.modo) return;
+      fichaEmpresaBusca.modo = novo;
+      document.querySelectorAll("#feModo > li").forEach((li) => li.classList.remove("active"));
+      a.closest("li").classList.add("active");
+      document.getElementById("buscaCnpj").hidden = fichaEmpresaBusca.modo !== "cnpj";
+      document.getElementById("buscaNomeEmpresa").hidden = fichaEmpresaBusca.modo !== "nome";
+      if (fichaEmpresaBusca.modo === "nome") {
+        // limpa os restos da ficha por CNPJ
+        state.fichaCnpj = "";
+        document.getElementById("fcCnpj").value = "";
+        document.getElementById("fcOut").innerHTML = emptyState("Informe um CNPJ.");
+      } else {
+        // limpa os restos da busca por nome
+        fichaEmpresaBusca.texto = ""; fichaEmpresaBusca.resultados = [];
+        document.getElementById("feTexto").value = "";
+        document.getElementById("feOut").innerHTML = "";
+      }
+    };
 
     const abrir = () => {
       const v = document.getElementById("fcCnpj").value.replace(/\D/g, "");
@@ -3674,9 +4779,51 @@ PAGES["capiblu-empresa"] = {
     };
     document.getElementById("fcGo").onclick = abrir;
     document.getElementById("fcCnpj").onkeydown = (e) => { if (e.key === "Enter") abrir(); };
+
+    document.getElementById("feGo").onclick = buscarEmpresaPorNome;
+    document.getElementById("feTexto").onkeydown = (e) => { if (e.key === "Enter") buscarEmpresaPorNome(); };
+    if (fichaEmpresaBusca.resultados.length) renderEmpresaBusca();
+
     if (cnpj) await renderFichaEmpresa(cnpj);
   },
 };
+
+async function buscarEmpresaPorNome() {
+  const texto = document.getElementById("feTexto").value.trim();
+  if (texto.length < 3) return toast("Digite ao menos 3 caracteres.", "err");
+  fichaEmpresaBusca.texto = texto;
+  const out = document.getElementById("feOut");
+  out.innerHTML = LOADING;
+  try {
+    const r = await api(`/api/capiblu/empresas?texto=${encodeURIComponent(texto)}&limite=20`);
+    fichaEmpresaBusca.resultados = r.empresas || [];
+    renderEmpresaBusca();
+  } catch (e) {
+    out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+  }
+}
+
+function renderEmpresaBusca() {
+  const out = document.getElementById("feOut");
+  if (!out) return;
+  const lista = fichaEmpresaBusca.resultados;
+  if (!lista.length) { out.innerHTML = emptyState("Nenhuma empresa encontrada."); return; }
+  out.innerHTML = table(["Razão social", "CNPJ", "Município", "Situação", ""], lista.map((e) => ({ cells: [
+    `<strong>${h(e.razao_social || e.nome_fantasia || "—")}</strong>
+     ${e.nome_fantasia && e.razao_social ? `<br><span class="text-muted text-size-small">${h(e.nome_fantasia)}</span>` : ""}`,
+    h(e.cnpj || "—"),
+    `${h(e.municipio || "")}${e.uf ? `/${h(e.uf)}` : ""}`,
+    `<span class="pill ${e.situacao === "ATIVA" ? "green" : "grey"}">${h(e.situacao || "—")}</span>`,
+    `<button class="btn btn-default btn-xs" data-abrirempresa="${h((e.cnpj || "").replace(/\D/g, ""))}">Abrir ficha</button>`,
+  ] })), { scroll: true });
+  out.querySelectorAll("[data-abrirempresa]").forEach((b) => {
+    b.onclick = () => {
+      fichaEmpresaBusca.modo = "cnpj";
+      state.fichaCnpj = b.dataset.abrirempresa;
+      go("capiblu-empresa");
+    };
+  });
+}
 
 async function renderFichaEmpresa(cnpj) {
   const out = document.getElementById("fcOut");
@@ -3843,6 +4990,8 @@ function renderPessoa(r, bloco) {
   }
   if (bloco === "mk") return renderMk(r);
   if (bloco === "parentes") return renderParentes(r);
+  if (bloco === "vinculos") return renderVinculos(r);
+  if (bloco === "contacts") return renderContatos(r);
   return tabelaGenerica(r);
 }
 
@@ -3851,6 +5000,16 @@ function renderMk(r) {
   const tels = p.telefones || r.telefones || [];
   const ends = p.enderecos || r.enderecos || [];
   const mails = p.emails || r.emails || [];
+  // Quatro blocos que vêm no mesmo payload e antes eram descartados.
+  const empresas = p.empresas || r.empresas || p.qsa || r.qsa || [];
+  const vizinhos = p.vizinhos || r.vizinhos || [];
+  const consumo = p.perfil_consumo || r.perfil_consumo || p.consumo || [];
+  const beneficios = (p.beneficios || r.beneficios || []).filter((b) => b && (b.valor || b.recebimento || b.beneficio));
+  const cpf = String(p.cpf || "").replace(/\D/g, "");
+
+  const bloco = (titulo, corpo, extra = "") => corpo
+    ? `<div class="sub-block"><h4>${h(titulo)}${extra}</h4>${corpo}</div>` : "";
+
   return `
     ${grade([
       campo("Nome", p.nome), campo("CPF", fmtCPF(p.cpf)),
@@ -3859,20 +5018,111 @@ function renderMk(r) {
       campo("Score", p.score), campo("Escolaridade", p.escolaridade),
       campo("Situação do CPF", p.situacao_cpf || p.situacao),
     ])}
-    ${tels.length ? `<h4 style="font-size:13px;margin-top:20px">Telefones (${tels.length})</h4>
-      ${table(["Número", "Tipo", "WhatsApp", "Atualizado"], tels.slice(0, 12).map((t) => ({ cells: [
-        `<strong>${h(t.display || t.numero || t.telefone || "—")}</strong>`,
-        h(t.categoria || t.tipo || "—"),
-        t.whatsapp ? `<span class="pill green">sim</span>` : `<span class="text-muted">—</span>`,
-        h(t.atualizacao || t.data || "—"),
-      ] })), { scroll: true })}` : ""}
-    ${mails.length ? `<h4 style="font-size:13px;margin-top:20px">E-mails</h4>
-      <p>${mails.slice(0, 8).map((e) => h(typeof e === "string" ? e : e.email)).join(" · ")}</p>` : ""}
-    ${ends.length ? `<h4 style="font-size:13px;margin-top:20px">Endereços (${ends.length})</h4>
-      ${table(["Endereço", "Bairro", "Cidade", "CEP"], ends.slice(0, 8).map((e) => ({ cells: [
-        h(endereco(e)), h(e.bairro || "—"),
-        h([e.cidade || e.municipio, e.uf].filter(Boolean).join("/")), h(e.cep || "—"),
-      ] })), { scroll: true })}` : ""}`;
+    ${bloco(`Telefones (${tels.length})`,
+      tels.length ? table(["Número", "Tipo", "WhatsApp", "Confiança", "Atualizado"],
+        tels.slice(0, 12).map((t, i) => {
+          const num = String(t.display || t.numero || t.telefone || "").replace(/\D/g, "");
+          return { cells: [
+            `<strong>${h(t.display || t.numero || t.telefone || "—")}</strong>`,
+            h(t.categoria || t.tipo || "—"),
+            t.whatsapp ? `<span class="pill green">sim</span>` : `<span class="text-muted">—</span>`,
+            `<span id="tp-${h(cpf)}-${i}">${num && cpf
+              ? `<a data-posse="${h(num)}" data-doc="${h(cpf)}" data-cel="tp-${h(cpf)}-${i}"
+                    data-nome="${h(p.nome || "")}">verificar</a>`
+              : '<span class="text-muted">—</span>'}</span>`,
+            h(t.atualizacao || t.data || "—"),
+          ] };
+        }), { scroll: true }) : "",
+      tels.length && cpf ? `<button class="btn btn-default btn-xs" data-posse-todos="${h(cpf)}">Verificar todos</button>` : "")}
+    ${bloco("E-mails", mails.length
+      ? `<p>${mails.slice(0, 8).map((e) => h(typeof e === "string" ? e : e.email)).join(" · ")}</p>` : "")}
+    ${bloco(`Endereços (${ends.length})`, ends.length
+      ? table(["Endereço", "Bairro", "Cidade", "CEP"], ends.slice(0, 8).map((e) => ({ cells: [
+          h(endereco(e)), h(e.bairro || "—"),
+          h([e.cidade || e.municipio, e.uf].filter(Boolean).join("/")), h(e.cep || "—"),
+        ] })), { scroll: true }) : "")}
+    ${bloco(`Empresas e participações (${empresas.length})`, empresas.length
+      ? table(["Razão social", "CNPJ", "Participação", ""], empresas.slice(0, 12).map((e) => {
+          const doc = String(e.cnpj || e.documento || "").replace(/\D/g, "");
+          return { cells: [
+            `<strong>${h(e.razao_social || e.nome || e.empresa || "—")}</strong>`,
+            fmtCNPJ(doc),
+            h(e.qualificacao || e.participacao || e.cargo || "—"),
+            doc ? `<a data-ficha="${h(doc)}">Abrir ficha</a>` : "",
+          ] };
+        }), { scroll: true }) : "")}
+    ${bloco(`Vizinhos (${vizinhos.length})`, vizinhos.length
+      ? table(["Nome", "CPF", "Telefone"], vizinhos.slice(0, 10).map((v) => ({ cells: [
+          h(v.nome || "—"), fmtCPF(v.cpf),
+          h((v.telefones && v.telefones[0] && (v.telefones[0].display || v.telefones[0].numero)) || v.telefone || "—"),
+        ] })), { scroll: true }) : "")}
+    ${bloco("Perfil de consumo", consumo.length
+      ? `<div class="tag-wrap">${consumo.slice(0, 24).map((c) => {
+          const nome = typeof c === "string" ? c : (c.descricao || c.nome || "");
+          const confirmado = typeof c === "object" && (c.confirmado || c.tipo === "confirmado");
+          return `<span class="pill ${confirmado ? "green" : "grey"}">${h(nome)}</span>`;
+        }).join(" ")}</div>
+        <div class="help-block">Verde é confirmado; cinza, provável.</div>` : "")}
+    ${bloco(`Benefícios (${beneficios.length})`, beneficios.length
+      ? table(["Benefício", "Situação", "Valor"], beneficios.slice(0, 8).map((b) => ({ cells: [
+          h(b.beneficio || b.descricao || "—"), h(b.situacao || b.recebimento || "—"),
+          h(b.valor ? fmtMoney(Number(b.valor)) : "—"),
+        ] })), { scroll: true }) : "")}`;
+}
+
+/* Verificação de posse dentro da ficha: uma linha ou todas. */
+document.addEventListener("click", async (e) => {
+  const um = e.target.closest("[data-posse]");
+  if (um) return posseNaCelula(um.dataset.posse, um.dataset.doc, um.dataset.cel, um.dataset.nome);
+  const todos = e.target.closest("[data-posse-todos]");
+  if (todos) {
+    const doc = todos.dataset.posseTodos;
+    todos.disabled = true;
+    for (const a of [...document.querySelectorAll(`[data-posse][data-doc="${doc}"]`)]) {
+      await posseNaCelula(a.dataset.posse, doc, a.dataset.cel);
+    }
+    todos.disabled = false;
+    return;
+  }
+  const ficha = e.target.closest("[data-ficha]");
+  if (ficha) { state.fichaCnpj = ficha.dataset.ficha; go("capiblu-empresa"); }
+});
+
+/** Selo de confiança do telefone: posse (WorkAPI) + dono do WhatsApp.
+ *
+ * As duas fontes respondem coisas diferentes — "de quem é a linha" e "quem
+ * atende" — e o SDR precisa das duas antes de ligar ou mandar mensagem. O
+ * DonoDoZap é melhor-esforço: se não responder, fica só a posse.
+ */
+async function posseNaCelula(phone, doc, celId, nome) {
+  const cel = document.getElementById(celId);
+  if (cel) cel.innerHTML = `<span class="spinner"></span>`;
+  let selo = `<span class="pill grey">n/d</span>`;
+  try {
+    const r = await api(`/api/capiblu/telefones/${phone}/pertence/${doc}`);
+    const ok = r.pertence ?? r.atrelado ?? r.confirmado;
+    const compart = r.compartilhada ?? r.linha_compartilhada;
+    const n = r.total ?? r.vinculos ?? null;
+    selo = compart
+      ? `<span class="pill blue" title="A linha aparece para mais de um documento">compart.${n ? ` (${n})` : ""}</span>`
+      : ok ? `<span class="pill green">confirmado</span>` : `<span class="pill amber">não confirmado</span>`;
+  } catch (err) {
+    selo = `<span class="pill grey" title="${h(err.message)}">n/d</span>`;
+  }
+  if (cel) cel.innerHTML = selo;
+  try {
+    const z = await api(`/api/capiblu/telefones/${phone}/donodozap` +
+                        (nome ? `?nome=${encodeURIComponent(nome)}` : ""));
+    if (z.status === "unavailable" || !cel) return;
+    const bate = z.confere ?? z.match_ok ?? (z.match ? true : null);
+    const quem = z.nome || z.match || "";
+    if (z.alerta_compartilhado) {
+      cel.innerHTML = selo + ` <span class="pill blue" title="${h(z.total || "")} vínculos no WhatsApp">zap compart.</span>`;
+    } else if (quem) {
+      cel.innerHTML = selo +
+        ` <span class="pill ${bate === false ? "amber" : "green"}" title="No WhatsApp: ${h(quem)}">zap: ${h(String(quem).split(" ")[0])}</span>`;
+    }
+  } catch (err) { /* melhor-esforço: o selo de posse já está na tela */ }
 }
 
 function renderParentes(r) {
@@ -3886,6 +5136,70 @@ function renderParentes(r) {
       || p.telefone || "—"),
   ] })), { scroll: true });
 }
+
+/** Vínculos da RAIS: onde a pessoa trabalhou, com admissão e saída.
+ *  Antes caía no \`tabelaGenerica\` — dado certo com cara de depuração. */
+function renderVinculos(r) {
+  const lista = r.vinculos || r.empregos || r.data || r.registros || [];
+  if (!lista.length) return emptyState("Nenhum vínculo declarado na RAIS.");
+  const rows = lista.map((v) => {
+    const doc = String(v.cnpj || v.documento || "").replace(/\D/g, "");
+    const admissao = v.admissao || v.data_admissao || v.inicio;
+    const saida = v.desligamento || v.data_desligamento || v.fim;
+    return { cells: [
+      `<strong>${h(v.razao_social || v.empresa || v.nome_empresa || "—")}</strong>`,
+      doc ? `<a data-ficha="${h(doc)}">${fmtCNPJ(doc)}</a>` : '<span class="text-muted">—</span>',
+      h(v.cargo || v.ocupacao || v.funcao || "—"),
+      h(admissao ? fmtDate(admissao) === "—" ? admissao : fmtDate(admissao) : "—"),
+      saida ? h(fmtDate(saida) === "—" ? saida : fmtDate(saida))
+            : `<span class="pill green">no emprego</span>`,
+      h(v.salario ? fmtMoney(Number(v.salario)) : "—"),
+    ] };
+  });
+  return `
+    <div class="help-block">Declarado pela empresa na RAIS — o vínculo pode estar
+      encerrado sem que a base registre a saída.</div>
+    ${table(["Empresa", "CNPJ", "Cargo", "Admissão", "Saída", "Salário"], rows, { scroll: true })}`;
+}
+
+/** Contatos do bureau: telefone e e-mail com a origem declarada. */
+function renderContatos(r) {
+  const tels = r.telefones || (r.contatos && r.contatos.telefones) || [];
+  const mails = r.emails || (r.contatos && r.contatos.emails) || [];
+  const cpf = String(r.cpf || (r.pessoa && r.pessoa.cpf) || "").replace(/\D/g, "");
+  if (!tels.length && !mails.length) return emptyState("Nenhum contato retornado para este documento.");
+  const linhaTel = tels.slice(0, 15).map((t, i) => {
+    const num = String(t.numero || t.telefone || t.display || t).replace(/\D/g, "");
+    return { cells: [
+      `<strong>${h(fmtTelefone(num) || num || "—")}</strong>`,
+      h(t.tipo || t.categoria || "—"),
+      h(t.origem || t.fonte || "Serasa"),
+      t.whatsapp ? `<span class="pill green">sim</span>` : '<span class="text-muted">—</span>',
+      `<span id="cc-${h(cpf)}-${i}">${num && cpf
+        ? `<a data-posse="${h(num)}" data-doc="${h(cpf)}" data-cel="cc-${h(cpf)}-${i}">verificar</a>`
+        : '<span class="text-muted">—</span>'}</span>`,
+    ] };
+  });
+  return `
+    <div class="alert alert-info alert-styled-left">
+      Consulta paga. Os contatos vêm do bureau e não passaram por validação de posse —
+      use <strong>verificar</strong> antes de tratar como número da pessoa.
+    </div>
+    ${tels.length ? `<div class="sub-block"><h4>Telefones (${tels.length})</h4>
+      ${table(["Número", "Tipo", "Origem", "WhatsApp", "Confiança"], linhaTel, { scroll: true })}</div>` : ""}
+    ${mails.length ? `<div class="sub-block"><h4>E-mails (${mails.length})</h4>
+      ${table(["E-mail", "Origem"], mails.slice(0, 12).map((e) => ({ cells: [
+        h(typeof e === "string" ? e : (e.email || "—")),
+        h(typeof e === "object" ? (e.origem || e.fonte || "Serasa") : "Serasa"),
+      ] })))}</div>` : ""}`;
+}
+
+const fmtTelefone = (raw) => {
+  const d = String(raw || "").replace(/\D/g, "");
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return d;
+};
 
 /** Última linha de defesa: monta tabela a partir das chaves da própria lista. */
 function tabelaGenerica(r) {
@@ -3941,16 +5255,22 @@ function renderReverso(r, phone) {
   return painel;
 }
 
-/** Validação telefone × documento: o número é mesmo daquela pessoa? */
+/** Validação telefone × documento: o número é mesmo daquela pessoa?
+ *  Verde confirma, âmbar nega — azul aqui seria confundido com explicação. */
 function renderPertence(r, phone, doc) {
   const pertence = r.pertence ?? r.atrelado ?? r.confirmado;
   const compartilhada = r.compartilhada ?? r.linha_compartilhada;
+  const vinculos = r.total ?? r.vinculos ?? null;
   return panel("Validação", `
-    <div class="alert ${pertence ? "alert-success" : "alert-info"} alert-styled-left">
+    <div class="alert ${pertence ? "alert-success" : "alert-warning"} alert-styled-left">
       <strong>${pertence ? "Confirmado" : "Não confirmado"}</strong> —
       ${h(phone)} ${pertence ? "está atrelado a" : "não aparece atrelado a"} ${h(doc)}.
-      ${compartilhada ? " <strong>Atenção:</strong> a linha aparece para mais de um documento." : ""}
     </div>
+    ${compartilhada ? `<div class="alert alert-info alert-styled-left">
+        <strong>Linha compartilhada</strong> — este número aparece para
+        ${vinculos ? `<strong>${h(vinculos)}</strong> documentos` : "mais de um documento"}.
+        Confirme com quem atender antes de tratar como contato direto.
+      </div>` : ""}
     ${tabelaGenerica(r)}`, { subtitle: "Consulta paga" });
 }
 
