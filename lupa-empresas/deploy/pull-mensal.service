@@ -1,0 +1,19 @@
+[Unit]
+Description=CapiBLU - puxa a cota mensal do LinkedIn (Bright Data, so Brasil)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/capiblu/lupa-empresas/backend
+EnvironmentFile=/opt/capiblu/lupa-empresas/.env
+Environment=CNPJ_DB_DIR=/capiblu_data
+Environment=PULL_DIR=/capiblu_data/pulls
+Environment=PULL_LIMITE=100000
+ExecStart=/opt/capiblu/venv/bin/python pull_mensal.py
+# Filtro amplo demora horas: o timeout tem que caber isso, senao o systemd mata
+# o job no meio e a faixa fica marcada como pendente sem ninguem entender.
+TimeoutStartSec=8h
+StandardOutput=append:/var/log/capiblu-pull-mensal.log
+StandardError=append:/var/log/capiblu-pull-mensal.log

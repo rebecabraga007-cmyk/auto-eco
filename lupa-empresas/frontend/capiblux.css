@@ -516,6 +516,13 @@ body {
   padding: 11px 13px; border: 1px solid var(--gray-300); background: var(--gray-50);
   border-radius: var(--radius-sm); font-size: .94rem; width: 100%; min-height: 46px;
 }
+/* A regra acima é para campo de texto, mas `.pf-field input` pega TODO input —
+   inclusive os checkboxes de "Onde a palavra é procurada", que viravam caixas de
+   46px de altura ocupando a linha inteira. Devolve o tamanho nativo a eles. */
+.pf-field input[type=checkbox], .pf-field input[type=radio] {
+  width: 16px; height: 16px; min-height: 0; padding: 0; flex: 0 0 auto;
+  background: none; border-radius: 0;
+}
 .pf-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .pf-row2 > div { display: flex; flex-direction: column; gap: 5px; }
 .pf-row2 label { font-size: .78rem; font-weight: 700; color: var(--gray-700); }

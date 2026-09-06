@@ -33,6 +33,7 @@ _DDL = """
 CREATE TABLE IF NOT EXISTS perfis (
   url          TEXT PRIMARY KEY,
   nome         TEXT,
+  nome_norm    TEXT,
   cargo        TEXT,
   empresa      TEXT,
   empresa_norm TEXT,
@@ -95,13 +96,14 @@ def init() -> None:
 
     # 2. colunas novas — CREATE TABLE IF NOT EXISTS não altera tabela existente
     tem = {r[1] for r in con.execute("PRAGMA table_info(perfis)")}
-    for coluna in ("departamento", "senioridade"):
+    for coluna in ("departamento", "senioridade", "nome_norm"):
         if coluna not in tem:
             con.execute("ALTER TABLE perfis ADD COLUMN %s TEXT" % coluna)
 
     # 3. só agora os índices que dependem delas
     con.execute("CREATE INDEX IF NOT EXISTS idx_lc_depto  ON perfis(departamento)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_lc_senior ON perfis(senioridade)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_lc_nome  ON perfis(nome_norm)")
     con.commit()
     con.close()
 
@@ -113,6 +115,10 @@ def norm(s: str) -> str:
     tabela = str.maketrans("áàâãäéèêëíìîïóòôõöúùûüçñ", "aaaaaeeeeiiiiooooouuuucn")
     s = s.translate(tabela)
     return re.sub(r"[^a-z0-9 ]+", " ", s).strip()
+
+
+def _chave_nome(nome: str) -> str:
+    return " ".join(norm(nome).split())
 
 
 def salvar_perfis(pessoas: list[dict[str, Any]], origem: str = "api") -> int:
@@ -130,18 +136,20 @@ def salvar_perfis(pessoas: list[dict[str, Any]], origem: str = "api") -> int:
         if not ja:
             novos += 1
         con.execute("""
-            INSERT INTO perfis (url,nome,cargo,empresa,empresa_norm,cidade,pais,
+            INSERT INTO perfis (url,nome,nome_norm,cargo,empresa,empresa_norm,cidade,pais,
                                 foto,formacao,sobre,seguidores,origem,visto_em,
                                 departamento,senioridade)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(url) DO UPDATE SET
-              nome=excluded.nome, cargo=excluded.cargo, empresa=excluded.empresa,
+              nome=excluded.nome, nome_norm=excluded.nome_norm,
+              cargo=excluded.cargo, empresa=excluded.empresa,
               empresa_norm=excluded.empresa_norm, cidade=excluded.cidade,
               pais=excluded.pais, foto=excluded.foto, formacao=excluded.formacao,
               sobre=excluded.sobre, seguidores=excluded.seguidores,
               visto_em=excluded.visto_em, departamento=excluded.departamento,
               senioridade=excluded.senioridade
-        """, (url, p.get("nome"), p.get("cargo"), p.get("empresa"),
+        """, (url, p.get("nome"), _chave_nome(p.get("nome") or ""),
+              p.get("cargo"), p.get("empresa"),
               norm(p.get("empresa") or ""), p.get("cidade"), p.get("pais"),
               p.get("foto"), p.get("formacao"), p.get("sobre"),
               p.get("seguidores"), origem, agora,
@@ -203,6 +211,56 @@ def procurar(q: str = "", pais: str = "", limite: int = 100,
     linhas = con.execute(" ".join(sql), args).fetchall()
     con.close()
     return [dict(r) for r in linhas]
+
+
+def cruzar(pessoas: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Acha, no cache do LinkedIn, quem são as pessoas de uma lista da Receita.
+
+    Recebe [{nome, empresa}] e devolve {nome_normalizado: {perfil..., forca}}.
+
+    DUAS FORÇAS, e a distinção importa:
+      "nome+empresa" — o nome bate E a empresa também. Confiável.
+      "so nome"      — só o nome bate. Homônimo é comum no Brasil, então isto é
+                       pista, não conclusão; a tela mostra em cinza.
+
+    Não inventa correspondência por semelhança: ou o nome normalizado é igual, ou
+    não casa. Casar "João Silva" com "João da Silva Santos" produziria telefone
+    de estranho no funil de vendas, que é pior que não achar ninguém.
+    """
+    if not pessoas:
+        return {}
+    alvos = {}
+    for p in pessoas:
+        k = _chave_nome(p.get("nome") or "")
+        if k:
+            alvos.setdefault(k, set()).add(norm(p.get("empresa") or ""))
+    if not alvos:
+        return {}
+
+    con = _con()
+    saida: dict[str, dict[str, Any]] = {}
+    # Uma consulta por lote de nomes: 200 consultas separadas seriam lentas à toa.
+    nomes = list(alvos)
+    for i in range(0, len(nomes), 400):
+        pedaco = nomes[i:i + 400]
+        marcas = ",".join("?" * len(pedaco))
+        linhas = con.execute(
+            "SELECT * FROM perfis WHERE nome_norm IN (%s)" % marcas, pedaco
+        ).fetchall()
+        for r in linhas:
+            d = dict(r)
+            k = _chave_nome(d.get("nome") or "")
+            if k not in alvos:
+                continue
+            emp_perfil = norm(d.get("empresa") or "")
+            forte = any(e and emp_perfil and (e in emp_perfil or emp_perfil in e)
+                        for e in alvos[k])
+            d["forca"] = "nome+empresa" if forte else "so nome"
+            # Match forte sobrescreve fraco já guardado para o mesmo nome.
+            if k not in saida or (forte and saida[k].get("forca") != "nome+empresa"):
+                saida[k] = d
+    con.close()
+    return saida
 
 
 def contagem_por_classificacao() -> dict[str, dict[str, int]]:

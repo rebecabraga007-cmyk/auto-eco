@@ -475,6 +475,27 @@ async def linkedin_cache_busca(q: str = "", pais: str = "", limite: int = 100,
     return {"status": "ok", "total": len(pessoas), "pessoas": pessoas}
 
 
+@app.post("/api/linkedin/cruzar")
+async def linkedin_cruzar(payload: dict = Body(default={})):
+    """Acha, no cache do LinkedIn, quem são as pessoas de uma lista da Receita.
+
+    Body: {pessoas: [{nome, empresa}]}. Devolve os achados com a força do
+    casamento — "nome+empresa" é confiável, "so nome" é pista (homônimo é comum).
+    Não gasta nada: só olha o que já foi comprado.
+    """
+    pessoas = payload.get("pessoas") or []
+    if not isinstance(pessoas, list):
+        return {"status": "error", "message": "pessoas deve ser uma lista.", "achados": {}}
+    try:
+        achados = linkedin_cache.cruzar(pessoas[:500])
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:150], "achados": {}}
+    fortes = sum(1 for v in achados.values() if v.get("forca") == "nome+empresa")
+    return {"status": "ok", "achados": achados,
+            "total": len(achados), "fortes": fortes,
+            "fracos": len(achados) - fortes}
+
+
 @app.get("/api/linkedin/filtro-opcoes")
 async def linkedin_filtro_opcoes():
     """Vocabulário dos filtros — o mesmo da Datastone (/b2b/filter-options).

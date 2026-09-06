@@ -2053,23 +2053,57 @@ async function prospBuscarPessoas() {
     }
     const pessoas = res.pessoas || [];
     const totalStr = res.total_aprox ? `${(res.total || pessoas.length).toLocaleString('pt-BR')}+` : (res.total || pessoas.length).toLocaleString('pt-BR');
-    cnt.textContent = `${totalStr} pessoas (sócios) · proxy — LinkedIn ainda não conectado`;
     if (!pessoas.length) {
+      cnt.textContent = `${totalStr} pessoas (sócios)`;
       out.innerHTML = `<p class="msg">Nenhuma pessoa encontrada com esses filtros.</p>`;
       return;
     }
+
+    // Cruza com o cache do LinkedIn: quem desses sócios já temos perfil.
+    // Não gasta nada — só olha o que foi comprado. Se falhar, a tabela sai
+    // sem a coluna em vez de não sair.
+    let achados = {}, fortes = 0;
+    try {
+      const cr = await fetch(`${API}/api/linkedin/cruzar`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pessoas: pessoas.map(p => ({ nome: p.nome, empresa: p.empresa })) }),
+      }).then(r => r.json());
+      achados = cr.achados || {};
+      fortes = cr.fortes || 0;
+    } catch (e) { /* segue sem o cruzamento */ }
+
+    const chave = s => (s || '').toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9 ]+/g, ' ').trim().split(/\s+/).join(' ');
+
+    const nAchados = Object.keys(achados).length;
+    cnt.textContent = `${totalStr} pessoas (sócios da Receita)`
+      + ` · ${nAchados} com perfil no LinkedIn`
+      + (nAchados ? ` (${fortes} confirmados pela empresa)` : '');
+
     out.innerHTML = `
       <div class="prosp-table-scroll">
         <table class="prosp-table">
-          <thead><tr><th>NOME</th><th>CARGO</th><th>EMPRESA</th><th>LOCALIZAÇÃO</th><th>CNPJ</th></tr></thead>
-          <tbody>${pessoas.map(p => `
+          <thead><tr><th>NOME</th><th>CARGO</th><th>EMPRESA</th><th>LOCALIZAÇÃO</th><th>CNPJ</th><th>LINKEDIN</th></tr></thead>
+          <tbody>${pessoas.map(p => {
+            const m = achados[chave(p.nome)];
+            // "so nome" fica em cinza com aviso: homônimo é comum, então é
+            // pista, não conclusão. Mostrar igual ao confirmado enganaria.
+            const li = !m ? '—'
+              : m.forca === 'nome+empresa'
+                ? `<a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.cargo || 'perfil')}</a>`
+                : `<a href="${esc(m.url)}" target="_blank" rel="noopener"
+                     style="opacity:.6" title="Só o nome bate — a empresa no LinkedIn é ${esc(m.empresa || 'outra')}. Confira antes de usar.">${esc(m.cargo || 'perfil')} (?)</a>`;
+            return `
             <tr>
               <td>${esc(p.nome)}</td>
               <td>${esc(p.cargo || '—')}</td>
               <td>${esc(p.empresa)}</td>
               <td>${esc([p.municipio, p.uf].filter(Boolean).join(', ')) || '—'}</td>
               <td class="mono">${esc(p.cnpj)}</td>
-            </tr>`).join('')}
+              <td>${li}</td>
+            </tr>`;
+          }).join('')}
           </tbody>
         </table>
       </div>`;

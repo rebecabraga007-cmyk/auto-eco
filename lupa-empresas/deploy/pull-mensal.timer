@@ -1,0 +1,16 @@
+[Unit]
+Description=CapiBLU - dispara a puxada mensal do LinkedIn todo dia 05
+
+[Timer]
+# Dia 05 de cada mes, 03:00. Comeca em 05/out/2026.
+OnCalendar=*-*-05 03:00:00
+# Se o servidor estiver desligado na hora marcada, roda quando voltar em vez de
+# perder o mes -- e cota que nao volta.
+Persistent=true
+# Espalha o disparo em ate 10 min: nao ha pressa e evita bater junto com outros
+# jobs no mesmo minuto.
+RandomizedDelaySec=600
+Unit=pull-mensal.service
+
+[Install]
+WantedBy=timers.target
