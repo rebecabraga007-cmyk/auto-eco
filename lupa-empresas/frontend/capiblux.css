@@ -835,3 +835,12 @@ body.locked { overflow: hidden; }
 
 /* Dossiê é exclusivo de admin: esconde os atalhos de PDF para os demais. */
 body.sem-dossie .btn-dossie { display: none !important; }
+
+/* Iniciais no lugar da foto: perfil sem avatar, ou avatar generico do LinkedIn
+   (aquele boneco cinza). Uma coluna de bonecos iguais parece defeito. */
+.li-ini {
+  width: 40px; height: 40px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: #E4EBF1; color: #4A6B85;
+  font-size: .72rem; font-weight: 700; letter-spacing: .02em;
+}

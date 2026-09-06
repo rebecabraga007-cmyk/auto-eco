@@ -35,6 +35,14 @@ LIMITE_MAX = int(os.environ.get("BRIGHTDATA_LIMITE_MAX", "500"))
 _TIMEOUT = httpx.Timeout(90.0)
 
 
+# O /datasets/v3/scrape CONTINUA valido (so o /v3/filter e o /v3/snapshot mudaram).
+# Raspar a pagina da empresa e rapido (segundos) e devolve o nome EXATO como o
+# LinkedIn escreve — que e o que faz o filtro de pessoas acertar depois.
+SCRAPE_URL = "https://api.brightdata.com/datasets/v3/scrape"
+DATASET_EMPRESA = os.environ.get(
+    "BRIGHTDATA_COMPANY_DATASET_ID", "gd_l1vikfnt1wgvvqz95w").strip()
+
+
 def enabled() -> bool:
     return bool(CHAVE and DATASET)
 
@@ -45,6 +53,79 @@ def _headers() -> dict[str, str]:
 
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip())
+
+
+_RE_COMPANY = re.compile(r"linkedin\.com/company/([^/?#\s]+)", re.I)
+
+
+async def empresa_por_url(url: str) -> dict[str, Any]:
+    """Raspa a pagina da empresa. Serve para dois problemas de uma vez:
+
+    1. Da o nome EXATO como o LinkedIn escreve (o filtro de pessoas casa por
+       nome, e a razao social da Receita quase nunca bate).
+    2. Diz o tamanho da empresa no LinkedIn — que e o que prevê se o filtro de
+       pessoas vai voltar em 1 minuto ou estourar o tempo. Empresa de 300 mil
+       funcionarios nao termina; de 5 mil, volta rapido.
+    """
+    if not enabled():
+        return {"status": "unavailable",
+                "message": "Bright Data nao configurada (BRIGHTDATA_API_KEY)."}
+    url = _norm(url)
+    m = _RE_COMPANY.search(url)
+    if not m:
+        return {"status": "error",
+                "message": "Cole o link da PAGINA DA EMPRESA "
+                           "(linkedin.com/company/...), nao o de uma pessoa."}
+    limpo = "https://www.linkedin.com/company/" + m.group(1)
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(180.0)) as cli:
+            r = await cli.post(
+                "%s?dataset_id=%s&format=json" % (SCRAPE_URL, DATASET_EMPRESA),
+                headers=_headers(), json=[{"url": limpo}])
+    except Exception as exc:
+        return {"status": "error", "message": "Falha ao falar com a Bright Data: %s"
+                                              % str(exc)[:140]}
+    if r.status_code >= 400:
+        return {"status": "error",
+                "message": "Bright Data %s: %s" % (r.status_code, r.text[:200])}
+    import json as _json
+    try:
+        d = _json.loads(r.content)          # bytes: a resposta e UTF-8 sem charset
+    except Exception:
+        return {"status": "error", "message": "Resposta invalida da Bright Data."}
+    if isinstance(d, list):
+        d = d[0] if d else {}
+    if not isinstance(d, dict) or not d.get("name"):
+        return {"status": "not_found",
+                "message": "Nao achei essa empresa no LinkedIn. Confira o link."}
+
+    destaque = []
+    for chave in ("employees", "alumni"):
+        for e in d.get(chave) or []:
+            if isinstance(e, dict):
+                nome = _norm(e.get("title") or e.get("name") or "")
+                lnk = (e.get("link") or e.get("url") or "").split("?")[0]
+                if nome and lnk:
+                    destaque.append({"nome": nome, "url": lnk})
+    total = d.get("employees_in_linkedin")
+    return {
+        "status": "ok",
+        "nome": d.get("name") or "",
+        "company_id": str(d.get("company_id") or ""),
+        "funcionarios_linkedin": total,
+        "setor": d.get("industries") or "",
+        "sede": d.get("headquarters") or "",
+        "site": d.get("website") or "",
+        "pais": d.get("country_code") or "",
+        "url": limpo,
+        "destaque": destaque[:12],
+        # Aviso honesto na tela em vez de deixar a pessoa esperar 7 minutos por nada.
+        "aviso_tamanho": (
+            "Empresa grande (%s pessoas no LinkedIn). O filtro pode demorar muito "
+            "ou nao terminar — vale restringir por cargo." % f"{total:,}".replace(",", ".")
+            if isinstance(total, int) and total > 50000 else ""),
+    }
 
 
 async def disparar(empresa: str, pais: str = "BR", cargo: str = "",
@@ -105,6 +186,9 @@ def _pessoa(rec: dict[str, Any]) -> dict[str, Any]:
     emp = rec.get("current_company") or {}
     if not isinstance(emp, dict):
         emp = {}
+    # `default_avatar` marca a foto generica do LinkedIn (aquele boneco cinza).
+    # Sem essa distincao a tabela enche de bonecos iguais e parece defeito.
+    generica = bool(rec.get("default_avatar"))
     return {
         "nome": rec.get("name") or "",
         "cargo": rec.get("position") or "",
@@ -112,6 +196,8 @@ def _pessoa(rec: dict[str, Any]) -> dict[str, Any]:
         "cidade": rec.get("city") or "",
         "pais": rec.get("country_code") or "",
         "url": rec.get("url") or rec.get("input_url") or "",
+        "foto": "" if generica else (rec.get("avatar") or ""),
+        "foto_generica": generica,
         "seguidores": rec.get("followers"),
         "formacao": rec.get("educations_details") or "",
         "sobre": (rec.get("about") or "")[:400],

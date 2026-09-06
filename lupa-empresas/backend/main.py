@@ -445,6 +445,17 @@ async def linkedin_status():
             "limite_max": brightdata_pessoas.LIMITE_MAX}
 
 
+@app.post("/api/linkedin/empresa")
+async def linkedin_empresa(payload: dict = Body(default={})):
+    """Dados da empresa a partir do link do LinkedIn — rápido (segundos).
+
+    Serve para acertar o nome antes de gastar a busca de funcionários, que casa
+    por nome e é lenta: descobrir a grafia errada depois de 4 minutos de espera
+    é o pior jeito de descobrir.
+    """
+    return await brightdata_pessoas.empresa_por_url(str(payload.get("url") or ""))
+
+
 @app.post("/api/linkedin/funcionarios")
 async def linkedin_funcionarios(payload: dict = Body(default={})):
     """Dispara a busca. CUSTA por registro entregue — o limite é sempre explícito."""

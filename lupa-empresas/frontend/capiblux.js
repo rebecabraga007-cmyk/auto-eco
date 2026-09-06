@@ -4458,11 +4458,22 @@ function liTabela(d, empresa) {
     : '';
   return nota + `
   <table class="data-table">
-    <thead><tr><th>Nome</th><th>Cargo</th><th>Empresa</th><th>Cidade</th><th>Perfil</th></tr></thead>
+    <thead><tr><th style="width:52px"></th><th>Nome</th><th>Cargo</th><th>Empresa</th><th>Cidade</th><th>Perfil</th></tr></thead>
     <tbody>${pessoas.map((p, i) => {
       const parecido = i >= (d.exatos || 0);
+      // Sem foto (ou foto genérica do LinkedIn) mostra as iniciais — fica legível
+      // em vez de uma coluna de bonecos cinzas iguais.
+      const iniciais = (p.nome || '?').split(/\s+/).slice(0, 2)
+        .map(x => x[0] || '').join('').toUpperCase();
+      const foto = p.foto
+        ? `<img src="${esc(p.foto)}" alt="" loading="lazy" referrerpolicy="no-referrer"
+             style="width:40px;height:40px;border-radius:50%;object-fit:cover;display:block"
+             onerror="this.replaceWith(Object.assign(document.createElement('div'),
+               {className:'li-ini',textContent:'${esc(iniciais)}'}))" />`
+        : `<div class="li-ini">${esc(iniciais)}</div>`;
       return `
       <tr${parecido ? ' style="opacity:.6"' : ''}>
+        <td>${foto}</td>
         <td><b>${esc(p.nome || '')}</b></td>
         <td>${esc(p.cargo || '')}</td>
         <td>${esc(p.empresa || '')}</td>
@@ -4537,4 +4548,64 @@ async function liBuscar() {
 liBtn?.addEventListener('click', liBuscar);
 document.getElementById('li-empresa')?.addEventListener('keydown', e => {
   if (e.key === 'Enter') liBuscar();
+});
+
+/* Conferir a empresa pelo link antes de gastar a busca de funcionários.
+   Raspar a página da empresa custa segundos e devolve o nome EXATO do LinkedIn
+   + o tamanho — que é o que prevê se o filtro de pessoas vai terminar. */
+const liUrlBtn = document.getElementById('li-url-btn');
+const liEmpInfo = document.getElementById('li-empresa-info');
+
+async function liConferirEmpresa() {
+  const url = (document.getElementById('li-url').value || '').trim();
+  if (!url) { liEmpInfo.innerHTML = '<div class="warn-box">Cole o link da empresa.</div>'; return; }
+  liUrlBtn.disabled = true;
+  liEmpInfo.innerHTML = '<div class="info-box">Consultando o LinkedIn…</div>';
+  let d;
+  try {
+    d = await fetch(`${API}/api/linkedin/empresa`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    }).then(r => r.json());
+  } catch (e) {
+    liUrlBtn.disabled = false;
+    liEmpInfo.innerHTML = '<div class="warn-box">Não consegui falar com o servidor.</div>';
+    return;
+  }
+  liUrlBtn.disabled = false;
+
+  if (d.status !== 'ok') {
+    liEmpInfo.innerHTML = `<div class="warn-box">${esc(d.message || 'Não encontrei essa empresa.')}</div>`;
+    return;
+  }
+
+  // Preenche o campo de busca com a grafia do LinkedIn — o filtro casa por nome.
+  document.getElementById('li-empresa').value = d.nome || '';
+
+  const tot = (typeof d.funcionarios_linkedin === 'number')
+    ? d.funcionarios_linkedin.toLocaleString('pt-BR') : '—';
+  const destaque = (d.destaque || []).length
+    ? `<div style="margin-top:8px"><b>Perfis que a página já mostra</b> (de graça, sem
+       rodar a busca):<ul style="margin:6px 0 0 18px">${d.destaque.map(p =>
+        `<li><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.nome)}</a></li>`
+       ).join('')}</ul></div>`
+    : '';
+  liEmpInfo.innerHTML = `
+    <div class="info-box">
+      <div><b>${esc(d.nome)}</b>${d.setor ? ' · ' + esc(d.setor) : ''}</div>
+      <div style="margin-top:4px">
+        ${tot} pessoas no LinkedIn${d.sede ? ' · ' + esc(d.sede) : ''}
+        ${d.site ? ` · <a href="${esc(d.site)}" target="_blank" rel="noopener">site</a>` : ''}
+      </div>
+      <div class="pf-advanced-hint" style="margin-top:6px">Nome preenchido no campo de
+        busca acima com a grafia do LinkedIn.</div>
+      ${d.aviso_tamanho ? `<div class="warn-box" style="margin-top:8px">${esc(d.aviso_tamanho)}</div>` : ''}
+      ${destaque}
+    </div>`;
+}
+
+liUrlBtn?.addEventListener('click', liConferirEmpresa);
+document.getElementById('li-url')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') liConferirEmpresa();
 });
