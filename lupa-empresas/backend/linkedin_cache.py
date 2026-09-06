@@ -172,6 +172,29 @@ def procurar(q: str = "", pais: str = "", limite: int = 100) -> list[dict[str, A
     return [dict(r) for r in linhas]
 
 
+def empresas_parecidas(q: str, limite: int = 15) -> list[dict[str, Any]]:
+    """Empresas que já temos gente, com nome parecido. Grátis e instantâneo.
+
+    Serve para o caso mais comum de frustração: a pessoa digita "movida" e não
+    sabe se o LinkedIn escreve "Movida", "Movida Aluguel de Carros" ou
+    "Movida Participações". Aqui ela vê as grafias reais e escolhe.
+    """
+    alvo = norm(q)
+    if not alvo:
+        return []
+    con = _con()
+    linhas = con.execute("""
+        SELECT empresa, COUNT(*) AS quantos, MAX(visto_em) AS visto_em
+          FROM perfis
+         WHERE empresa_norm LIKE ? AND COALESCE(empresa,'') <> ''
+      GROUP BY empresa_norm
+      ORDER BY quantos DESC
+         LIMIT ?
+    """, ("%" + alvo + "%", int(limite))).fetchall()
+    con.close()
+    return [dict(r) for r in linhas]
+
+
 def salvar_empresa(d: dict[str, Any]) -> None:
     url = (d.get("url") or "").strip().rstrip("/")
     if not url:

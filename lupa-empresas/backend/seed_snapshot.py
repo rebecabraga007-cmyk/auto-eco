@@ -96,6 +96,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("snapshot")
     ap.add_argument("--saida", default="", help="caminho do .db (padrao: o do cache)")
+    # O snapshot e do mundo inteiro: 92% dele nao serve pra prospeccao no Brasil,
+    # so ocupa espaco e deixa a busca lenta. --pais "" carrega tudo.
+    ap.add_argument("--pais", default="BR", help='so este pais (padrao BR; "" = todos)')
     args = ap.parse_args()
 
     if args.saida:
@@ -105,12 +108,15 @@ def main():
     print("cache em:", linkedin_cache.DB_PATH)
 
     t0 = time.time()
-    lote, lidos, gravados = [], 0, 0
+    lote, lidos, gravados, pulados = [], 0, 0, 0
     for d in registros(args.snapshot):
         if not isinstance(d, dict) or "linkedin_num_id" not in d:
             continue      # objeto aninhado (similar_profiles), nao e perfil de topo
         p = para_pessoa(d)
         if not p["url"]:
+            continue
+        if args.pais and (p.get("pais") or "").upper() != args.pais.upper():
+            pulados += 1
             continue
         lote.append(p)
         lidos += 1
@@ -123,8 +129,9 @@ def main():
         gravados += linkedin_cache.salvar_perfis(lote, origem="snapshot")
 
     mb = os.path.getsize(linkedin_cache.DB_PATH) / 1024 / 1024
-    print("\nPRONTO: %s perfis lidos, %s novos no cache (%.1f MB) em %.0fs"
-          % (f"{lidos:,}", f"{gravados:,}", mb, time.time() - t0))
+    print("\nPRONTO: %s perfis guardados (%s novos), %s de outros paises pulados"
+          % (f"{lidos:,}", f"{gravados:,}", f"{pulados:,}"))
+    print("        %.1f MB em %.0fs" % (mb, time.time() - t0))
     print(json.dumps(linkedin_cache.estatisticas(), indent=2))
 
 

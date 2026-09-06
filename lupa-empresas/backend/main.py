@@ -466,6 +466,13 @@ async def linkedin_cache_busca(q: str = "", pais: str = "", limite: int = 100):
     return {"status": "ok", "total": len(pessoas), "pessoas": pessoas}
 
 
+@app.get("/api/linkedin/empresas")
+async def linkedin_empresas_sugestao(q: str = "", conferir: int = 0):
+    """Empresas parecidas com o termo. O cache é grátis; `conferir=N` raspa N
+    URLs candidatas no LinkedIn (isso CUSTA, por isso é opt-in e limitado)."""
+    return await brightdata_pessoas.sugerir_empresas(q, conferir=min(int(conferir or 0), 5))
+
+
 @app.post("/api/linkedin/empresa")
 async def linkedin_empresa(payload: dict = Body(default={})):
     """Dados da empresa a partir do link do LinkedIn — rápido (segundos).

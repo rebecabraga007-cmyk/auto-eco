@@ -4624,3 +4624,88 @@ liUrlBtn?.addEventListener('click', liConferirEmpresa);
 document.getElementById('li-url')?.addEventListener('keydown', e => {
   if (e.key === 'Enter') liConferirEmpresa();
 });
+
+/* ============================================================
+   "Não achou? Ver empresas" — resolve o caso mais comum de frustração:
+   a grafia do LinkedIn não é a que a pessoa digitou.
+   Duas camadas: o cache é grátis; conferir candidatas no LinkedIn custa,
+   então é sempre um clique separado e explícito.
+   ============================================================ */
+const liSugBtn = document.getElementById('li-sug-btn');
+const liSug = document.getElementById('li-sugestoes');
+
+function liEscolher(nome) {
+  document.getElementById('li-empresa').value = nome;
+  liSug.innerHTML = `<div class="info-box">Empresa escolhida: <b>${esc(nome)}</b>.
+                     Clique em <b>Buscar</b>.</div>`;
+}
+
+function liRenderSugestoes(d) {
+  const conhecidas = d.conhecidas || [];
+  const confirmadas = d.confirmadas || [];
+  const candidatas = d.candidatas || [];
+
+  const blocoCache = conhecidas.length ? `
+    <div style="margin-bottom:10px">
+      <b>Já temos gente destas</b> (grátis, é só clicar):
+      <div style="margin-top:6px">${conhecidas.map(e => `
+        <button class="btn-secondary li-pick" data-nome="${esc(e.empresa)}"
+                style="margin:0 6px 6px 0">
+          ${esc(e.empresa)} <span style="opacity:.7">· ${e.quantos} perfis</span>
+        </button>`).join('')}</div>
+    </div>` : '';
+
+  const blocoConf = confirmadas.length ? `
+    <div style="margin-bottom:10px">
+      <b>Encontradas no LinkedIn</b>:
+      <div style="margin-top:6px">${confirmadas.map(e => `
+        <button class="btn-secondary li-pick" data-nome="${esc(e.nome)}"
+                style="margin:0 6px 6px 0">
+          ${esc(e.nome)} <span style="opacity:.7">·
+          ${e.funcionarios ? e.funcionarios.toLocaleString('pt-BR') + ' pessoas' : '—'}
+          ${e.setor ? ' · ' + esc(e.setor) : ''}</span>
+        </button>`).join('')}</div>
+    </div>` : '';
+
+  // Só oferece gastar depois de mostrar o que é de graça.
+  const blocoCand = candidatas.length && !confirmadas.length ? `
+    <div class="pf-advanced-hint">
+      Posso conferir ${candidatas.length} endereço(s) possível(is) no LinkedIn —
+      <b>isso é cobrado</b>, uma raspagem por endereço:
+      <div style="margin-top:6px;font-family:monospace;font-size:.78rem">
+        ${candidatas.map(u => esc(u)).join('<br/>')}
+      </div>
+      <button id="li-conferir" class="btn-secondary" style="margin-top:8px">
+        Conferir no LinkedIn (cobra)
+      </button>
+    </div>` : '';
+
+  liSug.innerHTML = `<div class="info-box">
+    ${blocoCache}${blocoConf}${blocoCand}
+    ${(!conhecidas.length && !confirmadas.length && !candidatas.length)
+      ? esc(d.message || 'Nada encontrado.') : ''}
+  </div>`;
+
+  liSug.querySelectorAll('.li-pick').forEach(b =>
+    b.addEventListener('click', () => liEscolher(b.dataset.nome)));
+  document.getElementById('li-conferir')?.addEventListener('click', () => liSugerir(3));
+}
+
+async function liSugerir(conferir) {
+  const q = (document.getElementById('li-empresa').value || '').trim();
+  if (!q) { liSug.innerHTML = '<div class="warn-box">Escreva um pedaço do nome.</div>'; return; }
+  liSugBtn.disabled = true;
+  liSug.innerHTML = `<div class="info-box">${conferir
+    ? 'Conferindo no LinkedIn… (alguns segundos por endereço)'
+    : 'Procurando no que já temos…'}</div>`;
+  try {
+    const d = await fetch(`${API}/api/linkedin/empresas?q=${encodeURIComponent(q)}`
+      + `&conferir=${conferir || 0}`).then(r => r.json());
+    liRenderSugestoes(d);
+  } catch (e) {
+    liSug.innerHTML = '<div class="warn-box">Não consegui falar com o servidor.</div>';
+  }
+  liSugBtn.disabled = false;
+}
+
+liSugBtn?.addEventListener('click', () => liSugerir(0));

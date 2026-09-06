@@ -153,6 +153,78 @@ async def empresa_por_url(url: str) -> dict[str, Any]:
     return saida
 
 
+def _candidatas(nome: str) -> list[str]:
+    """URLs plausíveis da empresa no LinkedIn, a partir do nome.
+
+    Não existe "buscar empresa por nome" na API da Bright Data — só acerto de
+    URL. Então geramos variações e conferimos quais existem. Da mais provável
+    para a menos, porque cada raspagem é cobrada.
+    """
+    base = _norm(nome).lower()
+    if not base:
+        return []
+    tabela = str.maketrans("áàâãäéèêëíìîïóòôõöúùûüçñ", "aaaaaeeeeiiiiooooouuuucn")
+    base = base.translate(tabela)
+    base = re.sub(r"[^a-z0-9 ]+", " ", base).strip()
+    palavras = [p for p in base.split() if p]
+    if not palavras:
+        return []
+
+    # Sufixos societários não entram no slug do LinkedIn.
+    ruido = {"sa", "s", "a", "ltda", "me", "eireli", "epp", "do", "da", "de",
+             "dos", "das", "e"}
+    limpas = [p for p in palavras if p not in ruido] or palavras
+
+    vistos, saida = set(), []
+    for cand in ("-".join(limpas), "-".join(palavras), limpas[0],
+                 "-".join(limpas[:2]), "".join(limpas)):
+        if cand and cand not in vistos:
+            vistos.add(cand)
+            saida.append("https://www.linkedin.com/company/" + cand)
+    return saida
+
+
+async def sugerir_empresas(q: str, conferir: int = 0) -> dict[str, Any]:
+    """Ajuda a achar a empresa certa quando o nome não bate de primeira.
+
+    Duas camadas, de propósito nessa ordem:
+      1. O que já temos no cache — grátis, instantâneo, com a grafia real.
+      2. Só se pedido (`conferir` > 0), raspa N URLs candidatas no LinkedIn.
+         Isso CUSTA, então nunca acontece sozinho.
+    """
+    q = _norm(q)
+    if not q:
+        return {"status": "error", "message": "Escreva um pedaço do nome."}
+
+    try:
+        conhecidas = linkedin_cache.empresas_parecidas(q)
+    except Exception:
+        conhecidas = []
+
+    candidatas = _candidatas(q)
+    confirmadas = []
+    for url in candidatas[:max(0, int(conferir))]:
+        r = await empresa_por_url(url)
+        if r.get("status") == "ok":
+            confirmadas.append({
+                "nome": r.get("nome"), "url": r.get("url"),
+                "funcionarios": r.get("funcionarios_linkedin"),
+                "setor": r.get("setor"), "sede": r.get("sede"),
+                "fonte": r.get("fonte") or "linkedin",
+            })
+
+    return {
+        "status": "ok",
+        "termo": q,
+        "conhecidas": conhecidas,          # do cache: {empresa, quantos, visto_em}
+        "confirmadas": confirmadas,        # raspadas agora
+        "candidatas": candidatas,          # ainda não conferidas (cada uma custa)
+        "message": "" if (conhecidas or confirmadas) else
+                   "Não temos ninguém dessa empresa ainda. Confira as URLs "
+                   "candidatas ou cole o link da página no LinkedIn.",
+    }
+
+
 async def disparar(empresa: str, pais: str = "BR", cargo: str = "",
                    limite: int = 0, forcar: bool = False) -> dict[str, Any]:
     """Dispara o filtro. Retorna {status, protocolo} — NAO espera o resultado."""
