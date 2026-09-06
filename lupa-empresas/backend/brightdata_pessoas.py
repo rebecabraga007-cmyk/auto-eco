@@ -339,6 +339,105 @@ async def buscar_agora(empresa: str, pais: str = "BR", cargo: str = "",
     }
 
 
+
+# Na Bright Data o `or` aceita no maximo 4 condicoes (medido: 5 -> HTTP 500).
+# Entao "varias empresas de uma vez" cabe em grupos de 4 por chamada.
+EMPRESAS_POR_CHAMADA = 4
+
+
+async def buscar_varias(empresas: list[str], pais: str = "BR", cargo: str = "",
+                        limite_por_lote: int = 50,
+                        decisores: bool = True) -> dict[str, Any]:
+    """Funcionarios de VARIAS empresas. Cache primeiro, Bright Data para o resto.
+
+    A Datastone resolve isso com uma query so, porque a base deles ja tem pessoa
+    ligada a empresa por id (visto no `prospect.js`: `selected_companies` e uma
+    LISTA). Aqui o cache faz o mesmo de graca; o que falta vai a Bright Data em
+    grupos de 4, que e o teto do `or` de la.
+    """
+    empresas = [_norm(e) for e in (empresas or []) if _norm(e)]
+    if not empresas:
+        return {"status": "error", "message": "Informe ao menos uma empresa."}
+
+    try:
+        cobertura = linkedin_cache.cobertura_empresas(empresas, pais=pais)
+    except Exception:
+        cobertura = [{"empresa": e, "perfis": 0, "decisores": 0} for e in empresas]
+
+    # So vai a API o que o cache nao cobre — decidido por DECISOR, nao por perfil:
+    # ter 30 estagiarios de uma empresa nao ajuda quem procura quem decide.
+    faltando = [c["empresa"] for c in cobertura
+                if (c["decisores"] if decisores else c["perfis"]) < 3]
+
+    buscadas, custo_registros = [], 0
+    for i in range(0, len(faltando), EMPRESAS_POR_CHAMADA):
+        lote = faltando[i:i + EMPRESAS_POR_CHAMADA]
+        grupo_emp = {"operator": "or", "filters": [
+            {"name": "current_company_name", "operator": "includes", "value": e}
+            for e in lote]}
+        condicoes = [grupo_emp]
+        if pais:
+            condicoes.append({"name": "country_code", "operator": "=",
+                              "value": pais.upper()[:2]})
+        # Empresas (or) + decisores (or) dentro de um and = 2 niveis, dentro do
+        # limite de 3 da doc. Cargo digitado substitui o grupo de decisores.
+        if _norm(cargo):
+            condicoes.append({"name": "position", "operator": "includes",
+                              "value": _norm(cargo)})
+        elif decisores:
+            condicoes.append(_grupo_decisores())
+
+        corpo = {"size": max(1, min(limite_por_lote, SEARCH_TETO)),
+                 "filter": {"operator": "and", "filters": condicoes},
+                 "sort": [{"timestamp": "asc"}]}
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as cli:
+                r = await cli.post(SEARCH_URL + DATASET, headers=_headers(), json=corpo)
+        except Exception:
+            continue
+        if r.status_code >= 400:
+            continue
+        import json as _json
+        try:
+            d = _json.loads(r.content)
+        except Exception:
+            continue
+        achados = [_pessoa(x) for x in (d.get("hits") or []) if isinstance(x, dict)]
+        custo_registros += len(achados)
+        try:
+            linkedin_cache.salvar_perfis(achados, origem="api")
+        except Exception:
+            pass
+        buscadas.extend(lote)
+
+    # RECALCULA a cobertura: a de cima foi medida ANTES de buscar e diria
+    # "0 decisores" mesmo depois de trazer 20 deles — numero que mente na tela.
+    try:
+        cobertura = linkedin_cache.cobertura_empresas(empresas, pais=pais)
+    except Exception:
+        pass
+
+    # Le tudo do cache no fim: o que ja tinha + o que acabou de entrar, na mesma
+    # ordem (decisor primeiro) e sem duplicata.
+    try:
+        pessoas = linkedin_cache.por_empresas(empresas, pais=pais, limite=500,
+                                              senioridade="Decisores" if decisores else "")
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:150], "pessoas": []}
+
+    return {
+        "status": "ok",
+        "empresas_pedidas": len(empresas),
+        "empresas_buscadas_na_api": buscadas,
+        "chamadas_api": (len(faltando) + EMPRESAS_POR_CHAMADA - 1) // EMPRESAS_POR_CHAMADA,
+        "registros_cobrados": custo_registros,
+        "custo_estimado_usd": round(custo_registros * 0.0025, 2),
+        "cobertura": cobertura,
+        "total": len(pessoas),
+        "pessoas": pessoas,
+    }
+
+
 async def disparar(empresa: str, pais: str = "BR", cargo: str = "",
                    limite: int = 0, forcar: bool = False) -> dict[str, Any]:
     """Dispara o filtro. Retorna {status, protocolo} — NAO espera o resultado."""

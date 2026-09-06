@@ -4818,9 +4818,9 @@ async function b2bCarregarOpcoes() {
 
 function b2bTabela(pessoas) {
   if (!pessoas.length) {
-    return `<div class="info-box">Nenhum perfil com esses filtros. A base só tem
-            quem já foi comprado — use a aba <b>Funcionários no LinkedIn</b> para
-            trazer gente nova de uma empresa.</div>`;
+    return `<div class="info-box">Nenhum perfil com esses filtros na base local.
+            Se você digitou o nome de uma empresa, use o botão acima para trazer os
+            decisores dela da Bright Data.</div>`;
   }
   return `
   <table class="data-table">
@@ -4872,10 +4872,14 @@ async function b2bFiltrar() {
     b2bRes.innerHTML = `<div class="info-box" style="margin-bottom:10px">
         <b>${pessoas.length}</b> perfis · resposta local, nada foi cobrado</div>`
       + b2bTabela(pessoas);
-    // Filtrou por empresa e veio pouco? Oferece completar na Bright Data.
+    // Veio pouco? Oferece buscar na Bright Data. Usa o campo "Empresa" ou, se
+    // vazio, o texto livre — quem digita "petrobras" na busca quer a Petrobras,
+    // e antes a oferta so aparecia se o termo estivesse no campo certo.
     const empFiltro = (document.getElementById('b2b-empresa').value || '').trim();
+    const textoLivre = (document.getElementById('b2b-q').value || '').trim();
+    const termo = empFiltro || textoLivre;
     if (typeof b2bOfertaBuscar === 'function') {
-      b2bOfertaBuscar(empFiltro && pessoas.length < 25 ? empFiltro : '', pessoas.length);
+      b2bOfertaBuscar(termo && pessoas.length < 25 ? termo : '', pessoas.length);
     }
   } catch (e) {
     b2bRes.innerHTML = '<div class="warn-box">Não consegui falar com o servidor.</div>';
@@ -4903,10 +4907,11 @@ function b2bOfertaBuscar(empresa, quantosTem) {
     <div class="info-box">
       Temos <b>${quantosTem}</b> perfis de “${esc(empresa)}” no que já foi comprado.
       <button id="b2b-fetch" class="btn-secondary" style="margin-left:8px">
-        Buscar até ${n} na Bright Data (~US$ ${custo})
+        Trazer decisores da Bright Data (~US$ ${custo})
       </button>
-      <div class="pf-advanced-hint" style="margin-top:6px">Leva ~2 segundos. O que
-        vier fica guardado — na próxima vez essa empresa sai de graça.</div>
+      <div class="pf-advanced-hint" style="margin-top:6px">Busca até ${n} perfis com
+        <b>diretor, head, presidente ou CEO</b> no cargo — responde em ~2s. O que vier
+        fica guardado: essa empresa sai de graça na próxima vez.</div>
     </div>`;
   document.getElementById('b2b-fetch')?.addEventListener('click', async (ev) => {
     const btn = ev.currentTarget;

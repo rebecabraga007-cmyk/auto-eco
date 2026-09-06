@@ -496,6 +496,23 @@ async def linkedin_cruzar(payload: dict = Body(default={})):
             "fracos": len(achados) - fortes}
 
 
+@app.post("/api/linkedin/funcionarios-varias")
+async def linkedin_funcionarios_varias(payload: dict = Body(default={})):
+    """Funcionários de VÁRIAS empresas de uma vez — como o filtro da Datastone.
+
+    Body: {empresas: ["Movida", "Klabin"], pais, cargo, decisores, limite}.
+    Lê o cache primeiro e só vai à Bright Data para as empresas descobertas,
+    em grupos de 4 (teto do `or` de lá). Devolve `custo_estimado_usd`.
+    """
+    return await brightdata_pessoas.buscar_varias(
+        empresas=payload.get("empresas") or [],
+        pais=str(payload.get("pais") or "BR"),
+        cargo=str(payload.get("cargo") or ""),
+        limite_por_lote=int(payload.get("limite") or 50),
+        decisores=payload.get("decisores", True) is not False,
+    )
+
+
 @app.get("/api/linkedin/filtro-opcoes")
 async def linkedin_filtro_opcoes():
     """Vocabulário dos filtros — o mesmo da Datastone (/b2b/filter-options).

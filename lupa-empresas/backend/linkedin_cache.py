@@ -266,6 +266,69 @@ def cruzar(pessoas: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return saida
 
 
+def por_empresas(empresas: list[str], pais: str = "", limite: int = 300,
+                 departamento: str = "", senioridade: str = "") -> list[dict[str, Any]]:
+    """Pessoas de VÁRIAS empresas numa consulta só. Grátis e instantâneo.
+
+    É assim que a Datastone faz (visto no `prospect.js` deles): o filtro manda
+    `selected_companies` como LISTA, porque a base já tem pessoa ligada a empresa.
+    Ninguém consulta empresa por empresa.
+
+    Aqui vale o mesmo: o cache tem `empresa_norm`, então N empresas custam uma
+    query. Na Bright Data isso não dá — o `or` de lá aceita no máximo 4 termos.
+    """
+    alvos = [norm(e) for e in (empresas or []) if norm(e)]
+    if not alvos:
+        return []
+    # OR de LIKE: "movida" tem que casar "Movida Aluguel de Carros" e
+    # "Grupo Movida", igual ao `includes` que trouxe esses perfis.
+    ors = " OR ".join(["empresa_norm LIKE ?"] * len(alvos))
+    sql = ["SELECT * FROM perfis WHERE (%s)" % ors]
+    args: list[Any] = ["%" + a + "%" for a in alvos]
+    if pais:
+        sql.append("AND pais = ?")
+        args.append(pais.upper()[:2])
+    if departamento:
+        sql.append("AND departamento = ?")
+        args.append(departamento)
+    if senioridade:
+        sql.append("AND senioridade = ?")
+        args.append(senioridade)
+    # Decisor primeiro, depois quem tem foto: é a ordem em que a operação usa.
+    sql.append("""ORDER BY CASE WHEN senioridade='Decisores' THEN 0 ELSE 1 END,
+                           (foto IS NULL OR foto=''), visto_em DESC LIMIT ?""")
+    args.append(int(limite))
+    con = _con()
+    linhas = con.execute(" ".join(sql), args).fetchall()
+    con.close()
+    return [dict(r) for r in linhas]
+
+
+def cobertura_empresas(empresas: list[str], pais: str = "") -> list[dict[str, Any]]:
+    """Quantos perfis já temos de cada empresa da lista — e quantos são decisores.
+
+    Serve para a tela dizer, ANTES de gastar, quais empresas já estão cobertas e
+    quais precisam ir à Bright Data.
+    """
+    saida = []
+    con = _con()
+    for e in (empresas or []):
+        alvo = norm(e)
+        if not alvo:
+            continue
+        args: list[Any] = ["%" + alvo + "%"]
+        extra = ""
+        if pais:
+            extra = " AND pais = ?"
+            args.append(pais.upper()[:2])
+        r = con.execute(
+            "SELECT COUNT(*), SUM(CASE WHEN senioridade='Decisores' THEN 1 ELSE 0 END) "
+            "FROM perfis WHERE empresa_norm LIKE ?" + extra, args).fetchone()
+        saida.append({"empresa": e, "perfis": r[0] or 0, "decisores": r[1] or 0})
+    con.close()
+    return saida
+
+
 def contagem_por_classificacao() -> dict[str, dict[str, int]]:
     """Quantos perfis em cada departamento e senioridade.
 
