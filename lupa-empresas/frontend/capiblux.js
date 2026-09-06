@@ -4709,3 +4709,113 @@ async function liSugerir(conferir) {
 }
 
 liSugBtn?.addEventListener('click', () => liSugerir(0));
+
+/* ============================================================
+   Filtro de pessoas — vocabulário da Datastone sobre o cache local.
+   Tudo aqui é instantâneo e de graça: nada vai à Bright Data.
+   ============================================================ */
+const b2bBtn = document.getElementById('b2b-btn');
+const b2bRes = document.getElementById('b2b-results');
+const b2bResumo = document.getElementById('b2b-resumo');
+let _b2bOpcoesCarregadas = false;
+
+async function b2bCarregarOpcoes() {
+  if (_b2bOpcoesCarregadas) return;
+  try {
+    const d = await fetch(`${API}/api/linkedin/filtro-opcoes`).then(r => r.json());
+    const cd = (d.contagem && d.contagem.departamento) || {};
+    const cs = (d.contagem && d.contagem.senioridade) || {};
+    const selD = document.getElementById('b2b-depto');
+    const selS = document.getElementById('b2b-senior');
+    // O número ao lado evita o pior caso: clicar num filtro que não tem ninguém
+    // atrás e achar que a tela quebrou.
+    (d.departamentos || []).forEach(x => {
+      const n = cd[x] || 0;
+      if (!n) return;
+      selD.insertAdjacentHTML('beforeend',
+        `<option value="${esc(x)}">${esc(x)} (${n})</option>`);
+    });
+    (d.senioridades || []).forEach(x => {
+      const n = cs[x] || 0;
+      if (!n) return;
+      selS.insertAdjacentHTML('beforeend',
+        `<option value="${esc(x)}">${esc(x)} (${n})</option>`);
+    });
+    const total = Object.values(cd).reduce((a, b) => a + b, 0);
+    b2bResumo.innerHTML = `Base atual: <b>${total.toLocaleString('pt-BR')}</b> perfis
+      brasileiros já comprados. Sem nível declarado no cargo:
+      <b>${(cs['(sem)'] || 0).toLocaleString('pt-BR')}</b> — não é falha do filtro,
+      é cargo que não diz o nível ("Enfermeira", "Porteiro").`;
+    _b2bOpcoesCarregadas = true;
+  } catch (e) {
+    b2bResumo.textContent = 'Não consegui carregar as opções de filtro.';
+  }
+}
+
+function b2bTabela(pessoas) {
+  if (!pessoas.length) {
+    return `<div class="info-box">Nenhum perfil com esses filtros. A base só tem
+            quem já foi comprado — use a aba <b>Funcionários no LinkedIn</b> para
+            trazer gente nova de uma empresa.</div>`;
+  }
+  return `
+  <table class="data-table">
+    <thead><tr><th style="width:52px"></th><th>Nome</th><th>Cargo</th>
+      <th>Departamento</th><th>Nível</th><th>Empresa</th><th>Cidade</th><th></th></tr></thead>
+    <tbody>${pessoas.map(p => {
+      const iniciais = (p.nome || '?').split(/\s+/).slice(0, 2)
+        .map(x => x[0] || '').join('').toUpperCase();
+      const foto = p.foto
+        ? `<img src="${esc(p.foto)}" alt="" loading="lazy" referrerpolicy="no-referrer"
+             style="width:40px;height:40px;border-radius:50%;object-fit:cover;display:block"
+             onerror="this.replaceWith(Object.assign(document.createElement('div'),
+               {className:'li-ini',textContent:'${esc(iniciais)}'}))" />`
+        : `<div class="li-ini">${esc(iniciais)}</div>`;
+      return `
+      <tr>
+        <td>${foto}</td>
+        <td><b>${esc(p.nome || '')}</b></td>
+        <td>${esc(p.cargo || '')}</td>
+        <td>${esc(p.departamento || '—')}</td>
+        <td>${esc(p.senioridade || '—')}</td>
+        <td>${esc(p.empresa || '')}</td>
+        <td>${esc((p.cidade || '').replace(/, Brazil$/, ''))}</td>
+        <td>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">perfil</a>` : ''}</td>
+      </tr>`;
+    }).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function b2bFiltrar() {
+  b2bBtn.disabled = true;
+  b2bRes.innerHTML = '<div class="info-box">Filtrando…</div>';
+  const par = new URLSearchParams({
+    q: (document.getElementById('b2b-q').value || '').trim(),
+    departamento: document.getElementById('b2b-depto').value,
+    senioridade: document.getElementById('b2b-senior').value,
+    empresa: (document.getElementById('b2b-empresa').value || '').trim(),
+    limite: document.getElementById('b2b-limite').value,
+    pais: 'BR',
+  });
+  try {
+    const d = await fetch(`${API}/api/linkedin/cache?${par}`).then(r => r.json());
+    let pessoas = d.pessoas || [];
+    // Cidade é filtrada aqui porque no banco ela vem como texto livre
+    // ("Niterói, Rio de Janeiro, Brazil") — não vale criar índice pra isso.
+    const cid = (document.getElementById('b2b-cidade').value || '').trim().toLowerCase();
+    if (cid) pessoas = pessoas.filter(p => (p.cidade || '').toLowerCase().includes(cid));
+    b2bRes.innerHTML = `<div class="info-box" style="margin-bottom:10px">
+        <b>${pessoas.length}</b> perfis · resposta local, nada foi cobrado</div>`
+      + b2bTabela(pessoas);
+  } catch (e) {
+    b2bRes.innerHTML = '<div class="warn-box">Não consegui falar com o servidor.</div>';
+  }
+  b2bBtn.disabled = false;
+}
+
+b2bBtn?.addEventListener('click', b2bFiltrar);
+document.getElementById('b2b-q')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') b2bFiltrar();
+});
+document.querySelector('[data-tab="b2b"]')?.addEventListener('click', b2bCarregarOpcoes);

@@ -34,6 +34,7 @@
     <button class="nav-btn" data-tab="empassertiva">Empresa Assertiva<span class="nav-btn-sub">cadastro + quem decide</span></button>
     <button class="nav-btn" data-tab="vinculos">Vínculo empregatício<span class="nav-btn-sub">por empresa ou por pessoa</span></button>
     <button class="nav-btn" data-tab="linkedin">Funcionários no LinkedIn<span class="nav-btn-sub">quem trabalha numa empresa</span></button>
+    <button class="nav-btn" data-tab="b2b">Filtro de pessoas<span class="nav-btn-sub">por departamento e senioridade</span></button>
     <button class="nav-btn" data-tab="pessoa">Uma pessoa<span class="nav-btn-sub">por CPF, com dados completos</span></button>
     <button class="nav-btn" data-tab="nome">Uma pessoa pelo nome<span class="nav-btn-sub">quando não sei o CPF</span></button>
     <button class="nav-btn" data-tab="telefone">De quem é este telefone<span class="nav-btn-sub">descobrir o dono do número</span></button>
@@ -252,6 +253,40 @@
       </div>
     </div>
     <div id="li-results" class="results-area"></div>
+  </section>
+
+  <section id="tab-b2b" class="tab-section">
+    <div class="module-header">
+      <div class="module-overline">Prospecção · pessoas</div>
+      <h2 class="module-title">Filtro de pessoas</h2>
+      <p class="module-sub">Busca na base de perfis que a operação já comprou — responde na hora e não gasta nada. Departamento e senioridade são deduzidos do cargo, no mesmo vocabulário da Datastone.</p>
+    </div>
+    <div class="search-panel">
+      <div class="search-row">
+        <div class="input-wrap">
+          <span class="input-icon">🔎</span>
+          <input id="b2b-q" type="text" placeholder="Nome, cargo ou empresa…" autocomplete="off" />
+        </div>
+        <button id="b2b-btn" class="btn-primary">Filtrar</button>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Quem:</span>
+        <select id="b2b-depto" class="filter-select"><option value="">Departamento (todos)</option></select>
+        <select id="b2b-senior" class="filter-select"><option value="">Senioridade (todas)</option></select>
+        <select id="b2b-limite" class="filter-select">
+          <option value="50">Máx 50</option>
+          <option value="100" selected>Máx 100</option>
+          <option value="300">Máx 300</option>
+        </select>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Onde:</span>
+        <input id="b2b-empresa" type="text" class="filter-select" placeholder="Empresa contém…" style="width:210px" />
+        <input id="b2b-cidade" type="text" class="filter-select" placeholder="Cidade contém…" style="width:180px" />
+      </div>
+      <div id="b2b-resumo" class="pf-advanced-hint" style="margin-top:10px"></div>
+    </div>
+    <div id="b2b-results" class="results-area"></div>
   </section>
 
   <section id="tab-pessoa" class="tab-section">
