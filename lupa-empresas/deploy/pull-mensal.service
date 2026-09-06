@@ -10,7 +10,9 @@ WorkingDirectory=/opt/capiblu/lupa-empresas/backend
 EnvironmentFile=/opt/capiblu/lupa-empresas/.env
 Environment=CNPJ_DB_DIR=/capiblu_data
 Environment=PULL_DIR=/capiblu_data/pulls
-Environment=PULL_LIMITE=100000
+# Limite conservador: Filter API cobra $2,50 por 1.000 registros.
+# 100 mil custaria $250 -- valor que nao pode sair sozinho de um job agendado.
+Environment=PULL_LIMITE=2000
 ExecStart=/opt/capiblu/venv/bin/python pull_mensal.py
 # Filtro amplo demora horas: o timeout tem que caber isso, senao o systemd mata
 # o job no meio e a faixa fica marcada como pendente sem ninguem entender.

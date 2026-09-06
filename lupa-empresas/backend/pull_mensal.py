@@ -40,9 +40,16 @@ DATASET = os.environ.get("BRIGHTDATA_PEOPLE_DATASET_ID", "gd_l1viktl72bvl7bjuj0"
 FILTER_URL = "https://api.brightdata.com/datasets/filter"
 SNAP_URL = "https://api.brightdata.com/datasets/snapshots"
 
+# CUSTO REAL (fatura de 01-06/set/2026): Filter API cobra $2,50 por 1.000
+# registros. 100 mil = $250. NAO confie no campo `cost` do snapshot: ele vem 0
+# mesmo quando ha cobranca. Por isso o limite padrao aqui e BAIXO e o script
+# exige --confirmo para pedidos grandes: job agendado que gasta $250 sozinho e
+# exatamente o tipo de coisa que nao pode acontecer por descuido.
 DESTINO = os.environ.get("PULL_DIR", "/capiblu_data/pulls")
 PLANO = os.path.join(DESTINO, "plano.json")
-LIMITE = int(os.environ.get("PULL_LIMITE", "100000"))
+LIMITE = int(os.environ.get("PULL_LIMITE", "2000"))
+CUSTO_POR_MIL = 2.50
+TETO_SEM_CONFIRMACAO = int(os.environ.get("PULL_TETO_LIVRE", "5000"))
 # Filtro amplo demora MUITO: os testes com país inteiro passaram de 7 minutos e
 # só ficaram prontos horas depois. Por isso a espera é longa e o intervalo largo.
 ESPERA_MAX_S = int(os.environ.get("PULL_ESPERA_MAX", str(6 * 3600)))
@@ -191,6 +198,8 @@ def main():
     ap.add_argument("--plano", action="store_true", help="mostra o plano e sai")
     ap.add_argument("--faixa", type=int, default=0, help="força uma faixa pelo id")
     ap.add_argument("--limite", type=int, default=LIMITE)
+    ap.add_argument("--confirmo", action="store_true",
+                    help="autoriza pedido acima de %s registros" % TETO_SEM_CONFIRMACAO)
     args = ap.parse_args()
 
     plano = carregar_plano()
@@ -221,7 +230,13 @@ def main():
             log("todas as faixas já foram puxadas — nada a fazer")
             return
 
-    log("faixa %s: %s (limite %s)" % (faixa["id"], faixa["rotulo"], args.limite))
+    custo = args.limite / 1000.0 * CUSTO_POR_MIL
+    log("faixa %s: %s | limite %s | custo estimado US$ %.2f"
+        % (faixa["id"], faixa["rotulo"], f"{args.limite:,}", custo))
+    if args.limite > TETO_SEM_CONFIRMACAO and not args.confirmo:
+        log("ABORTADO: %s registros custam ~US$ %.2f. Rode com --confirmo se for "
+            "mesmo pra gastar isso." % (f"{args.limite:,}", custo))
+        raise SystemExit(3)
     sid = disparar(faixa, args.limite)
     log("snapshot %s" % sid)
     meta = esperar(sid)
@@ -242,7 +257,10 @@ def main():
     feitas[str(faixa["id"])] = {
         "rotulo": faixa["rotulo"], "snapshot": sid, "registros": total,
         "novos": novos, "csv": nome, "truncada": truncada,
-        "custo_informado": meta.get("cost"),
+        # O `cost` do metadado vem 0 mesmo havendo cobranca — guardamos a
+        # estimativa nossa, que e a que bate com a fatura.
+        "custo_estimado_usd": round(total / 1000.0 * CUSTO_POR_MIL, 2),
+        "custo_informado_api": meta.get("cost"),
         "quando": time.strftime("%Y-%m-%d %H:%M"),
     }
     plano["feitas"] = feitas
