@@ -47,6 +47,7 @@ import dossie
 import mistral
 import workapi
 import brightdata_pessoas
+import linkedin_cache
 
 # Base local de CPF (JBR_PF) — modulo compartilhado em ../../jbr_base.
 _JBR = os.path.join(
@@ -80,6 +81,11 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 
 app = FastAPI(title="Lupa de Empresas", version="1.0.0")
+
+try:
+    linkedin_cache.init()      # cria o SQLite do cache na primeira subida
+except Exception:
+    pass
 
 app.add_middleware(
     CORSMiddleware,
@@ -440,9 +446,24 @@ async def dossie_pdf(request: Request, tipo: str, doc: str, insight: bool = Fals
 @app.get("/api/linkedin/status")
 async def linkedin_status():
     """Diz se a busca por funcionários está configurada (sem expor a chave)."""
+    try:
+        cache = linkedin_cache.estatisticas()
+    except Exception:
+        cache = {}
     return {"enabled": brightdata_pessoas.enabled(),
             "limite_padrao": brightdata_pessoas.LIMITE_PADRAO,
-            "limite_max": brightdata_pessoas.LIMITE_MAX}
+            "limite_max": brightdata_pessoas.LIMITE_MAX,
+            "cache": cache}
+
+
+@app.get("/api/linkedin/cache")
+async def linkedin_cache_busca(q: str = "", pais: str = "", limite: int = 100):
+    """Busca livre nos perfis JÁ PAGOS. Não gasta nada e responde na hora."""
+    try:
+        pessoas = linkedin_cache.procurar(q=q, pais=pais, limite=limite)
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:120], "pessoas": []}
+    return {"status": "ok", "total": len(pessoas), "pessoas": pessoas}
 
 
 @app.post("/api/linkedin/empresa")
@@ -464,6 +485,7 @@ async def linkedin_funcionarios(payload: dict = Body(default={})):
         pais=str(payload.get("pais") or "BR"),
         cargo=str(payload.get("cargo") or ""),
         limite=int(payload.get("limite") or 0),
+        forcar=bool(payload.get("forcar")),
     )
 
 

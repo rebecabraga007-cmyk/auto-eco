@@ -4485,7 +4485,7 @@ function liTabela(d, empresa) {
   </table>`;
 }
 
-async function liBuscar() {
+async function liBuscar(forcar) {
   const empresa = (document.getElementById('li-empresa').value || '').trim();
   if (!empresa) { liAviso('Escreva o nome da empresa.', 'warn-box'); return; }
 
@@ -4501,11 +4501,26 @@ async function liBuscar() {
     disparo = await fetch(`${API}/api/linkedin/funcionarios`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ empresa, cargo, pais, limite }),
+      body: JSON.stringify({ empresa, cargo, pais, limite, forcar: !!forcar }),
     }).then(r => r.json());
   } catch (e) {
     liBtn.disabled = false;
     liAviso('Não consegui falar com o servidor.', 'warn-box');
+    return;
+  }
+
+  // Já tínhamos esses perfis comprados: mostra na hora, de graça, e oferece
+  // pagar por dados novos só se a pessoa quiser.
+  if (disparo.status === 'cache') {
+    liBtn.disabled = false;
+    liRes.innerHTML = `
+      <div class="info-box" style="margin-bottom:10px">
+        <b>${disparo.total} perfis que já tínhamos</b> — ${esc(disparo.message || '')}
+        <button id="li-forcar" class="btn-secondary" style="margin-left:10px">
+          Buscar novos na Bright Data (cobra)
+        </button>
+      </div>` + liTabela({ ...disparo, exatos: disparo.total, parecidos: 0 }, empresa);
+    document.getElementById('li-forcar')?.addEventListener('click', () => liBuscar(true));
     return;
   }
 

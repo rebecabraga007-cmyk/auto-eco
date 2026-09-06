@@ -25,6 +25,8 @@ from typing import Any
 
 import httpx
 
+import linkedin_cache
+
 CHAVE = os.environ.get("BRIGHTDATA_API_KEY", "").strip()
 DATASET = os.environ.get("BRIGHTDATA_PEOPLE_DATASET_ID", "gd_l1viktl72bvl7bjuj0").strip()
 FILTER_URL = "https://api.brightdata.com/datasets/filter"
@@ -78,6 +80,19 @@ async def empresa_por_url(url: str) -> dict[str, Any]:
                            "(linkedin.com/company/...), nao o de uma pessoa."}
     limpo = "https://www.linkedin.com/company/" + m.group(1)
 
+    # Raspagem de empresa tambem e cobrada — se ja conferimos esse link, reusa.
+    try:
+        antes = linkedin_cache.empresa_cacheada(limpo)
+    except Exception:
+        antes = None
+    if antes:
+        return {"status": "ok", "fonte": "cache",
+                "nome": antes["nome"], "company_id": antes["company_id"],
+                "funcionarios_linkedin": antes["funcionarios"],
+                "setor": antes["setor"], "sede": antes["sede"],
+                "site": antes["site"], "pais": antes["pais"],
+                "url": limpo, "destaque": [], "aviso_tamanho": ""}
+
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(180.0)) as cli:
             r = await cli.post(
@@ -109,7 +124,7 @@ async def empresa_por_url(url: str) -> dict[str, Any]:
                 if nome and lnk:
                     destaque.append({"nome": nome, "url": lnk})
     total = d.get("employees_in_linkedin")
-    return {
+    saida = {
         "status": "ok",
         "nome": d.get("name") or "",
         "company_id": str(d.get("company_id") or ""),
@@ -126,10 +141,20 @@ async def empresa_por_url(url: str) -> dict[str, Any]:
             "ou nao terminar — vale restringir por cargo." % f"{total:,}".replace(",", ".")
             if isinstance(total, int) and total > 50000 else ""),
     }
+    try:
+        linkedin_cache.salvar_empresa(saida)
+        # Os perfis em destaque vem de graca junto com a pagina: guarda tambem.
+        if destaque:
+            linkedin_cache.salvar_perfis(
+                [{"url": p["url"], "nome": p["nome"], "empresa": saida["nome"],
+                  "pais": saida.get("pais")} for p in destaque], origem="api")
+    except Exception:
+        pass
+    return saida
 
 
 async def disparar(empresa: str, pais: str = "BR", cargo: str = "",
-                   limite: int = 0) -> dict[str, Any]:
+                   limite: int = 0, forcar: bool = False) -> dict[str, Any]:
     """Dispara o filtro. Retorna {status, protocolo} — NAO espera o resultado."""
     if not enabled():
         return {"status": "unavailable",
@@ -139,6 +164,23 @@ async def disparar(empresa: str, pais: str = "BR", cargo: str = "",
         return {"status": "error", "message": "Informe o nome da empresa."}
 
     limite = max(1, min(int(limite or LIMITE_PADRAO), LIMITE_MAX))
+
+    # CACHE PRIMEIRO. Cobra-se por perfil entregue, então repetir a mesma busca
+    # paga de novo pela mesma gente. Só vai à Bright Data com forcar=True.
+    if not forcar:
+        try:
+            guardados = linkedin_cache.por_empresa(empresa, pais=pais, cargo=cargo,
+                                                   limite=limite)
+        except Exception:
+            guardados = []
+        if guardados:
+            return {
+                "status": "cache",
+                "empresa": empresa,
+                "total": len(guardados),
+                "pessoas": guardados,
+                "message": "Do que já foi comprado antes — não gastou nada agora.",
+            }
 
     condicoes = [{"name": "current_company_name", "operator": "includes", "value": empresa}]
     if pais:
@@ -171,6 +213,11 @@ async def disparar(empresa: str, pais: str = "BR", cargo: str = "",
     protocolo = d.get("snapshot_id") or d.get("id")
     if not protocolo:
         return {"status": "error", "message": "A Bright Data nao devolveu protocolo."}
+    try:
+        linkedin_cache.registrar_busca(empresa, pais, cargo, limite, protocolo)
+    except Exception:
+        pass          # cache e conveniencia: nunca derruba a busca
+
     return {
         "status": "ok",
         "protocolo": protocolo,
@@ -261,6 +308,13 @@ async def consultar(protocolo: str, empresa: str = "") -> dict[str, Any]:
     regs = bruto if isinstance(bruto, list) else (bruto or {}).get("data") or []
     pessoas = [_pessoa(x) for x in regs if isinstance(x, dict)]
 
+    # GUARDA TUDO que chegou: ja foi pago, nao se paga de novo.
+    novos = 0
+    try:
+        novos = linkedin_cache.salvar_perfis(pessoas, origem="api")
+    except Exception:
+        pass
+
     exatos, parecidos = [], []
     for p in pessoas:
         (exatos if _casa_empresa(p, empresa) else parecidos).append(p)
@@ -271,6 +325,7 @@ async def consultar(protocolo: str, empresa: str = "") -> dict[str, Any]:
         "pessoas": exatos + parecidos,
         "exatos": len(exatos),
         "parecidos": len(parecidos),
+        "novos_no_cache": novos,
         "message": "" if pessoas else
                    "Nenhum perfil no dataset para esse filtro. Tente outra grafia "
                    "do nome da empresa (o dataset guarda o nome como esta no LinkedIn).",
