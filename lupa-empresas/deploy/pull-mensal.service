@@ -1,5 +1,5 @@
 [Unit]
-Description=CapiBLU - puxa a cota mensal do LinkedIn (Bright Data, so Brasil)
+Description=CapiBLU - baixa o snapshot mensal da assinatura (Bright Data)
 After=network-online.target
 Wants=network-online.target
 
@@ -10,12 +10,11 @@ WorkingDirectory=/opt/capiblu/lupa-empresas/backend
 EnvironmentFile=/opt/capiblu/lupa-empresas/.env
 Environment=CNPJ_DB_DIR=/capiblu_data
 Environment=PULL_DIR=/capiblu_data/pulls
-# Limite conservador: Filter API cobra $2,50 por 1.000 registros.
-# 100 mil custaria $250 -- valor que nao pode sair sozinho de um job agendado.
-Environment=PULL_LIMITE=2000
+# So perfis deste pais entram no cache (o snapshot vem do mundo inteiro).
+Environment=PULL_PAIS=BR
 ExecStart=/opt/capiblu/venv/bin/python pull_mensal.py
-# Filtro amplo demora horas: o timeout tem que caber isso, senao o systemd mata
-# o job no meio e a faixa fica marcada como pendente sem ninguem entender.
-TimeoutStartSec=8h
+# Baixar 700 MB e semear 100 mil linhas leva minutos, nao horas: nao ha job
+# assincrono pra esperar. Uma hora e folga suficiente.
+TimeoutStartSec=1h
 StandardOutput=append:/var/log/capiblu-pull-mensal.log
 StandardError=append:/var/log/capiblu-pull-mensal.log

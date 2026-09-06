@@ -4842,6 +4842,11 @@ async function b2bFiltrar() {
     b2bRes.innerHTML = `<div class="info-box" style="margin-bottom:10px">
         <b>${pessoas.length}</b> perfis · resposta local, nada foi cobrado</div>`
       + b2bTabela(pessoas);
+    // Filtrou por empresa e veio pouco? Oferece completar na Bright Data.
+    const empFiltro = (document.getElementById('b2b-empresa').value || '').trim();
+    if (typeof b2bOfertaBuscar === 'function') {
+      b2bOfertaBuscar(empFiltro && pessoas.length < 25 ? empFiltro : '', pessoas.length);
+    }
   } catch (e) {
     b2bRes.innerHTML = '<div class="warn-box">Não consegui falar com o servidor.</div>';
   }
@@ -4853,3 +4858,48 @@ document.getElementById('b2b-q')?.addEventListener('keydown', e => {
   if (e.key === 'Enter') b2bFiltrar();
 });
 document.querySelector('[data-tab="b2b"]')?.addEventListener('click', b2bCarregarOpcoes);
+
+/* Ponte do filtro B2B para a Bright Data: quando o cache tem pouco de uma
+   empresa, oferece buscar mais. O Search leva ~2s (o Filter antigo levava
+   40-100s), entao isso deixou de ser espera e passou a ser um clique.
+   O custo aparece ANTES: $2,50 por 1.000 registros = $0,0025 cada. */
+const b2bAmpliar = document.getElementById('b2b-ampliar');
+
+function b2bOfertaBuscar(empresa, quantosTem) {
+  if (!empresa) { b2bAmpliar.innerHTML = ''; return; }
+  const n = 50;
+  const custo = (n * 0.0025).toFixed(2);
+  b2bAmpliar.innerHTML = `
+    <div class="info-box">
+      Temos <b>${quantosTem}</b> perfis de “${esc(empresa)}” no que já foi comprado.
+      <button id="b2b-fetch" class="btn-secondary" style="margin-left:8px">
+        Buscar até ${n} na Bright Data (~US$ ${custo})
+      </button>
+      <div class="pf-advanced-hint" style="margin-top:6px">Leva ~2 segundos. O que
+        vier fica guardado — na próxima vez essa empresa sai de graça.</div>
+    </div>`;
+  document.getElementById('b2b-fetch')?.addEventListener('click', async (ev) => {
+    const btn = ev.currentTarget;
+    btn.disabled = true;
+    btn.textContent = 'Buscando…';
+    try {
+      const d = await fetch(`${API}/api/linkedin/funcionarios`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ empresa, pais: 'BR', limite: n, forcar: true }),
+      }).then(r => r.json());
+      if (d.status === 'ok') {
+        b2bAmpliar.innerHTML = `<div class="info-box">Trouxe <b>${d.total}</b> perfis
+          (${d.novos_no_cache} novos no cache) em ${((d.ms || 0) / 1000).toFixed(1)}s.
+          O dataset tem <b>${(d.total_no_dataset || 0).toLocaleString('pt-BR')}</b>
+          brasileiros nessa empresa.</div>`;
+        _b2bOpcoesCarregadas = false;      // as contagens mudaram
+        await b2bCarregarOpcoes();
+        await b2bFiltrar();
+      } else {
+        b2bAmpliar.innerHTML = `<div class="warn-box">${esc(d.message || 'Falhou.')}</div>`;
+      }
+    } catch (e) {
+      b2bAmpliar.innerHTML = '<div class="warn-box">Não consegui falar com o servidor.</div>';
+    }
+  });
+}

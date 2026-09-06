@@ -167,8 +167,11 @@ def por_empresa(empresa: str, pais: str = "", cargo: str = "",
     if not alvo:
         return []
     sql = ["SELECT * FROM perfis WHERE empresa_norm LIKE ?"]
-    # LIKE com % no fim usa o indice; o alvo vem normalizado dos dois lados.
-    args: list[Any] = [alvo + "%"]
+    # CONTÉM, não começa-com. Tem que casar com o `includes` da Bright Data, que
+    # é o que trouxe esses perfis: buscar "Klabin" lá traz "Grupo Klabin", e com
+    # prefixo essa pessoa escapava da checagem de cache e seria comprada de novo.
+    # Custa varredura em vez de índice, mas são milhares de linhas, não milhões.
+    args: list[Any] = ["%" + alvo + "%"]
     if pais:
         sql.append("AND pais = ?")
         args.append(pais.upper()[:2])

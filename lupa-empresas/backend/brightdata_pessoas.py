@@ -225,6 +225,100 @@ async def sugerir_empresas(q: str, conferir: int = 0) -> dict[str, Any]:
     }
 
 
+SEARCH_URL = "https://api.brightdata.com/datasets/search/"
+SEARCH_TETO = 100          # medido: `size` acima de 100 devolve 400 (a doc diz 1.000)
+
+
+async def buscar_agora(empresa: str, pais: str = "BR", cargo: str = "",
+                       limite: int = 0, cursor: Any = None) -> dict[str, Any]:
+    """Busca SÍNCRONA pelo endpoint Search. Substitui o par disparar/consultar.
+
+    Por que trocar: o Filter é um job de 40s a 4min com polling; o Search devolve
+    inline em 2-3s. O PREÇO É O MESMO ($2,50 por 1.000 registros nos dois), então
+    a troca não economiza dinheiro — economiza tempo e destrava paginação, que o
+    Filter simplesmente não tem.
+
+    A resposta traz `total_hits`, que é quantos existem no dataset inteiro (não
+    quantos vieram). É o número que a tela mostra como "de N encontrados".
+
+    Paginação: mande `cursor` com o `timestamp` do último resultado da página
+    anterior. Ordenamos por timestamp justamente para o cursor ser estável.
+    """
+    if not enabled():
+        return {"status": "unavailable",
+                "message": "Bright Data nao configurada (BRIGHTDATA_API_KEY)."}
+    empresa = _norm(empresa)
+    limite = max(1, min(int(limite or LIMITE_PADRAO), SEARCH_TETO))
+
+    condicoes = []
+    if pais:
+        condicoes.append({"name": "country_code", "operator": "=", "value": pais.upper()[:2]})
+    if empresa:
+        condicoes.append({"name": "current_company_name", "operator": "includes",
+                          "value": empresa})
+    if _norm(cargo):
+        condicoes.append({"name": "position", "operator": "includes", "value": _norm(cargo)})
+    if not condicoes:
+        return {"status": "error", "message": "Informe ao menos empresa ou cargo."}
+
+    corpo: dict[str, Any] = {
+        "size": limite,
+        "filter": (condicoes[0] if len(condicoes) == 1
+                   else {"operator": "and", "filters": condicoes}),
+        "sort": [{"timestamp": "asc"}],
+    }
+    if cursor:
+        corpo["search_after"] = cursor if isinstance(cursor, list) else [cursor]
+
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as cli:
+            r = await cli.post(SEARCH_URL + DATASET, headers=_headers(), json=corpo)
+    except Exception as exc:
+        return {"status": "error", "message": "Falha na Bright Data: %s" % str(exc)[:140]}
+    if r.status_code >= 400:
+        return {"status": "error",
+                "message": "Bright Data %s: %s" % (r.status_code, r.text[:200])}
+
+    import json as _json
+    try:
+        d = _json.loads(r.content)     # bytes: UTF-8 sem charset no cabeçalho
+    except Exception:
+        return {"status": "error", "message": "Resposta invalida da Bright Data."}
+
+    brutos = d.get("hits") or []       # é `hits`, NÃO `data` como no Filter
+    pessoas = [_pessoa(x) for x in brutos if isinstance(x, dict)]
+
+    novos = 0
+    try:
+        novos = linkedin_cache.salvar_perfis(pessoas, origem="api")
+    except Exception:
+        pass
+
+    exatos, parecidos = [], []
+    for p in pessoas:
+        (exatos if _casa_empresa(p, empresa) else parecidos).append(p)
+
+    proximo = None
+    if brutos and len(brutos) >= limite:
+        proximo = brutos[-1].get("timestamp")
+
+    return {
+        "status": "ok",
+        "fonte": "search",
+        "total": len(pessoas),
+        "total_no_dataset": d.get("total_hits"),
+        "pessoas": exatos + parecidos,
+        "exatos": len(exatos),
+        "parecidos": len(parecidos),
+        "novos_no_cache": novos,
+        "cursor": proximo,
+        "ms": d.get("took"),
+        "message": "" if pessoas else
+                   "Nenhum perfil com esse filtro. Tente outra grafia do nome da "
+                   "empresa (o dataset guarda como está no LinkedIn).",
+    }
+
+
 async def disparar(empresa: str, pais: str = "BR", cargo: str = "",
                    limite: int = 0, forcar: bool = False) -> dict[str, Any]:
     """Dispara o filtro. Retorna {status, protocolo} — NAO espera o resultado."""

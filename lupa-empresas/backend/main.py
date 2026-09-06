@@ -535,13 +535,31 @@ async def linkedin_empresa(payload: dict = Body(default={})):
 
 @app.post("/api/linkedin/funcionarios")
 async def linkedin_funcionarios(payload: dict = Body(default={})):
-    """Dispara a busca. CUSTA por registro entregue — o limite é sempre explícito."""
-    return await brightdata_pessoas.disparar(
-        empresa=str(payload.get("empresa") or ""),
-        pais=str(payload.get("pais") or "BR"),
-        cargo=str(payload.get("cargo") or ""),
-        limite=int(payload.get("limite") or 0),
-        forcar=bool(payload.get("forcar")),
+    """Busca funcionários. CUSTA por registro entregue ($2,50/1.000).
+
+    Usa o endpoint Search (síncrono, 2-3s). O Filter antigo era um job de 40s a
+    4min pelo MESMO preço — a troca é por velocidade e paginação, não por custo.
+    Antes de gastar, olha o cache: `forcar=true` pula essa checagem.
+    """
+    empresa = str(payload.get("empresa") or "")
+    pais = str(payload.get("pais") or "BR")
+    cargo = str(payload.get("cargo") or "")
+    limite = int(payload.get("limite") or 0)
+
+    if not payload.get("forcar") and not payload.get("cursor"):
+        try:
+            guardados = linkedin_cache.por_empresa(empresa, pais=pais, cargo=cargo,
+                                                   limite=limite or 50)
+        except Exception:
+            guardados = []
+        if guardados:
+            return {"status": "cache", "empresa": empresa, "total": len(guardados),
+                    "pessoas": guardados,
+                    "message": "Do que já foi comprado antes — não gastou nada agora."}
+
+    return await brightdata_pessoas.buscar_agora(
+        empresa=empresa, pais=pais, cargo=cargo, limite=limite,
+        cursor=payload.get("cursor"),
     )
 
 
