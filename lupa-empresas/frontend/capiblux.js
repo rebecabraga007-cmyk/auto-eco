@@ -4463,17 +4463,11 @@ document.getElementById('tok-criar')?.addEventListener('click', admTokenCriar);
 
 /* ============================================================
    Funcionários no LinkedIn (dataset da Bright Data)
-   Duas etapas porque o filtro de lá é um job de 1 a 4 min: dispara,
-   guarda o protocolo, e fica consultando até ficar pronto.
+   Usa o endpoint Search: responde em ~2s, entao NAO ha job nem polling.
+   Devolve `cursor` para paginar (o Search entrega no maximo 100 por chamada).
    ============================================================ */
 const liBtn = document.getElementById('li-btn');
 const liRes = document.getElementById('li-results');
-let liTimer = null;
-
-function liPara() {
-  if (liTimer) { clearInterval(liTimer); liTimer = null; }
-}
-
 function liAviso(html, cls) {
   liRes.innerHTML = `<div class="${cls || 'info-box'}">${html}</div>`;
 }
@@ -4523,11 +4517,11 @@ async function liBuscar(forcar) {
   const empresa = (document.getElementById('li-empresa').value || '').trim();
   if (!empresa) { liAviso('Escreva o nome da empresa.', 'warn-box'); return; }
 
-  liPara();
   liBtn.disabled = true;
   const cargo = (document.getElementById('li-cargo').value || '').trim();
   const pais = document.getElementById('li-pais').value;
   const limite = parseInt(document.getElementById('li-limite').value, 10) || 50;
+  const decisores = !!document.getElementById('li-decisores')?.checked;
 
   liAviso('Enviando a busca…');
   let disparo;
@@ -4535,7 +4529,7 @@ async function liBuscar(forcar) {
     disparo = await fetch(`${API}/api/linkedin/funcionarios`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ empresa, cargo, pais, limite, forcar: !!forcar }),
+      body: JSON.stringify({ empresa, cargo, pais, limite, decisores, forcar: !!forcar }),
     }).then(r => r.json());
   } catch (e) {
     liBtn.disabled = false;
@@ -4564,34 +4558,68 @@ async function liBuscar(forcar) {
     return;
   }
 
-  const t0 = Date.now();
-  const protocolo = disparo.protocolo;
-  const consultar = async () => {
-    const seg = Math.round((Date.now() - t0) / 1000);
-    let d;
+  // O Search responde na hora (~2s). Nao existe mais protocolo pra consultar:
+  // a versao anterior lia `disparo.protocolo` (undefined desde a troca) e ficava
+  // num laco de 10s consultando /funcionarios/undefined pra sempre.
+  liBtn.disabled = false;
+  liRenderResultado(disparo, empresa, { empresa, cargo, pais, limite, decisores });
+}
+
+// Estado da paginacao: o Search devolve no maximo 100 por chamada e um cursor.
+const liPag = { pessoas: [], cursor: null, params: null, total: 0 };
+
+function liRenderResultado(d, empresa, params) {
+  if (d.status !== 'ok') {
+    liAviso(esc(d.message || 'A busca falhou.'), 'warn-box');
+    return;
+  }
+  liPag.pessoas = d.pessoas || [];
+  liPag.cursor = d.cursor || null;
+  liPag.params = params;
+  liPag.total = d.total_no_dataset || 0;
+  liPintar(empresa, d);
+}
+
+function liPintar(empresa, d) {
+  const soDec = d && d.so_decisores;
+  const noDataset = liPag.total
+    ? ` · o dataset tem <b>${liPag.total.toLocaleString('pt-BR')}</b> `
+      + (soDec ? 'decisores' : 'brasileiros') + ' nessa empresa'
+    : '';
+  const ms = d && d.ms ? ` em ${(d.ms / 1000).toFixed(1)}s` : '';
+  const maisBtn = liPag.cursor
+    ? `<button id="li-mais" class="btn-secondary" style="margin-left:8px">Carregar mais
+       (~US$ ${((liPag.params.limite || 50) * 0.0025).toFixed(2)})</button>`
+    : '';
+  liRes.innerHTML = `
+    <div class="info-box" style="margin-bottom:10px">
+      <b>${liPag.pessoas.length}</b> perfis${ms}${noDataset}${maisBtn}
+    </div>` + liTabela({ ...d, pessoas: liPag.pessoas }, empresa);
+
+  document.getElementById('li-mais')?.addEventListener('click', async (ev) => {
+    const btn = ev.currentTarget;
+    btn.disabled = true;
+    btn.textContent = 'Buscando…';
     try {
-      d = await fetch(`${API}/api/linkedin/funcionarios/${encodeURIComponent(protocolo)}`
-        + `?empresa=${encodeURIComponent(empresa)}`).then(r => r.json());
-    } catch (e) { return; }   // rede oscilou: tenta de novo no próximo ciclo
-
-    if (d.status === 'building') {
-      liAviso(`Procurando “${esc(empresa)}” no banco do LinkedIn… <b>${seg}s</b>
-               <div class="pf-advanced-hint" style="margin-top:6px">Costuma levar de 1 a 4
-               minutos. Pode continuar usando as outras abas — quando terminar aparece aqui.</div>`);
-      return;
+      const p = await fetch(`${API}/api/linkedin/funcionarios`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...liPag.params, cursor: liPag.cursor }),
+      }).then(r => r.json());
+      if (p.status === 'ok') {
+        // Dedupe por URL: paginacao por cursor pode repetir na borda.
+        const vistos = new Set(liPag.pessoas.map(x => x.url));
+        liPag.pessoas = liPag.pessoas.concat((p.pessoas || []).filter(x => !vistos.has(x.url)));
+        liPag.cursor = p.cursor || null;
+        liPintar(empresa, p);
+      } else {
+        btn.disabled = false;
+        btn.textContent = 'Carregar mais';
+      }
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = 'Carregar mais';
     }
-    liPara();
-    liBtn.disabled = false;
-    if (d.status === 'ok') {
-      liRes.innerHTML = liTabela(d, empresa);
-    } else {
-      liAviso(esc(d.message || 'A busca falhou.'), 'warn-box');
-    }
-  };
-
-  await consultar();
-  if (!liBtn.disabled) return;         // já resolveu na primeira tentativa
-  liTimer = setInterval(consultar, 10000);
+  });
 }
 
 liBtn?.addEventListener('click', liBuscar);
@@ -4649,9 +4677,11 @@ async function liConferirEmpresa() {
       </div>
       <div class="pf-advanced-hint" style="margin-top:6px">Nome preenchido no campo de
         busca acima com a grafia do LinkedIn.</div>
-      ${d.aviso_tamanho ? `<div class="warn-box" style="margin-top:8px">${esc(d.aviso_tamanho)}</div>` : ''}
       ${destaque}
     </div>`;
+  // Confirmou a empresa? Já mostra os decisores — exigir um segundo clique pra
+  // ver o que a pessoa veio buscar era só atrito.
+  if (d.nome) liBuscar();
 }
 
 liUrlBtn?.addEventListener('click', liConferirEmpresa);

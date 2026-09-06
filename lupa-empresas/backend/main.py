@@ -560,6 +560,9 @@ async def linkedin_funcionarios(payload: dict = Body(default={})):
     return await brightdata_pessoas.buscar_agora(
         empresa=empresa, pais=pais, cargo=cargo, limite=limite,
         cursor=payload.get("cursor"),
+        # Padrão LIGADO: sem isso a busca traz uma fatia arbitrária da empresa.
+        # Medido na Magalu: 40 perfis sem filtro deram ZERO decisores.
+        decisores=payload.get("decisores", True) is not False,
     )
 
 

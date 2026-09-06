@@ -223,6 +223,9 @@
       <div id="li-sugestoes"></div>
       <div class="filter-row">
         <span class="filter-label">Filtros:</span>
+        <label class="toggle-wrap" title="Traz só quem tem diretor, head, presidente ou CEO no cargo. Sem isso a busca devolve uma fatia qualquer da empresa.">
+          <input id="li-decisores" type="checkbox" checked /><span>Só decisores</span>
+        </label>
         <input id="li-cargo" type="text" class="filter-select" placeholder="Cargo contém… (opcional)" style="width:210px" />
         <select id="li-pais" class="filter-select">
           <option value="BR" selected>Brasil</option>
@@ -249,7 +252,7 @@
       <div id="li-empresa-info" style="margin-top:10px"></div>
 
       <div class="pf-advanced-hint" style="margin-top:10px">
-        Cada perfil entregue é cobrado pela Bright Data — por isso o limite é sempre explícito. A busca de funcionários leva de <b>1 a 4 minutos</b> e <b>não termina em empresa muito grande</b>: pode deixar a aba aberta que ela atualiza sozinha.
+        A busca responde em <b>2 a 3 segundos</b>, inclusive em empresa grande. Cada perfil entregue é cobrado pela Bright Data (US$ 0,0025 cada) — por isso o limite é sempre explícito. O que vier fica guardado: buscar a mesma empresa de novo é instantâneo e de graça.
       </div>
     </div>
     <div id="li-results" class="results-area"></div>

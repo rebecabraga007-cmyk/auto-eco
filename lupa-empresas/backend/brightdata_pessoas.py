@@ -25,6 +25,7 @@ from typing import Any
 
 import httpx
 
+import cargos
 import linkedin_cache
 
 CHAVE = os.environ.get("BRIGHTDATA_API_KEY", "").strip()
@@ -228,9 +229,23 @@ async def sugerir_empresas(q: str, conferir: int = 0) -> dict[str, Any]:
 SEARCH_URL = "https://api.brightdata.com/datasets/search/"
 SEARCH_TETO = 100          # medido: `size` acima de 100 devolve 400 (a doc diz 1.000)
 
+# Termos que trazem quem decide. SÃO QUATRO PORQUE QUATRO É O TETO: medido que
+# um grupo `or` com 5 condições devolve "HTTP 500 Filter validation failed".
+# A escolha destes quatro veio de medir a cobertura na Magalu:
+#   2 termos (diretor, head) -> 19 decisores  |  3 -> 21  |  4 -> 22
+# "presidente" pega vice-presidente por ser `includes`; "diretor" pega diretora.
+TERMOS_DECISOR = ["diretor", "head", "presidente", "ceo"]
+
+
+def _grupo_decisores() -> dict[str, Any]:
+    return {"operator": "or",
+            "filters": [{"name": "position", "operator": "includes", "value": t}
+                        for t in TERMOS_DECISOR]}
+
 
 async def buscar_agora(empresa: str, pais: str = "BR", cargo: str = "",
-                       limite: int = 0, cursor: Any = None) -> dict[str, Any]:
+                       limite: int = 0, cursor: Any = None,
+                       decisores: bool = True) -> dict[str, Any]:
     """Busca SÍNCRONA pelo endpoint Search. Substitui o par disparar/consultar.
 
     Por que trocar: o Filter é um job de 40s a 4min com polling; o Search devolve
@@ -258,6 +273,10 @@ async def buscar_agora(empresa: str, pais: str = "BR", cargo: str = "",
                           "value": empresa})
     if _norm(cargo):
         condicoes.append({"name": "position", "operator": "includes", "value": _norm(cargo)})
+    elif decisores:
+        # Só entra se NÃO houver cargo digitado: os dois juntos viriam como AND e
+        # "gerente" + decisores devolveria vazio, que pareceria falha de busca.
+        condicoes.append(_grupo_decisores())
     if not condicoes:
         return {"status": "error", "message": "Informe ao menos empresa ou cargo."}
 
@@ -305,6 +324,7 @@ async def buscar_agora(empresa: str, pais: str = "BR", cargo: str = "",
     return {
         "status": "ok",
         "fonte": "search",
+        "so_decisores": bool(decisores and not _norm(cargo)),
         "total": len(pessoas),
         "total_no_dataset": d.get("total_hits"),
         "pessoas": exatos + parecidos,
@@ -402,7 +422,12 @@ def _pessoa(rec: dict[str, Any]) -> dict[str, Any]:
     # `default_avatar` marca a foto generica do LinkedIn (aquele boneco cinza).
     # Sem essa distincao a tabela enche de bonecos iguais e parece defeito.
     generica = bool(rec.get("default_avatar"))
+    cargo = rec.get("position") or ""
     return {
+        # Classifica aqui tambem (nao so na gravacao do cache): a tela precisa
+        # saber quem e decisor no MESMO retorno da busca, nao na proxima.
+        "departamento": cargos.departamento(cargo),
+        "senioridade": cargos.senioridade(cargo),
         "nome": rec.get("name") or "",
         "cargo": rec.get("position") or "",
         "empresa": rec.get("current_company_name") or emp.get("name") or "",
