@@ -23,6 +23,8 @@ import sqlite3
 import time
 from typing import Any
 
+import cargos
+
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = (os.environ.get("LINKEDIN_CACHE_PATH")
            or os.path.join(os.environ.get("CNPJ_DB_DIR", _AQUI), "linkedin_cache.db"))
@@ -41,7 +43,11 @@ CREATE TABLE IF NOT EXISTS perfis (
   sobre        TEXT,
   seguidores   INTEGER,
   origem       TEXT,      -- 'api' | 'snapshot'
-  visto_em     INTEGER
+  visto_em     INTEGER,
+  -- Classificados na GRAVACAO, nao na consulta: filtrar por departamento em
+  -- 100 mil linhas rodando regex a cada busca seria lento sem necessidade.
+  departamento TEXT,
+  senioridade  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_lc_empresa ON perfis(empresa_norm);
 CREATE INDEX IF NOT EXISTS idx_lc_pais    ON perfis(pais);
@@ -81,9 +87,21 @@ def _con():
 
 
 def init() -> None:
+    """Cria/migra o banco. A ORDEM importa: índice de coluna nova só depois do
+    ALTER TABLE, senão o script inteiro falha em banco que já existia."""
     os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
     con = _con()
-    con.executescript(_DDL)
+    con.executescript(_DDL)                     # 1. tabelas e índices antigos
+
+    # 2. colunas novas — CREATE TABLE IF NOT EXISTS não altera tabela existente
+    tem = {r[1] for r in con.execute("PRAGMA table_info(perfis)")}
+    for coluna in ("departamento", "senioridade"):
+        if coluna not in tem:
+            con.execute("ALTER TABLE perfis ADD COLUMN %s TEXT" % coluna)
+
+    # 3. só agora os índices que dependem delas
+    con.execute("CREATE INDEX IF NOT EXISTS idx_lc_depto  ON perfis(departamento)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_lc_senior ON perfis(senioridade)")
     con.commit()
     con.close()
 
@@ -113,18 +131,22 @@ def salvar_perfis(pessoas: list[dict[str, Any]], origem: str = "api") -> int:
             novos += 1
         con.execute("""
             INSERT INTO perfis (url,nome,cargo,empresa,empresa_norm,cidade,pais,
-                                foto,formacao,sobre,seguidores,origem,visto_em)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                foto,formacao,sobre,seguidores,origem,visto_em,
+                                departamento,senioridade)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(url) DO UPDATE SET
               nome=excluded.nome, cargo=excluded.cargo, empresa=excluded.empresa,
               empresa_norm=excluded.empresa_norm, cidade=excluded.cidade,
               pais=excluded.pais, foto=excluded.foto, formacao=excluded.formacao,
               sobre=excluded.sobre, seguidores=excluded.seguidores,
-              visto_em=excluded.visto_em
+              visto_em=excluded.visto_em, departamento=excluded.departamento,
+              senioridade=excluded.senioridade
         """, (url, p.get("nome"), p.get("cargo"), p.get("empresa"),
               norm(p.get("empresa") or ""), p.get("cidade"), p.get("pais"),
               p.get("foto"), p.get("formacao"), p.get("sobre"),
-              p.get("seguidores"), origem, agora))
+              p.get("seguidores"), origem, agora,
+              cargos.departamento(p.get("cargo") or ""),
+              cargos.senioridade(p.get("cargo") or "")))
     con.commit()
     con.close()
     return novos
@@ -153,7 +175,9 @@ def por_empresa(empresa: str, pais: str = "", cargo: str = "",
     return [dict(r) for r in linhas]
 
 
-def procurar(q: str = "", pais: str = "", limite: int = 100) -> list[dict[str, Any]]:
+def procurar(q: str = "", pais: str = "", limite: int = 100,
+             departamento: str = "", senioridade: str = "",
+             empresa: str = "") -> list[dict[str, Any]]:
     """Busca livre no que já foi pago — por nome, empresa ou cargo."""
     con = _con()
     termo = "%" + (q or "").strip().lower() + "%"
@@ -165,11 +189,38 @@ def procurar(q: str = "", pais: str = "", limite: int = 100) -> list[dict[str, A
     if pais:
         sql.append("AND pais = ?")
         args.append(pais.upper()[:2])
+    if departamento:
+        sql.append("AND departamento = ?")
+        args.append(departamento)
+    if senioridade:
+        sql.append("AND senioridade = ?")
+        args.append(senioridade)
+    if empresa:
+        sql.append("AND empresa_norm LIKE ?")
+        args.append("%" + norm(empresa) + "%")
     sql.append("ORDER BY visto_em DESC LIMIT ?")
     args.append(int(limite))
     linhas = con.execute(" ".join(sql), args).fetchall()
     con.close()
     return [dict(r) for r in linhas]
+
+
+def contagem_por_classificacao() -> dict[str, dict[str, int]]:
+    """Quantos perfis em cada departamento e senioridade.
+
+    A tela usa isto para mostrar o número ao lado de cada opção — oferecer um
+    filtro que não tem ninguém atrás faz a pessoa clicar e achar que quebrou.
+    """
+    con = _con()
+    saida: dict[str, dict[str, int]] = {}
+    for campo in ("departamento", "senioridade"):
+        saida[campo] = {
+            (k or "(sem)"): n
+            for k, n in con.execute(
+                "SELECT %s, COUNT(*) FROM perfis GROUP BY 1" % campo)
+        }
+    con.close()
+    return saida
 
 
 def empresas_parecidas(q: str, limite: int = 15) -> list[dict[str, Any]]:

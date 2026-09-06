@@ -48,6 +48,7 @@ import mistral
 import workapi
 import brightdata_pessoas
 import linkedin_cache
+import cargos
 
 # Base local de CPF (JBR_PF) — modulo compartilhado em ../../jbr_base.
 _JBR = os.path.join(
@@ -457,13 +458,40 @@ async def linkedin_status():
 
 
 @app.get("/api/linkedin/cache")
-async def linkedin_cache_busca(q: str = "", pais: str = "", limite: int = 100):
-    """Busca livre nos perfis JÁ PAGOS. Não gasta nada e responde na hora."""
+async def linkedin_cache_busca(q: str = "", pais: str = "", limite: int = 100,
+                               departamento: str = "", senioridade: str = "",
+                               empresa: str = ""):
+    """Busca nos perfis JÁ PAGOS. Não gasta nada e responde na hora.
+
+    Aceita o mesmo vocabulário de filtro da Datastone (departamento e
+    senioridade), derivado do texto do cargo em `cargos.py`.
+    """
     try:
-        pessoas = linkedin_cache.procurar(q=q, pais=pais, limite=limite)
+        pessoas = linkedin_cache.procurar(
+            q=q, pais=pais, limite=limite, departamento=departamento,
+            senioridade=senioridade, empresa=empresa)
     except Exception as exc:
         return {"status": "error", "message": str(exc)[:120], "pessoas": []}
     return {"status": "ok", "total": len(pessoas), "pessoas": pessoas}
+
+
+@app.get("/api/linkedin/filtro-opcoes")
+async def linkedin_filtro_opcoes():
+    """Vocabulário dos filtros — o mesmo da Datastone (/b2b/filter-options).
+
+    Devolve também quantos perfis já temos em cada balde: filtro que promete
+    uma opção sem ninguém atrás é pior que não oferecer a opção.
+    """
+    try:
+        contagem = linkedin_cache.contagem_por_classificacao()
+    except Exception:
+        contagem = {"departamento": {}, "senioridade": {}}
+    return {
+        "status": "ok",
+        "departamentos": cargos.DEPARTAMENTOS,
+        "senioridades": cargos.SENIORIDADES,
+        "contagem": contagem,
+    }
 
 
 @app.get("/api/linkedin/empresas")
