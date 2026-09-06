@@ -33,6 +33,7 @@
     <button class="nav-btn" data-tab="empresa">Uma empresa<span class="nav-btn-sub">por CNPJ ou nome</span></button>
     <button class="nav-btn" data-tab="empassertiva">Empresa Assertiva<span class="nav-btn-sub">cadastro + quem decide</span></button>
     <button class="nav-btn" data-tab="vinculos">Vínculo empregatício<span class="nav-btn-sub">por empresa ou por pessoa</span></button>
+    <button class="nav-btn" data-tab="linkedin">Funcionários no LinkedIn<span class="nav-btn-sub">quem trabalha numa empresa</span></button>
     <button class="nav-btn" data-tab="pessoa">Uma pessoa<span class="nav-btn-sub">por CPF, com dados completos</span></button>
     <button class="nav-btn" data-tab="nome">Uma pessoa pelo nome<span class="nav-btn-sub">quando não sei o CPF</span></button>
     <button class="nav-btn" data-tab="telefone">De quem é este telefone<span class="nav-btn-sub">descobrir o dono do número</span></button>
@@ -203,6 +204,43 @@
   </section>
 
   <!-- ══ MÓDULO PESSOA CPF ══ -->
+  <section id="tab-linkedin" class="tab-section">
+    <div class="module-header">
+      <div class="module-overline">Achar gente · pelo LinkedIn</div>
+      <h2 class="module-title">Quem trabalha numa empresa</h2>
+      <p class="module-sub">Pergunto ao banco de perfis do LinkedIn (Bright Data) quem tem essa empresa como emprego atual. Não é uma varredura do site — é uma consulta a uma base já pronta, então não trava nem é bloqueada.</p>
+    </div>
+    <div class="search-panel">
+      <div class="search-row">
+        <div class="input-wrap">
+          <span class="input-icon">🏢</span>
+          <input id="li-empresa" type="text" placeholder="Nome da empresa como aparece no LinkedIn…" autocomplete="off" />
+        </div>
+        <button id="li-btn" class="btn-primary">Buscar</button>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Filtros:</span>
+        <input id="li-cargo" type="text" class="filter-select" placeholder="Cargo contém… (opcional)" style="width:210px" />
+        <select id="li-pais" class="filter-select">
+          <option value="BR" selected>Brasil</option>
+          <option value="">Qualquer país</option>
+          <option value="PT">Portugal</option>
+          <option value="US">Estados Unidos</option>
+        </select>
+        <select id="li-limite" class="filter-select">
+          <option value="25">Máx 25 perfis</option>
+          <option value="50" selected>Máx 50 perfis</option>
+          <option value="100">Máx 100 perfis</option>
+          <option value="250">Máx 250 perfis</option>
+        </select>
+      </div>
+      <div class="pf-advanced-hint" style="margin-top:10px">
+        Cada perfil entregue é cobrado pela Bright Data — por isso o limite é sempre explícito. A consulta leva de <b>1 a 4 minutos</b>: pode deixar a aba aberta que ela atualiza sozinha.
+      </div>
+    </div>
+    <div id="li-results" class="results-area"></div>
+  </section>
+
   <section id="tab-pessoa" class="tab-section">
     <div class="module-header">
       <div class="module-overline">Achar alguém · pessoa</div>

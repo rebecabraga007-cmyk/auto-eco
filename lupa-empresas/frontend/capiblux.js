@@ -4426,3 +4426,115 @@ async function admTokenCriar() {
 }
 
 document.getElementById('tok-criar')?.addEventListener('click', admTokenCriar);
+
+/* ============================================================
+   Funcionários no LinkedIn (dataset da Bright Data)
+   Duas etapas porque o filtro de lá é um job de 1 a 4 min: dispara,
+   guarda o protocolo, e fica consultando até ficar pronto.
+   ============================================================ */
+const liBtn = document.getElementById('li-btn');
+const liRes = document.getElementById('li-results');
+let liTimer = null;
+
+function liPara() {
+  if (liTimer) { clearInterval(liTimer); liTimer = null; }
+}
+
+function liAviso(html, cls) {
+  liRes.innerHTML = `<div class="${cls || 'info-box'}">${html}</div>`;
+}
+
+function liTabela(d, empresa) {
+  const pessoas = d.pessoas || [];
+  if (!pessoas.length) {
+    return `<div class="info-box">${esc(d.message || 'Nenhum perfil encontrado.')}</div>`;
+  }
+  // O filtro da Bright Data casa por pedaço do nome: buscar "Movida" traz
+  // "Movidata" junto. O backend separa; aqui a gente avisa em vez de esconder.
+  const nota = d.parecidos
+    ? `<div class="info-box" style="margin-bottom:10px">Dos ${d.total} perfis,
+       <b>${d.exatos}</b> são exatamente “${esc(empresa)}” e <b>${d.parecidos}</b> são de
+       empresas com nome parecido (aparecem no fim da lista, em cinza).</div>`
+    : '';
+  return nota + `
+  <table class="data-table">
+    <thead><tr><th>Nome</th><th>Cargo</th><th>Empresa</th><th>Cidade</th><th>Perfil</th></tr></thead>
+    <tbody>${pessoas.map((p, i) => {
+      const parecido = i >= (d.exatos || 0);
+      return `
+      <tr${parecido ? ' style="opacity:.6"' : ''}>
+        <td><b>${esc(p.nome || '')}</b></td>
+        <td>${esc(p.cargo || '')}</td>
+        <td>${esc(p.empresa || '')}</td>
+        <td>${esc(p.cidade || '')}</td>
+        <td>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">abrir</a>` : ''}</td>
+      </tr>`;
+    }).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function liBuscar() {
+  const empresa = (document.getElementById('li-empresa').value || '').trim();
+  if (!empresa) { liAviso('Escreva o nome da empresa.', 'warn-box'); return; }
+
+  liPara();
+  liBtn.disabled = true;
+  const cargo = (document.getElementById('li-cargo').value || '').trim();
+  const pais = document.getElementById('li-pais').value;
+  const limite = parseInt(document.getElementById('li-limite').value, 10) || 50;
+
+  liAviso('Enviando a busca…');
+  let disparo;
+  try {
+    disparo = await fetch(`${API}/api/linkedin/funcionarios`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ empresa, cargo, pais, limite }),
+    }).then(r => r.json());
+  } catch (e) {
+    liBtn.disabled = false;
+    liAviso('Não consegui falar com o servidor.', 'warn-box');
+    return;
+  }
+
+  if (disparo.status !== 'ok') {
+    liBtn.disabled = false;
+    liAviso(esc(disparo.message || 'Não foi possível iniciar a busca.'), 'warn-box');
+    return;
+  }
+
+  const t0 = Date.now();
+  const protocolo = disparo.protocolo;
+  const consultar = async () => {
+    const seg = Math.round((Date.now() - t0) / 1000);
+    let d;
+    try {
+      d = await fetch(`${API}/api/linkedin/funcionarios/${encodeURIComponent(protocolo)}`
+        + `?empresa=${encodeURIComponent(empresa)}`).then(r => r.json());
+    } catch (e) { return; }   // rede oscilou: tenta de novo no próximo ciclo
+
+    if (d.status === 'building') {
+      liAviso(`Procurando “${esc(empresa)}” no banco do LinkedIn… <b>${seg}s</b>
+               <div class="pf-advanced-hint" style="margin-top:6px">Costuma levar de 1 a 4
+               minutos. Pode continuar usando as outras abas — quando terminar aparece aqui.</div>`);
+      return;
+    }
+    liPara();
+    liBtn.disabled = false;
+    if (d.status === 'ok') {
+      liRes.innerHTML = liTabela(d, empresa);
+    } else {
+      liAviso(esc(d.message || 'A busca falhou.'), 'warn-box');
+    }
+  };
+
+  await consultar();
+  if (!liBtn.disabled) return;         // já resolveu na primeira tentativa
+  liTimer = setInterval(consultar, 10000);
+}
+
+liBtn?.addEventListener('click', liBuscar);
+document.getElementById('li-empresa')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') liBuscar();
+});

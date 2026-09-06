@@ -46,6 +46,7 @@ import serasa
 import dossie
 import mistral
 import workapi
+import brightdata_pessoas
 
 # Base local de CPF (JBR_PF) — modulo compartilhado em ../../jbr_base.
 _JBR = os.path.join(
@@ -430,6 +431,35 @@ async def dossie_pdf(request: Request, tipo: str, doc: str, insight: bool = Fals
         io.BytesIO(pdf_bytes), media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{nome_arquivo}"'},
     )
+
+
+# ---- Funcionários por empresa no dataset do LinkedIn (Bright Data) ----
+# Duas rotas porque o filtro da Bright Data é um JOB de 1 a 4 minutos: segurar a
+# requisição esperando daria timeout no proxy. Dispara → guarda o protocolo → consulta.
+
+@app.get("/api/linkedin/status")
+async def linkedin_status():
+    """Diz se a busca por funcionários está configurada (sem expor a chave)."""
+    return {"enabled": brightdata_pessoas.enabled(),
+            "limite_padrao": brightdata_pessoas.LIMITE_PADRAO,
+            "limite_max": brightdata_pessoas.LIMITE_MAX}
+
+
+@app.post("/api/linkedin/funcionarios")
+async def linkedin_funcionarios(payload: dict = Body(default={})):
+    """Dispara a busca. CUSTA por registro entregue — o limite é sempre explícito."""
+    return await brightdata_pessoas.disparar(
+        empresa=str(payload.get("empresa") or ""),
+        pais=str(payload.get("pais") or "BR"),
+        cargo=str(payload.get("cargo") or ""),
+        limite=int(payload.get("limite") or 0),
+    )
+
+
+@app.get("/api/linkedin/funcionarios/{protocolo}")
+async def linkedin_funcionarios_resultado(protocolo: str, empresa: str = ""):
+    """Consulta o protocolo. status: building (tente de novo) | ok | error."""
+    return await brightdata_pessoas.consultar(protocolo, empresa=empresa)
 
 
 @app.get("/api/company/{cnpj}/employees")
