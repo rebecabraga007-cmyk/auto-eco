@@ -126,6 +126,11 @@ _CONSULTA_PREFIXES = (
     "/api/person", "/api/phone", "/api/assertiva", "/api/company",
     "/api/dossie", "/api/companies/search", "/api/prospeccao/pessoas",
     "/api/enrich/upload", "/api/enrich/run", "/api/enrich/export",
+    # O funil é o endpoint MAIS caro do app: um lote pode disparar dezenas de
+    # consultas pagas num clique. Precisa ser nomeado inteiro, e não como
+    # "/api/funil", porque `/api/funil/empresa` só lê a base da Receita local
+    # e não pode queimar cota de ninguém.
+    "/api/funil/resolver",
 )
 
 # ... MENOS estas, que só leem base LOCAL (JBR/RFB) e não custam nada a ninguém.

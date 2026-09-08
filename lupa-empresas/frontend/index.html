@@ -283,10 +283,66 @@
         </select>
       </div>
       <div class="filter-row">
-        <span class="filter-label">Onde:</span>
-        <input id="b2b-empresa" type="text" class="filter-select" placeholder="Empresa contém…" style="width:210px" />
-        <input id="b2b-cidade" type="text" class="filter-select" placeholder="Cidade contém…" style="width:180px" />
+        <span class="filter-label">Cargo:</span>
+        <input id="b2b-cargo" type="text" class="filter-select" placeholder="Pesquise um cargo — vários separados por vírgula" style="width:330px" />
       </div>
+      <div class="filter-row">
+        <span class="filter-label">Nome:</span>
+        <input id="b2b-nome" type="text" class="filter-select" placeholder="Digite um nome" style="width:170px" />
+        <input id="b2b-sobrenome" type="text" class="filter-select" placeholder="Digite um sobrenome" style="width:170px" />
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Onde:</span>
+        <input id="b2b-empresa" type="text" class="filter-select" placeholder="Empresa — várias separadas por vírgula" style="width:280px" />
+        <select id="b2b-uf" class="filter-select" multiple size="1" style="width:130px" title="Selecione uma ou mais UF"></select>
+        <input id="b2b-cidade" type="text" class="filter-select" placeholder="Cidade contém…" style="width:150px" />
+      </div>
+
+      <!-- Painel da unidade. Aparece sozinho quando a empresa digitada é uma
+           rede: numa multinacional a cidade não é só um filtro, é a ESCOLHA DA
+           FILIAL — sem ela a confirmação cai de 46% para 2,4% e cada pessoa
+           custa até R$ 5,71. Fica aqui, colado no campo de empresa, porque é
+           onde a decisão é tomada. -->
+      <div id="b2b-unidade" hidden style="margin-top:8px"></div>
+
+      <!-- Filtros que a Datastone tem e que aqui dependem de dado incompleto:
+           o rótulo diz a cobertura real em vez de fingir que cobre tudo. -->
+      <button type="button" id="b2b-mais-btn" class="btn-secondary" style="margin-top:6px">
+        + Mais filtros
+      </button>
+      <div id="b2b-mais" hidden style="margin-top:6px">
+        <div class="filter-row">
+          <span class="filter-label">Palavras-chave:</span>
+          <input id="b2b-palavras" type="text" class="filter-select" placeholder="Pesquise especialidades — ex.: SAP, exportação, tributário" style="width:340px" />
+        </div>
+        <div class="filter-row">
+          <span class="filter-label">Tempo na empresa:</span>
+          <select id="b2b-tempo" class="filter-select">
+            <option value="">Selecione um período (todos)</option>
+            <option value="ate1">Até 1 ano</option>
+            <option value="1a3">1 a 3 anos</option>
+            <option value="3a5">3 a 5 anos</option>
+            <option value="5a10">5 a 10 anos</option>
+            <option value="mais10">Mais de 10 anos</option>
+          </select>
+          <span id="b2b-tempo-nota" class="pf-advanced-hint" style="display:inline"></span>
+        </div>
+        <div class="filter-row">
+          <span class="filter-label">Dados disponíveis:</span>
+          <label class="pf-field" style="display:inline-flex;align-items:center;gap:6px">
+            <input id="b2b-foto" type="checkbox" /> Só com foto real
+          </label>
+          <label class="pf-field" style="display:inline-flex;align-items:center;gap:6px">
+            Seguidores mín.
+            <input id="b2b-seguidores" type="number" class="filter-num" min="0" step="100" placeholder="0" style="width:90px" />
+          </label>
+        </div>
+        <div class="filter-row">
+          <span class="filter-label">Perfil direto:</span>
+          <input id="b2b-url" type="text" class="filter-select" placeholder="Insira a URL do perfil LinkedIn" style="width:340px" />
+        </div>
+      </div>
+
       <div id="b2b-resumo" class="pf-advanced-hint" style="margin-top:10px"></div>
       <div id="b2b-ampliar" style="margin-top:10px"></div>
     </div>
@@ -859,6 +915,25 @@
         <button id="adm-total-atualizar" class="btn-secondary">🔄 Atualizar</button>
       </div>
       <div id="adm-total-resultado"></div>
+    </div>
+
+    <div class="search-panel">
+      <h3 style="margin:0 0 6px;font-size:1.05rem">Custo Bright Data (LinkedIn)</h3>
+      <p class="pf-advanced-hint" style="display:block;margin:0 0 12px">A fatura da Bright Data
+        vem por mês e não diz quem pediu o quê — então cada chamada é registrada aqui na hora,
+        com usuário. Cobra <strong>US$ 2,50 por 1.000 perfis entregues</strong> (US$ 0,0025 cada);
+        a resposta da API devolve <code>cost: 0</code> no corpo, que é enganoso — o valor abaixo
+        é calculado sobre os registros entregues, conferido contra a fatura.
+        A assinatura mensal do snapshot (US$ 31,82/mês) <strong>não</strong> aparece aqui: é cobrança fixa, fora da API.</p>
+      <div class="filter-row" style="margin-top:0">
+        <span class="filter-label">Período:</span>
+        <button type="button" class="pf-cargo bd-per" data-dias="7">7 dias</button>
+        <button type="button" class="pf-cargo bd-per active" data-dias="30">30 dias</button>
+        <button type="button" class="pf-cargo bd-per" data-dias="90">90 dias</button>
+        <button type="button" class="pf-cargo bd-per" data-dias="0">Tudo</button>
+        <button id="adm-bd-atualizar" class="btn-secondary">🔄 Atualizar</button>
+      </div>
+      <div id="adm-bd-resultado"></div>
     </div>
 
     <div class="search-panel">

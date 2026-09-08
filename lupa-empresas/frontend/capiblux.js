@@ -4284,6 +4284,107 @@ function admTotalHtml(d) {
   }));
 })();
 
+// ── ADMIN · custo da Bright Data (LinkedIn) ─────────────────────────
+// Por que existe: a fatura deles vem por mês, num total só, e não diz quem
+// pediu o quê. Sem registrar na hora da chamada não há como saber depois se o
+// mês foi de busca útil ou de teste. E a resposta da API devolve `cost: 0` no
+// corpo, o que já me levou a concluir errado duas vezes — o valor aqui é
+// calculado sobre os registros entregues (US$ 2,50/1.000), conferido na fatura.
+const usd = n => 'US$ ' + (Number(n) || 0).toFixed(4);
+
+function admBdHtml(d) {
+  const cache = d.cache || {};
+  const economia = Number(d.economia_usd) || 0;
+  const gasto = Number(d.gasto_usd) || 0;
+  return `
+  <div class="info-box" style="margin:10px 0">
+    <div style="display:flex;gap:26px;flex-wrap:wrap">
+      <div><div class="pf-advanced-hint">Gasto no período</div>
+           <div style="font-size:1.5rem;font-weight:700">${usd(gasto)}</div></div>
+      <div><div class="pf-advanced-hint">Perfis cobrados</div>
+           <div style="font-size:1.5rem;font-weight:700">${(d.registros || 0).toLocaleString('pt-BR')}</div></div>
+      <div><div class="pf-advanced-hint">Chamadas</div>
+           <div style="font-size:1.5rem;font-weight:700">${(d.chamadas || 0).toLocaleString('pt-BR')}</div></div>
+      <div><div class="pf-advanced-hint">Economizado pelo cache</div>
+           <div style="font-size:1.5rem;font-weight:700;color:#1a7f37">${usd(economia)}</div></div>
+      <div><div class="pf-advanced-hint">Perfis na base</div>
+           <div style="font-size:1.5rem;font-weight:700">${(cache.perfis_br || 0).toLocaleString('pt-BR')}</div></div>
+    </div>
+    ${!d.chamadas ? `<div class="pf-advanced-hint" style="margin-top:8px">
+      Nenhuma chamada registrada neste período. O registro começou a valer com
+      esta versão — gasto anterior a ela só aparece na fatura da Bright Data.
+    </div>` : ''}
+  </div>
+
+  ${(d.por_tipo || []).length ? `
+  <h4 style="margin:14px 0 6px;font-size:.95rem">Por tipo de chamada</h4>
+  <table class="data-table"><thead><tr><th>Tipo</th><th>Chamadas</th>
+    <th>Registros</th><th>Gasto</th><th>Economia</th></tr></thead>
+    <tbody>${d.por_tipo.map(t => `<tr>
+      <td>${esc(t.tipo === 'search' ? 'Busca de perfis (Search)'
+              : t.tipo === 'scrape_empresa' ? 'Página de empresa (Scrape)'
+              : t.tipo === 'cache' ? 'Servido pela base (grátis)'
+              : t.tipo === 'snapshot' ? 'Snapshot mensal' : t.tipo || '—')}</td>
+      <td>${t.chamadas}</td><td>${(t.registros || 0).toLocaleString('pt-BR')}</td>
+      <td>${usd(t.gasto_usd)}</td>
+      <td style="color:#1a7f37">${t.economia_usd ? usd(t.economia_usd) : '—'}</td>
+    </tr>`).join('')}</tbody></table>` : ''}
+
+  ${(d.por_usuario || []).length ? `
+  <h4 style="margin:14px 0 6px;font-size:.95rem">Quem gastou</h4>
+  <table class="data-table"><thead><tr><th>Usuário</th><th>Chamadas</th>
+    <th>Registros</th><th>Gasto</th></tr></thead>
+    <tbody>${d.por_usuario.map(u => `<tr><td>${esc(u.usuario)}</td>
+      <td>${u.chamadas}</td><td>${(u.registros || 0).toLocaleString('pt-BR')}</td>
+      <td><b>${usd(u.gasto_usd)}</b></td></tr>`).join('')}</tbody></table>` : ''}
+
+  ${(d.ultimos || []).length ? `
+  <h4 style="margin:14px 0 6px;font-size:.95rem">Últimas chamadas</h4>
+  <table class="data-table"><thead><tr><th>Quando</th><th>Usuário</th><th>Tipo</th>
+    <th>O que foi pedido</th><th>Registros</th><th>Custo</th></tr></thead>
+    <tbody>${d.ultimos.map(x => `<tr>
+      <td>${new Date((x.quando || 0) * 1000).toLocaleString('pt-BR')}</td>
+      <td>${esc(x.usuario || '—')}</td><td>${esc(x.tipo || '')}</td>
+      <td>${esc(x.detalhe || '')}</td><td>${x.registros || 0}</td>
+      <td>${x.gasto_usd ? usd(x.gasto_usd) : '—'}</td>
+    </tr>`).join('')}</tbody></table>` : ''}`;
+}
+
+async function admCustoBd(dias) {
+  const box = document.getElementById('adm-bd-resultado');
+  if (!box) return;
+  box.innerHTML = '<p class="msg">Carregando…</p>';
+  const par = new URLSearchParams();
+  if (dias) {
+    const de = new Date(Date.now() - dias * 86400000);
+    par.set('desde', de.toISOString().slice(0, 10));
+  }
+  try {
+    const d = await fetch(`${API}/api/linkedin/custos?${par}`).then(r => r.json());
+    if (d.status !== 'ok') {
+      box.innerHTML = `<p class="msg error">${esc(d.detail || d.message || 'Falha.')}</p>`;
+      return;
+    }
+    box.innerHTML = admBdHtml(d);
+  } catch (e) {
+    box.innerHTML = '<p class="msg error">Não consegui falar com o servidor.</p>';
+  }
+}
+
+(function initAdmBd() {
+  const btn = document.getElementById('adm-bd-atualizar');
+  if (!btn) return;
+  let dias = 30;
+  btn.addEventListener('click', () => admCustoBd(dias));
+  document.querySelectorAll('.bd-per').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('.bd-per').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    dias = parseInt(b.dataset.dias, 10);   // 0 = tudo
+    admCustoBd(dias);
+  }));
+  document.querySelector('[data-tab="admin"]')?.addEventListener('click', () => admCustoBd(30));
+})();
+
 // ── ADMIN · tabela de preço por tipo de consulta ────────────────────
 // A Assertiva não devolve preço em lugar nenhum da API; só o contrato diz.
 // Enquanto não preenchido, tudo é calculado pelo padrão (0,119) e o total do
@@ -4835,14 +4936,19 @@ function b2bTabela(pessoas) {
              onerror="this.replaceWith(Object.assign(document.createElement('div'),
                {className:'li-ini',textContent:'${esc(iniciais)}'}))" />`
         : `<div class="li-ini">${esc(iniciais)}</div>`;
+      // `exata: false` = a empresa só bate por pedaço de palavra ("Localiza"
+      // pegando "Maxlocaliza"). Fica na lista, mas em cinza e marcada, senão a
+      // pessoa liga pra empresa errada achando que é a que pediu.
+      const parecido = p.exata === false;
       return `
-      <tr>
+      <tr${parecido ? ' style="opacity:.55"' : ''}>
         <td>${foto}</td>
         <td><b>${esc(p.nome || '')}</b></td>
         <td>${esc(p.cargo || '')}</td>
         <td>${esc(p.departamento || '—')}</td>
         <td>${esc(p.senioridade || '—')}</td>
-        <td>${esc(p.empresa || '')}</td>
+        <td>${esc(p.empresa || '')}${parecido
+          ? ' <span class="pf-advanced-hint">(nome parecido)</span>' : ''}</td>
         <td>${esc((p.cidade || '').replace(/, Brazil$/, ''))}</td>
         <td>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">perfil</a>` : ''}</td>
       </tr>`;
@@ -4851,36 +4957,202 @@ function b2bTabela(pessoas) {
   </table>`;
 }
 
+const _v = id => (document.getElementById(id)?.value || '').trim();
+
+/* Lê a tela inteira de filtros de uma vez. Existe separado porque os MESMOS
+   filtros vão para dois lugares: a base local (de graça) e a Bright Data
+   (cobrando). Montar duas vezes garantiria divergência entre o que a tela
+   mostra e o que a busca paga procura. */
+function b2bFiltrosAtuais() {
+  const ufs = Array.from(document.getElementById('b2b-uf')?.selectedOptions || [])
+    .map(o => o.value).filter(Boolean);
+  return {
+    q: _v('b2b-q'),
+    departamento: _v('b2b-depto'),
+    senioridade: _v('b2b-senior'),
+    empresa: _v('b2b-empresa'),
+    cargo: _v('b2b-cargo'),
+    nome: _v('b2b-nome'),
+    sobrenome: _v('b2b-sobrenome'),
+    cidade: _v('b2b-cidade'),
+    palavras: _v('b2b-palavras'),
+    tempo_empresa: _v('b2b-tempo'),
+    linkedin_url: _v('b2b-url'),
+    min_seguidores: _v('b2b-seguidores'),
+    so_com_foto: document.getElementById('b2b-foto')?.checked ? 1 : 0,
+    ufs: ufs.join(','),
+    limite: _v('b2b-limite') || '100',
+    pais: 'BR',
+  };
+}
+
+document.getElementById('b2b-mais-btn')?.addEventListener('click', (ev) => {
+  const box = document.getElementById('b2b-mais');
+  box.hidden = !box.hidden;
+  ev.currentTarget.textContent = box.hidden ? '+ Mais filtros' : '− Menos filtros';
+});
+
+/* Popula o select de UF com as UFs que TÊM gente na base. Oferecer as 27 fixas
+   faria o filtro devolver zero em UF que nunca foi comprada, o que parece bug. */
+let _b2bUfsCarregadas = false;
+async function b2bCarregarUfs() {
+  if (_b2bUfsCarregadas) return;
+  const sel = document.getElementById('b2b-uf');
+  if (!sel) return;
+  try {
+    const d = await fetch(`${API}/api/linkedin/ufs`).then(r => r.json());
+    const comUf = (d.ufs || []).filter(u => u.uf);
+    const semUf = (d.ufs || []).find(u => !u.uf);
+    sel.innerHTML = comUf.map(u =>
+      `<option value="${esc(u.uf)}">${esc(u.uf)} (${u.perfis})</option>`).join('');
+    sel.size = Math.min(8, Math.max(3, comUf.length));
+    if (semUf && semUf.perfis) {
+      sel.title = `${semUf.perfis} perfis não têm UF identificada e não aparecem `
+        + `quando você filtra por UF — o LinkedIn não tem campo de estado, `
+        + `a UF é deduzida do texto da cidade.`;
+    }
+    _b2bUfsCarregadas = true;
+  } catch (e) { /* select fica vazio; o resto do filtro funciona */ }
+}
+
+/* ------------------------------------------------------------------ *
+   ESCOLHA DA UNIDADE
+
+   A cidade não é só um filtro a mais. Numa rede nacional ela é a seleção da
+   FILIAL, e isso muda a economia da busca inteira: medido, a cidade confirma
+   46,1% dos casos numa empresa de um estabelecimento e 2,4% numa multinacional
+   — vinte vezes menos. Sem escolher, cada pessoa custa até R$ 5,71 para
+   confirmar quase nada. Com a cidade escolhida, a Gerdau de São Paulo vira uma
+   empresa local e o teto cai para R$ 0,48.
+
+   Por isso o painel aparece ANTES da busca, e não como erro depois. Consultar
+   isto é de graça: sai da base da Receita, que é local.
+
+   Uma armadilha coberta aqui: a listagem é por raiz de CNPJ, e grupo grande
+   fatia a marca em várias raízes. "Gerdau em MG" chegava a devolver zero
+   unidade, porque o nome resolve para a holding em São Paulo enquanto as
+   unidades mineiras estão sob outra razão social. Quando o backend troca de
+   raiz, o painel diz qual usou.
+ * ------------------------------------------------------------------ */
+const b2bUnidade = document.getElementById('b2b-unidade');
+let _b2bCtxEmpresa = null;
+
+function b2bPintaUnidade(c) {
+  if (!b2bUnidade) return;
+  _b2bCtxEmpresa = c;
+  if (!c || c.status !== 'ok' || !c.cnpj) { b2bUnidade.hidden = true; return; }
+
+  // Empresa de um lugar só não precisa de painel — seria ruído.
+  if (c.faixa === 'local' && !c.raiz_trocada) { b2bUnidade.hidden = true; return; }
+
+  const precisa = c.exige_cidade && !c.pode_buscar;
+  const caixa = precisa ? 'warn-box' : 'info-box';
+  const filiais = c.filiais || [];
+
+  const chips = filiais.slice(0, 12).map(f => `
+    <button type="button" class="btn-secondary b2b-filial"
+            data-cidade="${esc(f.cidade)}" data-uf="${esc(f.uf)}"
+            style="margin:3px 4px 0 0;padding:3px 9px;font-size:12px">
+      ${esc(f.cidade)}<span style="opacity:.6">/${esc(f.uf)}</span>
+      ${f.matriz ? ' <b title="matriz">·</b>' : ''}
+      ${f.perfis ? `<span style="opacity:.6"> ${f.perfis} perfis</span>` : ''}
+    </button>`).join('');
+
+  b2bUnidade.hidden = false;
+  b2bUnidade.innerHTML = `
+    <div class="${caixa}">
+      <div><b>${esc(c.razao || c.empresa)}</b>
+        <span style="opacity:.7">· ${c.unidades} unidade(s) em ${c.ufs} UF(s)
+        · rede ${esc(c.faixa)}</span></div>
+      ${c.raiz_trocada ? `<div class="pf-advanced-hint" style="margin-top:4px">
+        O nome digitado resolve para outra razão social do grupo; usando a raiz
+        <code>${esc(c.raiz_trocada)}</code>, que é a que tem unidade aqui.</div>` : ''}
+      ${c.aviso ? `<div class="pf-advanced-hint" style="margin-top:4px">${esc(c.aviso)}</div>` : ''}
+      <div class="pf-advanced-hint" style="margin-top:4px">${esc(c.porque || '')}</div>
+      ${filiais.length ? `<div style="margin-top:6px">
+        <span class="filter-label" style="font-size:12px">Unidade:</span><br>${chips}
+        ${filiais.length > 12 ? `<span class="pf-advanced-hint">
+          e mais ${filiais.length - 12}</span>` : ''}
+      </div>` : ''}
+      ${precisa ? `<div class="pf-advanced-hint" style="margin-top:6px">
+        Escolha uma unidade acima — ou digite a cidade — antes de mandar buscar
+        na Bright Data. Sem isso o custo por pessoa vai a
+        R$ ${(c.custo_max_brl || 0).toFixed(2)}.</div>` : ''}
+    </div>`;
+
+  b2bUnidade.querySelectorAll('.b2b-filial').forEach(b => {
+    b.addEventListener('click', () => {
+      document.getElementById('b2b-cidade').value = b.dataset.cidade;
+      const sel = document.getElementById('b2b-uf');
+      if (sel) Array.from(sel.options).forEach(o => {
+        o.selected = (o.value === b.dataset.uf);
+      });
+      b2bChecarEmpresa();
+    });
+  });
+}
+
+let _b2bTimer = null;
+async function b2bChecarEmpresa() {
+  const nome = _v('b2b-empresa');
+  // Várias empresas de uma vez: o painel é de uma unidade só, então não tenta
+  // adivinhar qual — some e deixa a busca seguir como antes.
+  if (!nome || nome.includes(',') || nome.length < 3) {
+    if (b2bUnidade) b2bUnidade.hidden = true;
+    _b2bCtxEmpresa = null;
+    return;
+  }
+  const ufs = Array.from(document.getElementById('b2b-uf')?.selectedOptions || [])
+    .map(o => o.value).filter(Boolean);
+  const par = new URLSearchParams({
+    nome, cidade: _v('b2b-cidade'), uf: ufs.length === 1 ? ufs[0] : '',
+  });
+  try {
+    b2bPintaUnidade(await fetch(`${API}/api/funil/empresa?${par}`).then(r => r.json()));
+  } catch (e) { if (b2bUnidade) b2bUnidade.hidden = true; }
+}
+
+['b2b-empresa', 'b2b-cidade'].forEach(id => {
+  document.getElementById(id)?.addEventListener('input', () => {
+    clearTimeout(_b2bTimer);
+    _b2bTimer = setTimeout(b2bChecarEmpresa, 450);
+  });
+});
+document.getElementById('b2b-uf')?.addEventListener('change', b2bChecarEmpresa);
+
 async function b2bFiltrar() {
   b2bBtn.disabled = true;
   b2bRes.innerHTML = '<div class="info-box">Filtrando…</div>';
-  const par = new URLSearchParams({
-    q: (document.getElementById('b2b-q').value || '').trim(),
-    departamento: document.getElementById('b2b-depto').value,
-    senioridade: document.getElementById('b2b-senior').value,
-    empresa: (document.getElementById('b2b-empresa').value || '').trim(),
-    limite: document.getElementById('b2b-limite').value,
-    pais: 'BR',
-  });
+  const f = b2bFiltrosAtuais();
+  const par = new URLSearchParams(f);
   try {
     const d = await fetch(`${API}/api/linkedin/cache?${par}`).then(r => r.json());
     let pessoas = d.pessoas || [];
-    // Cidade é filtrada aqui porque no banco ela vem como texto livre
-    // ("Niterói, Rio de Janeiro, Brazil") — não vale criar índice pra isso.
-    const cid = (document.getElementById('b2b-cidade').value || '').trim().toLowerCase();
-    if (cid) pessoas = pessoas.filter(p => (p.cidade || '').toLowerCase().includes(cid));
-    b2bRes.innerHTML = `<div class="info-box" style="margin-bottom:10px">
-        <b>${pessoas.length}</b> perfis · resposta local, nada foi cobrado</div>`
-      + b2bTabela(pessoas);
-    // Veio pouco? Oferece buscar na Bright Data. Usa o campo "Empresa" ou, se
-    // vazio, o texto livre — quem digita "petrobras" na busca quer a Petrobras,
-    // e antes a oferta so aparecia se o termo estivesse no campo certo.
-    const empFiltro = (document.getElementById('b2b-empresa').value || '').trim();
-    const textoLivre = (document.getElementById('b2b-q').value || '').trim();
-    const termo = empFiltro || textoLivre;
-    if (typeof b2bOfertaBuscar === 'function') {
-      b2bOfertaBuscar(termo && pessoas.length < 25 ? termo : '', pessoas.length);
+    const nParecidos = pessoas.filter(p => p.exata === false).length;
+    const nExatos = pessoas.length - nParecidos;
+
+    // Avisos de cobertura: dois filtros dependem de dado que o LinkedIn não dá
+    // pronto, e ficar calado sobre isso faz o resultado parecer errado.
+    const avisos = [];
+    if (f.ufs && d.sem_uf) {
+      avisos.push(`${d.sem_uf} perfis do resultado não têm UF identificada — a UF `
+        + `é deduzida do texto da cidade, o LinkedIn não tem campo de estado.`);
     }
+    if (f.tempo_empresa) {
+      avisos.push(`Tempo na empresa existe em ~30% dos perfis (vem de `
+        + `<i>experience</i>, que não vem em todo registro). Quem não tem a data `
+        + `ficou fora deste resultado.`);
+    }
+
+    b2bRes.innerHTML = `<div class="info-box" style="margin-bottom:10px">
+        <b>${nExatos}</b> perfis · resposta local, nada foi cobrado
+        ${nParecidos ? `<div class="pf-advanced-hint" style="margin-top:4px">Mais
+          <b>${nParecidos}</b> de empresas com nome parecido, no fim da lista em
+          cinza — o filtro casa por pedaço de palavra.</div>` : ''}
+        ${avisos.map(a => `<div class="pf-advanced-hint" style="margin-top:4px">${a}</div>`).join('')}
+      </div>` + b2bTabela(pessoas);
+
+    b2bOfertaBuscar(f, nExatos);
   } catch (e) {
     b2bRes.innerHTML = '<div class="warn-box">Não consegui falar com o servidor.</div>';
   }
@@ -4888,47 +5160,121 @@ async function b2bFiltrar() {
 }
 
 b2bBtn?.addEventListener('click', b2bFiltrar);
-document.getElementById('b2b-q')?.addEventListener('keydown', e => {
-  if (e.key === 'Enter') b2bFiltrar();
+['b2b-q', 'b2b-empresa', 'b2b-cargo', 'b2b-nome', 'b2b-sobrenome',
+ 'b2b-cidade', 'b2b-palavras', 'b2b-url'].forEach(id => {
+  document.getElementById(id)?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') b2bFiltrar();
+  });
 });
+document.querySelector('[data-tab="b2b"]')?.addEventListener('click', b2bCarregarUfs);
 document.querySelector('[data-tab="b2b"]')?.addEventListener('click', b2bCarregarOpcoes);
 
-/* Ponte do filtro B2B para a Bright Data: quando o cache tem pouco de uma
-   empresa, oferece buscar mais. O Search leva ~2s (o Filter antigo levava
-   40-100s), entao isso deixou de ser espera e passou a ser um clique.
-   O custo aparece ANTES: $2,50 por 1.000 registros = $0,0025 cada. */
+/* Ponte do filtro B2B para a Bright Data.
+
+   ANTES: só dava pra pedir "os decisores da empresa X". Se a pessoa filtrasse
+   por cargo + UF + palavra-chave e a base não tivesse, a tela dizia "0 perfis"
+   e acabava ali — não havia como buscar o que não estava comprado.
+
+   AGORA: manda o filtro INTEIRO da tela para a API deles. O custo aparece antes
+   (US$ 0,0025 por perfil) e o valor real aparece depois, porque o preço é por
+   perfil ENTREGUE — pedir 50 e vir 12 custa 12, não 50.
+
+   DOIS FILTROS NÃO VÃO: UF e tempo na empresa. Sondei a API deles em 06/set —
+   `connections` devolve 0 sempre e `experience` responde HTTP 500 (ETIMEDOUT),
+   e estado não existe como campo. Então esses dois seguem valendo só sobre o
+   que já está na base, e o texto abaixo diz isso em vez de deixar a pessoa
+   achar que filtrou. */
 const b2bAmpliar = document.getElementById('b2b-ampliar');
 
-function b2bOfertaBuscar(empresa, quantosTem) {
-  if (!empresa) { b2bAmpliar.innerHTML = ''; return; }
-  const n = 50;
-  const custo = (n * 0.0025).toFixed(2);
+function b2bOfertaBuscar(f, quantosTem) {
+  if (!b2bAmpliar) return;
+  // Precisa de algum critério: sem filtro a busca deles traria perfil aleatório
+  // e cobraria por cada um. O backend também recusa, mas avisar aqui é melhor
+  // que deixar clicar e receber erro.
+  const criterios = [f.empresa, f.cargo, f.nome, f.sobrenome, f.cidade,
+                     f.palavras, f.q].filter(Boolean);
+  if (!criterios.length) {
+    b2bAmpliar.innerHTML = `<div class="pf-advanced-hint">Preencha empresa, cargo,
+      nome, cidade ou palavra-chave para poder buscar perfis novos na Bright Data.</div>`;
+    return;
+  }
+
+  // Rede nacional sem unidade escolhida: buscar aqui é jogar dinheiro fora
+  // depois. Os perfis vêm da Bright Data espalhados pelo país inteiro, e cada
+  // um deles vai custar até R$ 5,71 de Assertiva para confirmar 2,4% dos casos.
+  // O aviso não bloqueia — bloquear seria decidir pela pessoa — mas põe o custo
+  // na frente antes do clique.
+  const ctx = _b2bCtxEmpresa;
+  const faltaUnidade = ctx && ctx.status === 'ok' && ctx.exige_cidade
+                       && !ctx.pode_buscar;
+
+  const n = Math.min(parseInt(f.limite, 10) || 50, 100);
+  const custoMax = (n * 0.0025).toFixed(2);
+  const soLocal = [];
+  if (f.ufs) soLocal.push('UF');
+  if (f.tempo_empresa) soLocal.push('tempo na empresa');
+
   b2bAmpliar.innerHTML = `
-    <div class="info-box">
-      Temos <b>${quantosTem}</b> perfis de “${esc(empresa)}” no que já foi comprado.
+    <div class="${faltaUnidade ? 'warn-box' : 'info-box'}">
+      ${faltaUnidade ? `<div style="margin-bottom:6px">
+        <b>${esc(ctx.razao || ctx.empresa)}</b> tem ${ctx.unidades} unidades em
+        ${ctx.ufs} UFs e nenhuma foi escolhida. Dá para buscar assim, mas os
+        perfis virão espalhados pelo país e achar o CPF de cada um custará até
+        <b>R$ ${(ctx.custo_max_brl || 0).toFixed(2)}</b> em vez de R$ 0,48.
+        Escolher a unidade acima resolve isso.</div>` : ''}
+      A base local tem <b>${quantosTem}</b> perfis com esse filtro.
       <button id="b2b-fetch" class="btn-secondary" style="margin-left:8px">
-        Trazer decisores da Bright Data (~US$ ${custo})
+        Buscar perfis novos na Bright Data (até US$ ${custoMax})
       </button>
-      <div class="pf-advanced-hint" style="margin-top:6px">Busca até ${n} perfis com
-        <b>diretor, head, presidente ou CEO</b> no cargo — responde em ~2s. O que vier
-        fica guardado: essa empresa sai de graça na próxima vez.</div>
+      <div class="pf-advanced-hint" style="margin-top:6px">
+        Procura no dataset inteiro (21 milhões de perfis) com
+        <b>${criterios.map(esc).join(' + ')}</b> — responde em ~2s. Cobra
+        US$ 0,0025 por perfil <b>entregue</b>, então vir menos custa menos.
+        O que chegar fica guardado e sai de graça na próxima busca.
+        ${soLocal.length ? `<br><b>${soLocal.join(' e ')}</b>
+          ${soLocal.length > 1 ? 'não são filtros' : 'não é filtro'} na API deles —
+          ${soLocal.length > 1 ? 'valem' : 'vale'} só sobre o que já está na base,
+          então o resultado novo pode incluir gente fora ${soLocal.length > 1 ? 'desses critérios' : 'desse critério'}.` : ''}
+      </div>
     </div>`;
+
   document.getElementById('b2b-fetch')?.addEventListener('click', async (ev) => {
     const btn = ev.currentTarget;
     btn.disabled = true;
-    btn.textContent = 'Buscando…';
+    btn.textContent = 'Buscando na Bright Data…';
     try {
-      const d = await fetch(`${API}/api/linkedin/funcionarios`, {
+      const d = await fetch(`${API}/api/linkedin/buscar-fora`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ empresa, pais: 'BR', limite: n, forcar: true }),
+        body: JSON.stringify({
+          pais: 'BR',
+          empresas: f.empresa || f.q,
+          cargo: f.cargo,
+          nome: f.nome,
+          sobrenome: f.sobrenome,
+          cidade: f.cidade,
+          palavras: f.palavras,
+          min_seguidores: parseInt(f.min_seguidores, 10) || 0,
+          so_com_foto: !!f.so_com_foto,
+          // Sem cargo digitado, restringe a decisores: buscar "todo mundo da
+          // Ambev" traria 19 mil perfis e cobraria por todos.
+          decisores: !f.cargo,
+          limite: n,
+        }),
       }).then(r => r.json());
+
       if (d.status === 'ok') {
-        b2bAmpliar.innerHTML = `<div class="info-box">Trouxe <b>${d.total}</b> perfis
-          (${d.novos_no_cache} novos no cache) em ${((d.ms || 0) / 1000).toFixed(1)}s.
-          O dataset tem <b>${(d.total_no_dataset || 0).toLocaleString('pt-BR')}</b>
-          brasileiros nessa empresa.</div>`;
+        b2bAmpliar.innerHTML = `<div class="info-box">
+          Trouxe <b>${d.total}</b> perfis (${d.novos_no_cache} novos na base) em
+          ${((d.ms || 0) / 1000).toFixed(1)}s · custo real
+          <b>US$ ${(d.custo_usd || 0).toFixed(4)}</b>.
+          ${d.total_no_dataset ? `O dataset tem
+            <b>${(d.total_no_dataset).toLocaleString('pt-BR')}</b> brasileiros
+            nesse filtro — dá pra buscar mais.` : ''}
+          </div>`;
         _b2bOpcoesCarregadas = false;      // as contagens mudaram
+        _b2bUfsCarregadas = false;
         await b2bCarregarOpcoes();
+        await b2bCarregarUfs();
         await b2bFiltrar();
       } else {
         b2bAmpliar.innerHTML = `<div class="warn-box">${esc(d.message || 'Falhou.')}</div>`;

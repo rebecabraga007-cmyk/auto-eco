@@ -49,6 +49,9 @@ import workapi
 import brightdata_pessoas
 import linkedin_cache
 import cargos
+import funcoes
+import identidade
+import funil
 
 # Base local de CPF (JBR_PF) — modulo compartilhado em ../../jbr_base.
 _JBR = os.path.join(
@@ -460,19 +463,168 @@ async def linkedin_status():
 @app.get("/api/linkedin/cache")
 async def linkedin_cache_busca(q: str = "", pais: str = "", limite: int = 100,
                                departamento: str = "", senioridade: str = "",
-                               empresa: str = ""):
+                               empresa: str = "",
+                               nome: str = "", sobrenome: str = "",
+                               cargo: str = "", ufs: str = "", cidade: str = "",
+                               palavras: str = "", tempo_empresa: str = "",
+                               so_com_foto: int = 0, min_seguidores: int = 0,
+                               linkedin_url: str = ""):
     """Busca nos perfis JÁ PAGOS. Não gasta nada e responde na hora.
 
-    Aceita o mesmo vocabulário de filtro da Datastone (departamento e
-    senioridade), derivado do texto do cargo em `cargos.py`.
+    Aceita o vocabulário de filtro da Datastone: nome, sobrenome, cargo,
+    departamento, senioridade, UF, cidade, palavras-chave (o "especialidades"
+    deles), tempo na empresa e dados disponíveis. `empresa` aceita vários nomes
+    separados por vírgula, como o `selected_companies` deles.
+
+    DOIS FILTROS SÓ FUNCIONAM AQUI, não na Bright Data:
+      - `ufs`: o LinkedIn não tem campo de estado; a UF é deduzida do texto de
+        cidade e fica vazia quando não dá pra afirmar.
+      - `tempo_empresa`: vem de `experience`, que a API deles não filtra
+        (HTTP 500 quando tentei).
+    Por isso a resposta devolve `sem_uf` — quantos perfis do resultado não têm
+    UF identificada — em vez de descartá-los em silêncio.
     """
     try:
         pessoas = linkedin_cache.procurar(
             q=q, pais=pais, limite=limite, departamento=departamento,
-            senioridade=senioridade, empresa=empresa)
+            senioridade=senioridade, empresa=empresa,
+            nome=nome, sobrenome=sobrenome, cargo=cargo, ufs=ufs,
+            cidade=cidade, palavras=palavras, tempo_empresa=tempo_empresa,
+            so_com_foto=bool(so_com_foto), min_seguidores=min_seguidores,
+            linkedin_url=linkedin_url)
     except Exception as exc:
         return {"status": "error", "message": str(exc)[:120], "pessoas": []}
-    return {"status": "ok", "total": len(pessoas), "pessoas": pessoas}
+    exatos = sum(1 for p in pessoas if p.get("exata") is not False)
+    return {"status": "ok", "total": len(pessoas), "pessoas": pessoas,
+            "exatos": exatos, "parecidos": len(pessoas) - exatos,
+            "sem_uf": sum(1 for p in pessoas if not (p.get("uf") or "")),
+            "sem_tempo_empresa": sum(1 for p in pessoas
+                                     if not (p.get("desde_na_empresa") or ""))}
+
+
+@app.post("/api/linkedin/buscar-fora")
+async def linkedin_buscar_fora(request: Request, payload: dict = Body(default={})):
+    """Busca na Bright Data o que NÃO está na base local. COBRA.
+
+    Mesmo conjunto de filtros da tela, traduzido para o DSL deles. Recusa buscar
+    sem nenhum filtro além do país: sem critério a chamada traria perfil
+    aleatório e cobraria por cada um.
+
+    Devolve `custo_usd` do que foi efetivamente entregue e grava no livro-caixa
+    (`gastos_bd`), que alimenta o painel administrativo.
+    """
+    return await brightdata_pessoas.buscar_por_filtro(
+        pais=str(payload.get("pais") or "BR"),
+        empresas=payload.get("empresas") or payload.get("empresa") or [],
+        empresa_ids=payload.get("empresa_ids") or [],
+        cargos_termos=payload.get("cargo") or [],
+        nome=str(payload.get("nome") or ""),
+        sobrenome=str(payload.get("sobrenome") or ""),
+        cidade=str(payload.get("cidade") or ""),
+        palavras=payload.get("palavras") or [],
+        min_seguidores=int(payload.get("min_seguidores") or 0),
+        so_com_foto=payload.get("so_com_foto") is True,
+        decisores=payload.get("decisores") is True,
+        limite=int(payload.get("limite") or 50),
+        usuario=(request.headers.get("x-user-email") or ""),
+    )
+
+
+@app.get("/api/linkedin/ufs")
+async def linkedin_ufs():
+    """UFs presentes no cache, com contagem. Só oferece UF que tem gente."""
+    try:
+        return {"status": "ok", "ufs": linkedin_cache.ufs_disponiveis()}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:120], "ufs": []}
+
+
+@app.get("/api/funil/empresa")
+async def funil_empresa(nome: str = "", cidade: str = "", uf: str = ""):
+    """Porte da empresa e unidades disponíveis. NÃO GASTA NADA.
+
+    O filtro B2B chama isto enquanto a pessoa digita o nome da empresa, para
+    poder dizer antes da busca: "a Gerdau tem 184 unidades em 23 UFs, escolha
+    a cidade". Sem isso, buscar decisor de rede nacional custa até R$ 5,71 por
+    pessoa para confirmar 2,4% dos casos.
+    """
+    nome = (nome or "").strip()
+    if len(nome) < 3:
+        return {"status": "vazio", "filiais": []}
+    try:
+        return {"status": "ok", **funil.contexto_empresa(nome, cidade, uf)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:160], "filiais": []}
+
+
+@app.post("/api/funil/resolver")
+async def funil_resolver(request: Request, payload: dict = Body(...)):
+    """Roda o funil num lote de perfis. ISTO GASTA DINHEIRO.
+
+    Duas travas, porque a consulta é paga e o clique é fácil:
+      - `teto_brl` limita o lote inteiro e é obrigatório respeitar; o padrão
+        é conservador de propósito.
+      - `usar_pagas=False` roda só as etapas gratuitas (WorkAPI e as listas
+        por CNPJ que já estiverem em cache), para a tela poder mostrar quanto
+        se resolve sem cobrar nada antes de oferecer o botão que cobra.
+    """
+    perfis = payload.get("perfis") or []
+    if not isinstance(perfis, list) or not perfis:
+        return {"status": "error", "message": "Nenhum perfil enviado."}
+    if len(perfis) > 200:
+        return {"status": "error",
+                "message": "Máximo 200 perfis por lote (recebi %d)." % len(perfis)}
+    try:
+        teto = float(payload.get("teto_brl") or funil.TETO_LOTE_PADRAO)
+    except (TypeError, ValueError):
+        teto = funil.TETO_LOTE_PADRAO
+    teto = max(0.0, min(teto, 200.0))
+    try:
+        r = await funil.resolver_lote(
+            perfis,
+            cidade=(payload.get("cidade") or "").strip(),
+            uf=(payload.get("uf") or "").strip().upper()[:2],
+            teto_brl=teto,
+            usar_pagas=bool(payload.get("usar_pagas", True)),
+        )
+        return {"status": "ok", **r}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:200]}
+
+
+@app.get("/api/linkedin/custos")
+async def linkedin_custos(request: Request, desde: str = "", ate: str = ""):
+    """Livro-caixa da Bright Data — só admin.
+
+    A fatura deles vem por mês e não diz quem pediu o quê. Isto registra cada
+    chamada na hora, com usuário, e mostra junto o que o cache serviu de graça.
+    """
+    if not _is_admin(request):
+        return JSONResponse({"detail": "Requer admin."}, status_code=403)
+
+    def _ts(s: str, fim: bool = False) -> int:
+        s = (s or "").strip()
+        if not s:
+            return 0
+        try:
+            import datetime as _dt
+            d = _dt.datetime.strptime(s[:10], "%Y-%m-%d")
+            if fim:
+                d = d.replace(hour=23, minute=59, second=59)
+            return int(d.timestamp())
+        except Exception:
+            return 0
+
+    try:
+        res = linkedin_cache.resumo_gastos(_ts(desde), _ts(ate, True))
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:150]}
+    try:
+        res["cache"] = linkedin_cache.estatisticas()
+    except Exception:
+        res["cache"] = {}
+    res["status"] = "ok"
+    return res
 
 
 @app.post("/api/linkedin/cruzar")
