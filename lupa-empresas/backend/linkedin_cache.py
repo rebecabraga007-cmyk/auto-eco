@@ -126,7 +126,11 @@ def init() -> None:
              "empresa_id",      # current_company_company_id — 40,7%
              "idiomas",         # languages       — 11,7%
              "certificacoes",   # certifications  —  8,0%
-             "desde_na_empresa")  # de `experience` — 80,3%; guarda AAAAMM
+             "desde_na_empresa",  # de `experience` — 80,3%; guarda AAAAMM
+             # Só o dataset ENRIQUECIDO traz. É o único identificador único que
+             # um perfil carrega: nome tem homônimo, e-mail não. 5,0% dos
+             # brasileiros têm; por empresa chega a 31%.
+             "email")
     for coluna in novas:
         if coluna not in tem:
             con.execute("ALTER TABLE perfis ADD COLUMN %s TEXT" % coluna)
@@ -349,8 +353,8 @@ def salvar_perfis(pessoas: list[dict[str, Any]], origem: str = "api") -> int:
                                 departamento,senioridade,
                                 primeiro_nome,sobrenome,uf,empresa_id,
                                 idiomas,certificacoes,desde_na_empresa,conexoes,
-                                formatura_ano,carreira_desde)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                formatura_ano,carreira_desde,email)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(url) DO UPDATE SET
               nome=excluded.nome, nome_norm=excluded.nome_norm,
               cargo=excluded.cargo, empresa=excluded.empresa,
@@ -371,7 +375,10 @@ def salvar_perfis(pessoas: list[dict[str, Any]], origem: str = "api") -> int:
               -- NULLIF(...,0): o Search nao devolve `education`/`experience`, so o
               -- snapshot devolve. Sobrescrever com 0 apagaria o ano ja obtido.
               formatura_ano=COALESCE(NULLIF(excluded.formatura_ano,0), perfis.formatura_ano),
-              carreira_desde=COALESCE(NULLIF(excluded.carreira_desde,0), perfis.carreira_desde)
+              carreira_desde=COALESCE(NULLIF(excluded.carreira_desde,0), perfis.carreira_desde),
+              -- mesma proteção: o dataset padrão não tem e-mail, e um perfil
+              -- revisto por ele não pode apagar o que o enriquecido trouxe.
+              email=COALESCE(NULLIF(excluded.email,''), perfis.email)
         """, (url, p.get("nome"), _chave_nome(p.get("nome") or ""),
               p.get("cargo"), p.get("empresa"),
               norm(p.get("empresa") or ""), p.get("cidade"), p.get("pais"),
@@ -385,7 +392,8 @@ def salvar_perfis(pessoas: list[dict[str, Any]], origem: str = "api") -> int:
               p.get("empresa_id") or "", p.get("idiomas") or "",
               p.get("certificacoes") or "", p.get("desde_na_empresa") or "",
               p.get("conexoes"),
-              int(p.get("formatura_ano") or 0), int(p.get("carreira_desde") or 0)))
+              int(p.get("formatura_ano") or 0), int(p.get("carreira_desde") or 0),
+              (p.get("email") or "").strip().lower()))
     con.commit()
     con.close()
     return novos

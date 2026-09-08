@@ -30,7 +30,22 @@ import cargos
 import linkedin_cache
 
 CHAVE = os.environ.get("BRIGHTDATA_API_KEY", "").strip()
-DATASET = os.environ.get("BRIGHTDATA_PEOPLE_DATASET_ID", "gd_l1viktl72bvl7bjuj0").strip()
+# DATASET ENRIQUECIDO (gd_me5ppx...), nao o padrao (gd_l1vikt...).
+#
+# Mesmo universo -- 43.213.633 brasileiros nos dois -- mas este traz o campo
+# `email`, que o padrao nao tem. Medido em 08/set/2026: 2.181.331 brasileiros
+# com e-mail (5,0%), e por empresa chega a 31% (Banrisul).
+#
+# Ele responde pelo SEARCH, que e o endpoint que usamos. NAO responde pelo
+# Filter (404) -- o entitlement e por endpoint, e eu quase conclui que nao
+# tinhamos acesso por ter testado so o Filter.
+#
+# O preco: 35 campos contra 46. Perde certifications, groups, organizations,
+# patents, posts, projects, publications, recommendations e fsd_profile_id.
+# MANTEM education e experience, que e de onde sai a faixa de nascimento --
+# entao o desambiguador do funil continua inteiro.
+DATASET = os.environ.get("BRIGHTDATA_PEOPLE_DATASET_ID",
+                         "gd_me5ppxjr2ge6icjuh0").strip()
 FILTER_URL = "https://api.brightdata.com/datasets/filter"
 SNAP_URL = "https://api.brightdata.com/datasets/snapshots"
 
@@ -542,6 +557,9 @@ def _pessoa(rec: dict[str, Any]) -> dict[str, Any]:
         "foto": "" if generica else (rec.get("avatar") or ""),
         "foto_generica": generica,
         "seguidores": rec.get("followers"),
+        # So existe no dataset enriquecido. E o unico identificador UNICO que
+        # um perfil do LinkedIn carrega: nome tem homonimo, e-mail nao.
+        "email": (rec.get("email") or "").strip().lower(),
         "formacao": rec.get("educations_details") or "",
         "sobre": (rec.get("about") or "")[:400],
         # Campos que o dataset já entregava e a gente descartava. Medido em 300

@@ -15,10 +15,12 @@ nome custaria trinta vezes mais. Numa empresa com 12 perfis:
     decisores + RAIS, por CNPJ ......  2 consultas  R$ 0,24  cobre os 12
     busca por nome, um a um ......... 60 consultas  R$ 7,14  um por vez
 
-  00  Bright Data           PAGO    entra pronto: nome, cargo, empresa, cidade
-  01  porta de cargo        local   rotula; NÃO barra (ver abaixo)
-  02  porte da empresa      local   escolhe a filial e o teto de gasto
+  00  Bright Data           PAGO    entra pronto: nome, cargo, empresa, e-MAIL
+  01  e-mail -> dono        PAGO    R$ 0,119, EXATO, sem desambiguação
+  02  porta de cargo        local   rotula; NÃO barra (ver abaixo)
+      porte da empresa      local   escolhe a filial e o teto de gasto
   03  possíveis decisores   POR EMPRESA, R$ 0,24 na 1ª vez, depois cache
+      sócios do QSA         POR EMPRESA, local e grátis
   04  RAIS / CAGED          POR EMPRESA, gateway FDX
   ---------------------------------------------------------------------
   05  JBR                   local   ENUMERA os candidatos: 223,7M, sem teto
@@ -41,8 +43,24 @@ BLU que a rodada manual tinha achado passaram a dar "não consegui identificar".
 Documentação que descreve mais do que o código faz é pior que documentação
 nenhuma: ela impede a pergunta certa.
 
-SOBRE A ETAPA 01
-----------------
+POR QUE O E-MAIL VEM PRIMEIRO (decisão da Rebeca, 08/09/2026)
+-------------------------------------------------------------
+É a única etapa que identifica sem desambiguar. O e-mail é único; o nome não —
+89 "Felipe Oliveira", 195 "Vinicius Ferreira", e as etapas 05 a 09 inteiras
+existem para desempatar isso.
+
+Medido em 32 e-mails de 8 empresas: cobertura 9,4%, precisão 100% (3 de 3, os
+três com CPF). Cobertura baixa faz dela cara por CPF — R$ 1,32 contra R$ 0,31
+do funil medido — e eu recomendei pô-la depois das gratuitas. A Rebeca decidiu
+que vem primeiro, com o argumento de que precisão vale mais que preço quando o
+SDR liga. É defensável e está registrado dos dois lados.
+
+O que só existe porque ela é primeira: as guardas em `_pelo_email`. Caixa
+genérica não é consultada, e nome que não casa é descartado — sem isso a etapa
+erraria exatamente onde promete não errar.
+
+SOBRE A PORTA DE CARGO (etapa 02)
+---------------------------------
 Ela roda e rotula, mas não barra: `barrar_sem_cargo` nasce False. Medida nos
 166 perfis, a porta dava +1,7 pp de razão CUSTANDO 14 CPFs — o grupo que ela
 barra resolve a 46,2%, não a 30% que eu projetei. Decisão da Rebeca em
@@ -620,6 +638,74 @@ def _da_regiao(cpf: str, uf: str) -> bool:
     return bool(d) and len(c) == 11 and c[8] == d
 
 
+# Caixas genéricas: o e-mail existe, mas não é DE UMA PESSOA. Consultá-las
+# devolve quem registrou o domínio — um sócio, o TI, um despachante — e o funil
+# carimbaria essa pessoa como se fosse o perfil do LinkedIn. É o único jeito de
+# a etapa de e-mail errar, então é o único jeito que se fecha.
+CAIXA_GENERICA = {
+    "contato", "contact", "comercial", "vendas", "sales", "sac", "atendimento",
+    "financeiro", "faturamento", "rh", "recrutamento", "jobs", "carreiras",
+    "suporte", "support", "ti", "info", "admin", "administrativo", "marketing",
+    "imprensa", "ouvidoria", "compras", "licitacao", "juridico", "no-reply",
+    "noreply", "naoresponda", "newsletter", "email", "mail", "geral",
+}
+
+
+async def _pelo_email(email: str, nome_perfil: str,
+                      gasto: Gasto) -> dict[str, Any] | None:
+    """E-mail -> dono, pela Assertiva. Identificação exata, sem desambiguação.
+
+    POR QUE ISTO É A PRIMEIRA ETAPA (decisão da Rebeca, 08/09/2026): o e-mail é
+    o único identificador ÚNICO que um perfil do LinkedIn carrega. Nome tem
+    homônimo — 89 "Felipe Oliveira", 195 "Vinicius Ferreira" — e o funil inteiro
+    das etapas 05 a 09 existe para desempatar isso. O e-mail não empata.
+
+    Medido em 32 e-mails de 8 empresas:
+        cobertura  3 de 32 (9,4%) — a Assertiva conhece poucos
+        precisão   3 de 3 (100%) — dos que conhece, acerta a pessoa
+    Cobertura baixa custa oportunidade; precisão alta é o que justifica vir
+    primeiro. E ela revela o nome escondido: "Matheus Medeiros" no LinkedIn
+    volta como "MATHEUS JOSE HENZ DE MEDEIROS", que é justamente o dado que
+    falta nas outras etapas.
+
+    DUAS GUARDAS, porque "risco zero" só vale com elas:
+      1. caixa genérica não é pessoa (contato@, vendas@) — nem consulta
+      2. o nome que volta TEM que casar com o do perfil; se divergir, o e-mail
+         é compartilhado ou de terceiro, e a resposta é descartada
+    Sem a segunda, a etapa erraria exatamente onde promete não errar.
+
+    Devolve None quando não há o que concluir — aí o funil segue normalmente.
+    """
+    email = (email or "").strip().lower()
+    if "@" not in email or gasto.estourou():
+        return None
+    caixa = email.split("@")[0]
+    if re.sub(r"[._-]", "", caixa) in CAIXA_GENERICA or caixa in CAIXA_GENERICA:
+        return None
+
+    r = await assertiva.consulta_email(email)
+    gasto.assertiva += 1
+    if r.get("status") != "ok":
+        return None
+    resp = (r.get("data") or {}).get("resposta") or {}
+    pf = resp.get("pessoaFisica") or resp.get("pessoasFisicas") or []
+    if isinstance(pf, dict):
+        pf = [pf]
+    for x in pf[:3]:
+        cpf = _cpf(x.get("cpf"))
+        nome_real = x.get("nome") or x.get("nomeCompleto") or ""
+        if not cpf or not nome_real:
+            continue
+        # guarda 2: o nome tem que casar. `_nome_contido` nos dois sentidos —
+        # o LinkedIn corta nome do meio, então "Matheus Medeiros" cabe dentro
+        # de "Matheus Jose Henz de Medeiros", mas não pode casar com outra
+        # pessoa qualquer que tenha o mesmo e-mail no cadastro.
+        if _nome_contido(nome_perfil, nome_real) or _nome_contido(nome_real,
+                                                                  nome_perfil):
+            return {"cpf": cpf, "nome_real": nome_real, "email": email}
+    return None
+
+
 async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
                           barrar_sem_cargo: bool = False) -> dict[str, Any]:
     """Um perfil do LinkedIn -> um CPF, ou o motivo de não ter dado.
@@ -655,11 +741,23 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
     if len([t for t in I._norm(nome).split() if len(t) > 1]) < 2:
         return saida("nome_incompleto")
 
-    # ETAPA 01 — porta de cargo. Roda para ROTULAR; só barra se pedirem.
+    # ETAPA 01 — E-MAIL. Primeira porque é a única identificação que não
+    # precisa de desambiguação: o e-mail é único, o nome não.
+    em = (perfil.get("email") or "").strip().lower()
+    if em:
+        achado = await _pelo_email(em, nome_exibido, gasto)
+        etapas.append("01 email:%s" % ("resolveu" if achado else "nao"))
+        if achado:
+            return saida("resolvido_por_email", achado["cpf"], 100, forte=True,
+                         nome_completo=achado["nome_real"], email=em,
+                         porque="e-mail %s é dele na Assertiva — identificação "
+                                "exata, sem homônimo" % em)
+
+    # ETAPA 02 — porta de cargo. Roda para ROTULAR; só barra se pedirem.
     # Desligada por decisão da Rebeca em 08/09/2026: medida, ela dava +1,7 pp
     # de razão e custava 14 CPFs. Ver `funcoes.eh_cargo`.
     tem_cargo = funcoes.eh_cargo(cargo)
-    etapas.append("01 cargo:%s" % ("sim" if tem_cargo else "nao"))
+    etapas.append("02 cargo:%s" % ("sim" if tem_cargo else "nao"))
     if barrar_sem_cargo and not tem_cargo:
         return saida("barrado_sem_cargo")
 
