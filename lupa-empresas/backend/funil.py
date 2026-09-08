@@ -286,8 +286,15 @@ def _pela_jbr(nome: str, teto: int = 400) -> tuple[list[dict[str, Any]], str]:
         return [], ""
     finally:
         con.close()
-    return ([{"cpf": r[0], "nome": r[1], "nascimento": r[2]} for r in linhas
-             if _cpf(r[0])], modo if linhas else "")
+    # O SQL do modo primeiro+ultimo só amarra a PRIMEIRA e a ÚLTIMA palavra —
+    # tudo no meio passa. Conferir os tokens do meio aqui é o que separa
+    # "David Mikael Schuster" de "David Schuster" e "David Silva da Cruz
+    # Schuster": dos três que a JBR devolve, só um tem MIKAEL, e é ele. Sem
+    # esta linha os três seguiam como concorrentes, o caso virava ambíguo e
+    # ia parar na consulta paga.
+    fora = [{"cpf": r[0], "nome": r[1], "nascimento": r[2]} for r in linhas
+            if _cpf(r[0]) and _nome_contido(nome, r[1])]
+    return (fora, modo if fora else "")
 
 
 _razoes: dict[str, str] = {}
