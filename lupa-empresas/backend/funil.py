@@ -333,10 +333,18 @@ def _idade_ok(nascimento: Any) -> bool:
 
     Nascimento vazio NÃO corta. Ausência de dado não é motivo para eliminar.
     """
-    m = re.search(r"(19|20)\d{2}", str(nascimento or ""))
-    if not m:
-        return True
-    idade = time.localtime().tm_year - int(m.group(0))
+    # Pega QUALQUER grupo de 4 dígitos, o último (datas vêm DD/MM/AAAA).
+    #
+    # O regex anterior era `(19|20)\d{2}`, e ele não reconhecia 1893 como ano
+    # — "não achei data" caía na regra de não cortar. O efeito foi o pior
+    # possível: dos 14 "Pedro Lobo" da JBR, o filtro cortou os 13 plausíveis e
+    # deixou passar o de 1893, que virou CANDIDATO ÚNICO e foi apresentado
+    # como resolvido. Um filtro que só entende o que já é razoável não é
+    # filtro: ele seleciona o absurdo.
+    anos = re.findall(r"\d{4}", str(nascimento or ""))
+    if not anos:
+        return True                      # ausência de dado não elimina
+    idade = time.localtime().tm_year - int(anos[-1])
     return IDADE_MIN <= idade <= IDADE_MAX
 
 
@@ -1023,6 +1031,39 @@ async def dossie_pessoa(cpf: str, gasto: Gasto | None = None) -> dict[str, Any]:
     }
 
 
+def _desmente(d: dict[str, Any]) -> str:
+    """O dossiê contradiz a identificação? Devolve o motivo, ou "".
+
+    Confere o que só a consulta paga sabe, contra o que o funil decidiu antes
+    dela. São três desmentidos, todos vindos de campo explícito da Assertiva —
+    nenhum é inferência:
+
+        óbito provável / titular falecido   a pessoa não atende telefone
+        CPF suspenso, cancelado ou nulo     cadastro que não deveria circular
+        idade fora de 18-60                 não é o gerente que se procura
+
+    Ausência de dado NUNCA desmente: campo vazio é falta de informação, e
+    tratá-lo como prova contrária derrubaria a maior parte da base.
+    """
+    if not isinstance(d, dict) or d.get("status") != "ok":
+        return ""
+    if d.get("obito_provavel"):
+        return ("a Assertiva marca óbito provável para este CPF — não é a "
+                "pessoa do perfil")
+    sit = I._norm(d.get("situacao_cpf"))
+    if sit and any(x in sit for x in ("FALECID", "OBITO", "SUSPENS",
+                                      "CANCELAD", "NULA")):
+        return "CPF com situação '%s' — descartado" % d.get("situacao_cpf")
+    try:
+        idade = int(str(d.get("idade") or "").strip() or 0)
+    except ValueError:
+        idade = 0
+    if idade and not (IDADE_MIN <= idade <= IDADE_MAX):
+        return ("o cadastro diz %d anos, fora da faixa de %d a %d — não é a "
+                "pessoa do perfil" % (idade, IDADE_MIN, IDADE_MAX))
+    return ""
+
+
 async def resolver_e_detalhar(perfil: dict[str, Any], cidade: str = "",
                               uf: str = "", teto_brl: float = 3.0,
                               cnpj: str = "") -> dict[str, Any]:
@@ -1040,7 +1081,23 @@ async def resolver_e_detalhar(perfil: dict[str, Any], cidade: str = "",
         "faixa": emp.estrategia.get("faixa"),
         "porque": emp.estrategia.get("porque", "")}}
     if r.get("cpf"):
-        saida["dossie"] = await dossie_pessoa(r["cpf"], gasto)
+        d = await dossie_pessoa(r["cpf"], gasto)
+        saida["dossie"] = d
+        # O DOSSIÊ PODE DESMENTIR A IDENTIFICAÇÃO, e antes ninguém olhava.
+        #
+        # Um "Pedro Lobo" de 1893 chegou à tela como resolvido, confiança 70,
+        # com "CPF TITULAR FALECIDO" e "óbito provável" impressos logo acima —
+        # os dados que provavam o erro estavam na própria resposta e nada os
+        # confrontava com a decisão. Aqui a identificação é revista contra o
+        # que a consulta paga acabou de dizer.
+        motivo = _desmente(d)
+        if motivo:
+            r["cpf"] = ""
+            r["forte"] = False
+            r["confianca"] = 0
+            r["situacao"] = "descartado_pelo_cadastro"
+            r["porque"] = motivo
+            saida["dossie"] = {"status": "descartado", "message": motivo}
     saida["custo"] = gasto.resumo()
     return saida
 

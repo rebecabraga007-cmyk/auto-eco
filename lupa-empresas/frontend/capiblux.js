@@ -5005,8 +5005,7 @@ function b2bPainelPessoa(d) {
       <b>Não consegui identificar o CPF.</b>
       <div class="pf-advanced-hint" style="margin-top:4px">
         ${esc(id.porque || id.situacao || 'sem motivo registrado')}</div>
-      ${custo.brl === undefined ? '' : `<div class="pf-advanced-hint"
-        style="margin-top:4px">Gasto: R$ ${custo.brl.toFixed(2)}</div>`}
+
     </div>`;
   }
   if (doc.status && doc.status !== 'ok') {
@@ -5074,11 +5073,10 @@ function b2bPainelPessoa(d) {
                    doc.enderecos[0].uf].filter(Boolean).join(', '))}</div>` : ''}
       </div>
     </div>
-    ${custo.brl === undefined ? '' : `
-    <div class="pf-advanced-hint" style="margin-top:10px">
-      Custo desta consulta: <b>R$ ${custo.brl.toFixed(2)}</b>
-      (${custo.assertiva || 0} Assertiva${custo.workapi ? `, ${custo.workapi} WorkAPI grátis` : ''})
-    </div>`}
+    <!-- Custo NAO aparece aqui, nem para admin: o painel de busca e do
+         operador, e preco ao lado de um nome empurra a pessoa a nao clicar
+         justamente onde clicar valeria a pena. O livro-caixa completo fica na
+         aba de administracao. -->
   </div>`;
 }
 
