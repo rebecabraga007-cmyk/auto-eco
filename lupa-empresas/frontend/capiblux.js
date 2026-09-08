@@ -4575,6 +4575,7 @@ function liAviso(html, cls) {
 
 function liTabela(d, empresa) {
   const pessoas = d.pessoas || [];
+  verMaisGuardar('li-results', pessoas);
   if (!pessoas.length) {
     return `<div class="info-box">${esc(d.message || 'Nenhum perfil encontrado.')}</div>`;
   }
@@ -4587,7 +4588,8 @@ function liTabela(d, empresa) {
     : '';
   return nota + `
   <table class="data-table">
-    <thead><tr><th style="width:52px"></th><th>Nome</th><th>Cargo</th><th>Empresa</th><th>Cidade</th><th>Perfil</th></tr></thead>
+    <thead><tr><th style="width:52px"></th><th>Nome</th><th>Cargo</th><th>Empresa</th>
+      <th>Cidade</th><th style="width:150px">Contato</th></tr></thead>
     <tbody>${pessoas.map((p, i) => {
       const parecido = i >= (d.exatos || 0);
       // Sem foto (ou foto genérica do LinkedIn) mostra as iniciais — fica legível
@@ -4607,8 +4609,11 @@ function liTabela(d, empresa) {
         <td>${esc(p.cargo || '')}</td>
         <td>${esc(p.empresa || '')}</td>
         <td>${esc(p.cidade || '')}</td>
-        <td>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">abrir</a>` : ''}</td>
-      </tr>`;
+        <td style="white-space:nowrap">${verMaisBotao(i)}
+          ${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener"
+             style="margin-left:8px">perfil</a>` : ''}
+        </td>
+      </tr>${verMaisLinha(i, 6)}`;
     }).join('')}
     </tbody>
   </table>`;
@@ -4917,13 +4922,8 @@ async function b2bCarregarOpcoes() {
   }
 }
 
-/* Guarda a lista da última busca para o "Ver mais" achar o perfil pelo índice
-   da linha. Sem isto o botão teria que carregar o perfil inteiro num data-attr
-   por linha, e o cargo do LinkedIn é texto livre que quebra HTML fácil. */
-let _b2bPessoas = [];
-
 function b2bTabela(pessoas) {
-  _b2bPessoas = pessoas;
+  verMaisGuardar('b2b-results', pessoas);
   if (!pessoas.length) {
     return `<div class="info-box">Nenhum perfil com esses filtros na base local.
             Se você digitou o nome de uma empresa, use o botão acima para trazer os
@@ -4957,16 +4957,11 @@ function b2bTabela(pessoas) {
         <td>${esc(p.empresa || '')}${parecido
           ? ' <span class="pf-advanced-hint">(nome parecido)</span>' : ''}</td>
         <td>${esc((p.cidade || '').replace(/, Brazil$/, ''))}</td>
-        <td style="white-space:nowrap">
-          <button type="button" class="btn-secondary b2b-vermais" data-i="${i}"
-                  style="padding:3px 9px;font-size:12px"
-                  title="Acha o CPF e traz o telefone. Consulta paga.">
-            Ver mais</button>
+        <td style="white-space:nowrap">${verMaisBotao(i)}
           ${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener"
              style="margin-left:8px">perfil</a>` : ''}
         </td>
-      </tr>
-      <tr class="b2b-detalhe" data-i="${i}" hidden><td colspan="8"></td></tr>`;
+      </tr>${verMaisLinha(i, 8)}`;
     }).join('')}
     </tbody>
   </table>`;
@@ -5078,44 +5073,74 @@ function b2bPainelPessoa(d) {
   </div>`;
 }
 
-document.getElementById('b2b-results')?.addEventListener('click', async (ev) => {
-  const btn = ev.target.closest('.b2b-vermais');
-  if (!btn) return;
-  const i = btn.dataset.i;
-  const linha = document.querySelector(`.b2b-detalhe[data-i="${i}"]`);
-  const cel = linha?.querySelector('td');
-  const p = _b2bPessoas[i];
-  if (!linha || !cel || !p) return;
+/* O botão vive em DUAS tabelas — "Filtro de pessoas" e "Funcionários no
+   LinkedIn". Elas renderizam por funções diferentes, então o estado fica num
+   registro por container em vez de uma variável só: duas listas abertas ao
+   mesmo tempo não podem sobrescrever uma à outra. */
+const _verMaisPessoas = {};
+let _verMaisTabelaAtual = '';
 
-  // Segundo clique fecha, sem consultar de novo.
-  if (!linha.hidden) { linha.hidden = true; btn.textContent = 'Ver mais'; return; }
-  if (cel.dataset.pronto) { linha.hidden = false; btn.textContent = 'Fechar'; return; }
+function verMaisGuardar(containerId, pessoas) {
+  _verMaisPessoas[containerId] = pessoas || [];
+  _verMaisTabelaAtual = containerId;
+}
 
-  linha.hidden = false;
-  btn.disabled = true;
-  cel.innerHTML = '<div class="info-box">Procurando o CPF e o telefone…</div>';
-  try {
-    const d = await fetch(`${API}/api/funil/pessoa`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        perfil: { nome: p.nome, cargo: p.cargo, empresa: p.empresa,
-                  cidade: p.cidade, formatura_ano: p.formatura_ano || 0,
-                  carreira_desde: p.carreira_desde || 0 },
-        cidade: _v('b2b-cidade'), uf: (p.uf || ''),
-      }),
-    }).then(r => r.json());
-    if (d.status !== 'ok') {
-      cel.innerHTML = `<div class="warn-box">${esc(d.message || 'Falhou.')}</div>`;
-    } else {
-      cel.innerHTML = b2bPainelPessoa(d);
-      cel.dataset.pronto = '1';
-      btn.textContent = 'Fechar';
+function verMaisBotao(i) {
+  return `<button type="button" class="btn-secondary js-vermais" data-i="${i}"
+    style="padding:3px 9px;font-size:12px"
+    title="Acha o CPF e traz o telefone. Consulta paga.">Ver mais</button>`;
+}
+
+function verMaisLinha(i, colunas) {
+  return `<tr class="js-vermais-det" data-i="${i}" hidden>
+            <td colspan="${colunas}"></td></tr>`;
+}
+
+function ligarVerMais(containerId) {
+  const box = document.getElementById(containerId);
+  if (!box || box.dataset.vermaisLigado) return;
+  box.dataset.vermaisLigado = '1';
+  box.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('.js-vermais');
+    if (!btn) return;
+    const i = btn.dataset.i;
+    const linha = box.querySelector(`.js-vermais-det[data-i="${i}"]`);
+    const cel = linha?.querySelector('td');
+    const p = (_verMaisPessoas[containerId] || [])[i];
+    if (!linha || !cel || !p) return;
+
+    // Segundo clique fecha; terceiro reabre sem consultar de novo.
+    if (!linha.hidden) { linha.hidden = true; btn.textContent = 'Ver mais'; return; }
+    if (cel.dataset.pronto) { linha.hidden = false; btn.textContent = 'Fechar'; return; }
+
+    linha.hidden = false;
+    btn.disabled = true;
+    cel.innerHTML = '<div class="info-box">Procurando o CPF e o telefone…</div>';
+    try {
+      const d = await fetch(`${API}/api/funil/pessoa`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          perfil: { nome: p.nome, cargo: p.cargo, empresa: p.empresa,
+                    cidade: p.cidade, formatura_ano: p.formatura_ano || 0,
+                    carreira_desde: p.carreira_desde || 0 },
+          cidade: _v('b2b-cidade'), uf: (p.uf || ''),
+        }),
+      }).then(r => r.json());
+      if (d.status !== 'ok') {
+        cel.innerHTML = `<div class="warn-box">${esc(d.message || 'Falhou.')}</div>`;
+      } else {
+        cel.innerHTML = b2bPainelPessoa(d);
+        cel.dataset.pronto = '1';
+        btn.textContent = 'Fechar';
+      }
+    } catch (e) {
+      cel.innerHTML = '<div class="warn-box">Não consegui falar com o servidor.</div>';
     }
-  } catch (e) {
-    cel.innerHTML = '<div class="warn-box">Não consegui falar com o servidor.</div>';
-  }
-  btn.disabled = false;
-});
+    btn.disabled = false;
+  });
+}
+
+['b2b-results', 'li-results'].forEach(ligarVerMais);
 
 const _v = id => (document.getElementById(id)?.value || '').trim();
 
