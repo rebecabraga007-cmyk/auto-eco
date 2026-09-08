@@ -592,6 +592,40 @@ async def funil_resolver(request: Request, payload: dict = Body(...)):
         return {"status": "error", "message": str(exc)[:200]}
 
 
+@app.post("/api/funil/pessoa")
+async def funil_pessoa(request: Request, payload: dict = Body(...)):
+    """O "ver mais" de UMA pessoa: acha o CPF e devolve os dados dela.
+
+    ISTO GASTA. Teto baixo por padrão (R$ 3) porque nasce de um clique numa
+    linha da tabela, e um clique não deve conseguir torrar o orçamento do dia.
+
+    Aceita `cpf` direto quando a pessoa já foi identificada antes — aí pula o
+    funil inteiro e só busca os dados, que é uma consulta em vez de várias.
+    """
+    cpf = re.sub(r"\D", "", str(payload.get("cpf") or ""))
+    try:
+        teto = float(payload.get("teto_brl") or 3.0)
+    except (TypeError, ValueError):
+        teto = 3.0
+    teto = max(0.0, min(teto, 20.0))
+    try:
+        if len(cpf) == 11:
+            return {"status": "ok", "identificacao": {"cpf": cpf,
+                    "situacao": "cpf_informado", "confianca": 100},
+                    "dossie": await funil.dossie_pessoa(cpf, funil.Gasto(teto))}
+        perfil = payload.get("perfil") or {}
+        if not (perfil.get("nome") or "").strip():
+            return {"status": "error", "message": "Informe o CPF ou o perfil."}
+        r = await funil.resolver_e_detalhar(
+            perfil,
+            cidade=(payload.get("cidade") or "").strip(),
+            uf=(payload.get("uf") or "").strip().upper()[:2],
+            teto_brl=teto)
+        return {"status": "ok", **r}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:200]}
+
+
 @app.get("/api/linkedin/custos")
 async def linkedin_custos(request: Request, desde: str = "", ate: str = ""):
     """Livro-caixa da Bright Data — só admin.

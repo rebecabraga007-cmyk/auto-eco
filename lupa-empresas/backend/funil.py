@@ -357,6 +357,142 @@ async def resolver_lote(perfis: list[dict[str, Any]], cidade: str = "",
     }
 
 
+# ===========================================================================
+# DOSSIÊ — o que a tela mostra depois que o CPF saiu
+# ===========================================================================
+# Ordem dos telefones. O objetivo do funil inteiro é ALGUÉM ATENDER, então o
+# critério não é "o dado mais completo", é "o número com maior chance de tocar
+# na mão da pessoa certa hoje". Nesta ordem:
+#
+#   1. não perturbe    -> vai para o fim, sempre. É risco jurídico, não ruído.
+#   2. relação Direto  -> o número é do titular; "terceiro" é a mãe, o vizinho
+#   3. WhatsApp        -> canal que o SDR usa de verdade
+#   4. celular         -> 11 dígitos; fixo raramente atende em prospecção B2B
+#   5. contato recente -> `ultimoContato` da Assertiva, em meses
+#   6. priority        -> o palpite deles, como último desempate
+def _ordem_telefone(t: dict[str, Any]) -> tuple:
+    digitos = re.sub(r"\D", "", str(t.get("telefone") or ""))
+    celular = len(digitos) == 11 and digitos[2:3] == "9"
+    meses = t.get("meses_sem_contato")
+    return (
+        1 if t.get("nao_perturbe") else 0,
+        0 if str(t.get("relacao") or "").upper().startswith("DIRET") else 1,
+        0 if t.get("whatsapp") else 1,
+        0 if celular else 1,
+        999 if meses is None else meses,
+        t.get("priority") if isinstance(t.get("priority"), int) else 99,
+    )
+
+
+def _rotulo_telefone(t: dict[str, Any]) -> str:
+    """Uma frase curta dizendo por que este número está nesta posição."""
+    p = []
+    if t.get("nao_perturbe"):
+        p.append("NÃO PERTURBE")
+    if t.get("whatsapp"):
+        p.append("WhatsApp")
+    rel = str(t.get("relacao") or "")
+    if rel:
+        p.append("do titular" if rel.upper().startswith("DIRET") else rel.lower())
+    m = t.get("meses_sem_contato")
+    if m == 0:
+        p.append("contato nos últimos dias")
+    elif isinstance(m, int):
+        p.append("contato há %d %s" % (m, "mês" if m == 1 else "meses"))
+    if t.get("hotphone"):
+        p.append("linha ativa")
+    return " · ".join(p)
+
+
+async def dossie_pessoa(cpf: str, gasto: Gasto | None = None) -> dict[str, Any]:
+    """Os dados da pessoa, com o telefone na frente. UMA consulta paga.
+
+    Se a consulta desse CPF já rolou nesta execução, a Assertiva devolve do
+    cache em memória do módulo `assertiva` e não cobra de novo.
+    """
+    d = _cpf(cpf)
+    if not d:
+        return {"status": "error", "message": "CPF inválido."}
+    g = gasto or Gasto()
+    if g.estourou():
+        return {"status": "teto_de_gasto", "cpf": d}
+    r = await assertiva.consulta_cpf(d)
+    g.assertiva += 1
+    if r.get("status") != "ok":
+        return {"status": r.get("status") or "error", "cpf": d,
+                "message": r.get("message") or "A Assertiva não devolveu dados."}
+
+    resp = (r.get("data") or {}).get("resposta") or {}
+    s = I.sinais_do_cpf(r)
+    tels = sorted(s["telefones"], key=_ordem_telefone)
+    for t in tels:
+        t["porque"] = _rotulo_telefone(t)
+
+    vinculos = sorted(s["vinculos"], key=lambda v: str(v.get("desde") or ""),
+                      reverse=True)
+    for v in vinculos:
+        v["areas"] = sorted(funcoes.areas(v["cargo"]) | funcoes.areas(v["setor"]))
+
+    # Nome, nascimento e situação NÃO ficam no topo da resposta — moram em
+    # `dadosCadastrais`. Lê-los do topo devolvia string vazia em silêncio, e o
+    # painel aparecia sem o nome da pessoa que ele acabou de identificar.
+    dc = resp.get("dadosCadastrais") or {}
+
+    def sim(v) -> bool:
+        return str(v).strip().lower() in ("true", "1", "sim")
+
+    return {
+        "status": "ok", "cpf": d,
+        "nome": dc.get("nome") or "",
+        "nascimento": dc.get("dataNascimento") or "",
+        "idade": dc.get("idade") or "",
+        "sexo": dc.get("sexo") or "",
+        "mae": dc.get("maeNome") or "",
+        "situacao_cpf": dc.get("situacaoCadastral") or "",
+        # Dois marcadores que mudam se vale a pena ligar, e que ficariam
+        # escondidos se o painel só mostrasse contato.
+        "obito_provavel": sim(dc.get("obitoProvavel")),
+        "ppe": sim(dc.get("ppe")),
+        "telefones": tels,
+        "emails": s["emails"],
+        "enderecos": [
+            {"logradouro": " ".join(x for x in [e.get("tipoLogradouro"),
+                                                e.get("logradouro")] if x),
+             "numero": e.get("numero") or "",
+             "complemento": e.get("complemento") or "",
+             "bairro": e.get("bairro") or "", "cidade": e.get("cidade") or "",
+             "uf": e.get("uf") or "", "cep": e.get("cep") or ""}
+            for e in ((resp.get("enderecos") or [])
+                      + (resp.get("enderecosAdicionados") or []))
+            if isinstance(e, dict)],
+        "redes": [x for x in (resp.get("redesSociais") or []) if x],
+        "vinculos": vinculos,
+        "custo": g.resumo(),
+    }
+
+
+async def resolver_e_detalhar(perfil: dict[str, Any], cidade: str = "",
+                              uf: str = "",
+                              teto_brl: float = 3.0) -> dict[str, Any]:
+    """O "ver mais" de uma pessoa: acha o CPF e já traz os dados dela.
+
+    Teto baixo de propósito — isto nasce de um clique numa linha da tabela, e
+    um clique não deve conseguir gastar o orçamento do dia.
+    """
+    gasto = Gasto(teto_brl)
+    emp = Empresa((perfil.get("empresa") or "").strip(), cidade, uf)
+    await emp.preparar(gasto)
+    r = await resolver_pessoa(perfil, emp, gasto)
+    saida = {"identificacao": r, "empresa": {
+        "cnpj": emp.cnpj, "razao": emp.razao,
+        "faixa": emp.estrategia.get("faixa"),
+        "porque": emp.estrategia.get("porque", "")}}
+    if r.get("cpf"):
+        saida["dossie"] = await dossie_pessoa(r["cpf"], gasto)
+    saida["custo"] = gasto.resumo()
+    return saida
+
+
 def contexto_empresa(nome: str, cidade: str = "", uf: str = "") -> dict[str, Any]:
     """Tudo que a TELA precisa saber sobre a empresa, sem gastar um centavo.
 

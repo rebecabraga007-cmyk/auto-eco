@@ -4917,7 +4917,13 @@ async function b2bCarregarOpcoes() {
   }
 }
 
+/* Guarda a lista da última busca para o "Ver mais" achar o perfil pelo índice
+   da linha. Sem isto o botão teria que carregar o perfil inteiro num data-attr
+   por linha, e o cargo do LinkedIn é texto livre que quebra HTML fácil. */
+let _b2bPessoas = [];
+
 function b2bTabela(pessoas) {
+  _b2bPessoas = pessoas;
   if (!pessoas.length) {
     return `<div class="info-box">Nenhum perfil com esses filtros na base local.
             Se você digitou o nome de uma empresa, use o botão acima para trazer os
@@ -4926,8 +4932,9 @@ function b2bTabela(pessoas) {
   return `
   <table class="data-table">
     <thead><tr><th style="width:52px"></th><th>Nome</th><th>Cargo</th>
-      <th>Departamento</th><th>Nível</th><th>Empresa</th><th>Cidade</th><th></th></tr></thead>
-    <tbody>${pessoas.map(p => {
+      <th>Departamento</th><th>Nível</th><th>Empresa</th><th>Cidade</th>
+      <th style="width:150px"></th></tr></thead>
+    <tbody>${pessoas.map((p, i) => {
       const iniciais = (p.nome || '?').split(/\s+/).slice(0, 2)
         .map(x => x[0] || '').join('').toUpperCase();
       const foto = p.foto
@@ -4950,12 +4957,165 @@ function b2bTabela(pessoas) {
         <td>${esc(p.empresa || '')}${parecido
           ? ' <span class="pf-advanced-hint">(nome parecido)</span>' : ''}</td>
         <td>${esc((p.cidade || '').replace(/, Brazil$/, ''))}</td>
-        <td>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">perfil</a>` : ''}</td>
-      </tr>`;
+        <td style="white-space:nowrap">
+          <button type="button" class="btn-secondary b2b-vermais" data-i="${i}"
+                  style="padding:3px 9px;font-size:12px"
+                  title="Acha o CPF e traz o telefone. Consulta paga.">
+            Ver mais</button>
+          ${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener"
+             style="margin-left:8px">perfil</a>` : ''}
+        </td>
+      </tr>
+      <tr class="b2b-detalhe" data-i="${i}" hidden><td colspan="8"></td></tr>`;
     }).join('')}
     </tbody>
   </table>`;
 }
+
+/* ------------------------------------------------------------------ *
+   VER MAIS — do perfil do LinkedIn ao telefone
+
+   O LinkedIn não dá telefone: são 46 campos e nenhum de contato. Este botão
+   roda o funil (listas por CNPJ -> WorkAPI -> busca paga) até um CPF, e só
+   então consulta os dados da pessoa.
+
+   Os telefones vêm ORDENADOS pela chance de alguém atender, não pela ordem que
+   a Assertiva mandou: não-perturbe por último sempre, depois número do próprio
+   titular, depois WhatsApp, depois celular, depois contato recente. O motivo de
+   cada posição aparece do lado — sem isso o SDR liga do começo da lista e cai
+   no telefone da mãe de 2015.
+ * ------------------------------------------------------------------ */
+function b2bTelefone(t) {
+  const d = String(t.telefone || '').replace(/\D/g, '');
+  const fmt = d.length === 11 ? `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`
+    : d.length === 10 ? `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}` : d;
+  const bloqueado = !!t.nao_perturbe;
+  return `
+    <div style="display:flex;align-items:baseline;gap:10px;padding:5px 0;
+                border-bottom:1px solid var(--linha,#e4e4e4)
+                ${bloqueado ? ';opacity:.6' : ''}">
+      <b style="font-family:ui-monospace,monospace;font-size:14px">${esc(fmt)}</b>
+      ${t.whatsapp ? '<span class="pf-advanced-hint" style="color:#0a7">wpp</span>' : ''}
+      <span class="pf-advanced-hint">${esc(t.porque || '')}</span>
+    </div>`;
+}
+
+function b2bPainelPessoa(d) {
+  const id = d.identificacao || {};
+  const doc = d.dossie || {};
+  const custo = (d.custo || doc.custo || {});
+
+  if (!id.cpf) {
+    return `<div class="warn-box">
+      <b>Não consegui identificar o CPF.</b>
+      <div class="pf-advanced-hint" style="margin-top:4px">
+        ${esc(id.porque || id.situacao || 'sem motivo registrado')}</div>
+      <div class="pf-advanced-hint" style="margin-top:4px">
+        Gasto: R$ ${(custo.brl || 0).toFixed(2)}</div>
+    </div>`;
+  }
+  if (doc.status && doc.status !== 'ok') {
+    return `<div class="warn-box">CPF encontrado, mas os dados não vieram:
+      ${esc(doc.message || doc.status)}</div>`;
+  }
+
+  const tels = doc.telefones || [];
+  const vinc = doc.vinculos || [];
+  const cpfMasc = id.cpf.slice(0, 3) + '.***.***-' + id.cpf.slice(-2);
+
+  return `
+  <div class="info-box" style="margin:6px 0">
+    <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:baseline">
+      <b>${esc(doc.nome || '')}</b>
+      <span style="font-family:ui-monospace,monospace">${esc(cpfMasc)}</span>
+      ${doc.idade ? `<span class="pf-advanced-hint">${esc(doc.idade)} anos</span>` : ''}
+      ${doc.situacao_cpf ? `<span class="pf-advanced-hint">CPF ${esc(doc.situacao_cpf)}</span>` : ''}
+      ${doc.obito_provavel ? `<span style="color:#b00;font-weight:600">óbito provável</span>` : ''}
+      ${doc.ppe ? `<span class="pf-advanced-hint" title="pessoa politicamente exposta">PPE</span>` : ''}
+    </div>
+    <div class="pf-advanced-hint" style="margin-top:3px">
+      identificado por <b>${esc(id.situacao || '')}</b>
+      ${id.confianca ? ` · confiança ${id.confianca}` : ''}
+      ${id.porque ? ` · ${esc(id.porque)}` : ''}
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+                gap:18px;margin-top:12px">
+      <div>
+        <div class="filter-label" style="font-size:12px">Telefones
+          <span class="pf-advanced-hint">— melhor primeiro</span></div>
+        ${tels.length ? tels.map(b2bTelefone).join('')
+          : '<div class="pf-advanced-hint">Nenhum telefone na base.</div>'}
+        ${(doc.emails || []).length ? `
+          <div class="filter-label" style="font-size:12px;margin-top:10px">E-mail</div>
+          ${doc.emails.map(e => `<div>${esc(e)}</div>`).join('')}` : ''}
+      </div>
+      <div>
+        <div class="filter-label" style="font-size:12px">Histórico profissional</div>
+        ${vinc.length ? vinc.slice(0, 6).map(v => `
+          <div style="padding:4px 0;border-bottom:1px solid var(--linha,#e4e4e4)">
+            <div>${esc(v.razao || '—')}
+              ${v.tipo === 'societario'
+                ? '<span class="pf-advanced-hint">sócio</span>' : ''}</div>
+            <div class="pf-advanced-hint">${esc(v.cargo || 'sem CBO')}
+              ${v.desde ? ` · desde ${esc(String(v.desde).slice(0, 10))}` : ''}</div>
+          </div>`).join('')
+          : `<div class="pf-advanced-hint">Sem vínculo no cadastro. Acontece com
+             empresa aberta há pouco, com quem é PJ e com quem trocou de emprego
+             recentemente — não quer dizer que a pessoa esteja errada.</div>`}
+        ${(doc.enderecos || []).length ? `
+          <div class="filter-label" style="font-size:12px;margin-top:10px">Endereço</div>
+          <div class="pf-advanced-hint">
+            ${esc([doc.enderecos[0].logradouro, doc.enderecos[0].numero,
+                   doc.enderecos[0].bairro, doc.enderecos[0].cidade,
+                   doc.enderecos[0].uf].filter(Boolean).join(', '))}</div>` : ''}
+      </div>
+    </div>
+    <div class="pf-advanced-hint" style="margin-top:10px">
+      Custo desta consulta: <b>R$ ${(custo.brl || 0).toFixed(2)}</b>
+      (${custo.assertiva || 0} Assertiva${custo.workapi ? `, ${custo.workapi} WorkAPI grátis` : ''})
+    </div>
+  </div>`;
+}
+
+document.getElementById('b2b-results')?.addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('.b2b-vermais');
+  if (!btn) return;
+  const i = btn.dataset.i;
+  const linha = document.querySelector(`.b2b-detalhe[data-i="${i}"]`);
+  const cel = linha?.querySelector('td');
+  const p = _b2bPessoas[i];
+  if (!linha || !cel || !p) return;
+
+  // Segundo clique fecha, sem consultar de novo.
+  if (!linha.hidden) { linha.hidden = true; btn.textContent = 'Ver mais'; return; }
+  if (cel.dataset.pronto) { linha.hidden = false; btn.textContent = 'Fechar'; return; }
+
+  linha.hidden = false;
+  btn.disabled = true;
+  cel.innerHTML = '<div class="info-box">Procurando o CPF e o telefone…</div>';
+  try {
+    const d = await fetch(`${API}/api/funil/pessoa`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        perfil: { nome: p.nome, cargo: p.cargo, empresa: p.empresa,
+                  cidade: p.cidade, formatura_ano: p.formatura_ano || 0,
+                  carreira_desde: p.carreira_desde || 0 },
+        cidade: _v('b2b-cidade'), uf: (p.uf || ''),
+      }),
+    }).then(r => r.json());
+    if (d.status !== 'ok') {
+      cel.innerHTML = `<div class="warn-box">${esc(d.message || 'Falhou.')}</div>`;
+    } else {
+      cel.innerHTML = b2bPainelPessoa(d);
+      cel.dataset.pronto = '1';
+      btn.textContent = 'Fechar';
+    }
+  } catch (e) {
+    cel.innerHTML = '<div class="warn-box">Não consegui falar com o servidor.</div>';
+  }
+  btn.disabled = false;
+});
 
 const _v = id => (document.getElementById(id)?.value || '').trim();
 
