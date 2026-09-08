@@ -314,6 +314,90 @@ def avaliar(sinais: dict, alvo: dict,
     return {"forca": forca, "motivos": motivos, "elimina": elimina}
 
 
+# limiar de confirmação — SÓ existe para desempatar
+FORCA_MINIMA = 50
+
+
+def decidir(candidatos: list[dict[str, Any]],
+            concorrentes: int = 0) -> dict[str, Any]:
+    """Escolhe o CPF entre os candidatos avaliados. É AQUI que a regra mora.
+
+    REGRA (definida pela Rebeca): a força mínima só se aplica quando há
+    CONCORRÊNCIA — ambiguidade, empate, homônimo. Quem não tem concorrente não
+    precisa de contraprova: se sobrou uma pessoa possível, é ela.
+
+    O QUE CONTA COMO CONCORRENTE (também definido pela Rebeca): não é quem a
+    Assertiva devolveu na bruta. É quem CHEGOU VIVO até a chamada por nome e
+    endereço, depois de já ter passado pelo JBR, pelo WorkAPI de nome, pelo MK
+    e pelo RAIS. Essas etapas são gratuitas ou baratas e existem justamente
+    para derrubar homônimo antes de gastar. Quem sobreviver a todas elas e
+    ainda for único não tem rival nenhum — cobrar contraprova dele é cobrar
+    duas vezes pelo mesmo filtro.
+
+    Por que isso importa tanto: no teste das 10 empresas médias, 149 consultas
+    renderam 1,6 candidato por perfil — quase todo caso tinha UM nome possível.
+    Exigir força >= 50 ali descartou 30 perfis que não eram ambíguos, eram
+    apenas gente sem contraprova disponível. O limiar existe para separar duas
+    pessoas com o mesmo nome; usado contra uma pessoa sozinha, só joga fora o
+    acerto.
+
+    `concorrentes` distingue dois "único" que não são iguais:
+        unico            — chegou sozinho na fase paga
+        unico_por_corte  — havia rivais aqui e a evidência os eliminou
+                           (profissão incompatível, fora da faixa de idade)
+    Os dois são aceitos, mas a tela deve mostrar a diferença: o segundo depende
+    de o corte ter sido justo.
+
+    `elimina` sempre vale, inclusive contra candidato único: médico não vira
+    vendedor por ser o único médico da cidade.
+    """
+    vivos = [c for c in candidatos if not c.get("elimina")]
+    if not vivos:
+        return {"cpf": "", "situacao": "todos_eliminados", "confianca": 0,
+                "candidatos_vivos": 0}
+    vivos.sort(key=lambda c: -int(c.get("forca") or 0))
+    melhor = vivos[0]
+    base = {"cpf": melhor.get("cpf", ""), "nome": melhor.get("nome", ""),
+            "forca": int(melhor.get("forca") or 0),
+            "motivos": melhor.get("motivos") or [],
+            "candidatos_vivos": len(vivos)}
+
+    if len(vivos) == 1:
+        sozinho = concorrentes <= 1
+        return {**base,
+                "situacao": "unico" if sozinho else "unico_por_corte",
+                # sem contraprova a confiança não é 100 — mas é aceito
+                "confianca": max(base["forca"], 70 if sozinho else 60),
+                "porque": ("chegou sozinho à fase paga, depois de JBR/WorkAPI/"
+                           "MK/RAIS — sem concorrente, não precisa de "
+                           "contraprova")
+                          if sozinho else
+                          ("%d candidatos chegaram aqui, %d eliminados por "
+                           "evidência — sobrou um"
+                           % (concorrentes, concorrentes - 1))}
+
+    # daqui para baixo HÁ concorrência: o limiar entra em cena
+    if melhor["forca"] >= FORCA_MINIMA and \
+            melhor["forca"] > int(vivos[1].get("forca") or 0):
+        return {**base, "situacao": "resolvido_por_evidencia",
+                "confianca": base["forca"],
+                "porque": "%d candidatos; este ganhou por %d pontos: %s"
+                          % (len(vivos),
+                             melhor["forca"] - int(vivos[1].get("forca") or 0),
+                             "; ".join(base["motivos"][:2]))}
+    if melhor["forca"] >= FORCA_MINIMA:
+        return {"cpf": "", "situacao": "empatado", "confianca": 0,
+                "candidatos_vivos": len(vivos),
+                "porque": "%d candidatos empatados em força %d"
+                          % (sum(1 for c in vivos
+                                 if int(c.get("forca") or 0) == melhor["forca"]),
+                             melhor["forca"])}
+    return {"cpf": "", "situacao": "ambiguo_sem_evidencia", "confianca": 0,
+            "candidatos_vivos": len(vivos),
+            "porque": "%d candidatos e nenhum passou de força %d — precisa de "
+                      "pista do operador" % (len(vivos), FORCA_MINIMA)}
+
+
 # ===========================================================================
 # ESTRATÉGIA POR PORTE DA EMPRESA
 # ===========================================================================
