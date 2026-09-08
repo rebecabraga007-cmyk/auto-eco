@@ -2,11 +2,65 @@
 
 import os
 import asyncio
+import time
+
 import httpx
 
 WORKAPI_KEY = os.environ.get("WORKAPI_KEY", "").strip()
 WORKAPI_BASE = "https://api.workapi.dev/v1/gateway"
 _TIMEOUT = httpx.Timeout(30.0)
+
+# UM cliente para o módulo inteiro, com pool de conexões, em vez de abrir e
+# fechar um AsyncClient (e um handshake TLS) por consulta.
+#
+# Isto sozinho NÃO resolveu a varredura de 166 perfis — eu achei que resolveria
+# e estava errado. Com o cliente compartilhado as falhas continuaram, só que
+# agora legíveis: HTTP 403 do gateway, não erro de conexão. A causa é rajada, e
+# o conserto é o intervalo abaixo. O cliente compartilhado fica porque é certo
+# de qualquer forma, não porque tenha consertado alguma coisa.
+_cliente: httpx.AsyncClient | None = None
+_lock = asyncio.Lock()
+
+# O gateway limita por RAJADA, e recusa com 403 — não com 429. Medido: numa
+# varredura de 166 perfis, 38 das 60 chamadas (63%) voltaram 403; os MESMOS
+# nomes, chamados com 1,2 s de intervalo, voltaram 200 com dados. Como o 403
+# parece "sem permissão", é fácil concluir que a chave perdeu acesso ao módulo
+# quando na verdade só foi rápido demais.
+_INTERVALO = float(os.environ.get("WORKAPI_INTERVALO", "1.2"))
+_ultima = 0.0
+_vez = asyncio.Lock()
+
+
+async def _espera_a_vez() -> None:
+    """Garante `_INTERVALO` segundos entre duas chamadas, seja quem chamar."""
+    global _ultima
+    async with _vez:
+        agora = time.monotonic()
+        atraso = _INTERVALO - (agora - _ultima)
+        if atraso > 0:
+            await asyncio.sleep(atraso)
+        _ultima = time.monotonic()
+
+
+async def _http() -> httpx.AsyncClient:
+    global _cliente
+    if _cliente is None or _cliente.is_closed:
+        async with _lock:
+            if _cliente is None or _cliente.is_closed:
+                _cliente = httpx.AsyncClient(
+                    timeout=_TIMEOUT,
+                    limits=httpx.Limits(max_connections=8,
+                                        max_keepalive_connections=4),
+                )
+    return _cliente
+
+
+async def fechar() -> None:
+    """Fecha o cliente compartilhado. Chamar no shutdown do serviço."""
+    global _cliente
+    if _cliente is not None and not _cliente.is_closed:
+        await _cliente.aclose()
+    _cliente = None
 
 
 def enabled() -> bool:
@@ -35,24 +89,26 @@ async def nome_search(q: str, limit: int = 40, tentativas: int = 2) -> dict:
     data, erro = None, ""
     for tentativa in range(max(1, tentativas)):
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                # WorkAPI não expõe parâmetros de limit/offset — a resposta traz o que acha
-                r = await client.get(
-                    f"{WORKAPI_BASE}/intelgrax-nomev2",
-                    headers={"x-api-key": WORKAPI_KEY},
-                    params={"name": q.strip()},
-                )
-                r.raise_for_status()
-                data = r.json()
+            await _espera_a_vez()
+            client = await _http()
+            # WorkAPI não expõe parâmetros de limit/offset — a resposta traz o que acha
+            r = await client.get(
+                f"{WORKAPI_BASE}/intelgrax-nomev2",
+                headers={"x-api-key": WORKAPI_KEY},
+                params={"name": q.strip()},
+            )
+            r.raise_for_status()
+            data = r.json()
         except Exception as exc:
-            data, erro = None, f"WorkAPI erro: {str(exc)[:100]}"
+            data = None
+            erro = "%s: %s" % (type(exc).__name__, str(exc)[:120])
         # `data` pode vir null no envelope — .get("data", {}) devolve None nesse
         # caso (a chave EXISTE), e o .get encadeado estourava AttributeError.
         corpo = ((data or {}).get("data") or {}).get("body") or {}
         if corpo.get("success") is True and (corpo.get("data") or []):
             break
         if tentativa + 1 < max(1, tentativas):
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(0.6 * (tentativa + 1))   # espera crescente
 
     if data is None:
         return {"status": "error", "message": erro or "WorkAPI sem resposta",
