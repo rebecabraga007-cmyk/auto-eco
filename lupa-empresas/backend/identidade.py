@@ -64,8 +64,16 @@ TETO_ASSERTIVA = 50
 # Acima disto não vale pagar consulta por candidato: o custo cresce linear e a
 # chance de acerto não.
 MAX_CANDIDATOS = 20
-# Consultas PAGAS por candidato, por pessoa buscada.
-MAX_PAGO = 4
+# Consultas PAGAS por candidato, por pessoa buscada (decisão da Rebeca: 20).
+#
+# Era 4, e 4 era pouco: no Felipe Oliveira a Assertiva devolveu 13 candidatos
+# em Araruama e só os 4 primeiros DO ALFABETO eram avaliados — os que tinham
+# vínculo de vendas ficavam de fora e o caso morria empatado em força 20.
+#
+# 20 casa com MAX_CANDIDATOS: acima de 20 candidatos o caso é abandonado de
+# qualquer forma, então limitar o pago abaixo disso só criava um segundo corte
+# invisível dentro de uma lista que já tinha passado no primeiro.
+MAX_PAGO = 20
 # Teto de consulta paga em rede nacional (decisão da Rebeca: 48, não 50).
 # Fica ABAIXO do teto de 50 da própria Assertiva de propósito — bater no
 # número redondo confunde "gastei tudo que eu podia" com "a lista truncou",
@@ -321,11 +329,14 @@ def avaliar(sinais: dict, alvo: dict,
         fam_cand |= funcoes.areas(p)
 
     if alvo.get("cidade") and _norm(alvo["cidade"]) in sinais["cidades"]:
-        if cidade_ja_filtrada:
-            motivos.append("cidade confere (esperado — a busca já filtrou por ela)")
-        else:
+        if not cidade_ja_filtrada:
             motivos.append("cidade do cadastro confere")
             forca = max(forca, 60)
+        # Quando a busca JÁ filtrou por cidade, isto não vira motivo nenhum.
+        # Virava, e era o primeiro da lista — então a tela mostrava "cidade
+        # confere" como a razão do acerto num sinal que vale ZERO, escondendo
+        # o que de fato pontuou. Motivo que não pontua não é motivo: é ruído
+        # que faz uma resolução por profissão parecer resolução por endereço.
 
     if funcoes.incompativel(fam_cargo, fam_cand):
         elimina = True
@@ -507,8 +518,8 @@ def decidir(candidatos: list[dict[str, Any]],
 # empresa grande, onde o valor do contato paga a consulta. Para volume, usar
 # o teto da faixa local.
 FAIXAS = [
-    ("local",    5,    2,  4,  60),   # (nome, max_filiais, max_ufs, teto_pago, peso_cidade)
-    ("regional", 60,  12, 15,  30),
+    ("local",    5,    2,  MAX_PAGO,  60),   # (nome, max_filiais, max_ufs, teto_pago, peso_cidade)
+    ("regional", 60,  12, MAX_PAGO,  30),
     ("nacional", 10**9, 99, MAX_PAGO_NACIONAL,  0),
 ]
 
@@ -588,8 +599,8 @@ def estrategia(cnpj: str, cidade_escolhida: str = "", uf_escolhida: str = "",
                     "filiais_no_estado": no_estado, "unidade_padrao": padrao,
                     "ordem": ["vinculo_cnpj", "razao_social", "cidade",
                               "profissao", "ddd"],
-                    "peso_cidade": 30, "teto_pago": 15,
-                    "custo_max_brl": round(15 * 0.119, 2),
+                    "peso_cidade": 30, "teto_pago": MAX_PAGO,
+                    "custo_max_brl": round(MAX_PAGO * 0.119, 2),
                     "porque": "%d cidades de %s têm unidade (de %d no país). "
                               "Escolha uma; sem escolher, a busca usa %s."
                               % (len(no_estado), ufa, p["filiais"],
@@ -637,8 +648,8 @@ def estrategia(cnpj: str, cidade_escolhida: str = "", uf_escolhida: str = "",
         return {**p, "modo": "unidade escolhida (%s)" % cidade_escolhida,
                 "exige_cidade": False, "pode_buscar": True,
                 "ordem": ["vinculo_cnpj", "razao_social", "cidade", "profissao", "ddd"],
-                "peso_cidade": 60, "teto_pago": 4,
-                "custo_max_brl": round(4 * 0.119, 2),
+                "peso_cidade": 60, "teto_pago": MAX_PAGO,
+                "custo_max_brl": round(MAX_PAGO * 0.119, 2),
                 "porque": "cidade definida — a busca fica local e a confirmação "
                           "volta a valer, mesmo numa rede de %d unidades"
                           % p["filiais"]}
@@ -647,16 +658,16 @@ def estrategia(cnpj: str, cidade_escolhida: str = "", uf_escolhida: str = "",
         return {**p, "modo": "rede regional", "exige_cidade": False,
                 "pode_buscar": True,
                 "ordem": ["vinculo_cnpj", "razao_social", "cidade", "profissao", "ddd"],
-                "peso_cidade": 30, "teto_pago": 15,
-                "custo_max_brl": round(15 * 0.119, 2),
+                "peso_cidade": 30, "teto_pago": MAX_PAGO,
+                "custo_max_brl": round(MAX_PAGO * 0.119, 2),
                 "porque": "%d unidades em %d UFs — escolher a cidade melhora, "
                           "mas não é obrigatório" % (p["filiais"], p["ufs"])}
 
     return {**p, "modo": "empresa local", "exige_cidade": False,
             "pode_buscar": True,
             "ordem": ["vinculo_cnpj", "razao_social", "cidade", "profissao", "ddd"],
-            "peso_cidade": 60, "teto_pago": 4,
-            "custo_max_brl": round(4 * 0.119, 2),
+            "peso_cidade": 60, "teto_pago": MAX_PAGO,
+            "custo_max_brl": round(MAX_PAGO * 0.119, 2),
             "porque": "%d estabelecimento(s) — a cidade confirma em 46%% dos casos"
                       % p["filiais"]}
 

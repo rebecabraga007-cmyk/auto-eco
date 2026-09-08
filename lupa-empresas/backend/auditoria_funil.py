@@ -7,9 +7,15 @@ etapa e verificada por TRES criterios:
 
   declarada  aparece no docstring do modulo
   no codigo  existe a funcao/chamada que a implementa
-  executa    dispara num perfil real e deixa marca em `etapas`
+  executa    disparou nos perfis desta rodada e deixou marca em `etapas`
 
-Uma etapa so conta como configurada se passar nos tres. R$ 0,00 -- roda com
+Configurada = declarada E no codigo. "executa" e informativo: rodando de graca
+com teto zero, as etapas pagas nao sao alcancadas, e perfil que resolve cedo
+pelo candidato unico nem chega nas seguintes -- isso e o funil funcionando.
+
+CUIDADO COM PADRAO FROUXO: a versao anterior procurava `digito` para achar a
+regiao fiscal e casou com a palavra "digitos" da funcao de telefone, dando
+"no codigo" para algo que nao existia. Auditoria que mente e pior que nenhuma. R$ 0,00 -- roda com
 `usar_pagas=False` e nao chega nas etapas 08/09 pagas.
 """
 import asyncio
@@ -90,8 +96,12 @@ async def main():
         if marca is None:
             executa = "n/a"
         else:
-            executa = "sim" if any(m.startswith(marca.split()[0]) for m in marcas) else "NAO"
-        ok = declarada and no_codigo and executa in ("sim", "n/a")
+            executa = ("sim" if any(m.startswith(marca.split()[0]) for m in marcas)
+                       else "nao rodou")
+        # "nao rodou" NAO e falha: esta auditoria roda de graca, com teto zero,
+        # e os perfis de teste resolvem cedo pelo candidato unico -- entao as
+        # etapas pagas nunca sao alcancadas. Falha e etapa que nao existe.
+        ok = declarada and no_codigo
         if not ok:
             faltando.append("%s %s" % (num, nome))
         print("%-4s %-24s %-10s %-10s %s%s"

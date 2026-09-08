@@ -124,6 +124,61 @@ def _nome_contido(procurado: str, achado: str) -> bool:
 # ===========================================================================
 # ETAPAS POR EMPRESA — rodam UMA VEZ e cobrem todo mundo daquele CNPJ
 # ===========================================================================
+def socios_da_empresa(cnpj: str) -> list[dict[str, Any]]:
+    """Sócios do QSA da Receita, com o CPF INTEIRO quando dá para fechar.
+
+    A fonte mais barata de CPF que existe neste projeto e que eu não estava
+    usando: local, gratuita, por CNPJ, e de qualidade de PROVA.
+
+    A Receita publica o CPF do sócio mascarado — `***597459**` mostra os
+    dígitos 4 a 9. Seis de onze não identificam ninguém sozinhos, mas somados
+    ao NOME COMPLETO fecham: a JBR tem nome e CPF inteiro, então basta procurar
+    o nome e ficar com quem tem aqueles seis dígitos na posição certa. Duas
+    pessoas com o mesmo nome completo E os mesmos seis dígitos centrais é
+    coincidência que não acontece na prática — por isso isto entra como prova,
+    não como palpite, e `conferido` diz quantos casaram.
+
+    Validado no caso que motivou tudo: o QSA da BLU SALES traz LUIZ GUSTAVO
+    TURMINA com `***597459**`, e o funil tinha achado 083…60 por outro caminho.
+    083 + 597459 + 60 fecha o CPF inteiro. Duas rotas independentes, mesma
+    resposta.
+    """
+    base = re.sub(r"\D", "", str(cnpj or ""))[:8]
+    if len(base) != 8:
+        return []
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % I.CNPJ_DB, uri=True)
+        linhas = con.execute(
+            "SELECT s.nome_socio, s.cpf_cnpj_socio, s.data_entrada, "
+            "       s.faixa_etaria, COALESCE(l.descricao, s.qualificacao) "
+            "FROM socios s LEFT JOIN lookup l "
+            "  ON l.tipo='qualificacao' AND l.codigo=s.qualificacao "
+            "WHERE s.cnpj_basico=? AND s.identificador='2'", (base,)).fetchall()
+        con.close()
+    except Exception:
+        return []
+
+    saida = []
+    for nome, mascara, desde, faixa, qualif in linhas:
+        m = re.sub(r"\D", "", str(mascara or ""))
+        completo, conferidos = "", 0
+        if len(m) == 6 and nome:
+            # a máscara é ***DDDDDD** : dígitos 4..9 do CPF
+            cands, _ = _pela_jbr(nome, teto=60)
+            batem = [c for c in cands if c["cpf"][3:9] == m]
+            conferidos = len(batem)
+            if len(batem) == 1:
+                completo = batem[0]["cpf"]
+        saida.append({
+            "nome": nome or "", "cpf_mascarado": str(mascara or ""),
+            "cpf": completo, "conferidos_na_jbr": conferidos,
+            "qualificacao": str(qualif or ""), "desde": str(desde or ""),
+            "faixa_etaria": str(faixa or ""),
+        })
+    return saida
+
+
+
 class Empresa:
     """O contexto de uma empresa: CNPJ, estratégia e as listas por CNPJ.
 
@@ -148,6 +203,7 @@ class Empresa:
         self.estrategia: dict[str, Any] = {}
         self.decisores: list[dict] = []
         self.vinculos: list[dict] = []
+        self.socios: list[dict] = []
         self.preparada = False
 
     async def preparar(self, gasto: Gasto, usar_pagas: bool = True) -> None:
@@ -160,6 +216,11 @@ class Empresa:
             self.cnpj, self.razao, self.aviso = r["cnpj"], r["razao"], r["aviso"]
         self.estrategia = I.estrategia(self.cnpj, self.cidade, self.uf,
                                        nome_empresa=self.nome)
+        # SÓCIOS primeiro: é local e grátis, então roda mesmo quando as pagas
+        # estão desligadas. Era a única fonte de CPF por CNPJ que não custava
+        # nada e eu não estava usando.
+        self.socios = socios_da_empresa(self.cnpj) if self.cnpj else []
+
         if not self.cnpj or not usar_pagas:
             self.preparada = True
             return
@@ -194,7 +255,10 @@ class Empresa:
 
     def por_lista(self, nome: str) -> tuple[str, str]:
         """Procura o nome nas duas listas por CNPJ. Grátis, já estão em memória."""
-        for etapa, lista in (("decisores", self.decisores),
+        # sócios primeiro: o CPF deles veio fechado contra a JBR pelos seis
+        # dígitos que a Receita publica, o que é prova e não indício.
+        for etapa, lista in (("socio", [x for x in self.socios if x["cpf"]]),
+                             ("decisores", self.decisores),
                              ("rais", self.vinculos)):
             achados = [x for x in lista if _nome_contido(nome, x["nome"])]
             if len(achados) == 1:
@@ -530,6 +594,24 @@ def _nomes_do_meio(nome: str, teto: int = 6) -> list[str]:
 PART = {"DA", "DE", "DO", "DAS", "DOS", "E"}
 
 
+# 9º dígito do CPF = região fiscal onde ele foi emitido. ORDENA, nunca exclui:
+# quem nasce no Ceará e se muda para São Paulo mantém o dígito 3 a vida toda.
+REGIAO_FISCAL = {
+    "0": ["RS"], "1": ["DF", "GO", "MS", "MT", "TO"],
+    "2": ["AC", "AM", "AP", "PA", "RO", "RR"], "3": ["CE", "MA", "PI"],
+    "4": ["AL", "PB", "PE", "RN"], "5": ["BA", "SE"], "6": ["MG"],
+    "7": ["ES", "RJ"], "8": ["SP"], "9": ["PR", "SC"],
+}
+UF_PARA_DIGITO = {uf: d for d, ufs in REGIAO_FISCAL.items() for uf in ufs}
+
+
+def _da_regiao(cpf: str, uf: str) -> bool:
+    """O CPF foi emitido na região da UF do perfil?"""
+    d = UF_PARA_DIGITO.get((uf or "").upper()[:2])
+    c = re.sub(r"\D", "", str(cpf or ""))
+    return bool(d) and len(c) == 11 and c[8] == d
+
+
 async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
                           barrar_sem_cargo: bool = False) -> dict[str, Any]:
     """Um perfil do LinkedIn -> um CPF, ou o motivo de não ter dado.
@@ -575,8 +657,8 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
 
     # ETAPAS 02/03/04 — porte, decisores e RAIS, já resolvidos por empresa.
     etapa, cpf = emp.por_lista(nome)
-    etapas.append("03/04 listas do CNPJ:%d+%d"
-                  % (len(emp.decisores), len(emp.vinculos)))
+    etapas.append("03/04 listas do CNPJ: %d sócios, %d decisores, %d RAIS"
+                  % (len(emp.socios), len(emp.decisores), len(emp.vinculos)))
     if cpf:
         return saida("resolvido_por_" + etapa, cpf, 90,
                      porque="nome único na lista de %s do CNPJ" % etapa)
@@ -659,8 +741,10 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
     # caso costuma fechar sem gastar: as empresas do MK vêm com CNPJ, e a razão
     # social da Receita cruzada com a empresa do LinkedIn é prova do mesmo tipo
     # que a Assertiva cobra para dar.
+    avaliados_mk: list[dict[str, Any]] = []
     if lista:
         avaliados = await _pelo_mk(lista, cid, uf, emp.nome, gasto)
+        avaliados_mk = avaliados
         etapas.append("07 MK:%d" % len(avaliados))
         fortes = [a for a in avaliados if a["forca"] >= 60]
         if fortes:
@@ -733,6 +817,22 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
     alvo = {"cnpj_empresa": emp.cnpj, "empresa": emp.nome, "cargo": cargo,
             "cidade": cid, "ddd": I.ddd_da_cidade(cid, uf)}
     teto = int(emp.estrategia.get("teto_pago") or I.MAX_PAGO)
+
+    # A ORDEM DE QUEM RECEBE CONSULTA PAGA decide o resultado, porque só os
+    # `teto` primeiros são consultados. Antes eu usava a ordem alfabética que a
+    # Assertiva devolve — jogando fora tudo que as etapas 05 a 07 já tinham
+    # aprendido. No Felipe Oliveira isso importou: dos 13 de Araruama, os que
+    # tinham vínculo de vendas ficavam fora dos 4 primeiros do alfabeto.
+    #
+    # Agora ordena por: nota que o MK já deu > CPF emitido na região da UF >
+    # ordem original. A região fiscal ordena e não exclui.
+    nota_mk = {a["cpf"]: int(a.get("forca") or 0) for a in (avaliados_mk or [])}
+
+    def prioridade(c):
+        d = _cpf(c.get("cpf"))
+        return (-nota_mk.get(d, 0), 0 if _da_regiao(d, uf) else 1)
+
+    pf = sorted(pf, key=prioridade)
     avaliados = []
     for c in pf[:teto]:
         if gasto.estourou():
@@ -788,6 +888,7 @@ async def resolver_lote(perfis: list[dict[str, Any]], cidade: str = "",
             "pode_buscar": emp.estrategia.get("pode_buscar", True),
             "porque": emp.estrategia.get("porque", ""),
             "decisores": len(emp.decisores), "rais": len(emp.vinculos),
+            "socios": emp.socios,
         }
         for p in lista:
             if gasto.estourou():
@@ -963,6 +1064,8 @@ def contexto_empresa(nome: str, cidade: str = "", uf: str = "",
         filiais = I.filiais_da_empresa(r["cnpj"], nome, 20, uf=uf) if r["cnpj"] else []
     return {
         "empresa": nome, "cnpj": r["cnpj"], "razao": r["razao"],
+        # Grátis: sai da base da Receita e fecha o CPF contra a JBR.
+        "socios": socios_da_empresa(r["cnpj"]) if r["cnpj"] else [],
         "aviso": r["aviso"] or est.get("aviso", ""),
         "faixa": est.get("faixa", "desconhecida"),
         "modo": est.get("modo", ""),
