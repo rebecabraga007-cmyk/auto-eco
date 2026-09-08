@@ -770,15 +770,21 @@ async def linkedin_funcionarios(payload: dict = Body(default={})):
     cargo = str(payload.get("cargo") or "")
     limite = int(payload.get("limite") or 0)
 
+    so_decisores = payload.get("decisores", True) is not False
+
     if not payload.get("forcar") and not payload.get("cursor"):
         try:
+            # `decisores` PRECISA vir até aqui. Sem ele, o checkbox "Só
+            # decisores" só valia para a busca paga: quando o cache respondia,
+            # a tela devolvia a empresa inteira com o filtro marcado.
             guardados = linkedin_cache.por_empresa(empresa, pais=pais, cargo=cargo,
-                                                   limite=limite or 50)
+                                                   limite=limite or 50,
+                                                   decisores=so_decisores and not cargo)
         except Exception:
             guardados = []
         if guardados:
             return {"status": "cache", "empresa": empresa, "total": len(guardados),
-                    "pessoas": guardados,
+                    "pessoas": guardados, "so_decisores": so_decisores and not cargo,
                     "message": "Do que já foi comprado antes — não gastou nada agora."}
 
     return await brightdata_pessoas.buscar_agora(
@@ -786,7 +792,7 @@ async def linkedin_funcionarios(payload: dict = Body(default={})):
         cursor=payload.get("cursor"),
         # Padrão LIGADO: sem isso a busca traz uma fatia arbitrária da empresa.
         # Medido na Magalu: 40 perfis sem filtro deram ZERO decisores.
-        decisores=payload.get("decisores", True) is not False,
+        decisores=so_decisores,
     )
 
 
