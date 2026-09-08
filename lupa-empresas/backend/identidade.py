@@ -58,6 +58,11 @@ TETO_ASSERTIVA = 50
 MAX_CANDIDATOS = 20
 # Consultas PAGAS por candidato, por pessoa buscada.
 MAX_PAGO = 4
+# Teto de consulta paga em rede nacional (decisão da Rebeca: 48, não 50).
+# Fica ABAIXO do teto de 50 da própria Assertiva de propósito — bater no
+# número redondo confunde "gastei tudo que eu podia" com "a lista truncou",
+# que são situações diferentes e pedem decisões diferentes.
+MAX_PAGO_NACIONAL = 48
 
 PART = {"DA", "DE", "DO", "DAS", "DOS", "E"}
 RUIDO_EMP = {"GRUPO", "COMPANHIA", "CIA", "LTDA", "SA", "EIRELI", "ME", "EPP",
@@ -65,10 +70,15 @@ RUIDO_EMP = {"GRUPO", "COMPANHIA", "CIA", "LTDA", "SA", "EIRELI", "ME", "EPP",
              "SERVICOS", "COMERCIO", "INDUSTRIA", "BRASIL"}
 
 # As tabelas de família e os pares incompatíveis viviam aqui e foram para o
-# `funcoes.py`, que corrigiu o bug do `` no fim do radical — `vend` nunca
+# `funcoes.py`, que corrigiu o bug do `\b` no fim do radical — `\bvend\b` nunca
 # casava com "vendedor" e a família VENDAS, a maior da base, ficou cega por um
 # dia inteiro de testes. Removidas daqui para não haver duas versões, uma delas
 # quebrada, esperando alguém importar a errada.
+#
+# As funcoes `_familias()` e `_incompativel()` sobreviveram a remocao das
+# tabelas e ficaram apontando para nomes inexistentes -- chama-las dava
+# NameError. Tinham zero chamadores e sairam tambem. Use `funcoes.areas()`
+# e `funcoes.incompativel()`.
 
 _mapa_ddd: dict | None = None
 
@@ -76,17 +86,6 @@ _mapa_ddd: dict | None = None
 def _norm(s: Any) -> str:
     s = unicodedata.normalize("NFKD", str(s or "")).encode("ascii", "ignore").decode()
     return " ".join(s.upper().split())
-
-
-def _familias(texto: Any) -> set:
-    t = _norm(texto).lower()
-    return {n for n, p in _FAMILIAS if re.search(p, t)}
-
-
-def _incompativel(a: set, b: set) -> bool:
-    if not a or not b or (a & b):
-        return False
-    return any((u in a and v in b) or (v in a and u in b) for u, v in _INCOMPATIVEIS)
 
 
 def _tokens_empresa(s: Any) -> set:
@@ -427,15 +426,15 @@ def decidir(candidatos: list[dict[str, Any]],
 #             a cidade ajuda em parte; teto médio
 #   NACIONAL  acima disso ................... Gerdau, Ambev, Localiza, Magalu
 #             a cidade confirma 2,4% -> só o vínculo funciona, e aí vale pagar
-#             até 50 consultas por pessoa, porque é o único caminho que existe
+#             até 48 consultas por pessoa, porque é o único caminho que existe
 #
-# O TETO DE 50 É CARO: R$ 5,95 por pessoa. Só se justifica para decisor de
+# O TETO DE 48 É CARO: R$ 5,71 por pessoa. Só se justifica para decisor de
 # empresa grande, onde o valor do contato paga a consulta. Para volume, usar
 # o teto da faixa local.
 FAIXAS = [
     ("local",    5,    2,  4,  60),   # (nome, max_filiais, max_ufs, teto_pago, peso_cidade)
     ("regional", 60,  12, 15,  30),
-    ("nacional", 10**9, 99, 50,  0),
+    ("nacional", 10**9, 99, MAX_PAGO_NACIONAL,  0),
 ]
 
 LIMITE_FILIAIS = 15     # mediana medida: 1 nas médias, 58 nas multinacionais
@@ -465,7 +464,8 @@ def porte_da_empresa(cnpj: str) -> dict[str, Any]:
                     "teto_pago": teto, "peso_cidade": peso,
                     "espalhada": nome == "nacional"}
     return {"filiais": n, "ufs": u, "conhecida": True, "faixa": "nacional",
-            "teto_pago": 50, "peso_cidade": 0, "espalhada": True}
+            "teto_pago": MAX_PAGO_NACIONAL, "peso_cidade": 0,
+            "espalhada": True}
 
 
 def estrategia(cnpj: str, cidade_escolhida: str = "", uf_escolhida: str = "",
@@ -541,8 +541,8 @@ def estrategia(cnpj: str, cidade_escolhida: str = "", uf_escolhida: str = "",
                 "exige_cidade": True, "pode_buscar": False,
                 "filiais_no_estado": [], "unidade_padrao": padrao,
                 "ordem": ["vinculo_cnpj", "razao_social", "profissao"],
-                "peso_cidade": 0, "teto_pago": 50,
-                "custo_max_brl": round(50 * 0.119, 2),
+                "peso_cidade": 0, "teto_pago": MAX_PAGO_NACIONAL,
+                "custo_max_brl": round(MAX_PAGO_NACIONAL * 0.119, 2),
                 "porque": "nenhuma unidade ativa em %s. %s" % (ufa,
                           padrao.get("aviso") or "Escolha outra cidade.")}
 
@@ -550,12 +550,12 @@ def estrategia(cnpj: str, cidade_escolhida: str = "", uf_escolhida: str = "",
         return {**p, "modo": "rede nacional SEM cidade",
                 "exige_cidade": True, "pode_buscar": False,
                 "ordem": ["vinculo_cnpj", "razao_social", "profissao"],
-                "peso_cidade": 0, "teto_pago": 50,
-                "custo_max_brl": round(50 * 0.119, 2),
+                "peso_cidade": 0, "teto_pago": MAX_PAGO_NACIONAL,
+                "custo_max_brl": round(MAX_PAGO_NACIONAL * 0.119, 2),
                 "porque": "%d unidades em %d UFs. Sem escolher a cidade, a "
                           "confirmação cai para 2,4%% e cada pessoa custa até "
-                          "R$ 5,95. Escolha a unidade ou ao menos o estado."
-                          % (p["filiais"], p["ufs"])}
+                          "R$ %.2f. Escolha a unidade ou ao menos o estado."
+                          % (p["filiais"], p["ufs"], MAX_PAGO_NACIONAL * 0.119)}
 
     if tem_cidade:
         # com a filial escolhida, qualquer porte vira caso local
@@ -601,7 +601,7 @@ def filiais_da_empresa(cnpj: str, nome_empresa: str = "",
 
     Por que isso vem ANTES de buscar, em rede grande: saber a cidade devolve o
     sinal que confirma 46% dos casos em empresa local, contra 2,4% em rede
-    espalhada. Uma pergunta ao operador substitui R$ 5,95 de consultas.
+    espalhada. Uma pergunta ao operador substitui R$ 5,71 de consultas.
 
     `perfis_no_cache` conta gente DAQUELA EMPRESA naquela cidade — antes eu
     contava todo mundo da cidade, e São Paulo aparecia com 1.279 em toda linha.
@@ -717,7 +717,7 @@ def raizes_da_marca(nome_empresa: str, uf: str = "",
 def precisa_escolher_filial(cnpj: str) -> bool:
     """Em rede nacional, perguntar a unidade sai mais barato que varrer.
 
-    Uma pergunta ao operador contra R$ 5,95 de consultas por pessoa — e com
+    Uma pergunta ao operador contra R$ 5,71 de consultas por pessoa — e com
     resultado melhor, porque devolve o sinal de cidade que a rede tinha tirado.
     """
     return porte_da_empresa(cnpj).get("faixa") == "nacional"
