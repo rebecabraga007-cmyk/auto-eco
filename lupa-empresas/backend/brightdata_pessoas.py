@@ -21,6 +21,7 @@ sempre explicito e o padrao e baixo.
 """
 import os
 import re
+import time
 from typing import Any
 
 import httpx
@@ -404,6 +405,8 @@ async def buscar_varias(empresas: list[str], pais: str = "BR", cargo: str = "",
             continue
         achados = [_pessoa(x) for x in (d.get("hits") or []) if isinstance(x, dict)]
         custo_registros += len(achados)
+        # Cobrado e cobrado: guarda tudo, inclusive o parecido. Quem separa e a
+        # leitura no fim -- descartar aqui seria pagar e jogar fora.
         try:
             linkedin_cache.salvar_perfis(achados, origem="api")
         except Exception:
@@ -425,9 +428,12 @@ async def buscar_varias(empresas: list[str], pais: str = "BR", cargo: str = "",
     except Exception as exc:
         return {"status": "error", "message": str(exc)[:150], "pessoas": []}
 
+    exatas = sum(1 for p in pessoas if p.get("exata"))
     return {
         "status": "ok",
         "empresas_pedidas": len(empresas),
+        "exatas": exatas,
+        "parecidas": len(pessoas) - exatas,
         "empresas_buscadas_na_api": buscadas,
         "chamadas_api": (len(faltando) + EMPRESAS_POR_CHAMADA - 1) // EMPRESAS_POR_CHAMADA,
         "registros_cobrados": custo_registros,
@@ -538,7 +544,129 @@ def _pessoa(rec: dict[str, Any]) -> dict[str, Any]:
         "seguidores": rec.get("followers"),
         "formacao": rec.get("educations_details") or "",
         "sobre": (rec.get("about") or "")[:400],
+        # Campos que o dataset já entregava e a gente descartava. Medido em 300
+        # registros: first_name 99,7%, last_name 99,0%, experience 80,3%,
+        # current_company_company_id 40,7%, languages 11,7%, certifications 8,0%.
+        # Sem eles nao havia como oferecer os filtros de nome/sobrenome, tempo
+        # na empresa e especialidades que a Datastone tem.
+        "primeiro_nome": rec.get("first_name") or "",
+        "sobrenome": rec.get("last_name") or "",
+        "empresa_id": (rec.get("current_company_company_id")
+                       or emp.get("company_id") or ""),
+        "conexoes": rec.get("connections"),
+        "idiomas": _titulos(rec.get("languages")),
+        "certificacoes": _titulos(rec.get("certifications")),
+        "desde_na_empresa": _desde_atual(rec, emp),
+        # Os dois estimadores de IDADE. Nao existe data de nascimento no
+        # LinkedIn, mas formatura e primeiro emprego cercam a faixa -- e faixa de
+        # nascimento e o filtro gratuito que mais corta homonimo.
+        "formatura_ano": _formatura(rec),
+        "carreira_desde": _carreira_desde(rec),
     }
+
+
+def _anos(txt: Any) -> list[int]:
+    """Anos plausiveis de vida adulta num texto. Descarta 1899 e 2100."""
+    return [int(a) for a in re.findall(r"\b(19[3-9]\d|20[0-4]\d)\b", str(txt or ""))]
+
+
+def _formatura(rec: dict[str, Any]) -> int:
+    """Ano da ULTIMA formacao concluida. 0 quando nao da pra afirmar.
+
+    Usa `end_year` do array `education` (43% preenchido). Pega o maior: a
+    formacao mais recente e a que melhor situa a idade. Curso em andamento
+    (sem end_year) nao entra -- serviria para chutar, nao para afirmar.
+    """
+    edu = rec.get("education")
+    if not isinstance(edu, list):
+        return 0
+    anos = []
+    for e in edu:
+        if not isinstance(e, dict):
+            continue
+        for campo in ("end_year", "endYear", "end_date"):
+            anos += _anos(e.get(campo))
+    return max(anos) if anos else 0
+
+
+def _carreira_desde(rec: dict[str, Any]) -> int:
+    """Ano da PRIMEIRA experiencia da carreira. 0 quando nao da.
+
+    E o melhor estimador de idade do registro: primeiro emprego costuma ser
+    entre 18 e 28 anos. `experience` vem 80% preenchido.
+    """
+    exp = rec.get("experience")
+    if not isinstance(exp, list):
+        return 0
+    anos = []
+    for x in exp:
+        if not isinstance(x, dict):
+            continue
+        for campo in ("start_date", "startDate", "duration", "duration_short"):
+            anos += _anos(x.get(campo))
+        for pos in (x.get("positions") or []):
+            if isinstance(pos, dict):
+                for campo in ("start_date", "duration"):
+                    anos += _anos(pos.get(campo))
+    return min(anos) if anos else 0
+
+
+def _titulos(v: Any) -> str:
+    """Achata [{title: 'Inglês'}, ...] num texto buscável. Guardar o JSON cru
+    obrigaria a tela a entender o formato deles; texto basta pro filtro."""
+    if not isinstance(v, list):
+        return ""
+    saida = []
+    for x in v[:12]:
+        if isinstance(x, dict):
+            t = x.get("title") or x.get("name") or ""
+            if t:
+                saida.append(str(t))
+        elif x:
+            saida.append(str(x))
+    return " | ".join(saida)[:300]
+
+
+_MESES = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7,
+          "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
+
+
+def _desde_atual(rec: dict[str, Any], emp: dict[str, Any]) -> str:
+    """Quando a pessoa entrou na empresa ATUAL, como AAAAMM.
+
+    O LinkedIn nao tem campo de data de entrada: esta dentro de `experience`,
+    em texto ("Jan 2018 - Present"). Extraimos so da experiencia marcada como
+    atual; se nenhuma estiver, devolvemos vazio em vez de chutar a primeira --
+    "tempo na empresa" errado manda o vendedor abrir a conversa com data falsa.
+    """
+    for fonte in (emp.get("start_date"), rec.get("current_company_join_date")):
+        m = re.search(r"(\d{4})[-/](\d{1,2})", str(fonte or ""))
+        if m:
+            return "%04d%02d" % (int(m.group(1)), int(m.group(2)))
+
+    exp = rec.get("experience")
+    if not isinstance(exp, list):
+        return ""
+    for x in exp:
+        if not isinstance(x, dict):
+            continue
+        periodo = str(x.get("duration") or x.get("duration_short") or "")
+        atual = ("present" in periodo.lower() or "atual" in periodo.lower()
+                 or x.get("end_date") in (None, "", "Present"))
+        if not atual:
+            continue
+        bruto = str(x.get("start_date") or periodo)
+        m = re.search(r"(\d{4})[-/](\d{1,2})", bruto)
+        if m:
+            return "%04d%02d" % (int(m.group(1)), int(m.group(2)))
+        m = re.search(r"([A-Za-z]{3})[a-z]*\.?\s+(\d{4})", bruto)
+        if m and m.group(1).lower() in _MESES:
+            return "%04d%02d" % (int(m.group(2)), _MESES[m.group(1).lower()])
+        m = re.search(r"\b(19|20)(\d{2})\b", bruto)
+        if m:
+            return "%s%s01" % (m.group(1), m.group(2))
+        return ""
+    return ""
 
 
 def _casa_empresa(pessoa: dict[str, Any], alvo: str) -> bool:
@@ -619,4 +747,163 @@ async def consultar(protocolo: str, empresa: str = "") -> dict[str, Any]:
         "message": "" if pessoas else
                    "Nenhum perfil no dataset para esse filtro. Tente outra grafia "
                    "do nome da empresa (o dataset guarda o nome como esta no LinkedIn).",
+    }
+
+
+# --------------------------------------------------------------------------
+# Busca por FILTRO na Bright Data (o "traz o que nao esta na base")
+# --------------------------------------------------------------------------
+# Ate aqui a unica forma de gastar era "traz os decisores da empresa X". Se a
+# pessoa filtrava por cargo + UF + palavra-chave e o cache nao tinha, nao havia
+# saida: a tela dizia "0 perfis" e ficava nisso. Isto traduz os filtros da tela
+# para o DSL deles e busca de verdade.
+#
+# O QUE A API DELES ACEITA FILTRAR (sondado em 06/set, size=1 por sonda):
+#   first_name =            OK   |  last_name = e includes   OK
+#   city includes           OK   |  about includes           OK
+#   educations_details inc. OK   |  languages includes       OK
+#   followers >             OK   |  default_avatar =         OK
+#   current_company_company_id =  OK  (25.091 para magazine-luiza)
+#   position includes       OK   |  current_company_name includes  OK
+# O QUE NAO ACEITA:
+#   connections >  -> devolve 0 sempre (campo nao indexado)
+#   experience     -> HTTP 500 ETIMEDOUT (array aninhado)
+# Consequencia: "tempo na empresa" e "UF" NAO existem como filtro na origem.
+# Tempo vem de `experience` e UF nao existe (so `city` em texto livre), entao
+# esses dois so funcionam sobre o que ja esta no cache. A tela avisa.
+
+# `city` do dataset guarda o nome COM acento ("Sao Paulo" devolveu 1 hit,
+# "Sao" sem acento nao casa). Entao o filtro de cidade vai como o usuario
+# digitou, sem passar pelo _norm que tira acento.
+CIDADE_SEM_NORM = True
+
+OR_TETO = 4                # medido: `or` com mais de 4 termos e rejeitado
+
+
+def _grupo_or(campo: str, termos: list[str], operador: str = "includes"):
+    """Grupo `or` de um campo. Corta em OR_TETO: acima disso a API rejeita a
+    chamada inteira, e perder a busca e pior que perder o 5o termo."""
+    termos = [t for t in termos if t][:OR_TETO]
+    if not termos:
+        return None
+    if len(termos) == 1:
+        return {"name": campo, "operator": operador, "value": termos[0]}
+    return {"operator": "or",
+            "filters": [{"name": campo, "operator": operador, "value": t}
+                        for t in termos]}
+
+
+async def buscar_por_filtro(pais: str = "BR", empresas: Any = None,
+                            empresa_ids: Any = None, cargos_termos: Any = None,
+                            nome: str = "", sobrenome: str = "",
+                            cidade: str = "", palavras: Any = None,
+                            min_seguidores: int = 0, so_com_foto: bool = False,
+                            decisores: bool = False, limite: int = 50,
+                            usuario: str = "") -> dict[str, Any]:
+    """Busca no dataset inteiro da Bright Data com os filtros da tela.
+
+    Cobra por registro entregue. Devolve `custo_usd` para a tela poder mostrar
+    o valor DEPOIS da chamada, alem da estimativa que ela mostra antes.
+    """
+    if not enabled():
+        return {"status": "unavailable", "pessoas": [],
+                "message": "BRIGHTDATA_API_KEY nao configurada."}
+
+    def _l(v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            v = re.split(r"[;,]", v)
+        return [str(x).strip() for x in v if str(x).strip()]
+
+    condicoes: list[dict[str, Any]] = []
+    if pais:
+        condicoes.append({"name": "country_code", "operator": "=",
+                          "value": pais.upper()[:2]})
+
+    # company_id e melhor que nome: e chave, nao texto. Quando a empresa foi
+    # conferida pelo link, temos o id e a busca deixa de trazer homonimo.
+    g = _grupo_or("current_company_company_id", _l(empresa_ids), "=")
+    if g:
+        condicoes.append(g)
+    else:
+        g = _grupo_or("current_company_name", _l(empresas))
+        if g:
+            condicoes.append(g)
+
+    termos_cargo = _l(cargos_termos)
+    if termos_cargo:
+        condicoes.append(_grupo_or("position", [_norm(t) for t in termos_cargo]))
+    elif decisores:
+        condicoes.append(_grupo_decisores())
+
+    if _norm(nome):
+        condicoes.append({"name": "first_name", "operator": "includes",
+                          "value": _norm(nome)})
+    if _norm(sobrenome):
+        condicoes.append({"name": "last_name", "operator": "includes",
+                          "value": _norm(sobrenome)})
+    if (cidade or "").strip():
+        condicoes.append({"name": "city", "operator": "includes",
+                          "value": cidade.strip()})
+    g = _grupo_or("about", _l(palavras))
+    if g:
+        condicoes.append(g)
+    if int(min_seguidores or 0) > 0:
+        condicoes.append({"name": "followers", "operator": ">",
+                          "value": int(min_seguidores)})
+    if so_com_foto:
+        condicoes.append({"name": "default_avatar", "operator": "=", "value": False})
+
+    # Sem nenhuma condicao alem do pais, a busca traria 21 milhoes de perfis
+    # aleatorios e cobraria por todos. Melhor recusar.
+    if len(condicoes) <= 1:
+        return {"status": "error", "pessoas": [],
+                "message": "Escolha ao menos um filtro (empresa, cargo, nome, "
+                           "cidade ou palavra-chave) antes de buscar na Bright "
+                           "Data - sem filtro ela cobraria por perfil aleatorio."}
+
+    corpo = {"size": max(1, min(int(limite or 50), SEARCH_TETO)),
+             "filter": {"operator": "and", "filters": condicoes},
+             "sort": [{"timestamp": "asc"}]}
+
+    t0 = time.time()
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as cli:
+            r = await cli.post(SEARCH_URL + DATASET, headers=_headers(), json=corpo)
+    except Exception as exc:
+        return {"status": "error", "pessoas": [],
+                "message": "Bright Data nao respondeu: %s" % str(exc)[:120]}
+    if r.status_code >= 400:
+        return {"status": "error", "pessoas": [],
+                "message": "Bright Data recusou o filtro (HTTP %s): %s"
+                           % (r.status_code, r.text[:180])}
+    import json as _json
+    try:
+        d = _json.loads(r.content)      # UTF-8 sem charset: r.text erra o acento
+    except Exception:
+        return {"status": "error", "pessoas": [], "message": "Resposta ilegivel."}
+
+    pessoas = [_pessoa(x) for x in (d.get("hits") or []) if isinstance(x, dict)]
+    custo = round(len(pessoas) * linkedin_cache.USD_POR_REGISTRO, 4)
+    novos = 0
+    try:
+        novos = linkedin_cache.salvar_perfis(pessoas, origem="api")
+    except Exception:
+        pass
+    linkedin_cache.registrar_gasto(
+        "search", detalhe=(", ".join(_l(empresas) or _l(cargos_termos)
+                                     or [nome or cidade or "filtro"]))[:200],
+        registros=len(pessoas), custo_usd=custo, usuario=usuario)
+
+    return {
+        "status": "ok",
+        "pessoas": pessoas,
+        "total": len(pessoas),
+        "total_no_dataset": d.get("total_hits"),
+        "novos_no_cache": novos,
+        "registros_cobrados": len(pessoas),
+        "custo_usd": custo,
+        "cursor": d.get("search_after"),
+        "ms": int((time.time() - t0) * 1000),
     }

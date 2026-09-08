@@ -31,6 +31,17 @@ AUTH_HEADER = os.environ.get("MK_AUTH_HEADER", "x-api-key").strip()
 AUTH_VALUE = (os.environ.get("MK_AUTH_VALUE") or os.environ.get("WORKAPI_KEY") or "").strip()
 METHOD = os.environ.get("MK_METHOD", "GET").strip().upper()
 
+# TETO DE CONSULTAS PARA UM MESMO NOME. Nao e limite da API -- e regra nossa.
+# Tres razoes, todas medidas em 07/set/2026:
+#   1. A cota e de 2.000/dia. Varrer 370 candidatos de um "Vinicius Ferreira"
+#      queima 18% do dia inteiro numa pessoa so.
+#   2. Acima de ~250 chamadas seguidas o gateway passa a recusar: 220 de 250
+#      voltaram erro em 55s (0,22s cada, rapido demais para ser resposta).
+#   3. Se 100 candidatos ja foram conferidos e nenhum casou, o problema nao e
+#      falta de consulta -- e falta de criterio. Continuar e gastar para
+#      confirmar o que ja se sabe: precisa de pista humana.
+MAX_POR_NOME = int(os.environ.get("MK_MAX_POR_NOME", "100"))
+
 # Módulo de TELEFONE REVERSO (intelgrax-tel): phone -> CPFs/CNPJs atrelados.
 # Tem chave PRÓPRIA (MK_TEL_KEY) porque o acesso é por módulo: a chave do CPF
 # (intelgrax-cpfv2) não abre o tel, e vice-versa. Cai na WORKAPI_KEY se não houver.
