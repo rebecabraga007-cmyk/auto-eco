@@ -5005,8 +5005,8 @@ function b2bPainelPessoa(d) {
       <b>Não consegui identificar o CPF.</b>
       <div class="pf-advanced-hint" style="margin-top:4px">
         ${esc(id.porque || id.situacao || 'sem motivo registrado')}</div>
-      <div class="pf-advanced-hint" style="margin-top:4px">
-        Gasto: R$ ${(custo.brl || 0).toFixed(2)}</div>
+      ${custo.brl === undefined ? '' : `<div class="pf-advanced-hint"
+        style="margin-top:4px">Gasto: R$ ${custo.brl.toFixed(2)}</div>`}
     </div>`;
   }
   if (doc.status && doc.status !== 'ok') {
@@ -5066,10 +5066,11 @@ function b2bPainelPessoa(d) {
                    doc.enderecos[0].uf].filter(Boolean).join(', '))}</div>` : ''}
       </div>
     </div>
+    ${custo.brl === undefined ? '' : `
     <div class="pf-advanced-hint" style="margin-top:10px">
-      Custo desta consulta: <b>R$ ${(custo.brl || 0).toFixed(2)}</b>
+      Custo desta consulta: <b>R$ ${custo.brl.toFixed(2)}</b>
       (${custo.assertiva || 0} Assertiva${custo.workapi ? `, ${custo.workapi} WorkAPI grátis` : ''})
-    </div>
+    </div>`}
   </div>`;
 }
 
@@ -5261,8 +5262,9 @@ function b2bPintaUnidade(c) {
       </div>` : ''}
       ${precisa ? `<div class="pf-advanced-hint" style="margin-top:6px">
         Escolha uma unidade acima — ou digite a cidade — antes de mandar buscar
-        na Bright Data. Sem isso o custo por pessoa vai a
-        R$ ${(c.custo_max_brl || 0).toFixed(2)}.</div>` : ''}
+        na Bright Data. Sem isso a busca fica espalhada pelo país inteiro e
+        acha muito menos.${c.custo_max_brl === undefined ? '' :
+          ` O custo por pessoa vai a R$ ${c.custo_max_brl.toFixed(2)}.`}</div>` : ''}
     </div>`;
 
   b2bUnidade.querySelectorAll('.b2b-filial').forEach(b => {
@@ -5404,8 +5406,9 @@ function b2bOfertaBuscar(f, quantosTem) {
       ${faltaUnidade ? `<div style="margin-bottom:6px">
         <b>${esc(ctx.razao || ctx.empresa)}</b> tem ${ctx.unidades} unidades em
         ${ctx.ufs} UFs e nenhuma foi escolhida. Dá para buscar assim, mas os
-        perfis virão espalhados pelo país e achar o CPF de cada um custará até
-        <b>R$ ${(ctx.custo_max_brl || 0).toFixed(2)}</b> em vez de R$ 0,48.
+        perfis virão espalhados pelo país e achar o CPF de cada um fica muito
+        mais caro e menos certeiro${ctx.custo_max_brl === undefined ? '' :
+          ` — até R$ ${ctx.custo_max_brl.toFixed(2)} por pessoa, em vez de R$ 0,48`}.
         Escolher a unidade acima resolve isso.</div>` : ''}
       A base local tem <b>${quantosTem}</b> perfis com esse filtro.
       <button id="b2b-fetch" class="btn-secondary" style="margin-left:8px">

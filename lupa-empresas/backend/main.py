@@ -539,8 +539,25 @@ async def linkedin_ufs():
         return {"status": "error", "message": str(exc)[:120], "ufs": []}
 
 
+def _limpa_custo(d: Any) -> Any:
+    """Tira o custo da resposta. Só admin vê quanto cada busca gastou.
+
+    Some NA ORIGEM, não por CSS: escondido no navegador o número continua no
+    DOM e em qualquer inspeção. Quem opera não precisa saber o preço de cada
+    linha — isso é conta de dono, e ver R$ 0,59 ao lado de um nome empurra a
+    pessoa a não clicar justamente onde clicar valeria a pena.
+    """
+    if isinstance(d, dict):
+        return {k: _limpa_custo(v) for k, v in d.items()
+                if k not in ("custo", "custo_por_cpf", "custo_max_brl")}
+    if isinstance(d, list):
+        return [_limpa_custo(x) for x in d]
+    return d
+
+
 @app.get("/api/funil/empresa")
-async def funil_empresa(nome: str = "", cidade: str = "", uf: str = ""):
+async def funil_empresa(request: Request, nome: str = "", cidade: str = "",
+                        uf: str = ""):
     """Porte da empresa e unidades disponíveis. NÃO GASTA NADA.
 
     O filtro B2B chama isto enquanto a pessoa digita o nome da empresa, para
@@ -552,7 +569,8 @@ async def funil_empresa(nome: str = "", cidade: str = "", uf: str = ""):
     if len(nome) < 3:
         return {"status": "vazio", "filiais": []}
     try:
-        return {"status": "ok", **funil.contexto_empresa(nome, cidade, uf)}
+        r = {"status": "ok", **funil.contexto_empresa(nome, cidade, uf)}
+        return r if _is_admin(request) else _limpa_custo(r)
     except Exception as exc:
         return {"status": "error", "message": str(exc)[:160], "filiais": []}
 
@@ -587,7 +605,8 @@ async def funil_resolver(request: Request, payload: dict = Body(...)):
             teto_brl=teto,
             usar_pagas=bool(payload.get("usar_pagas", True)),
         )
-        return {"status": "ok", **r}
+        r = {"status": "ok", **r}
+        return r if _is_admin(request) else _limpa_custo(r)
     except Exception as exc:
         return {"status": "error", "message": str(exc)[:200]}
 
@@ -610,9 +629,10 @@ async def funil_pessoa(request: Request, payload: dict = Body(...)):
     teto = max(0.0, min(teto, 20.0))
     try:
         if len(cpf) == 11:
-            return {"status": "ok", "identificacao": {"cpf": cpf,
-                    "situacao": "cpf_informado", "confianca": 100},
-                    "dossie": await funil.dossie_pessoa(cpf, funil.Gasto(teto))}
+            r = {"status": "ok", "identificacao": {"cpf": cpf,
+                 "situacao": "cpf_informado", "confianca": 100},
+                 "dossie": await funil.dossie_pessoa(cpf, funil.Gasto(teto))}
+            return r if _is_admin(request) else _limpa_custo(r)
         perfil = payload.get("perfil") or {}
         if not (perfil.get("nome") or "").strip():
             return {"status": "error", "message": "Informe o CPF ou o perfil."}
@@ -621,7 +641,8 @@ async def funil_pessoa(request: Request, payload: dict = Body(...)):
             cidade=(payload.get("cidade") or "").strip(),
             uf=(payload.get("uf") or "").strip().upper()[:2],
             teto_brl=teto)
-        return {"status": "ok", **r}
+        r = {"status": "ok", **r}
+        return r if _is_admin(request) else _limpa_custo(r)
     except Exception as exc:
         return {"status": "error", "message": str(exc)[:200]}
 
