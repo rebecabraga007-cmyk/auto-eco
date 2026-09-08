@@ -557,7 +557,7 @@ def _limpa_custo(d: Any) -> Any:
 
 @app.get("/api/funil/empresa")
 async def funil_empresa(request: Request, nome: str = "", cidade: str = "",
-                        uf: str = ""):
+                        uf: str = "", cnpj: str = ""):
     """Porte da empresa e unidades disponíveis. NÃO GASTA NADA.
 
     O filtro B2B chama isto enquanto a pessoa digita o nome da empresa, para
@@ -566,10 +566,12 @@ async def funil_empresa(request: Request, nome: str = "", cidade: str = "",
     pessoa para confirmar 2,4% dos casos.
     """
     nome = (nome or "").strip()
-    if len(nome) < 3:
+    # Com CNPJ digitado, o nome vira opcional: quem sabe o CNPJ não precisa
+    # acertar a grafia da razão social.
+    if len(nome) < 3 and len(re.sub(r"\D", "", cnpj or "")) != 14:
         return {"status": "vazio", "filiais": []}
     try:
-        r = {"status": "ok", **funil.contexto_empresa(nome, cidade, uf)}
+        r = {"status": "ok", **funil.contexto_empresa(nome, cidade, uf, cnpj)}
         return r if _is_admin(request) else _limpa_custo(r)
     except Exception as exc:
         return {"status": "error", "message": str(exc)[:160], "filiais": []}
@@ -604,6 +606,7 @@ async def funil_resolver(request: Request, payload: dict = Body(...)):
             uf=(payload.get("uf") or "").strip().upper()[:2],
             teto_brl=teto,
             usar_pagas=bool(payload.get("usar_pagas", True)),
+            cnpj=str(payload.get("cnpj") or ""),
         )
         r = {"status": "ok", **r}
         return r if _is_admin(request) else _limpa_custo(r)
@@ -640,7 +643,7 @@ async def funil_pessoa(request: Request, payload: dict = Body(...)):
             perfil,
             cidade=(payload.get("cidade") or "").strip(),
             uf=(payload.get("uf") or "").strip().upper()[:2],
-            teto_brl=teto)
+            teto_brl=teto, cnpj=str(payload.get("cnpj") or ""))
         r = {"status": "ok", **r}
         return r if _is_admin(request) else _limpa_custo(r)
     except Exception as exc:

@@ -5124,7 +5124,7 @@ function ligarVerMais(containerId) {
           perfil: { nome: p.nome, cargo: p.cargo, empresa: p.empresa,
                     cidade: p.cidade, formatura_ano: p.formatura_ano || 0,
                     carreira_desde: p.carreira_desde || 0 },
-          cidade: _v('b2b-cidade'), uf: (p.uf || ''),
+          cidade: _v('b2b-cidade'), uf: (p.uf || ''), cnpj: _v('b2b-cnpj'),
         }),
       }).then(r => r.json());
       if (d.status !== 'ok') {
@@ -5284,7 +5284,11 @@ async function b2bChecarEmpresa() {
   const nome = _v('b2b-empresa');
   // Várias empresas de uma vez: o painel é de uma unidade só, então não tenta
   // adivinhar qual — some e deixa a busca seguir como antes.
-  if (!nome || nome.includes(',') || nome.length < 3) {
+  // Com CNPJ digitado o painel vale mesmo sem nome: quem sabe o CNPJ
+  // não precisa acertar a grafia da razão social.
+  const cnpjDigitado = _v('b2b-cnpj').replace(/\D/g, '');
+  if (cnpjDigitado.length !== 14 &&
+      (!nome || nome.includes(',') || nome.length < 3)) {
     if (b2bUnidade) b2bUnidade.hidden = true;
     _b2bCtxEmpresa = null;
     return;
@@ -5293,13 +5297,14 @@ async function b2bChecarEmpresa() {
     .map(o => o.value).filter(Boolean);
   const par = new URLSearchParams({
     nome, cidade: _v('b2b-cidade'), uf: ufs.length === 1 ? ufs[0] : '',
+    cnpj: _v('b2b-cnpj'),
   });
   try {
     b2bPintaUnidade(await fetch(`${API}/api/funil/empresa?${par}`).then(r => r.json()));
   } catch (e) { if (b2bUnidade) b2bUnidade.hidden = true; }
 }
 
-['b2b-empresa', 'b2b-cidade'].forEach(id => {
+['b2b-empresa', 'b2b-cidade', 'b2b-cnpj'].forEach(id => {
   document.getElementById(id)?.addEventListener('input', () => {
     clearTimeout(_b2bTimer);
     _b2bTimer = setTimeout(b2bChecarEmpresa, 450);

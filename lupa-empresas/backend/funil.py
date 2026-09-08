@@ -131,10 +131,16 @@ class Empresa:
     todo mundo do mesmo CNPJ.
     """
 
-    def __init__(self, nome: str, cidade: str = "", uf: str = ""):
+    def __init__(self, nome: str, cidade: str = "", uf: str = "",
+                 cnpj: str = ""):
         self.nome = nome
         self.cidade = cidade
         self.uf = uf
+        # CNPJ informado pelo operador manda em tudo. Resolver empresa pelo
+        # nome erra de dois jeitos: não acha ("BLU Sales Group" contra "BLU
+        # SALES LTDA") ou acha a errada (marca fatiada em várias razões
+        # sociais). Quando a pessoa sabe o CNPJ, não há por que adivinhar.
+        self.cnpj_informado = re.sub(r"\D", "", str(cnpj or ""))[:14]
         self.cnpj = ""
         self.razao = ""
         self.aviso = ""
@@ -144,8 +150,13 @@ class Empresa:
         self.preparada = False
 
     async def preparar(self, gasto: Gasto, usar_pagas: bool = True) -> None:
-        r = I.cnpj_com_aviso(self.nome, self.uf)
-        self.cnpj, self.razao, self.aviso = r["cnpj"], r["razao"], r["aviso"]
+        if len(self.cnpj_informado) == 14:
+            self.cnpj = self.cnpj_informado
+            self.razao = _razao_do_cnpj(self.cnpj) or self.nome
+            self.aviso = ""
+        else:
+            r = I.cnpj_com_aviso(self.nome, self.uf)
+            self.cnpj, self.razao, self.aviso = r["cnpj"], r["razao"], r["aviso"]
         self.estrategia = I.estrategia(self.cnpj, self.cidade, self.uf,
                                        nome_empresa=self.nome)
         if not self.cnpj or not usar_pagas:
@@ -198,6 +209,39 @@ JBR_DB = os.environ.get("JBR_DB", "/opt/capiblu/jbr_base/jbr_pf.db")
 # estrangula acima de ~250 chamadas rápidas; 12 cobre o caso comum sem
 # transformar uma busca numa varredura.
 MAX_MK = int(os.environ.get("FUNIL_MAX_MK", "12"))
+
+
+IDADE_MIN, IDADE_MAX = 18, 60
+
+
+def _idade_ok(nascimento: Any) -> bool:
+    """Idade plausível para alguém com perfil profissional no LinkedIn.
+
+    Funciona SEM formatura e sem primeira experiência, que é o caso da maioria
+    dos perfis — a faixa de nascimento derivada delas só existe em ~30%. Aqui o
+    corte é grosso e vale sempre: quem tem 8 ou 74 anos não é o gerente que a
+    operação procura.
+
+    Nascimento vazio NÃO corta. Ausência de dado não é motivo para eliminar.
+    """
+    m = re.search(r"(19|20)\d{2}", str(nascimento or ""))
+    if not m:
+        return True
+    idade = time.localtime().tm_year - int(m.group(0))
+    return IDADE_MIN <= idade <= IDADE_MAX
+
+
+def _situacao_ok(situacao: Any) -> bool:
+    """Corta CPF suspenso e titular falecido. Vazio passa.
+
+    Mesmo princípio: "" é ausência de dado, não é óbito. Cortar o vazio
+    derrubaria a maior parte da base por falta de informação.
+    """
+    s = I._norm(situacao)
+    if not s:
+        return True
+    return not any(x in s for x in ("SUSPENS", "FALECID", "OBITO", "TITULAR "
+                                    "FALECIDO", "CANCELAD", "NULA"))
 
 
 def _pela_jbr(nome: str, teto: int = 400) -> tuple[list[dict[str, Any]], str]:
@@ -413,15 +457,36 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
 
     # ETAPA 05 — JBR: enumera os candidatos. Grátis, local, base inteira.
     jbr, modo = _pela_jbr(nome)
+    bruto_jbr = len(jbr)
+    # Corte grosso de idade ANTES de tudo: vale mesmo sem formatura, que é o
+    # caso da maioria. A faixa fina, quando existe, aperta depois.
+    jbr = [c for c in jbr if _idade_ok(c.get("nascimento"))]
     if de:
         f = [c for c in jbr
              if linkedin_cache.dentro_da_faixa(c.get("nascimento"), de, ate)]
         if f:
             jbr = f
-    etapas.append("05 JBR:%d(%s)" % (len(jbr), modo or "vazio"))
+    etapas.append("05 JBR:%d de %d(%s)" % (len(jbr), bruto_jbr, modo or "vazio"))
+
+    # SEM CONCORRENTE, ENCERRA AQUI. É a regra da documentação, e ela vale a
+    # cada etapa, não só no fim: se a base nacional inteira tem UMA pessoa com
+    # esse nome, não há o que desambiguar e continuar filtrando só gasta.
+    # Luiz Gustavo Turmina é um nome só no país inteiro — seguir para a WorkAPI
+    # e para o MK antes de decidir era trabalho para confirmar o óbvio.
+    # O MK ainda roda depois, mas para pegar TELEFONE, não para escolher.
+    if len(jbr) == 1:
+        d = I.decidir([{**jbr[0], "forca": 0, "elimina": False}], concorrentes=1)
+        tels = await _pelo_mk(jbr, cid, uf, emp.nome, gasto)
+        return saida("resolvido_gratis", d["cpf"], d["confianca"],
+                     porque="único com esse nome na base nacional — "
+                            "não há concorrente para desempatar",
+                     telefones=(tels[0].get("telefones") if tels else []))
 
     # ETAPA 06 — WorkAPI: endereço de graça, cruzado por CPF com a JBR.
     livres = await _pela_workapi(nome, gasto)
+    livres = [p for p in livres
+              if _idade_ok(p.get("data_nascimento"))
+              and _situacao_ok(p.get("situacao_cadastral"))]
     if de:
         f = [p for p in livres
              if linkedin_cache.dentro_da_faixa(p.get("data_nascimento"), de, ate)]
@@ -438,6 +503,15 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
             candidatos[d] = {"cpf": d, "nome": p.get("nome") or "",
                              "nascimento": p.get("data_nascimento") or ""}
     lista = list(candidatos.values())
+
+    # Mesma regra depois de juntar as duas bases gratuitas.
+    if len(lista) == 1:
+        d = I.decidir([{**lista[0], "forca": 0, "elimina": False}], concorrentes=1)
+        tels = await _pelo_mk(lista, cid, uf, emp.nome, gasto)
+        return saida("resolvido_gratis", d["cpf"], d["confianca"],
+                     porque="único candidato entre JBR e WorkAPI — sem "
+                            "concorrente, não precisa de contraprova",
+                     telefones=(tels[0].get("telefones") if tels else []))
 
     # Ordena pelo endereço que a WorkAPI deu: cidade do perfil primeiro.
     def ordem(c):
@@ -533,7 +607,8 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
 # ===========================================================================
 async def resolver_lote(perfis: list[dict[str, Any]], cidade: str = "",
                         uf: str = "", teto_brl: float = TETO_LOTE_PADRAO,
-                        usar_pagas: bool = True) -> dict[str, Any]:
+                        usar_pagas: bool = True,
+                        cnpj: str = "") -> dict[str, Any]:
     """Roda o funil num lote, agrupando por empresa para não repetir o CNPJ."""
     gasto = Gasto(teto_brl)
     t0 = time.time()
@@ -544,7 +619,9 @@ async def resolver_lote(perfis: list[dict[str, Any]], cidade: str = "",
 
     saidas, empresas = [], {}
     for nome_emp, lista in porempresa.items():
-        emp = Empresa(nome_emp, cidade, uf)
+        # o CNPJ informado só vale quando o lote é de UMA empresa
+        emp = Empresa(nome_emp, cidade, uf,
+                      cnpj if len(porempresa) == 1 else "")
         await emp.preparar(gasto, usar_pagas=usar_pagas)
         empresas[nome_emp] = {
             "cnpj": emp.cnpj, "razao": emp.razao, "aviso": emp.aviso,
@@ -688,15 +765,15 @@ async def dossie_pessoa(cpf: str, gasto: Gasto | None = None) -> dict[str, Any]:
 
 
 async def resolver_e_detalhar(perfil: dict[str, Any], cidade: str = "",
-                              uf: str = "",
-                              teto_brl: float = 3.0) -> dict[str, Any]:
+                              uf: str = "", teto_brl: float = 3.0,
+                              cnpj: str = "") -> dict[str, Any]:
     """O "ver mais" de uma pessoa: acha o CPF e já traz os dados dela.
 
     Teto baixo de propósito — isto nasce de um clique numa linha da tabela, e
     um clique não deve conseguir gastar o orçamento do dia.
     """
     gasto = Gasto(teto_brl)
-    emp = Empresa((perfil.get("empresa") or "").strip(), cidade, uf)
+    emp = Empresa((perfil.get("empresa") or "").strip(), cidade, uf, cnpj)
     await emp.preparar(gasto)
     r = await resolver_pessoa(perfil, emp, gasto)
     saida = {"identificacao": r, "empresa": {
@@ -709,13 +786,19 @@ async def resolver_e_detalhar(perfil: dict[str, Any], cidade: str = "",
     return saida
 
 
-def contexto_empresa(nome: str, cidade: str = "", uf: str = "") -> dict[str, Any]:
+def contexto_empresa(nome: str, cidade: str = "", uf: str = "",
+                     cnpj: str = "") -> dict[str, Any]:
     """Tudo que a TELA precisa saber sobre a empresa, sem gastar um centavo.
 
     É o que o filtro B2B chama enquanto a pessoa digita: diz o porte, se falta
     escolher a cidade, e quais unidades existem para escolher.
     """
-    r = I.cnpj_com_aviso(nome, uf)
+    informado = re.sub(r"\D", "", str(cnpj or ""))[:14]
+    if len(informado) == 14:
+        r = {"cnpj": informado, "razao": _razao_do_cnpj(informado) or nome,
+             "aviso": ""}
+    else:
+        r = I.cnpj_com_aviso(nome, uf)
     est = I.estrategia(r["cnpj"], cidade, uf, nome_empresa=nome)
     filiais = est.get("filiais_no_estado")
     if filiais is None:
