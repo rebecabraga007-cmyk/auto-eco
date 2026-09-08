@@ -34,9 +34,8 @@
     <button class="nav-btn" data-tab="empassertiva">Empresa Assertiva<span class="nav-btn-sub">cadastro + quem decide</span></button>
     <button class="nav-btn" data-tab="vinculos">Vínculo empregatício<span class="nav-btn-sub">por empresa ou por pessoa</span></button>
     <button class="nav-btn" data-tab="linkedin">Funcionários no LinkedIn<span class="nav-btn-sub">quem trabalha numa empresa</span></button>
-    <button class="nav-btn" data-tab="b2b">Filtro de pessoas<span class="nav-btn-sub">por departamento e senioridade</span></button>
     <button class="nav-btn" data-tab="pessoa">Uma pessoa<span class="nav-btn-sub">por CPF, com dados completos</span></button>
-    <button class="nav-btn" data-tab="nome">Uma pessoa pelo nome<span class="nav-btn-sub">quando não sei o CPF</span></button>
+    <button class="nav-btn" data-tab="nome">Achar uma pessoa<span class="nav-btn-sub">por nome, cargo, empresa ou cidade</span></button>
     <button class="nav-btn" data-tab="telefone">De quem é este telefone<span class="nav-btn-sub">descobrir o dono do número</span></button>
     <button class="nav-btn" data-tab="dossie">Dossiê<span class="nav-btn-sub">PDF completo por CPF ou CNPJ</span></button>
 
@@ -258,19 +257,86 @@
     <div id="li-results" class="results-area"></div>
   </section>
 
-  <section id="tab-b2b" class="tab-section">
+  
+
+  <section id="tab-pessoa" class="tab-section">
     <div class="module-header">
-      <div class="module-overline">Prospecção · pessoas</div>
-      <h2 class="module-title">Filtro de pessoas</h2>
-      <p class="module-sub">Busca na base de perfis que a operação já comprou — responde na hora e não gasta nada. Departamento e senioridade são deduzidos do cargo, no mesmo vocabulário da Datastone.</p>
+      <div class="module-overline">Achar alguém · pessoa</div>
+      <h2 class="module-title">Quem é essa pessoa?</h2>
+      <p class="module-sub">Cole o CPF. Procuro em duas bases públicas e mostro tudo que aparece: nome da mãe, endereços, telefones e a situação na Receita.</p>
+    </div>
+    <div class="search-panel">
+      <div class="search-row">
+        <div class="input-wrap input-sm">
+          <span class="input-icon">🪪</span>
+          <input id="cpf-q" type="text" placeholder="000.000.000-00" maxlength="14" autocomplete="off" />
+        </div>
+        <button id="cpf-btn" class="btn-primary">Consultar</button>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Fontes:</span>
+        <span class="source-pill" style="background:var(--blue-soft);color:var(--blue-dark)">JBR 223M</span>
+        <span class="source-pill" style="background:var(--green-soft);color:var(--green)">Mk Buscas</span>
+      </div>
+    </div>
+    <div id="cpf-results" class="results-area"></div>
+  </section>
+
+  <!-- ══ MÓDULO NOME ══ -->
+  <section id="tab-nome" class="tab-section">
+    <div class="module-header">
+      <div class="module-overline">Achar alguém · pelo nome</div>
+      <h2 class="module-title">Achar uma pessoa</h2>
+      <p class="module-sub">Procura nas duas bases locais de uma vez, sem gastar nada: os perfis do LinkedIn que a operação já comprou (com cargo e empresa) e os 223 milhões de registros da base de CPF (com nascimento). “Ver mais” em qualquer linha acha o CPF e o telefone.</p>
     </div>
     <div class="search-panel">
       <div class="search-row">
         <div class="input-wrap">
           <span class="input-icon">🔎</span>
-          <input id="b2b-q" type="text" placeholder="Nome, cargo ou empresa…" autocomplete="off" />
+          <input id="nome-q" type="text" placeholder="Nome completo da pessoa…" autocomplete="off" />
         </div>
-        <button id="b2b-btn" class="btn-primary">Filtrar</button>
+        <button id="nome-btn" class="btn-primary">Buscar</button>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Filtros:</span>
+        <select id="nome-sexo" class="filter-select">
+          <option value="">Sexo (todos)</option>
+          <option value="M">Masculino</option>
+          <option value="F">Feminino</option>
+        </select>
+        <input id="nome-ano-min" type="number" class="filter-num" placeholder="Nasc. de" min="1900" max="2015" />
+        <input id="nome-ano-max" type="number" class="filter-num" placeholder="até" min="1900" max="2015" />
+        <label class="toggle-wrap">
+          <input id="nome-broad" type="checkbox" />
+          <span>Busca ampla</span>
+        </label>
+        <select id="nome-limit" class="filter-select">
+          <option value="20">Máx 20</option>
+          <option value="40" selected>Máx 40</option>
+          <option value="100">Máx 100</option>
+        </select>
+      </div>
+
+      <div class="pf-divider" style="margin:14px 0"></div>
+      <div class="pf-advanced-hint" style="margin-bottom:8px">Não sabe o CPF nem o sobrenome certo? Dê pistas sobre a pessoa — depois clique em "Calcular ranking" nos resultados pra ordenar por % de chance de ser ela.</div>
+      <div class="filter-row">
+        <span class="filter-label">Pistas (opcional):</span>
+        <select id="nome-uf-suposta" class="filter-select">
+          <option value="">Suposto estado (UF)</option>
+        </select>
+        <input id="nome-cidade-suposta" type="text" class="filter-select" placeholder="Suposta cidade…" style="width:180px" />
+      </div>
+      <div class="pf-field" style="margin-top:10px">
+        <label>Descrição livre <span class="pf-advanced-hint" style="display:inline">local que trabalha, setor, qualquer detalhe que ajude a reconhecer</span></label>
+        <input id="nome-descricao" type="text" placeholder="Ex.: trabalha numa concessionária, é da área de vendas…" autocomplete="off" />
+      </div>
+    </div>
+    <div class="search-panel">
+      <div class="search-row" hidden>
+        <div class="input-wrap">
+          <input id="b2b-q" type="text" autocomplete="off" />
+        </div>
+        <button id="b2b-btn" class="btn-primary" hidden>Filtrar</button>
       </div>
       <div class="filter-row">
         <span class="filter-label">Quem:</span>
@@ -349,81 +415,12 @@
       <div id="b2b-resumo" class="pf-advanced-hint" style="margin-top:10px"></div>
       <div id="b2b-ampliar" style="margin-top:10px"></div>
     </div>
+    <h3 style="margin:22px 0 6px;font-size:1rem">Perfis do LinkedIn
+      <span class="pf-advanced-hint" style="display:inline">— cargo e empresa, da base já comprada</span></h3>
     <div id="b2b-results" class="results-area"></div>
-  </section>
 
-  <section id="tab-pessoa" class="tab-section">
-    <div class="module-header">
-      <div class="module-overline">Achar alguém · pessoa</div>
-      <h2 class="module-title">Quem é essa pessoa?</h2>
-      <p class="module-sub">Cole o CPF. Procuro em duas bases públicas e mostro tudo que aparece: nome da mãe, endereços, telefones e a situação na Receita.</p>
-    </div>
-    <div class="search-panel">
-      <div class="search-row">
-        <div class="input-wrap input-sm">
-          <span class="input-icon">🪪</span>
-          <input id="cpf-q" type="text" placeholder="000.000.000-00" maxlength="14" autocomplete="off" />
-        </div>
-        <button id="cpf-btn" class="btn-primary">Consultar</button>
-      </div>
-      <div class="filter-row">
-        <span class="filter-label">Fontes:</span>
-        <span class="source-pill" style="background:var(--blue-soft);color:var(--blue-dark)">JBR 223M</span>
-        <span class="source-pill" style="background:var(--green-soft);color:var(--green)">Mk Buscas</span>
-      </div>
-    </div>
-    <div id="cpf-results" class="results-area"></div>
-  </section>
-
-  <!-- ══ MÓDULO NOME ══ -->
-  <section id="tab-nome" class="tab-section">
-    <div class="module-header">
-      <div class="module-overline">Achar alguém · pelo nome</div>
-      <h2 class="module-title">Não sabe o CPF? Busque pelo nome</h2>
-      <p class="module-sub">Mostro os candidatos com esse nome na base JBR — clique em qualquer um para completar com telefone (Mk Buscas).</p>
-    </div>
-    <div class="search-panel">
-      <div class="search-row">
-        <div class="input-wrap">
-          <span class="input-icon">🔎</span>
-          <input id="nome-q" type="text" placeholder="Nome completo da pessoa…" autocomplete="off" />
-        </div>
-        <button id="nome-btn" class="btn-primary">Buscar</button>
-      </div>
-      <div class="filter-row">
-        <span class="filter-label">Filtros:</span>
-        <select id="nome-sexo" class="filter-select">
-          <option value="">Sexo (todos)</option>
-          <option value="M">Masculino</option>
-          <option value="F">Feminino</option>
-        </select>
-        <input id="nome-ano-min" type="number" class="filter-num" placeholder="Nasc. de" min="1900" max="2015" />
-        <input id="nome-ano-max" type="number" class="filter-num" placeholder="até" min="1900" max="2015" />
-        <label class="toggle-wrap">
-          <input id="nome-broad" type="checkbox" />
-          <span>Busca ampla</span>
-        </label>
-        <select id="nome-limit" class="filter-select">
-          <option value="20">Máx 20</option>
-          <option value="40" selected>Máx 40</option>
-          <option value="100">Máx 100</option>
-        </select>
-      </div>
-
-      <div class="pf-divider" style="margin:14px 0"></div>
-      <div class="pf-advanced-hint" style="margin-bottom:8px">Não sabe o CPF nem o sobrenome certo? Dê pistas sobre a pessoa — depois clique em "Calcular ranking" nos resultados pra ordenar por % de chance de ser ela.</div>
-      <div class="filter-row">
-        <span class="filter-label">Pistas (opcional):</span>
-        <select id="nome-uf-suposta" class="filter-select">
-          <option value="">Suposto estado (UF)</option>
-        </select>
-        <input id="nome-cidade-suposta" type="text" class="filter-select" placeholder="Suposta cidade…" style="width:180px" />
-      </div>
-      <div class="pf-field" style="margin-top:10px">
-        <label>Descrição livre <span class="pf-advanced-hint" style="display:inline">local que trabalha, setor, qualquer detalhe que ajude a reconhecer</span></label>
-        <input id="nome-descricao" type="text" placeholder="Ex.: trabalha numa concessionária, é da área de vendas…" autocomplete="off" />
-      </div>
-    </div>
+    <h3 style="margin:26px 0 6px;font-size:1rem">Candidatos na base de CPF
+      <span class="pf-advanced-hint" style="display:inline">— 223 milhões de registros, com nascimento</span></h3>
     <div id="nome-results" class="results-area"></div>
   </section>
 
