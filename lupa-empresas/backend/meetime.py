@@ -19,6 +19,7 @@ rejeita sort/date. Por isso paginamos incrementando `start`.
 import asyncio
 import os
 import re
+import hashlib
 import time
 import unicodedata
 from typing import Any
@@ -89,8 +90,14 @@ _cache: dict[str, dict[str, Any]] = {}
 _CACHE_TTL = 1800  # 30 min
 
 
-def enabled(grupo_id: str = "") -> bool:
-    return bool(_token(grupo_id) and _base_url())
+def enabled(grupo_id: str = "", token_avulso: str = "") -> bool:
+    """Dá para consultar a Meetime? Token do grupo OU o que o operador digitou.
+
+    O `token_avulso` conta aqui: sem isso, quem digita um token para filtrar
+    contra outra conta levaria "Meetime não configurada" mesmo tendo acabado
+    de fornecer a credencial.
+    """
+    return bool((token_avulso.strip() or _token(grupo_id)) and _base_url())
 
 
 def only_digits(s: str) -> str:
@@ -131,13 +138,31 @@ def _extrai_lead(rec: dict) -> tuple[str, list[str]]:
     return cnpj, nomes
 
 
-async def fetch_existing(max_pages: int = 200, force: bool = False, grupo_id: str = "") -> dict:
-    """Baixa (paginando) os leads da Meetime do grupo → {cnpjs:set, nomes:[(norm, tokens)]}.
+async def fetch_existing(max_pages: int = 200, force: bool = False,
+                         grupo_id: str = "", token_avulso: str = "") -> dict:
+    """Baixa (paginando) os leads da Meetime → {cnpjs:set, nomes:[(norm, tokens)]}.
 
-    Cada grupo tem sua própria conta/token Meetime, então o cache também é por grupo.
+    Cada grupo tem sua própria conta/token, então o cache também é por grupo.
+
+    `token_avulso` é o token que o OPERADOR digitou na tela, para filtrar contra
+    uma conta que não é a do grupo dele. Ele vale só para esta chamada e
+    NUNCA É GRAVADO — nem em `config_store`, nem em log, nem na resposta.
+
+    Isso é deliberado. O token do grupo é credencial de máquina: fica no
+    serviço de dados e nem o navegador o vê. Um token digitado na tela já
+    passou pelo navegador, então guardá-lo depois disso só aumentaria a
+    exposição sem devolver nada. O operador redigita quando precisar de novo.
+
+    A chave de cache dele é o HASH do token, não o token: assim duas buscas
+    seguidas na mesma conta reaproveitam a lista sem que o segredo apareça em
+    nenhuma estrutura de memória indexada por ele.
     """
-    cache_key = grupo_id or "__default__"
-    if not enabled(grupo_id):
+    if token_avulso:
+        cache_key = "avulso:" + hashlib.sha256(
+            token_avulso.strip().encode()).hexdigest()[:16]
+    else:
+        cache_key = grupo_id or "__default__"
+    if not enabled(grupo_id, token_avulso):
         return {"status": "unavailable", "message": "Meetime não configurada para este grupo (token ausente).",
                 "cnpjs": set(), "nomes": []}
     now = time.time()
@@ -146,7 +171,9 @@ async def fetch_existing(max_pages: int = 200, force: bool = False, grupo_id: st
         return {"status": "ok", "cnpjs": cached["cnpjs"], "nomes": cached["nomes"],
                 "total": len(cached["cnpjs"]) + len(cached["nomes"]), "cache": True}
 
-    headers = {"Accept": "application/json", _auth_header(): _token(grupo_id)}
+    headers = {"Accept": "application/json",
+               _auth_header(): (token_avulso.strip() if token_avulso
+                                else _token(grupo_id))}
     cnpjs, nomes = set(), []
     url = _base_url() + _leads_path()
     start = 0

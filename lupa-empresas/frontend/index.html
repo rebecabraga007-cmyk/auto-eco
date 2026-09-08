@@ -557,6 +557,19 @@
           <div class="pf-toggles">
             <label class="toggle-row"><span>Empresas fechadas ou suspensas</span><input id="pf-somente-ativas" type="checkbox" checked /></label>
             <label class="toggle-row"><span>Quem já está no nosso CRM <span style="color:var(--gray-500)">(Meetime)</span></span><input id="pf-excluir-meetime" type="checkbox" /></label>
+            <!-- Só aparece com o checkbox acima ligado: campo de credencial em
+                 tela é ruído para quem não vai usar, e a maioria usa o token do
+                 próprio grupo, já configurado pelo admin. -->
+            <div id="pf-meetime-token-wrap" hidden style="padding:2px 0 6px 2px">
+              <input id="pf-meetime-token" type="password" autocomplete="off"
+                     class="filter-select" style="width:100%;font-size:12px"
+                     placeholder="Token de outra conta Meetime (opcional)"
+                     title="Deixe vazio para usar o token do seu grupo, que o admin já configurou. Preencha só para filtrar contra OUTRA conta — o token vale apenas para esta busca e não fica guardado." />
+              <span class="pf-advanced-hint" style="display:block;margin-top:3px">
+                Vazio usa o token do seu grupo. Um token digitado aqui vale
+                <b>só para esta busca</b> e não é guardado.
+              </span>
+            </div>
             <label class="toggle-row"><span>Filiais — quero só a sede</span><input id="pf-matriz" type="checkbox" /></label>
             <label class="toggle-row"><span>Somente com telefone</span><input id="pf-com-tel" type="checkbox" /></label>
           </div>

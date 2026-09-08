@@ -2833,11 +2833,17 @@ async def meetime_dedup(request: Request, payload: dict = Body(default={})):
     (CNPJ exato OU nome por similaridade LIKE %). Retorna {novos, removidos}."""
     grupo_id = request.headers.get("x-user-grupo") or ""
     empresas = payload.get("empresas") or payload.get("candidatos") or []
-    if not meetime.enabled(grupo_id):
+    # Token que o OPERADOR digitou, para filtrar contra uma conta que não é a
+    # do grupo dele. Vale só para esta chamada: não é gravado em lugar nenhum
+    # e não volta na resposta.
+    token_avulso = str(payload.get("token") or "").strip()
+    if not meetime.enabled(grupo_id, token_avulso):
         return {"status": "unavailable",
-                "message": "Meetime não configurada para o seu grupo — peça ao admin para configurar em Usuários.",
+                "message": "Meetime não configurada para o seu grupo — peça ao admin "
+                           "para configurar em Usuários, ou informe um token nesta busca.",
                 "novos": empresas, "removidos": []}
-    ex = await meetime.fetch_existing(force=bool(payload.get("refresh")), grupo_id=grupo_id)
+    ex = await meetime.fetch_existing(force=bool(payload.get("refresh")),
+                                      grupo_id=grupo_id, token_avulso=token_avulso)
     if ex.get("status") and ex["status"] != "ok":
         return {"status": ex["status"], "message": ex.get("message"),
                 "novos": empresas, "removidos": []}

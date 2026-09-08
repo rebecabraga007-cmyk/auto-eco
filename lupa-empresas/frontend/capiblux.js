@@ -1469,6 +1469,14 @@ function popularSelectModelo(sel) {
 }
 
 // Remove das empresas carregadas as que já estão na Meetime (CNPJ + nome ~ LIKE %).
+/* O campo de token só existe quando a dedup Meetime está ligada: credencial em
+   tela é ruído para quem não vai usar, e a maioria usa o token do próprio
+   grupo, que o admin já configurou. */
+document.getElementById('pf-excluir-meetime')?.addEventListener('change', (e) => {
+  const w = document.getElementById('pf-meetime-token-wrap');
+  if (w) w.hidden = !e.target.checked;
+});
+
 async function prospDedupMeetime() {
   const btn = document.getElementById('pf-dedup');
   const note = document.getElementById('pf-dedup-note');
@@ -1476,9 +1484,18 @@ async function prospDedupMeetime() {
   try {
     const empresas = prospState.empresas.map(e => ({ cnpj: onlyDigits(e.cnpj), razao_social: e.razao_social }));
     const j = await fetch(`${API}/api/meetime/dedup`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ empresas }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      // token vazio = usa o do grupo. Preenchido, vale só para esta chamada:
+      // o backend não grava em lugar nenhum.
+      body: JSON.stringify({ empresas,
+        token: (document.getElementById('pf-meetime-token')?.value || '').trim() }),
     }).then(r => r.json());
-    if (j.status === 'unavailable') { note.innerHTML = '⚠️ Meetime não configurada — peça ao admin para colocar o token em <strong>Configurações</strong>.'; return; }
+    if (j.status === 'unavailable') {
+      note.innerHTML = '⚠️ Meetime não configurada para o seu grupo — peça ao admin '
+        + 'em <strong>Configurações</strong>, ou cole o token de outra conta no '
+        + 'campo acima para usar só nesta busca.';
+      return;
+    }
     if (j.status && j.status !== 'ok') { note.textContent = '⚠️ ' + (j.message || 'Falha na dedup Meetime.'); return; }
     // mantém só os "novos" (não estão na Meetime), preservando os objetos originais por CNPJ
     const removidosCnpj = new Set((j.removidos || []).map(r => onlyDigits(r.cnpj)));
@@ -5270,9 +5287,9 @@ function b2bPintaUnidade(c) {
       </div>` : ''}
       ${precisa ? `<div class="pf-advanced-hint" style="margin-top:6px">
         Escolha uma unidade acima — ou digite a cidade — antes de mandar buscar
-        na Bright Data. Sem isso a busca fica espalhada pelo país inteiro e
-        acha muito menos.${c.custo_max_brl === undefined ? '' :
-          ` O custo por pessoa vai a R$ ${c.custo_max_brl.toFixed(2)}.`}</div>` : ''}
+        na Bright Data. Sem isso a busca fica espalhada pelo país inteiro, a
+        confirmação por cidade cai de 46% para 2,4% e acha-se muito menos.
+        </div>` : ''}
     </div>`;
 
   b2bUnidade.querySelectorAll('.b2b-filial').forEach(b => {
@@ -5419,9 +5436,8 @@ function b2bOfertaBuscar(f, quantosTem) {
       ${faltaUnidade ? `<div style="margin-bottom:6px">
         <b>${esc(ctx.razao || ctx.empresa)}</b> tem ${ctx.unidades} unidades em
         ${ctx.ufs} UFs e nenhuma foi escolhida. Dá para buscar assim, mas os
-        perfis virão espalhados pelo país e achar o CPF de cada um fica muito
-        mais caro e menos certeiro${ctx.custo_max_brl === undefined ? '' :
-          ` — até R$ ${ctx.custo_max_brl.toFixed(2)} por pessoa, em vez de R$ 0,48`}.
+        perfis virão espalhados pelo país e achar o CPF de cada um fica bem
+        mais difícil — a cidade é o sinal que confirma, e sem ela ele some.
         Escolher a unidade acima resolve isso.</div>` : ''}
       A base local tem <b>${quantosTem}</b> perfis com esse filtro.
       <button id="b2b-fetch" class="btn-secondary" style="margin-left:8px">
