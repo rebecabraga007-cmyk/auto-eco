@@ -1431,11 +1431,19 @@ def _filtra_decisores(lista: list[dict], cargos: str, maximo: int) -> list[dict]
     """
     escolhidos = [c.strip().lower() for c in (cargos or "").split(",") if c.strip()]
     if escolhidos:
-        niveis = {int(c) for c in escolhidos if c.isdigit()}
-        termos = [c for c in escolhidos if not c.isdigit()]
+        # TERCEIRA linguagem, nova: "gerencia:vendas" — nível E área juntos.
+        # Os seis botões da tela dizem só o nível, e "Diretor" não distingue
+        # Diretor de TI de Diretor Comercial. O select de área ao lado manda
+        # neste formato, e quem entende é o dicionário do classificador.
+        com_area = [c for c in escolhidos if ":" in c or c in funcoes.AREAS]
+        simples = [c for c in escolhidos if c not in com_area]
+        niveis = {int(c) for c in simples if c.isdigit()}
+        termos = [c for c in simples if not c.isdigit()]
         lista = [p for p in lista
                  if (p.get("nivel") in niveis)
-                 or any(t in (p.get("cargo") or "").lower() for t in termos)]
+                 or any(t in (p.get("cargo") or "").lower() for t in termos)
+                 or (com_area
+                     and funcoes.casa_escolha(p.get("cargo") or "", com_area))]
     lista = sorted(lista, key=lambda p: (p.get("nivel") or 9, p.get("nome") or ""))
     return lista[:maximo] if maximo and maximo > 0 else lista
 

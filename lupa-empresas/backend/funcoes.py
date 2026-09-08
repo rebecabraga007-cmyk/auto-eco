@@ -432,6 +432,19 @@ def catalogo_decisores() -> dict:
     return {"niveis": niveis, "areas": areas, "cargos": cargos}
 
 
+# A TELA fala "diretor", o dicionário fala "diretoria". São as duas linguagens
+# do mesmo degrau, e traduzir aqui é melhor que renomear os botões: os valores
+# `data-c` da tela já vão para outros filtros que casam por pedaço do nome do
+# cargo, e mexer neles quebraria esses.
+APELIDO_NIVEL = {
+    "diretor": "diretoria", "diretora": "diretoria", "direcao": "diretoria",
+    "gerente": "gerencia", "gestor": "gerencia",
+    "coordenador": "coordenacao", "coordenacao": "coordenacao",
+    "presidente": "clevel", "socio": "clevel", "administrador": "clevel",
+    "representante": "clevel", "ceo": "clevel", "c-level": "clevel",
+}
+
+
 def casa_escolha(texto, escolhas: list) -> bool:
     """O cargo casa com alguma escolha da tela?
 
@@ -452,10 +465,11 @@ def casa_escolha(texto, escolhas: list) -> bool:
             continue
         if ":" in e:
             en, ea = e.split(":", 1)
+            en = APELIDO_NIVEL.get(en, en)
             if n == en and ea in a:
                 return True
-        elif e in NIVEIS:
-            if n == e:
+        elif APELIDO_NIVEL.get(e, e) in NIVEIS:
+            if n == APELIDO_NIVEL.get(e, e):
                 return True
         elif e in AREAS:
             if e in a:

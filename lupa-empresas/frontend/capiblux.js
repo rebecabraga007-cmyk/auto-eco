@@ -1254,6 +1254,14 @@ function renderProspList() {
             <button type="button" class="pf-cargo" data-c="diretor">Diretor</button>
             <button type="button" class="pf-cargo" data-c="gerente">Gerente</button>
             <button type="button" class="pf-cargo" data-c="coordenador">Coordenador</button>
+            <!-- ÁREA: os seis botões acima dizem o NÍVEL ("Diretor") e não
+                 distinguem Diretor de TI de Diretor Comercial. Um select ao
+                 lado resolve com um controle; 68 caixas de nível×área numa
+                 tela que já tem 76 controles seria piorar. -->
+            <select id="pf-dec-area" class="filter-select" style="margin-left:8px"
+                    title="Opcional. Restringe o cargo escolhido a uma área — 'Diretor' vira 'Diretor de TI'.">
+              <option value="">Qualquer área</option>
+            </select>
           </div>
         </div>
         <p class="pf-advanced-hint" id="pf-dec-custo" hidden></p>
@@ -1453,8 +1461,30 @@ async function testarCobertura() {
 }
 
 function cargosSelecionados() {
-  return [...document.querySelectorAll('#pf-cargos .pf-cargo.active')]
-    .map(b => b.dataset.c).filter(Boolean).join(',');
+  const niveis = [...document.querySelectorAll('#pf-cargos .pf-cargo.active')]
+    .map(b => b.dataset.c).filter(Boolean);
+  const area = document.getElementById('pf-dec-area')?.value || '';
+  if (!area) return niveis.join(',');
+  // "gerencia:vendas" é o formato que `funcoes.casa_escolha` entende. Sem
+  // nível marcado, a área sozinha vale — "qualquer decisor, mas de vendas".
+  return (niveis.length ? niveis.map(n => `${n}:${area}`) : [area]).join(',');
+}
+
+/* Popula o select de área com as 17 do classificador. Vem do backend, do MESMO
+   dicionário que o filtro usa — lista fixa aqui divergiria em silêncio no dia
+   em que uma área nova entrasse. */
+let _areasCarregadas = false;
+async function carregarAreasDecisor() {
+  const sel = document.getElementById('pf-dec-area');
+  if (!sel || _areasCarregadas) return;
+  try {
+    const d = await fetch(`${API}/api/funil/cargos`).then(r => r.json());
+    if (d.status !== 'ok') return;
+    sel.innerHTML = '<option value="">Qualquer área</option>'
+      + (d.areas || []).map(a =>
+          `<option value="${esc(a.chave)}">${esc(a.rotulo)}</option>`).join('');
+    _areasCarregadas = true;
+  } catch (e) { /* fica só "Qualquer área"; o filtro segue funcionando */ }
 }
 
 // Preenche um <select> com "— nenhum —", "🧑‍💼 Cliente" + modelos salvos (usado
@@ -1472,6 +1502,12 @@ function popularSelectModelo(sel) {
 /* O campo de token só existe quando a dedup Meetime está ligada: credencial em
    tela é ruído para quem não vai usar, e a maioria usa o token do próprio
    grupo, que o admin já configurou. */
+document.addEventListener('change', (e) => {
+  if (e.target && e.target.id === 'pf-decisores' && e.target.checked) {
+    carregarAreasDecisor();
+  }
+});
+
 document.getElementById('pf-excluir-meetime')?.addEventListener('change', (e) => {
   const w = document.getElementById('pf-meetime-token-wrap');
   if (w) w.hidden = !e.target.checked;
