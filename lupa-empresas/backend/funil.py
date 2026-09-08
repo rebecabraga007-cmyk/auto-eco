@@ -26,7 +26,7 @@ nome custaria trinta vezes mais. Numa empresa com 12 perfis:
   07  MK integrax-cpf       grátis  confirma cidade e EMPRESA; fecha sem pagar
   08  Assertiva nome+cidade PAGO    só para quem sobrou
   09  Assertiva consulta_cpf PAGO   a prova: CNPJ do empregador e CBO
-      decidir()                     escolhe, ou devolve para o operador
+  10  decidir()             local   escolhe o melhor e diz se e forte
 
 O ERRO QUE ESTE ARQUIVO JÁ TEVE, para não voltar
 ------------------------------------------------
@@ -58,6 +58,7 @@ import time
 from typing import Any
 
 import assertiva
+import cidades
 import funcoes
 import identidade as I
 import linkedin_cache
@@ -211,6 +212,50 @@ JBR_DB = os.environ.get("JBR_DB", "/opt/capiblu/jbr_base/jbr_pf.db")
 MAX_MK = int(os.environ.get("FUNIL_MAX_MK", "12"))
 
 
+# Palavras que aparecem no slug do LinkedIn e NÃO são nome de pessoa: cargo,
+# sigla de formação, canal, slogan. Cada uma vista em perfil real.
+NAO_E_NOME = {
+    "BDR", "SDR", "CEO", "CTO", "CFO", "COO", "CMO", "VP", "MBA", "PHD",
+    "DR", "DRA", "ENG", "ADM", "ADV", "PROF", "COACH", "MENTOR", "CONSULTOR",
+    "CONSULTORA", "OFICIAL", "REAL", "OFC", "BR", "BRASIL", "SALES", "VENDAS",
+    "MARKETING", "RH", "TI", "DEV", "DESIGNER", "ANALISTA", "GERENTE",
+    "DIRETOR", "DIRETORA", "HEAD", "LEAD", "SPECIALIST", "MANAGER", "JR",
+    "PL", "SR", "TRAINEE", "ESTAGIARIO", "PHOTOGRAPHY", "MUSIC", "OFICIALL",
+}
+
+
+def _nome_do_slug(url: Any, nome: str) -> str:
+    """O nome do meio que o LinkedIn esconde no display mas deixa na URL.
+
+    "linkedin.com/in/aline-mello-manchini-8b2..." -> "aline mello manchini",
+    enquanto o display mostra só "Aline Manchini". Com o nome completo, a JBR
+    exata devolve UMA pessoa em vez de quatro por primeiro+último — e o caso
+    fecha de graça na etapa 05, sem WorkAPI, sem MK e sem consulta paga.
+
+    Só aceita o slug quando ele CONTÉM o nome exibido e acrescenta alguma
+    coisa. Slug apelidado ("alinemanchini-consultora") não pode substituir o
+    nome, senão a busca vai atrás de uma pessoa que não existe.
+    """
+    m = re.search(r"/in/([^/?#]+)", str(url or ""))
+    if not m:
+        return nome
+    slug = re.sub(r"-[0-9a-f]{6,}$", "", m.group(1))     # sufixo aleatório
+    slug = re.sub(r"%[0-9A-Fa-f]{2}", "", slug)          # escape de acento
+    slug = re.sub(r"[-_]+", " ", slug).strip()
+    ts = [t for t in I._norm(slug).split() if len(t) > 1]
+    tn = [t for t in I._norm(nome).split() if len(t) > 1]
+    # O que o slug acrescenta tem que PARECER nome. "felipe-oliveira-bdr" passa
+    # na regra de "contém o display e acrescenta algo", mas BDR é cargo: usar
+    # isso como nome levou a JBR de 89 candidatos para ZERO. Quem escreve o
+    # slug põe cargo, cidade, sigla de formação e slogan ali.
+    extras = [t for t in ts if t not in set(tn)]
+    if any(t in NAO_E_NOME for t in extras):
+        return nome
+    if len(ts) > len(tn) and set(tn) <= set(ts):
+        return slug
+    return nome
+
+
 IDADE_MIN, IDADE_MAX = 18, 60
 
 
@@ -295,6 +340,37 @@ def _pela_jbr(nome: str, teto: int = 400) -> tuple[list[dict[str, Any]], str]:
     fora = [{"cpf": r[0], "nome": r[1], "nascimento": r[2]} for r in linhas
             if _cpf(r[0]) and _nome_contido(nome, r[1])]
     return (fora, modo if fora else "")
+
+
+def _jbr_variantes(nome_slug: str, nome_exibido: str
+                   ) -> tuple[list[dict[str, Any]], str]:
+    """Tenta as combinações de nome na JBR e devolve a primeira que der gente.
+
+    O slug da URL é um PALPITE, não uma verdade: ele traz o nome do meio em
+    "aline-mello-manchini", e traz cargo em "felipe-oliveira-bdr". Uma lista de
+    palavras proibidas ajuda mas nunca cobre tudo — sempre vai existir um slug
+    com apelido, cidade ou slogan que não está nela.
+
+    Então a regra é de resultado, não de adivinhação: se a variante devolve
+    ZERO, ela é descartada e o funil segue para a próxima. Uma consulta a mais
+    na JBR é local e gratuita; perder o candidato certo, não.
+
+    Ordem: nome do slug -> nome exibido -> primeiro+último do slug (para o caso
+    em que o meio do slug está certo mas grafado diferente do cadastro).
+    """
+    tentativas: list[tuple[str, str]] = []
+    if nome_slug and I._norm(nome_slug) != I._norm(nome_exibido):
+        tentativas.append(("slug", nome_slug))
+    tentativas.append(("exibido", nome_exibido))
+    t = [x for x in I._norm(nome_slug or "").split() if len(x) > 1]
+    if len(t) > 2:
+        tentativas.append(("slug 1o+ultimo", "%s %s" % (t[0], t[-1])))
+
+    for rotulo, tentado in tentativas:
+        cands, modo = _pela_jbr(tentado)
+        if cands:
+            return cands, "%s/%s" % (rotulo, modo)
+    return [], ""
 
 
 _razoes: dict[str, str] = {}
@@ -412,6 +488,48 @@ async def _pela_assertiva(nome: str, cidade: str, uf: str,
     return pf, por_uf, len(pf) >= I.TETO_ASSERTIVA
 
 
+def _nomes_do_meio(nome: str, teto: int = 6) -> list[str]:
+    """Nomes do meio mais comuns para esse primeiro+último, segundo a JBR.
+
+    Serve para FURAR o teto de 50 da Assertiva. A busca dela devolve no máximo
+    50, em ordem alfabética: "João Silva" em Belém volta 50 nomes começando em
+    "JOAO A…" e a pessoa certa pode estar depois do corte. Perguntar
+    "João ANTONIO Silva", "João CARLOS Silva"… quebra a lista em pedaços que
+    cabem embaixo do teto.
+
+    A JBR diz QUAIS nomes do meio existem de verdade para essa combinação, em
+    vez de chutar uma lista fixa de nomes comuns.
+    """
+    t = [x for x in I._norm(nome).split() if len(x) > 1]
+    if len(t) < 2:
+        return []
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % JBR_DB, uri=True)
+    except Exception:
+        return []
+    try:
+        pref, fim = t[0] + " ", t[0] + chr(ord(" ") + 1)
+        linhas = con.execute(
+            "SELECT nome_norm FROM pessoas WHERE nome_norm >= ? AND "
+            "nome_norm < ? AND nome_norm LIKE ? LIMIT 4000",
+            (pref, fim, "% " + t[-1])).fetchall()
+    except Exception:
+        return []
+    finally:
+        con.close()
+    from collections import Counter
+    c: Counter = Counter()
+    for (n,) in linhas:
+        partes = n.split()
+        for meio in partes[1:-1]:
+            if len(meio) > 2 and meio not in PART:
+                c[meio] += 1
+    return [m for m, _ in c.most_common(teto)]
+
+
+PART = {"DA", "DE", "DO", "DAS", "DOS", "E"}
+
+
 async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
                           barrar_sem_cargo: bool = False) -> dict[str, Any]:
     """Um perfil do LinkedIn -> um CPF, ou o motivo de não ter dado.
@@ -424,17 +542,22 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
     graça. Foi o que aconteceu com os funcionários da BLU.
     """
     t0 = time.time()
-    nome = (perfil.get("nome") or "").strip()
+    nome_exibido = (perfil.get("nome") or "").strip()
+    # A URL costuma trazer o nome completo que o display corta.
+    nome = _nome_do_slug(perfil.get("url"), nome_exibido)
     cargo = perfil.get("cargo") or ""
-    cid = I.cidade_do_linkedin(perfil.get("cidade"))
-    uf = (linkedin_cache.uf_de(perfil.get("cidade") or "")
-          # "Greater São Paulo Area" não tem vírgula, então `uf_de` volta
-          # vazio. A UF sai do nome do município quando ele é único.
-          or I.uf_da_cidade(cid) or emp.uf)
+    # O diretório resolve as seis famílias de grafia errada de uma vez, em vez
+    # de cada ponto do funil remendar a sua. Guarda `como` para a tela poder
+    # dizer que a cidade veio por semelhança, não por acerto exato.
+    loc = cidades.resolver(perfil.get("cidade"), uf_dica=emp.uf)
+    cid, uf = loc["cidade"], (loc["uf"] or emp.uf)
     etapas: list[str] = []
 
     def saida(situacao, cpf="", confianca=0, **extra):
-        return {"nome": nome, "empresa": emp.nome, "cargo": cargo,
+        if nome != nome_exibido:
+            etapas.insert(0, "slug:%s" % nome)
+        return {"nome": nome_exibido, "nome_completo": nome,
+                "empresa": emp.nome, "cargo": cargo,
                 "cidade": cid, "uf": uf, "cpf": cpf, "situacao": situacao,
                 "confianca": confianca, "etapas": etapas,
                 "ms": int((time.time() - t0) * 1000), **extra}
@@ -463,7 +586,7 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
         int(perfil.get("carreira_desde") or 0))
 
     # ETAPA 05 — JBR: enumera os candidatos. Grátis, local, base inteira.
-    jbr, modo = _pela_jbr(nome)
+    jbr, modo = _jbr_variantes(nome, nome_exibido)
     bruto_jbr = len(jbr)
     # Corte grosso de idade ANTES de tudo: vale mesmo sem formatura, que é o
     # caso da maioria. A faixa fina, quando existe, aperta depois.
@@ -484,7 +607,7 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
     if len(jbr) == 1:
         d = I.decidir([{**jbr[0], "forca": 0, "elimina": False}], concorrentes=1)
         tels = await _pelo_mk(jbr, cid, uf, emp.nome, gasto)
-        return saida("resolvido_gratis", d["cpf"], d["confianca"],
+        return saida("resolvido_gratis", d["cpf"], d["confianca"], forte=True,
                      porque="único com esse nome na base nacional — "
                             "não há concorrente para desempatar",
                      telefones=(tels[0].get("telefones") if tels else []))
@@ -515,7 +638,7 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
     if len(lista) == 1:
         d = I.decidir([{**lista[0], "forca": 0, "elimina": False}], concorrentes=1)
         tels = await _pelo_mk(lista, cid, uf, emp.nome, gasto)
-        return saida("resolvido_gratis", d["cpf"], d["confianca"],
+        return saida("resolvido_gratis", d["cpf"], d["confianca"], forte=True,
                      porque="único candidato entre JBR e WorkAPI — sem "
                             "concorrente, não precisa de contraprova",
                      telefones=(tels[0].get("telefones") if tels else []))
@@ -543,7 +666,15 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
         if fortes:
             d = I.decidir(fortes, concorrentes=len(fortes))
             if d.get("cpf"):
-                return saida("resolvido_gratis", d["cpf"], d["confianca"],
+                # O rótulo tem que seguir a DECISÃO, não o caminho. Desde
+                # que o decidir() passou a devolver o melhor mesmo fraco,
+                # carimbar tudo de "resolvido" aqui fazia um empate em força
+                # 60 chegar à tela com cara de confirmado.
+                return saida("resolvido_gratis" if d.get("forte")
+                             else d["situacao"],
+                             d["cpf"], d["confianca"],
+                             forte=bool(d.get("forte")),
+                             alternativas=d.get("alternativas") or [],
                              porque=d.get("porque", ""),
                              motivos=(fortes[0].get("motivos") or []),
                              telefones=next((a["telefones"] for a in fortes
@@ -552,7 +683,11 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
         if len(avaliados) == 1:
             d = I.decidir(avaliados, concorrentes=1)
             if d.get("cpf"):
-                return saida("resolvido_gratis", d["cpf"], d["confianca"],
+                return saida("resolvido_gratis" if d.get("forte")
+                             else d["situacao"],
+                             d["cpf"], d["confianca"],
+                             forte=bool(d.get("forte")),
+                             alternativas=d.get("alternativas") or [],
                              porque=d.get("porque", ""),
                              telefones=avaliados[0].get("telefones") or [])
 
@@ -565,9 +700,23 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
     pf, por_uf, truncou = await _pela_assertiva(nome, cid, uf, gasto)
     etapas.append("08 Assertiva:%d%s" % (len(pf), " por UF" if por_uf else ""))
     if truncou:
-        return saida("truncado_em_50", porque=(
-            "a Assertiva devolve no máximo 50, em ordem alfabética e sem "
-            "paginação — a pessoa pode estar depois do corte"))
+        # PARTIÇÃO PELO NOME DO MEIO: em vez de desistir, quebra a busca em
+        # pedaços que cabem embaixo do teto. Medido ontem: salvou 9 casos.
+        partes_ok = []
+        for meio in _nomes_do_meio(nome):
+            if gasto.estourou():
+                break
+            t = I._norm(nome).split()
+            pf2, uf2, tr2 = await _pela_assertiva(
+                "%s %s %s" % (t[0], meio, t[-1]), cid, uf, gasto)
+            if pf2 and not tr2:
+                partes_ok.extend(pf2)
+        etapas.append("08b partição:%d" % len(partes_ok))
+        if not partes_ok:
+            return saida("truncado_em_50", porque=(
+                "a Assertiva devolve no máximo 50, em ordem alfabética e sem "
+                "paginação, e partir pelo nome do meio não abriu a lista"))
+        pf, por_uf = partes_ok, False
     if not pf:
         return saida("nao_achado")
     if de:
@@ -606,6 +755,8 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
     d = I.decidir(avaliados, concorrentes=len(pf))
     return saida(d["situacao"], d.get("cpf", ""), d.get("confianca", 0),
                  porque=d.get("porque", ""), motivos=d.get("motivos") or [],
+                 forte=bool(d.get("forte")),
+                 alternativas=d.get("alternativas") or [],
                  candidatos=len(pf))
 
 

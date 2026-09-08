@@ -28,9 +28,17 @@ REGRA DE OURO: toda resposta paga é lida INTEIRA. O `consulta_cpf` traz o
 vínculo empregatício junto com o telefone — ignorar isso foi o erro que manteve
 a taxa em 57% quando ela podia ser 61%.
 
-E o que este módulo NUNCA faz: escolher um candidato sem evidência. Quando nada
-separa, devolve `nao_resolvido` com os candidatos e o motivo. Telefone errado no
-funil é pior que telefone nenhum.
+O QUE ELE DEVOLVE QUANDO A EVIDÊNCIA É FRACA (mudou em 08/09/2026, decisão da
+Rebeca): devolve o candidato de MAIOR NOTA assim mesmo, com `forte: False` e a
+nota. Antes devolvia `cpf: ""` e a tela dizia "não consegui identificar" — o
+operador ficava sem o palpite, sem os candidatos e sem as notas, com o mesmo
+problema e menos informação. Esconder o melhor palpite não deixa ninguém mais
+seguro.
+
+O que NÃO mudou: `forte` é que diz se é confirmação. Quem consome este módulo
+não pode tratar `cpf` preenchido como certeza — telefone errado apresentado
+como certo continua sendo pior que telefone nenhum. E `todos_eliminados` segue
+sem CPF: ali não há "o melhor", há gente que a evidência descartou.
 """
 import json
 import os
@@ -395,8 +403,11 @@ def decidir(candidatos: list[dict[str, Any]],
     """
     vivos = [c for c in candidatos if not c.get("elimina")]
     if not vivos:
+        # Único caso que ainda volta sem CPF: todos foram ELIMINADOS por
+        # evidência contrária (médico para vaga de vendas). Aqui não há "o
+        # melhor" — há só gente que a evidência descartou.
         return {"cpf": "", "situacao": "todos_eliminados", "confianca": 0,
-                "candidatos_vivos": 0}
+                "forte": False, "candidatos_vivos": 0}
     vivos.sort(key=lambda c: -int(c.get("forca") or 0))
     melhor = vivos[0]
     base = {"cpf": melhor.get("cpf", ""), "nome": melhor.get("nome", ""),
@@ -408,6 +419,7 @@ def decidir(candidatos: list[dict[str, Any]],
         sozinho = concorrentes <= 1
         return {**base,
                 "situacao": "unico" if sozinho else "unico_por_corte",
+                "forte": True,
                 # sem contraprova a confiança não é 100 — mas é aceito
                 "confianca": max(base["forca"], 70 if sozinho else 60),
                 "porque": ("chegou sozinho à fase paga, depois de JBR/WorkAPI/"
@@ -422,22 +434,42 @@ def decidir(candidatos: list[dict[str, Any]],
     if melhor["forca"] >= FORCA_MINIMA and \
             melhor["forca"] > int(vivos[1].get("forca") or 0):
         return {**base, "situacao": "resolvido_por_evidencia",
-                "confianca": base["forca"],
+                "forte": True, "confianca": base["forca"],
                 "porque": "%d candidatos; este ganhou por %d pontos: %s"
                           % (len(vivos),
                              melhor["forca"] - int(vivos[1].get("forca") or 0),
                              "; ".join(base["motivos"][:2]))}
-    if melhor["forca"] >= FORCA_MINIMA:
-        return {"cpf": "", "situacao": "empatado", "confianca": 0,
-                "candidatos_vivos": len(vivos),
-                "porque": "%d candidatos empatados em força %d"
-                          % (sum(1 for c in vivos
-                                 if int(c.get("forca") or 0) == melhor["forca"]),
-                             melhor["forca"])}
-    return {"cpf": "", "situacao": "ambiguo_sem_evidencia", "confianca": 0,
-            "candidatos_vivos": len(vivos),
-            "porque": "%d candidatos e nenhum passou de força %d — precisa de "
-                      "pista do operador" % (len(vivos), FORCA_MINIMA)}
+    # DAQUI PARA BAIXO A EVIDÊNCIA É FRACA, e mesmo assim devolve o melhor.
+    #
+    # Decisão da Rebeca em 08/09/2026: sempre mostrar o de maior nota, só
+    # sinalizando que o sinal é fraco em vez de tratar como certo. Antes estes
+    # dois ramos devolviam `cpf: ""` e o operador via "não consegui
+    # identificar" — sem os candidatos, sem as notas, sem nada para trabalhar
+    # em cima. Esconder o melhor palpite não deixa ninguém mais seguro; só
+    # deixa a pessoa sem informação e com o mesmo problema.
+    #
+    # `forte` é o campo que a tela usa para decidir o tom. Quem consome isto
+    # NÃO pode tratar `cpf` preenchido como confirmação: tem que olhar `forte`.
+    empatados = [c for c in vivos
+                 if int(c.get("forca") or 0) == melhor["forca"]]
+    alternativas = [{"cpf": c.get("cpf", ""), "nome": c.get("nome", ""),
+                     "forca": int(c.get("forca") or 0)}
+                    for c in vivos[1:6]]
+
+    if len(empatados) > 1:
+        return {**base, "situacao": "empatado", "forte": False,
+                "confianca": min(melhor["forca"], 35),
+                "alternativas": alternativas,
+                "porque": "%d candidatos empatados em força %d — este é o "
+                          "primeiro da lista, não o comprovado"
+                          % (len(empatados), melhor["forca"])}
+
+    return {**base, "situacao": "sinal_fraco", "forte": False,
+            "confianca": min(melhor["forca"], 45),
+            "alternativas": alternativas,
+            "porque": "%d candidatos e o melhor fez só %d de %d — é o mais "
+                      "provável, não o confirmado"
+                      % (len(vivos), melhor["forca"], FORCA_MINIMA)}
 
 
 # ===========================================================================

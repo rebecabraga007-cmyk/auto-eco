@@ -5028,6 +5028,14 @@ function b2bPainelPessoa(d) {
       ${doc.obito_provavel ? `<span style="color:#b00;font-weight:600">óbito provável</span>` : ''}
       ${doc.ppe ? `<span class="pf-advanced-hint" title="pessoa politicamente exposta">PPE</span>` : ''}
     </div>
+    ${id.forte === false ? `<div class="warn-box" style="margin-top:8px">
+      <b>Sinal fraco — confira antes de ligar.</b> Este é o candidato de maior
+      nota, não uma identificação confirmada.
+      ${(id.alternativas || []).length ? `<div class="pf-advanced-hint"
+        style="margin-top:4px">Outros possíveis:
+        ${id.alternativas.map(a => `${esc(a.nome || a.cpf)} (${a.forca})`)
+          .join(' · ')}</div>` : ''}
+    </div>` : ''}
     <div class="pf-advanced-hint" style="margin-top:3px">
       identificado por <b>${esc(id.situacao || '')}</b>
       ${id.confianca ? ` · confiança ${id.confianca}` : ''}
@@ -5123,7 +5131,9 @@ function ligarVerMais(containerId) {
         body: JSON.stringify({
           perfil: { nome: p.nome, cargo: p.cargo, empresa: p.empresa,
                     cidade: p.cidade, formatura_ano: p.formatura_ano || 0,
-                    carreira_desde: p.carreira_desde || 0 },
+                    carreira_desde: p.carreira_desde || 0,
+                    // a URL carrega o nome do meio que o display esconde
+                    url: p.url || '' },
           cidade: _v('b2b-cidade'), uf: (p.uf || ''), cnpj: _v('b2b-cnpj'),
         }),
       }).then(r => r.json());
