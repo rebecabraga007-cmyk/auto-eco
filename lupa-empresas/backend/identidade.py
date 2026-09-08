@@ -65,9 +65,17 @@ MAX_PAGO = 4
 MAX_PAGO_NACIONAL = 48
 
 PART = {"DA", "DE", "DO", "DAS", "DOS", "E"}
-RUIDO_EMP = {"GRUPO", "COMPANHIA", "CIA", "LTDA", "SA", "EIRELI", "ME", "EPP",
-             "HOLDING", "PARTICIPACOES", "LOJAS", "SISTEMAS", "TECNOLOGIA",
-             "SERVICOS", "COMERCIO", "INDUSTRIA", "BRASIL"}
+# "GROUP" é o gêmeo inglês de "GRUPO", que já estava aqui, e faltava. O LinkedIn
+# escreve "BLU Sales Group"; a Receita registra "BLU SALES LTDA" — e como o
+# casamento exige que a razão COMECE com todos os tokens, a empresa não
+# resolvia, o que desligava em silêncio as etapas 03, 04 e o sinal de empresa
+# do MK. Medido em 400 empresas do cache: 3 mudam de resposta e as 3 melhoram —
+# "Cast Group" passa a achar CAST INFORMATICA, "ASSA ABLOY Group" acha a ASSA
+# ABLOY, e "ZF Group" para de casar com GROUP CORAGEM AGRONEGOCIOS LTDA, que
+# era só uma empresa cujo nome começa com a palavra.
+RUIDO_EMP = {"GRUPO", "GROUP", "COMPANHIA", "CIA", "LTDA", "SA", "EIRELI",
+             "ME", "EPP", "HOLDING", "PARTICIPACOES", "LOJAS", "SISTEMAS",
+             "TECNOLOGIA", "SERVICOS", "COMERCIO", "INDUSTRIA", "BRASIL"}
 
 # As tabelas de família e os pares incompatíveis viviam aqui e foram para o
 # `funcoes.py`, que corrigiu o bug do `\b` no fim do radical — `\bvend\b` nunca
@@ -93,9 +101,21 @@ def _tokens_empresa(s: Any) -> set:
 
 
 def cidade_do_linkedin(texto: Any) -> str:
-    """'Niterói, Rio de Janeiro, Brazil' -> 'NITEROI'."""
+    """'Niterói, Rio de Janeiro, Brazil' -> 'NITEROI'.
+
+    Também desmonta a forma "Greater X Area", que o LinkedIn usa muito e que
+    NÃO é o nome de nenhum município: "Greater São Paulo Area" virava
+    `GREATER SAO PAULO AREA`, sem DDD e sem casar com cadastro nenhum. A busca
+    por cidade voltava vazia, a UF ficava em branco (então nem o retry por
+    estado acontecia) e o caso morria depois de gastar uma consulta.
+    """
     p = [x.strip() for x in str(texto or "").split(",") if x.strip()]
-    return _norm(p[0]) if p else ""
+    c = _norm(p[0]) if p else ""
+    if c.startswith("GREATER ") or c.endswith(" AREA"):
+        c = re.sub(r"^GREATER\s+", "", c)
+        c = re.sub(r"\s+(METROPOLITAN\s+)?AREA$", "", c)
+        c = re.sub(r"\s+REGION$", "", c).strip()
+    return c
 
 
 def ddd_da_cidade(cidade: str, uf: str) -> str:
@@ -113,6 +133,29 @@ def ddd_da_cidade(cidade: str, uf: str) -> str:
             _mapa_ddd = {}
     m = _mapa_ddd.get("%s|%s" % (_norm(cidade), (uf or "").upper()))
     return m["ddd"] if m else ""
+
+
+def uf_da_cidade(cidade: str) -> str:
+    """UF de um município, quando o nome é ÚNICO no país. Senão, "".
+
+    Existe para o caso "Greater São Paulo Area", que o LinkedIn escreve sem
+    vírgula — `uf_de()` separa por vírgula e devolve vazio, e sem UF não há
+    DDD nem repescagem por estado. Aqui a UF sai do próprio mapa de municípios.
+
+    Só responde quando não há ambiguidade: existe Toledo no PR e em MG, e
+    chutar uma delas colocaria a pessoa no estado errado com ar de certeza.
+    """
+    global _mapa_ddd
+    c = _norm(cidade)
+    if not c:
+        return ""
+    if _mapa_ddd is None:
+        try:
+            _mapa_ddd = json.load(open(MAPA_DDD, encoding="utf-8"))
+        except Exception:
+            _mapa_ddd = {}
+    ufs = {k.split("|", 1)[1] for k in _mapa_ddd if k.split("|", 1)[0] == c}
+    return ufs.pop() if len(ufs) == 1 else ""
 
 
 def cnpj_da_empresa(nome: str, uf: str = "") -> tuple[str, str]:
