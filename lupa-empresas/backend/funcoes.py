@@ -388,6 +388,81 @@ def decisor(texto) -> bool:
     return nivel(texto)[1] >= 3
 
 
+# ===========================================================================
+# CATALOGO DE CARGOS DE DECISAO — para o operador escolher na tela
+# ===========================================================================
+# Existe porque "decisor" não é uma coisa só. Quem vende software de RH quer
+# falar com o Head de Gente; quem vende maquinário quer o Gerente Industrial.
+# Oferecer só o botão "decisores" faz a lista vir com os dois e o SDR filtrar
+# no olho.
+#
+# A lista sai do próprio dicionário (NIVEIS × AREAS), não de uma tabela solta:
+# assim, quando um radical novo entra no classificador, ele aparece aqui
+# sozinho — e o que a tela oferece nunca diverge do que o filtro entende.
+NIVEIS_DECISAO = ("clevel", "diretoria", "gerencia", "coordenacao")
+
+
+def catalogo_decisores() -> dict:
+    """Cargos de decisão que a tela pode oferecer, agrupados.
+
+    Devolve:
+      niveis  os quatro degraus de decisão, com o peso (para ordenar)
+      areas   as 17 áreas, com rótulo legível
+      cargos  as combinações concretas — "Diretor Comercial", "Gerente de TI" —
+              com os TERMOS que o filtro usa, para a tela mandar de volta o que
+              o backend entende sem tradução no meio
+    """
+    niveis = [{"chave": k, "rotulo": NIVEIS[k]["rotulo"],
+               "peso": NIVEIS[k]["peso"],
+               "termos": sorted(set(NIVEIS[k]["radicais"] + NIVEIS[k]["siglas"]))}
+              for k in NIVEIS_DECISAO]
+
+    areas = [{"chave": a, "rotulo": rotulo_area(a)} for a in sorted(AREAS)]
+
+    # combinações: nível × área. Só as que fazem sentido dizer em voz alta —
+    # "Estagiário de Diretoria" não existe, e por isso o nível já vem filtrado.
+    cargos = []
+    for n in niveis:
+        for a in areas:
+            cargos.append({
+                "id": "%s:%s" % (n["chave"], a["chave"]),
+                "rotulo": "%s · %s" % (n["rotulo"], a["rotulo"]),
+                "nivel": n["chave"], "area": a["chave"],
+            })
+    return {"niveis": niveis, "areas": areas, "cargos": cargos}
+
+
+def casa_escolha(texto, escolhas: list) -> bool:
+    """O cargo casa com alguma escolha da tela?
+
+    `escolhas` aceita três formas, porque a tela pode mandar qualquer uma:
+      "gerencia"          só o nível
+      "vendas"            só a área
+      "gerencia:vendas"   nível E área juntos
+    Lista vazia = sem filtro, tudo passa. É o padrão, e é deliberado: filtro
+    que começa restringindo esconde resultado de quem não sabe que ele existe.
+    """
+    if not escolhas:
+        return True
+    n = nivel(texto)[0]
+    a = areas(texto)
+    for e in escolhas:
+        e = str(e or "").strip().lower()
+        if not e:
+            continue
+        if ":" in e:
+            en, ea = e.split(":", 1)
+            if n == en and ea in a:
+                return True
+        elif e in NIVEIS:
+            if n == e:
+                return True
+        elif e in AREAS:
+            if e in a:
+                return True
+    return False
+
+
 if __name__ == "__main__":
     # Casos que já falharam de verdade neste projeto.
     CASOS = [

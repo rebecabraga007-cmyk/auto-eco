@@ -76,6 +76,7 @@ import time
 from typing import Any
 
 import assertiva
+import brightdata_pessoas
 import cidades
 import funcoes
 import identidade as I
@@ -733,6 +734,13 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
         if nome != nome_exibido:
             etapas.insert(0, "slug:%s" % nome)
         return {"nome": nome_exibido, "nome_completo": nome,
+                # O e-mail vai SEMPRE, identificado ou nao. Antes so aparecia
+                # quando a Assertiva reconhecia o dono -- e a Assertiva conhece
+                # 9,4% deles. Os outros 90% eram descartados junto com o CPF que
+                # nao veio, jogando fora o ativo mais entregavel do dataset: um
+                # e-mail corporativo de um "head" (29% deles tem) e canal de
+                # prospeccao direto, sem precisar de CPF nem de telefone.
+                "email": (perfil.get("email") or "").strip().lower(),
                 "empresa": emp.nome, "cargo": cargo,
                 "cidade": cid, "uf": uf, "cpf": cpf, "situacao": situacao,
                 "confianca": confianca, "etapas": etapas,
@@ -749,7 +757,7 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
         etapas.append("01 email:%s" % ("resolveu" if achado else "nao"))
         if achado:
             return saida("resolvido_por_email", achado["cpf"], 100, forte=True,
-                         nome_completo=achado["nome_real"], email=em,
+                         nome_completo=achado["nome_real"],
                          porque="e-mail %s é dele na Assertiva — identificação "
                                 "exata, sem homônimo" % em)
 
@@ -1198,6 +1206,300 @@ async def resolver_e_detalhar(perfil: dict[str, Any], cidade: str = "",
             saida["dossie"] = {"status": "descartado", "message": motivo}
     saida["custo"] = gasto.resumo()
     return saida
+
+
+# ===========================================================================
+# FUNIL SIMPLES — para a aba de Prospecção B2B
+# ===========================================================================
+async def _telefones_do_cpf(cpf: str, gasto: Gasto) -> list[dict[str, Any]]:
+    """Telefones de um CPF. ASSERTIVA PRIMEIRO, MK quando o teto acabar.
+
+    A Assertiva custa R$ 0,119 por pessoa e o MK é cota grátis — mas a
+    prioridade é da Assertiva (decisão da Rebeca), e não é por capricho de
+    qualidade: só ela devolve `naoPerturbe`, `relacao` (se o número é do
+    titular ou de terceiro), `ultimoContato` e WhatsApp. O MK devolve o número
+    e mais nada.
+
+    "Não perturbe" sozinho justifica: é a diferença entre uma lista que o SDR
+    pode discar e uma que expõe a operação. Nenhum desses quatro campos existe
+    no MK, então uma lista só de MK não tem como ser ordenada por chance de
+    alguém atender nem filtrada por risco.
+
+    O RECUO EXISTE PORQUE A ABA B2B FAZ LISTA DE 50 A 100. Cem pessoas na
+    Assertiva são R$ 11,90; o teto do lote corta isso, e daí em diante o MK
+    entrega o número sem cobrar. Melhor uma lista com metade dos telefones
+    ricos e metade pobres do que meia lista.
+
+    `fonte` vai em cada número para a tela poder mostrar a diferença.
+    """
+    d = re.sub(r"\D", "", str(cpf or ""))
+    if len(d) != 11:
+        return []
+
+    if not gasto.estourou():
+        r = await assertiva.consulta_cpf(d)
+        gasto.assertiva += 1
+        if r.get("status") == "ok":
+            tels = sorted(I.sinais_do_cpf(r)["telefones"], key=_ordem_telefone)
+            for t in tels:
+                t["porque"] = _rotulo_telefone(t)
+                t["fonte"] = "assertiva"
+            if tels:
+                return tels
+
+    m = await mkbuscas.consulta_cpf(d)
+    gasto.mk += 1
+    if m.get("status") != "ok":
+        return []
+    tels = mkbuscas._extract_phones(m.get("data") or {})
+    tels = mkbuscas.refine_phones(tels, modo="celular") or tels
+    for t in tels:
+        t["fonte"] = "mk"
+        t["porque"] = "do MK — sem sinal de WhatsApp nem de não-perturbe"
+    return tels
+
+
+async def resolver_simples(perfil: dict[str, Any], emp: Empresa,
+                           gasto: Gasto) -> dict[str, Any]:
+    """Funil curto da aba B2B: telefone de sócio e decisor, com teto baixo.
+
+    O funil completo (11 etapas) vale quando se procura UMA pessoa específica e
+    vale pagar para desambiguar. A aba B2B é outra coisa: monta LISTA, e lista
+    tem que ser barata por linha, senão uma busca de 50 decisores custa mais que
+    o lead vale.
+
+    A ordem aqui é por CERTEZA E PREÇO, e ela PARA cedo de propósito:
+
+      A. sócio do QSA      grátis  CPF já fechado contra a JBR — é prova
+      B. decisor do CNPJ   R$0,24 POR EMPRESA, cobre todo mundo dela
+      C. e-mail            R$0,119 por pessoa, só quem tem — exato
+      D. JBR nome único    grátis  sem concorrente, sem contraprova
+      E. PARA.             devolve o e-mail e diz que não identificou
+
+    O que NÃO está aqui, e é o ponto: WorkAPI, busca paga por nome, partição,
+    consulta_cpf candidato a candidato. Tudo que existe para desempatar
+    homônimo. Se a JBR não fechou sozinha, a aba B2B desiste — porque
+    desempatar custa até R$ 2,38 por pessoa e aqui há cinquenta delas.
+
+    O telefone vem do MK em qualquer um dos caminhos: cota grátis.
+    """
+    t0 = time.time()
+    nome = (perfil.get("nome") or "").strip()
+    email = (perfil.get("email") or "").strip().lower()
+    cargo = perfil.get("cargo") or ""
+    etapas: list[str] = []
+
+    async def pronto(situacao, cpf, forte, porque):
+        tels = await _telefones_do_cpf(cpf, gasto) if cpf else []
+        return {"nome": nome, "cargo": cargo, "empresa": emp.nome,
+                "email": email, "cpf": cpf, "situacao": situacao,
+                "forte": forte, "porque": porque, "telefones": tels,
+                "etapas": etapas, "ms": int((time.time() - t0) * 1000)}
+
+    if len([t for t in I._norm(nome).split() if len(t) > 1]) < 2:
+        return await pronto("nome_incompleto", "", False,
+                            "nome com uma palavra só não dá para procurar")
+
+    # A e B — as listas por CNPJ, já em memória (a empresa foi preparada uma vez)
+    etapa, cpf = emp.por_lista(nome)
+    etapas.append("A/B listas do CNPJ")
+    if cpf:
+        return await pronto("resolvido_por_" + etapa, cpf, True,
+                            "nome único na lista de %s do CNPJ" % etapa)
+
+    # C — e-mail, quando existe
+    if email:
+        achado = await _pelo_email(email, nome, gasto)
+        etapas.append("C email:%s" % ("resolveu" if achado else "nao"))
+        if achado:
+            return await pronto("resolvido_por_email", achado["cpf"], True,
+                                "e-mail confere na Assertiva — sem homônimo")
+
+    # D — JBR, só quando fecha sozinha
+    jbr, modo = _jbr_variantes(_nome_do_slug(perfil.get("url"), nome), nome)
+    jbr = [c for c in jbr if _idade_ok(c.get("nascimento"))]
+    etapas.append("D JBR:%d" % len(jbr))
+    if len(jbr) == 1:
+        return await pronto("resolvido_gratis", jbr[0]["cpf"], True,
+                            "único com esse nome na base nacional")
+
+    # E — para aqui. Não vale desempatar numa tela de lista.
+    etapas.append("E parou")
+    return await pronto(
+        "so_email" if email else "nao_identificado", "", False,
+        ("%d candidatos na base nacional — desempatar custaria mais que o lead "
+         "vale numa lista. O e-mail continua utilizável." % len(jbr)) if email
+        else ("%d candidatos e nenhum e-mail — precisa do funil completo"
+              % len(jbr)))
+
+
+async def prospeccao_b2b(perfis: list[dict[str, Any]], cidade: str = "",
+                         uf: str = "", cnpj: str = "", teto_brl: float = 6.0,
+                         so_com_telefone: bool = True) -> dict[str, Any]:
+    """A aba B2B inteira: uma empresa, muitos decisores, teto baixo.
+
+    `so_com_telefone` NASCE LIGADO (decisão da Rebeca). A aba monta lista para
+    discar; linha sem telefone não é lead, é ruído que o operador vai percorrer
+    com o olho e descartar. Duas coisas acontecem quando está ligado:
+
+      1. pessoa sem telefone sai da lista
+      2. EMPRESA em que ninguém teve telefone é PULADA por inteiro, e aparece
+         em `empresas_puladas` com o motivo
+
+    O item 2 é o que economiza de verdade numa lista de cinquenta empresas: sem
+    ele, o operador abre a tela, vê trinta empresas com zero linhas cada e não
+    sabe se a busca falhou ou se a base não tem. Dizendo "puladas: 30, nenhum
+    telefone", ele sabe.
+
+    Desligando, a lista vem inteira — inclusive quem só tem e-mail, que para
+    prospecção B2B por escrito continua servindo.
+    """
+    gasto = Gasto(teto_brl)
+    t0 = time.time()
+    porempresa: dict[str, list] = {}
+    for p in perfis:
+        porempresa.setdefault((p.get("empresa") or "").strip(), []).append(p)
+
+    saidas, empresas, puladas = [], {}, []
+    for nome_emp, lista in porempresa.items():
+        emp = Empresa(nome_emp, cidade, uf, cnpj if len(porempresa) == 1 else "")
+        await emp.preparar(gasto)
+        empresas[nome_emp] = {
+            "cnpj": emp.cnpj, "razao": emp.razao,
+            "socios": emp.socios, "decisores": len(emp.decisores),
+            "rais": len(emp.vinculos)}
+        desta = []
+        for p in lista:
+            if gasto.estourou():
+                desta.append({"nome": p.get("nome"), "empresa": nome_emp,
+                              "email": (p.get("email") or "").lower(),
+                              "situacao": "teto_de_gasto", "cpf": "",
+                              "forte": False, "telefones": []})
+                continue
+            desta.append(await resolver_simples(p, emp, gasto))
+
+        com_tel = [x for x in desta if x.get("telefones")]
+        if so_com_telefone:
+            if not com_tel:
+                # empresa inteira sem telefone: pula e DIZ que pulou
+                puladas.append({"empresa": nome_emp, "razao": emp.razao,
+                                "perfis": len(desta),
+                                "com_email": sum(1 for x in desta if x.get("email")),
+                                "motivo": "nenhum decisor com telefone"})
+                continue
+            desta = com_tel
+        saidas.extend(desta)
+
+    com_tel = sum(1 for s in saidas if s.get("telefones"))
+    com_email = sum(1 for s in saidas if s.get("email"))
+    com_cpf = sum(1 for s in saidas if s.get("cpf"))
+    return {"pessoas": saidas, "empresas": empresas, "total": len(saidas),
+            "com_cpf": com_cpf, "com_telefone": com_tel, "com_email": com_email,
+            "so_com_telefone": so_com_telefone,
+            "empresas_puladas": puladas,
+            "custo": gasto.resumo(), "segundos": round(time.time() - t0, 1)}
+
+
+async def decisores_do_linkedin(empresa: str, cnpj: str = "", cidade: str = "",
+                                uf: str = "", limite: int = 50,
+                                teto_brl: float = 6.0,
+                                so_com_telefone: bool = True,
+                                max_decisores: int = 0, max_socios: int = 0,
+                                cargos_escolhidos: list | None = None
+                                ) -> dict[str, Any]:
+    """Decisores que só o LinkedIn conhece — e o telefone deles.
+
+    POR QUE ISTO EXISTE, sendo que a aba B2B já traz sócio e decisor: as três
+    fontes enxergam gente DIFERENTE, e a que falta é a maior.
+
+      sócios do QSA      quem é DONO. Não inclui empregado nenhum.
+      decisores Assertiva quem a folha registra como gestor. Defasa: empresa
+                          nova não tem, e a BLU (out/2024) tem zero.
+      LinkedIn            quem SE DECLARA gerente, head, diretor. É o único que
+                          enxerga o gestor contratado que não é sócio e ainda
+                          não apareceu em cadastro trabalhista.
+
+    Na Google Brasil os decisores da Assertiva deram 602 pessoas e nenhuma
+    estava no quadro societário. Na BLU foi o contrário: 2 sócios e zero
+    decisores. Nenhuma fonte cobre a outra.
+
+    O que devolve `novo`: o CPF não estava nem no QSA nem na lista da
+    Assertiva. É o que justifica a chamada — se todos vierem repetidos, a aba
+    B2B já bastava e isto é gasto à toa.
+
+    Custo: US$ 0,0025 por perfil da Bright Data + o funil simples por pessoa.
+    """
+    gasto = Gasto(teto_brl)
+    t0 = time.time()
+
+    emp = Empresa(empresa, cidade, uf, cnpj)
+    await emp.preparar(gasto)
+
+    # os CPFs que a aba B2B JÁ tem: é contra eles que se mede o que há de novo
+    conhecidos = {x["cpf"] for x in emp.socios if x.get("cpf")}
+    conhecidos |= {x["cpf"] for x in emp.decisores if x.get("cpf")}
+
+    r = await brightdata_pessoas.buscar_agora(
+        empresa=emp.razao or empresa, pais="BR", limite=limite, decisores=True)
+    hits = r.get("pessoas") or []
+    usd = float(r.get("custo_usd") or 0)
+
+    # O operador escolhe QUAIS cargos quer: "Gerência · Vendas" é outro lead
+    # que "Diretoria · TI", e oferecer só o botão "decisores" faz a lista vir
+    # com os dois. Lista vazia = sem filtro, que é o padrão.
+    if cargos_escolhidos:
+        hits = [h for h in hits
+                if funcoes.casa_escolha(h.get("cargo") or "", cargos_escolhidos)]
+    if max_decisores > 0:
+        hits = hits[:max_decisores]
+
+    saidas = []
+    for h in hits:
+        if gasto.estourou():
+            saidas.append({"nome": h.get("nome"), "situacao": "teto_de_gasto",
+                           "email": (h.get("email") or "").lower(),
+                           "cpf": "", "telefones": [], "novo": None})
+            continue
+        res = await resolver_simples({
+            "nome": h.get("nome"), "cargo": h.get("cargo") or "",
+            "empresa": empresa, "cidade": h.get("cidade") or "",
+            "email": h.get("email") or "", "url": h.get("url") or ""}, emp, gasto)
+        res["novo"] = bool(res.get("cpf")) and res["cpf"] not in conhecidos
+        saidas.append(res)
+
+    # SÓCIOS: entram na mesma lista, com telefone, porque a aba B2B quer os
+    # dois. Vêm do QSA (grátis) e o CPF já está fechado — então aqui só falta
+    # o telefone. `max_socios` respeita o que o operador pediu na tela.
+    if max_socios != 0:
+        com_cpf_socio = [x for x in emp.socios if x.get("cpf")]
+        for sc in com_cpf_socio[:max_socios if max_socios > 0 else None]:
+            if gasto.estourou():
+                break
+            tels = await _telefones_do_cpf(sc["cpf"], gasto)
+            saidas.append({
+                "nome": sc["nome"], "cargo": sc.get("qualificacao") or "Sócio",
+                "empresa": empresa, "email": "", "cpf": sc["cpf"],
+                "situacao": "socio_do_qsa", "forte": True,
+                "porque": "sócio no quadro da Receita, CPF fechado contra a JBR",
+                "telefones": tels, "novo": sc["cpf"] not in conhecidos,
+                "etapas": ["QSA"]})
+
+    if so_com_telefone:
+        saidas = [x for x in saidas if x.get("telefones")]
+    novos = sum(1 for x in saidas if x.get("novo"))
+    return {
+        "empresa": {"nome": empresa, "cnpj": emp.cnpj, "razao": emp.razao,
+                    "socios": len(emp.socios), "decisores": len(emp.decisores)},
+        "pessoas": saidas,
+        "total": len(saidas),
+        "com_cpf": sum(1 for x in saidas if x.get("cpf")),
+        "com_telefone": sum(1 for x in saidas if x.get("telefones")),
+        "com_email": sum(1 for x in saidas if x.get("email")),
+        "novos": novos, "so_com_telefone": so_com_telefone,
+        "ja_conhecidos": sum(1 for x in saidas if x.get("novo") is False and x.get("cpf")),
+        "custo": {**gasto.resumo(), "brightdata_usd": round(usd, 4)},
+        "segundos": round(time.time() - t0, 1),
+    }
 
 
 def contexto_empresa(nome: str, cidade: str = "", uf: str = "",

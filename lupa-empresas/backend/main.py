@@ -577,6 +577,55 @@ async def funil_empresa(request: Request, nome: str = "", cidade: str = "",
         return {"status": "error", "message": str(exc)[:160], "filiais": []}
 
 
+@app.get("/api/funil/cargos")
+async def funil_cargos():
+    """Catálogo de cargos de decisão para a tela oferecer. Local, grátis.
+
+    Sai do mesmo dicionário que o filtro usa (`funcoes.NIVEIS` × `AREAS`), não
+    de uma tabela paralela — assim o que a tela oferece nunca diverge do que o
+    backend entende.
+    """
+    try:
+        return {"status": "ok", **funcoes.catalogo_decisores()}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:160]}
+
+
+@app.post("/api/funil/decisores-linkedin")
+async def funil_decisores_linkedin(request: Request, payload: dict = Body(...)):
+    """Decisores que só o LinkedIn conhece, com telefone. GASTA.
+
+    A aba B2B já traz sócio e decisor da Assertiva; isto traz o gestor
+    contratado que não é sócio e ainda não apareceu em cadastro trabalhista —
+    o que nenhuma das duas outras fontes enxerga.
+    """
+    empresa = str(payload.get("empresa") or "").strip()
+    cnpj = re.sub(r"\D", "", str(payload.get("cnpj") or ""))
+    if len(empresa) < 3 and len(cnpj) != 14:
+        return {"status": "error", "message": "Informe a empresa ou o CNPJ."}
+    try:
+        teto = float(payload.get("teto_brl") or 6.0)
+    except (TypeError, ValueError):
+        teto = 6.0
+    try:
+        r = await funil.decisores_do_linkedin(
+            empresa=empresa, cnpj=cnpj,
+            cidade=str(payload.get("cidade") or "").strip(),
+            uf=str(payload.get("uf") or "").strip().upper()[:2],
+            limite=min(int(payload.get("limite") or 50), 100),
+            teto_brl=max(0.0, min(teto, 60.0)),
+            # nasce LIGADO: a aba monta lista para discar, e linha sem telefone
+            # não é lead. O operador desmarca se quiser a lista inteira.
+            so_com_telefone=payload.get("so_com_telefone", True) is not False,
+            max_decisores=int(payload.get("max_decisores") or 0),
+            max_socios=int(payload.get("max_socios") or 0),
+            cargos_escolhidos=payload.get("cargos") or [])
+        r = {"status": "ok", **r}
+        return r if _is_admin(request) else _limpa_custo(r)
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:200]}
+
+
 @app.post("/api/funil/resolver")
 async def funil_resolver(request: Request, payload: dict = Body(...)):
     """Roda o funil num lote de perfis. ISTO GASTA DINHEIRO.
