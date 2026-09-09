@@ -798,6 +798,41 @@ async def linkedin_empresas_sugestao(q: str = "", conferir: int = 0):
     return await brightdata_pessoas.sugerir_empresas(q, conferir=min(int(conferir or 0), 5))
 
 
+@app.get("/api/empresas/catalogo")
+async def empresas_catalogo():
+    """Faixas de porte e tipos de organizacao, com quantas empresas ha em cada.
+
+    Estatico: as contagens foram medidas contra o dataset e nao mudam a cada
+    clique. A contagem vai junto de proposito -- escolher "5.001 a 10.000"
+    sabendo que sao 302 empresas no Brasil e uma escolha; sem saber, e uma
+    surpresa depois da busca ja cobrada.
+    """
+    return brightdata_pessoas.catalogo_empresas()
+
+
+@app.post("/api/empresas/brightdata")
+async def empresas_brightdata(request: Request, payload: dict = Body(default={})):
+    """Busca de EMPRESAS no dataset da Bright Data (porte, tipo, fundacao).
+
+    Complementa a busca da Receita (/api/companies/search), nao substitui: a
+    Receita e gratis e sabe CNPJ, CNAE e situacao; esta sabe quantas pessoas a
+    empresa tem no LinkedIn, o tipo de organizacao e o site. Cada registro
+    entregue e cobrado, por isso `limite` tem teto baixo por padrao.
+    """
+    f = payload.get("filtros") or payload
+    return await brightdata_pessoas.buscar_empresas_por_filtro(
+        pais=str(f.get("pais") or "BR"),
+        nomes=f.get("nomes") or f.get("empresas"),
+        sites=f.get("sites"),
+        porte_min=int(f.get("porte_min") or 0),
+        tipos=f.get("tipos"),
+        fundada_apos=int(f.get("fundada_apos") or 0),
+        setores=f.get("setores"),
+        so_com_cnpj=bool(f.get("so_com_cnpj")),
+        limite=min(int(payload.get("limite") or f.get("limite") or 25), 100),
+        usuario=(request.headers.get("x-user-email") or ""))
+
+
 @app.post("/api/linkedin/empresa")
 async def linkedin_empresa(payload: dict = Body(default={})):
     """Dados da empresa a partir do link do LinkedIn — rápido (segundos).

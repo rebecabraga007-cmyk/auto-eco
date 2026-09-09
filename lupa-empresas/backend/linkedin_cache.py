@@ -150,6 +150,16 @@ def init() -> None:
     con.execute("CREATE INDEX IF NOT EXISTS idx_lc_uf    ON perfis(uf)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_lc_sobre ON perfis(sobrenome)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_lc_empid ON perfis(empresa_id)")
+
+    # A empresa da Bright Data nao vem com CNPJ -- ele e deduzido pelo dominio
+    # do site (ver empresa_cnpj). Guardar aqui evita refazer a deducao, e
+    # guardar a CONFIANCA junto evita o pior: uma tela que mostra o CNPJ
+    # deduzido por semelhanca de nome com a mesma cara de um exato.
+    tem_emp = {r[1] for r in con.execute("PRAGMA table_info(empresas)")}
+    for coluna in ("cnpj", "cnpj_confianca"):
+        if coluna not in tem_emp:
+            con.execute("ALTER TABLE empresas ADD COLUMN %s TEXT" % coluna)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_lc_emp_cnpj ON empresas(cnpj)")
     con.commit()
     con.close()
 
@@ -783,16 +793,23 @@ def salvar_empresa(d: dict[str, Any]) -> None:
         return
     con = _con()
     con.execute("""
-        INSERT INTO empresas (url,nome,company_id,funcionarios,setor,sede,site,pais,visto_em)
-        VALUES (?,?,?,?,?,?,?,?,?)
+        INSERT INTO empresas (url,nome,company_id,funcionarios,setor,sede,site,pais,
+                              visto_em,cnpj,cnpj_confianca)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(url) DO UPDATE SET
           nome=excluded.nome, company_id=excluded.company_id,
           funcionarios=excluded.funcionarios, setor=excluded.setor,
           sede=excluded.sede, site=excluded.site, pais=excluded.pais,
-          visto_em=excluded.visto_em
+          visto_em=excluded.visto_em,
+          -- CNPJ so e sobrescrito por CNPJ: uma releitura que nao conseguiu
+          -- deduzir nao pode apagar a deducao boa da vez anterior.
+          cnpj=COALESCE(NULLIF(excluded.cnpj,''), empresas.cnpj),
+          cnpj_confianca=CASE WHEN NULLIF(excluded.cnpj,'') IS NOT NULL
+                              THEN excluded.cnpj_confianca
+                              ELSE empresas.cnpj_confianca END
     """, (url, d.get("nome"), d.get("company_id"), d.get("funcionarios_linkedin"),
           d.get("setor"), d.get("sede"), d.get("site"), d.get("pais"),
-          int(time.time())))
+          int(time.time()), d.get("cnpj") or "", d.get("cnpj_confianca") or ""))
     con.commit()
     con.close()
 

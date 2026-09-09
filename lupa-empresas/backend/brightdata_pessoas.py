@@ -109,6 +109,11 @@ async def empresa_por_url(url: str) -> dict[str, Any]:
                 "funcionarios_linkedin": antes["funcionarios"],
                 "setor": antes["setor"], "sede": antes["sede"],
                 "site": antes["site"], "pais": antes["pais"],
+                # O CNPJ deduzido fica guardado junto: reconferir a cada
+                # leitura seria refazer a mesma consulta pelo mesmo resultado.
+                "cnpj": (antes["cnpj"] if "cnpj" in antes.keys() else "") or "",
+                "cnpj_confianca": (antes["cnpj_confianca"]
+                                   if "cnpj_confianca" in antes.keys() else "") or "nenhuma",
                 "url": limpo, "destaque": [], "aviso_tamanho": ""}
 
     try:
@@ -159,6 +164,18 @@ async def empresa_por_url(url: str) -> dict[str, Any]:
             "ou nao terminar — vale restringir por cargo." % f"{total:,}".replace(",", ".")
             if isinstance(total, int) and total > 50000 else ""),
     }
+
+    # A Bright Data nao manda CNPJ (26 campos, nenhum fiscal). Deduz aqui pelo
+    # dominio do site contra a Receita -- local, instantaneo e de graca. Quando
+    # nao da para decidir, `cnpj` volta vazio de proposito: ver empresa_cnpj.
+    try:
+        import empresa_cnpj
+        p = empresa_cnpj.resolver(registro=d)
+        saida.update(cnpj=p["cnpj"], cnpj_confianca=p["confianca"],
+                     cnpj_motivo=p["motivo"])
+    except Exception:
+        pass
+
     try:
         linkedin_cache.salvar_empresa(saida)
         # Os perfis em destaque vem de graca junto com a pagina: guarda tambem.
@@ -229,6 +246,8 @@ async def sugerir_empresas(q: str, conferir: int = 0) -> dict[str, Any]:
                 "funcionarios": r.get("funcionarios_linkedin"),
                 "setor": r.get("setor"), "sede": r.get("sede"),
                 "fonte": r.get("fonte") or "linkedin",
+                "cnpj": r.get("cnpj") or "",
+                "cnpj_confianca": r.get("cnpj_confianca") or "nenhuma",
             })
 
     return {
@@ -953,6 +972,222 @@ async def buscar_por_filtro(pais: str = "BR", empresas: Any = None,
         "total_no_dataset": d.get("total_hits"),
         "novos_no_cache": novos,
         "registros_cobrados": len(pessoas),
+        "custo_usd": custo,
+        "cursor": d.get("search_after"),
+        "ms": int((time.time() - t0) * 1000),
+    }
+
+
+# =====================================================================
+# EMPRESAS pelo dataset de empresas (gd_l1vikfnt1wgvvqz95w)
+# =====================================================================
+#
+# Ate aqui empresa so chegava de dois jeitos, os dois de uma em uma: raspando
+# a URL do LinkedIn (`empresa_por_url`) ou pelo autocomplete. A busca em massa
+# de EMPRESA ia na Receita, que e gratis e instantanea mas nao sabe nada do
+# LinkedIn -- nao sabe quantas pessoas a empresa tem la, nem o tipo de
+# organizacao, nem quando ela diz que foi fundada.
+#
+# Sao exatamente os filtros que o B2B da Datastone tem e o nosso nao. Todos
+# testados contra a API antes de virar codigo (8/set/2026):
+#
+#     website_simplified    =         funciona, e EXATO
+#     employees_in_linkedin >         funciona, 100% de cobertura
+#     organization_type     =         funciona
+#     founded               >         funciona
+#     industries            includes  funciona
+#
+# O que ficou de fora, e por que: `company_size` tem 56% de cobertura contra
+# 100% de `employees_in_linkedin`; e `current_company_company_id` no dataset
+# de PESSOAS nao casa com o `company_id` daqui -- medido em 5 empresas, todas
+# devolveram 0 pessoas enquanto a busca por nome devolvia milhares. Sao
+# espacos de id diferentes, apesar do nome igual.
+
+# Faixas medidas no dataset em 8/set/2026 (universo BR: 1.356.875).
+# Sao estas porque foram contadas uma a uma: faixa sem empresa dentro so
+# ocupa espaco na tela.
+FAIXAS_PORTE = [
+    ("1 a 10", 0, 10, 808423),
+    ("11 a 50", 10, 50, 218955),
+    ("51 a 200", 50, 200, 51075),
+    ("201 a 500", 200, 500, 11197),
+    ("501 a 1.000", 500, 1000, 3620),
+    ("1.001 a 5.000", 1000, 5000, 2732),
+    ("5.001 a 10.000", 5000, 10000, 302),
+    ("mais de 10.000", 10000, 0, 170),
+]
+
+# `Sole Proprietorship` ficou de fora de proposito: medido, tem ZERO empresas
+# brasileiras. Filtro que nunca devolve nada e pior que filtro nenhum.
+TIPOS_ORGANIZACAO = [
+    ("Privately Held", "Capital fechado", 412081),
+    ("Partnership", "Sociedade", 81315),
+    ("Self-Employed", "Autonomo", 42382),
+    ("Educational", "Educacional", 20091),
+    ("Nonprofit", "Sem fins lucrativos", 18470),
+    ("Public Company", "Capital aberto", 8406),
+    ("Government Agency", "Orgao publico", 3800),
+]
+
+
+def catalogo_empresas() -> dict[str, Any]:
+    """Opcoes de filtro de empresa, com quantas empresas ha em cada uma.
+
+    A contagem vai junto porque muda a decisao de quem filtra: escolher
+    "5.001 a 10.000" sabendo que sao 302 empresas no Brasil inteiro e uma
+    escolha; escolher sem saber e uma surpresa depois.
+    """
+    return {
+        "status": "ok",
+        "portes": [{"id": i, "rotulo": r, "min": a, "max": b, "quantas": q}
+                   for i, (r, a, b, q) in enumerate(FAIXAS_PORTE)],
+        "tipos": [{"valor": v, "rotulo": r, "quantas": q}
+                  for v, r, q in TIPOS_ORGANIZACAO],
+        "universo_br": 1356875,
+    }
+
+
+def _empresa(rec: dict[str, Any]) -> dict[str, Any]:
+    d = {
+        "nome": rec.get("name") or "",
+        "url": rec.get("url") or "",
+        "company_id": str(rec.get("company_id") or ""),
+        "funcionarios_linkedin": rec.get("employees_in_linkedin"),
+        "setor": rec.get("industries") or "",
+        "sede": rec.get("headquarters") or "",
+        "site": rec.get("website_simplified") or rec.get("website") or "",
+        "tipo": rec.get("organization_type") or "",
+        "fundada": rec.get("founded") or "",
+        "seguidores": rec.get("followers"),
+        "pais": rec.get("country_code") or "",
+    }
+    # O CNPJ nao vem da Bright Data. E deduzido aqui, de graca, contra a
+    # Receita; quando nao da para decidir entre empresas diferentes volta
+    # vazio de proposito. Ver empresa_cnpj.
+    try:
+        import empresa_cnpj
+        p = empresa_cnpj.resolver(registro=rec)
+        d["cnpj"] = p["cnpj"]
+        d["cnpj_confianca"] = p["confianca"]
+        d["cnpj_motivo"] = p["motivo"]
+    except Exception:
+        d["cnpj"], d["cnpj_confianca"], d["cnpj_motivo"] = "", "nenhuma", ""
+    return d
+
+
+async def buscar_empresas_por_filtro(
+        pais: str = "BR", nomes: Any = None, sites: Any = None,
+        porte_min: int = 0, tipos: Any = None, fundada_apos: int = 0,
+        setores: Any = None, so_com_cnpj: bool = False,
+        limite: int = 25, usuario: str = "") -> dict[str, Any]:
+    """Busca de EMPRESAS no dataset da Bright Data.
+
+    `limite` vira `size` e e sempre enviado. Isso nao e detalhe de estilo:
+    MEDIDO em 8/set/2026, chamada SEM `size` devolve tudo que casa e cobra
+    por tudo (16 de 16 e 13 de 13 nos dois testes). Nao existe teto padrao do
+    lado deles -- o teto tem que ser nosso.
+
+    `so_com_cnpj` filtra DEPOIS de receber, e nao ha como ser diferente: o
+    CNPJ e deduzido aqui e a Bright Data nao sabe o que e isso. Ou seja, ele
+    reduz o que aparece na tela e NAO o que foi cobrado. A resposta separa
+    `registros_cobrados` de `total` justamente para a tela poder dizer isso.
+    """
+    if not enabled():
+        return {"status": "unavailable", "empresas": [],
+                "message": "BRIGHTDATA_API_KEY nao configurada."}
+
+    def _l(v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            v = re.split(r"[;,]", v)
+        return [str(x).strip() for x in v if str(x).strip()]
+
+    cond: list[dict[str, Any]] = []
+    if pais:
+        cond.append({"name": "country_code", "operator": "=",
+                     "value": pais.upper()[:2]})
+
+    # Site e a melhor entrada daqui: `=` exato, sem homonimo. E o caminho de
+    # volta do CNPJ para o LinkedIn, porque o dominio sai do e-mail da Receita.
+    g = _grupo_or("website_simplified", [s.lower() for s in _l(sites)], "=")
+    if g:
+        cond.append(g)
+    g = _grupo_or("name", _l(nomes))
+    if g:
+        cond.append(g)
+    g = _grupo_or("industries", _l(setores))
+    if g:
+        cond.append(g)
+    g = _grupo_or("organization_type", _l(tipos), "=")
+    if g:
+        cond.append(g)
+    if int(porte_min or 0) > 0:
+        cond.append({"name": "employees_in_linkedin", "operator": ">",
+                     "value": int(porte_min)})
+    if int(fundada_apos or 0) > 0:
+        cond.append({"name": "founded", "operator": ">",
+                     "value": int(fundada_apos)})
+
+    if len(cond) <= 1:
+        return {"status": "error", "empresas": [],
+                "message": "Escolha ao menos um filtro (site, nome, setor, "
+                           "porte, tipo ou fundacao). Sem filtro a busca "
+                           "traria 1,3 milhao de empresas e cobraria todas."}
+
+    corpo = {"size": max(1, min(int(limite or 25), SEARCH_TETO)),
+             "filter": {"operator": "and", "filters": cond},
+             "sort": [{"timestamp": "asc"}]}
+
+    t0 = time.time()
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as cli:
+            r = await cli.post(SEARCH_URL + DATASET_EMPRESA,
+                               headers=_headers(), json=corpo)
+    except Exception as exc:
+        return {"status": "error", "empresas": [],
+                "message": "Bright Data nao respondeu: %s" % str(exc)[:120]}
+    if r.status_code >= 400:
+        return {"status": "error", "empresas": [],
+                "message": "Bright Data recusou o filtro (HTTP %s): %s"
+                           % (r.status_code, r.text[:180])}
+    import json as _json
+    try:
+        d = _json.loads(r.content)
+    except Exception:
+        return {"status": "error", "empresas": [],
+                "message": "Resposta ilegivel."}
+
+    brutas = [_empresa(x) for x in (d.get("hits") or []) if isinstance(x, dict)]
+    cobrados = len(brutas)
+    custo = round(cobrados * linkedin_cache.USD_POR_REGISTRO, 4)
+    empresas = [e for e in brutas if e.get("cnpj")] if so_com_cnpj else brutas
+
+    for e in brutas:
+        try:
+            linkedin_cache.salvar_empresa(
+                {"url": e["url"], "nome": e["nome"],
+                 "company_id": e["company_id"],
+                 "funcionarios_linkedin": e["funcionarios_linkedin"],
+                 "setor": e["setor"], "sede": e["sede"], "site": e["site"],
+                 "pais": e["pais"], "cnpj": e.get("cnpj"),
+                 "cnpj_confianca": e.get("cnpj_confianca")})
+        except Exception:
+            pass
+    linkedin_cache.registrar_gasto(
+        "search-empresas",
+        detalhe=(", ".join(_l(nomes) or _l(sites) or ["filtro"]))[:200],
+        registros=cobrados, custo_usd=custo, usuario=usuario)
+
+    com_cnpj = sum(1 for e in brutas if e.get("cnpj"))
+    return {
+        "status": "ok",
+        "empresas": empresas,
+        "total": len(empresas),
+        "total_no_dataset": d.get("total_hits"),
+        "com_cnpj": com_cnpj,
+        "sem_cnpj": cobrados - com_cnpj,
+        "registros_cobrados": cobrados,
         "custo_usd": custo,
         "cursor": d.get("search_after"),
         "ms": int((time.time() - t0) * 1000),
