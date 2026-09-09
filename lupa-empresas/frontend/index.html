@@ -450,11 +450,20 @@
               <input id="pf-cargo" type="text" placeholder="Pesquise um cargo (ex.: administrador, diretor)…" autocomplete="off" />
             </div>
             <div class="pf-field">
-              <label>🎖️ Senioridade <span class="pf-soon" title="Requer dataset de perfis profissionais">🔜</span></label>
+              <!-- O 🔜 saiu: o dataset de perfis profissionais está ligado
+                   (Bright Data enriquecido, 43,2M brasileiros). -->
+              <label>🎖️ Senioridade</label>
               <select id="pf-senioridade"><option value="">Selecione um nível de senioridade</option>
                 <option>Estagiário</option><option>Júnior</option><option>Pleno</option>
                 <option>Sênior</option><option>Coordenador</option><option>Gerente</option>
                 <option>Diretor</option><option>C-Level</option></select>
+            </div>
+            <div class="pf-field">
+              <!-- A maior lacuna contra a Datastone: eles filtram por
+                   departamento e nós só por senioridade. Os 23 são os mesmos
+                   deles; vêm do backend, do dicionário que o filtro usa. -->
+              <label>🏢 Departamento</label>
+              <select id="pf-depto-pessoa"><option value="">Todos os departamentos</option></select>
             </div>
             <div class="pf-field pf-row2">
               <div><label>📆 Anos na empresa (mín.)</label><input id="pf-anos-min" type="number" placeholder="0" min="0" /></div>
@@ -481,7 +490,10 @@
               <input id="pf-email-pessoa" type="text" placeholder="Insira um e-mail" disabled />
             </div>
             <div class="pf-toggles">
-              <label class="toggle-row"><span>Contatos com e-mail <span class="pf-soon">🔜</span></span><input id="pf-pessoa-com-email" type="checkbox" disabled /></label>
+              <!-- Funcional agora (o 🔜 saiu), mas DESMARCADO: só 5,05% dos
+                   perfis têm e-mail, e ligar por padrão esconderia 95% da base
+                   de quem nem sabe que o filtro existe. -->
+              <label class="toggle-row" title="Traz só perfis com e-mail corporativo — 5% do total, mas ~10% entre decisores e 29% em cargos de head. Cada um é acionável sem precisar de CPF nem telefone."><span>Contatos com e-mail</span><input id="pf-pessoa-com-email" type="checkbox" /></label>
               <label class="toggle-row"><span title="Telefone é resolvido ao montar a lista (Mk Buscas)">Contatos com telefone</span><input id="pf-pessoa-com-tel" type="checkbox" /></label>
               <label class="toggle-row"><span>Contatos com perfil LinkedIn <span class="pf-soon">🔜</span></span><input id="pf-pessoa-com-linkedin" type="checkbox" disabled /></label>
             </div>

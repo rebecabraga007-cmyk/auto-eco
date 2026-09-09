@@ -1396,18 +1396,73 @@ async def companies_search(payload: dict = Body(default={})):
 
 @app.post("/api/prospeccao/pessoas")
 async def prospeccao_pessoas(payload: dict = Body(default={})):
-    """Busca de pessoas (perfil 'Clientes potenciais' estilo Datastone).
+    """Busca de decisores. TRÊS CAMADAS, da mais barata para a mais cara.
 
-    PROXY com dados reais de HOJE: usa sócios da Receita (cargo = qualificação
-    societária). Quando o dataset de perfis profissionais for ligado, este
-    endpoint passa a incluir decisores não-sócios também.
+    1. CACHE do LinkedIn — 9 mil perfis já comprados, instantâneo e grátis.
+       É o que a tela mostra primeiro, como a Datastone faz com a base dela.
+    2. SÓCIOS da Receita — 27,8 milhões, local e grátis. Cobre quem é DONO;
+       não vê o gerente contratado.
+    3. Bright Data — 43,2 milhões de perfis. Cobra por registro entregue, e
+       só entra quando o operador pede (`fonte: "brightdata"`).
+
+    Departamento e senioridade só existem nas camadas 1 e 3: a Receita tem
+    qualificação SOCIETÁRIA, não cargo. Filtrar sócio por "TI" devolveria
+    vazio, então esses filtros não são aplicados à camada 2 — e a resposta diz
+    qual camada respondeu, para a tela poder explicar por que o filtro não
+    mordeu.
     """
-    if not _cnpj_local():
-        return {"status": "unavailable", "message": "Base local indisponível.", "pessoas": []}
     filtros = payload.get("filtros") or {}
-    limite = payload.get("limite") or 20
-    offset = payload.get("offset") or 0
-    return cnpj_lookup.search_pessoas(filtros, limite=limite, offset=offset)
+    limite = int(payload.get("limite") or 20)
+    offset = int(payload.get("offset") or 0)
+    fonte = str(payload.get("fonte") or "").strip().lower()
+
+    # ---- camada 3: só quando pedida, porque cobra --------------------
+    if fonte == "brightdata":
+        try:
+            r = await brightdata_pessoas.buscar_por_filtro(
+                pais="BR",
+                empresas=filtros.get("nome_empresa") or "",
+                cargos_termos=filtros.get("cargo") or "",
+                nome=filtros.get("nome") or "",
+                sobrenome=filtros.get("sobrenome") or "",
+                cidade=filtros.get("cidade") or "",
+                departamentos=filtros.get("departamento") or "",
+                so_com_email=bool(filtros.get("so_com_email")),
+                limite=min(limite, 100),
+                usuario=str(payload.get("usuario") or ""))
+            r["fonte"] = "brightdata"
+            return r
+        except Exception as exc:
+            return {"status": "error", "fonte": "brightdata",
+                    "message": str(exc)[:200], "pessoas": []}
+
+    # ---- camada 1: o cache, de graça ---------------------------------
+    try:
+        do_cache = linkedin_cache.procurar(
+            nome=filtros.get("nome") or "", empresa=filtros.get("nome_empresa") or "",
+            cargo=filtros.get("cargo") or "",
+            departamento=filtros.get("departamento") or "",
+            senioridade=filtros.get("senioridade") or "",
+            ufs=filtros.get("uf") or "", cidade=filtros.get("cidade") or "",
+            limite=limite)
+    except Exception:
+        do_cache = []
+    if do_cache:
+        return {"status": "ok", "fonte": "cache", "total": len(do_cache),
+                "pessoas": do_cache,
+                "message": "Do que já foi comprado — não gastou nada."}
+
+    # ---- camada 2: sócios da Receita ---------------------------------
+    if not _cnpj_local():
+        return {"status": "unavailable", "fonte": "receita",
+                "message": "Base local indisponível.", "pessoas": []}
+    r = cnpj_lookup.search_pessoas(filtros, limite=limite, offset=offset)
+    r["fonte"] = "receita"
+    if filtros.get("departamento") or filtros.get("senioridade"):
+        r["aviso"] = ("Departamento e senioridade não se aplicam a sócios da "
+                      "Receita, que têm qualificação societária. Busque na "
+                      "Bright Data para usar esses filtros.")
+    return r
 
 
 def _resolve_modelo(modelo_id: str) -> str:

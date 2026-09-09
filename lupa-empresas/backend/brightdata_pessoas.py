@@ -891,9 +891,18 @@ async def buscar_por_filtro(pais: str = "BR", empresas: Any = None,
     if so_com_foto:
         condicoes.append({"name": "default_avatar", "operator": "=", "value": False})
     if so_com_email:
-        # 5,05% dos brasileiros têm (2.181.331), mas a fatia sobe para ~10%
-        # entre decisores e chega a 29% em "head". Filtrar aqui evita pagar
-        # pelos 95% sem e-mail quando é o e-mail que se procura.
+        # NASCE DESLIGADO. A Rebeca chegou a pedir ligado e voltou atrás, e o
+        # motivo está no tamanho da conta: o universo cai de 43.213.633 para
+        # 2.181.331 brasileiros — 5,05%. Ligar por padrão esconderia 95% da
+        # base de quem nem sabe que o filtro existe.
+        #
+        # Por empresa a fatia é melhor,
+        # porque quem tem e-mail é mais senior: Banrisul 31%, Nibo 13%,
+        # Gerdau 12%, Magazine Luiza 7%. Entre decisores a média é ~10% e em
+        # "head" chega a 29%, contra 2% em auxiliar.
+        #
+        # A troca é essa: menos gente, e cada uma acionável hoje sem depender
+        # de identificar CPF nem de achar telefone.
         condicoes.append({"name": "email", "operator": "is_not_null"})
 
     # Sem nenhuma condicao alem do pais, a busca traria 21 milhoes de perfis

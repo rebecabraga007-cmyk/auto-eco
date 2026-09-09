@@ -1473,6 +1473,23 @@ function cargosSelecionados() {
 /* Popula o select de área com as 17 do classificador. Vem do backend, do MESMO
    dicionário que o filtro usa — lista fixa aqui divergiria em silêncio no dia
    em que uma área nova entrasse. */
+/* Os 23 departamentos vêm do backend, do mesmo vocabulário que o filtro usa.
+   Lista fixa aqui divergiria em silêncio quando um departamento mudasse. */
+let _deptosCarregados = false;
+async function carregarDeptosPessoa() {
+  const sel = document.getElementById('pf-depto-pessoa');
+  if (!sel || _deptosCarregados) return;
+  try {
+    const d = await fetch(`${API}/api/linkedin/filtro-opcoes`).then(r => r.json());
+    if (d.status !== 'ok') return;
+    sel.innerHTML = '<option value="">Todos os departamentos</option>'
+      + (d.departamentos || []).map(x =>
+          `<option value="${esc(x)}">${esc(x)}</option>`).join('');
+    _deptosCarregados = true;
+  } catch (e) { /* fica "Todos"; o resto do filtro segue */ }
+}
+document.getElementById('pf-perfil-pessoa')?.addEventListener('click', carregarDeptosPessoa);
+
 let _areasCarregadas = false;
 async function carregarAreasDecisor() {
   const sel = document.getElementById('pf-dec-area');
@@ -2083,6 +2100,10 @@ function prospFiltrosPessoa() {
     mei_optante: document.getElementById('pf-mei-optante').checked,
     mei_excluir: document.getElementById('pf-mei-excluir').checked,
     cnpj: onlyDigits(document.getElementById('pf-cnpj').value),
+    so_com_email: document.getElementById('pf-pessoa-com-email')?.checked || false,
+    so_com_telefone: document.getElementById('pf-pessoa-com-tel')?.checked || false,
+    departamento: document.getElementById('pf-depto-pessoa')?.value || '',
+    senioridade: document.getElementById('pf-senioridade')?.value || '',
   };
 }
 
