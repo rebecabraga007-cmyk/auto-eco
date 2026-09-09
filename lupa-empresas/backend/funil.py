@@ -87,6 +87,14 @@ import workapi
 
 PRECO_ASSERTIVA = 0.119
 
+# A Bright Data cobra em dolar, por registro entregue. O teto do funil e em
+# reais, entao precisa de uma taxa -- e ela fica aqui, com nome, em vez de
+# aparecer como "* 5.4" no meio de uma linha de codigo. Nao e cotacao ao vivo
+# de proposito: serve para o teto parar de gastar, e um teto que depende de
+# uma chamada de rede para funcionar e um teto que falha junto com a rede.
+# Folgada para cima, que e o lado seguro de errar num limitador.
+BRL_POR_USD = 6.0
+
 # Um perfil não vale gasto ilimitado. O teto por pessoa sai da estratégia de
 # porte; este é o teto do LOTE inteiro, para uma tela nunca torrar o orçamento
 # num clique.
@@ -107,18 +115,25 @@ class Gasto:
         self.mk = 0
         self.workapi = 0
         self.rais = 0
+        # Registros comprados da Bright Data. Ficavam FORA da conta: o teto so
+        # olhava a Assertiva, entao uma busca podia entregar 100 perfis pagos
+        # sem que o limitador percebesse. Agora entram.
+        self.brightdata = 0
 
     @property
     def brl(self) -> float:
-        return round(self.assertiva * PRECO_ASSERTIVA, 2)
+        return round(self.assertiva * PRECO_ASSERTIVA
+                     + self.brightdata * linkedin_cache.USD_POR_REGISTRO
+                     * BRL_POR_USD, 2)
 
     def estourou(self, margem: int = 1) -> bool:
         """True quando mais `margem` consultas passariam do teto."""
-        return (self.assertiva + margem) * PRECO_ASSERTIVA > self.teto
+        return self.brl + margem * PRECO_ASSERTIVA > self.teto
 
     def resumo(self) -> dict[str, Any]:
         return {"assertiva": self.assertiva, "mk": self.mk,
                 "workapi": self.workapi, "rais": self.rais,
+                "brightdata": self.brightdata,
                 "brl": self.brl, "teto_brl": self.teto}
 
 
@@ -1389,7 +1404,11 @@ async def prospeccao_b2b(perfis: list[dict[str, Any]], cidade: str = "",
                               "situacao": "teto_de_gasto", "cpf": "",
                               "forte": False, "telefones": []})
                 continue
-            desta.append(await resolver_simples(p, emp, gasto))
+            # `com_telefone=True` porque `prospeccao_b2b` E a montagem
+            # da lista. O padrao desligado de `resolver_simples` vale
+            # para quem o chama na BUSCA -- aqui o telefone e o produto.
+            desta.append(await resolver_simples(p, emp, gasto,
+                                                com_telefone=True))
 
         com_tel = [x for x in desta if x.get("telefones")]
         if so_com_telefone:
@@ -1452,10 +1471,36 @@ async def decisores_do_linkedin(empresa: str, cnpj: str = "", cidade: str = "",
     conhecidos = {x["cpf"] for x in emp.socios if x.get("cpf")}
     conhecidos |= {x["cpf"] for x in emp.decisores if x.get("cpf")}
 
+    # POR QUAL NOME PROCURAR. A versao anterior usava `emp.razao or empresa`,
+    # ou seja, preferia a razao social -- e razao social quase nunca e o nome
+    # do LinkedIn. Medido: o CNPJ 17.688.085/0001-45 e "L3 SOLUCOES EM
+    # TECNOLOGIA LTDA" na Receita e "Even3" no LinkedIn. Procurar por "L3"
+    # devolvia ZERO decisores numa empresa com 45 pessoas la dentro.
+    #
+    # O caminho certo custa 1 registro e economiza os 50 da busca errada:
+    # CNPJ -> dominio do e-mail (Receita, gratis) -> empresa por site (exato)
+    # -> o nome como o LinkedIn escreve.
+    alvo = emp.razao or empresa
+    achou = await brightdata_pessoas.nome_no_linkedin(cnpj=emp.cnpj or cnpj,
+                                                      site="")
+    nome_li = (achou or {}).get("nome") or ""
+    if nome_li:
+        alvo = nome_li
+        gasto.brightdata += 1
+    elif empresa and I._norm(empresa) != I._norm(emp.razao or ""):
+        # Sem dominio: o nome que a pessoa DIGITOU e melhor palpite que a
+        # razao social, porque ela digitou o nome pelo qual conhece a empresa.
+        alvo = empresa
+
     r = await brightdata_pessoas.buscar_agora(
-        empresa=emp.razao or empresa, pais="BR", limite=limite, decisores=True)
+        empresa=alvo, pais="BR", limite=limite, decisores=True)
     hits = r.get("pessoas") or []
     usd = float(r.get("custo_usd") or 0)
+    # Os perfis entregues sao a MAIOR fatia paga desta funcao -- ate 100 de uma
+    # vez -- e ate agora nao entravam no teto. Contam aqui, antes do resto do
+    # funil rodar, para que o `estourou()` das etapas seguintes ja saiba o que
+    # foi gasto na porta de entrada.
+    gasto.brightdata += len(hits)
 
     # O operador escolhe QUAIS cargos quer: "Gerência · Vendas" é outro lead
     # que "Diretoria · TI", e oferecer só o botão "decisores" faz a lista vir

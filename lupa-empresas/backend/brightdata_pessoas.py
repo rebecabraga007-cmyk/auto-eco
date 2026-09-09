@@ -1192,3 +1192,76 @@ async def buscar_empresas_por_filtro(
         "cursor": d.get("search_after"),
         "ms": int((time.time() - t0) * 1000),
     }
+
+
+async def nome_no_linkedin(cnpj: str = "", site: str = "") -> dict[str, Any]:
+    """Como a empresa se chama NO LINKEDIN, partindo do CNPJ.
+
+    Existe por causa de um erro concreto: a busca de decisores procurava pela
+    RAZAO SOCIAL, e razao social quase nunca e o nome do LinkedIn. O CNPJ
+    17.688.085/0001-45 e "L3 SOLUCOES EM TECNOLOGIA LTDA" na Receita e "Even3"
+    no LinkedIn -- procurar por "L3" devolvia zero decisores numa empresa com
+    45 pessoas la dentro.
+
+    O caminho e o mesmo da ponte, invertido:
+
+        CNPJ -> dominio do e-mail (Receita, local, gratis)
+             -> empresa por `website_simplified` = dominio (EXATO)
+             -> nome como o LinkedIn escreve
+
+    Custa 1 registro (US$ 0,0025). Vale: sem ele, a busca de pessoas seguinte
+    -- que custa ate 100 registros -- procura pelo nome errado e traz zero,
+    ou pior, traz gente de outra empresa com nome parecido.
+    """
+    if not enabled():
+        return {"status": "unavailable"}
+    dom = ""
+    if site:
+        try:
+            import empresa_cnpj
+            dom = empresa_cnpj.dominio(site)
+        except Exception:
+            dom = ""
+    if not dom and cnpj:
+        try:
+            import empresa_cnpj
+            dom = empresa_cnpj.dominio_do_cnpj(cnpj)
+        except Exception:
+            dom = ""
+    if not dom:
+        return {"status": "not_found", "motivo": "empresa sem dominio proprio"}
+
+    corpo = {"size": 1, "filter": {"operator": "and", "filters": [
+        {"name": "country_code", "operator": "=", "value": "BR"},
+        {"name": "website_simplified", "operator": "=", "value": dom}]}}
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as cli:
+            r = await cli.post(SEARCH_URL + DATASET_EMPRESA,
+                               headers=_headers(), json=corpo)
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:120]}
+    if r.status_code >= 400:
+        return {"status": "error",
+                "message": "HTTP %s %s" % (r.status_code, r.text[:120])}
+    import json as _json
+    try:
+        d = _json.loads(r.content)
+    except Exception:
+        return {"status": "error", "message": "resposta ilegivel"}
+    hits = d.get("hits") or []
+    if not hits:
+        return {"status": "not_found", "dominio": dom,
+                "motivo": "dominio %s nao tem pagina no LinkedIn" % dom}
+    h = hits[0]
+    try:
+        linkedin_cache.registrar_gasto(
+            "empresa-por-site", detalhe=dom, registros=1,
+            custo_usd=linkedin_cache.USD_POR_REGISTRO, usuario="")
+    except Exception:
+        pass
+    return {"status": "ok", "dominio": dom,
+            "nome": h.get("name") or "",
+            "company_id": str(h.get("company_id") or ""),
+            "funcionarios_linkedin": h.get("employees_in_linkedin"),
+            "url": h.get("url") or "",
+            "custo_usd": linkedin_cache.USD_POR_REGISTRO}

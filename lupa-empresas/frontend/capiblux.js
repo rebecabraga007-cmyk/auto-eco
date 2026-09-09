@@ -1246,6 +1246,15 @@ function renderProspList() {
             <span>Filtrar <strong>APENAS decisores nesse cargo</strong> <span class="pf-advanced-hint" style="display:inline">— lista só com quem tem o cargo marcado, sem sócios; empresa sem ninguém no cargo sai da lista</span></span>
           </label>
           <div class="filter-row" style="margin:0;flex-basis:100%">
+            <button type="button" id="pf-dec-linkedin" class="btn-secondary"
+              title="Traz quem SE DECLARA diretor/head/gerente no LinkedIn — o gestor contratado que não é sócio e ainda não aparece em cadastro trabalhista. É a fonte que as outras duas não enxergam. Custa: cada perfil entregue é cobrado.">
+              💼 Decisores do LinkedIn</button>
+            <span class="pf-advanced-hint" style="display:inline">teto R$</span>
+            <input id="pf-dec-teto" type="number" min="1" max="60" value="6" step="1"
+              class="filter-num" style="width:64px"
+              title="Para de gastar ao chegar neste valor" />
+          </div>
+          <div class="filter-row" style="margin:0;flex-basis:100%">
             <button type="button" id="pf-testar-cobertura" class="btn-secondary" title="Descobre em quantas empresas existe decisor, sem puxar telefone">🔬 Testar cobertura em</button>
             <input id="pf-amostra" type="number" min="3" max="60" value="10" class="filter-num" style="width:70px" />
             <span class="pf-advanced-hint" style="display:inline">empresas da lista — 2 consultas cada, sem telefone</span>
@@ -4882,6 +4891,20 @@ async function liConferirEmpresa() {
 
   const tot = (typeof d.funcionarios_linkedin === 'number')
     ? d.funcionarios_linkedin.toLocaleString('pt-BR') : '—';
+  /* O CNPJ nao vem do LinkedIn: e deduzido no servidor pelo dominio do site
+     contra a Receita. O selo separa "saiu do dominio" (chave literal) de
+     "saiu de semelhanca de nome" (erra) — mostrar os dois iguais seria
+     mentir sobre a qualidade do dado. Ver backend/empresa_cnpj.py. */
+  const cnpjFmt = (d.cnpj || '').replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/,
+                                        '$1.$2.$3/$4-$5');
+  const linhaCnpj = d.cnpj
+    ? `<div style="margin-top:4px">CNPJ <b>${esc(cnpjFmt)}</b>
+         <span title="${esc(d.cnpj_motivo || '')}">${d.cnpj_confianca === 'alta'
+           ? '✓' : '~ (por semelhança de nome — confira)'}</span></div>`
+    : (d.cnpj_confianca ? `<div style="margin-top:4px" class="pf-advanced-hint">
+         Não deu para identificar o CNPJ desta empresa
+         ${d.cnpj_motivo ? '— ' + esc(d.cnpj_motivo) : ''}.</div>` : '');
+
   const destaque = (d.destaque || []).length
     ? `<div style="margin-top:8px"><b>Perfis que a página já mostra</b> (de graça, sem
        rodar a busca):<ul style="margin:6px 0 0 18px">${d.destaque.map(p =>
@@ -4895,6 +4918,7 @@ async function liConferirEmpresa() {
         ${tot} pessoas no LinkedIn${d.sede ? ' · ' + esc(d.sede) : ''}
         ${d.site ? ` · <a href="${esc(d.site)}" target="_blank" rel="noopener">site</a>` : ''}
       </div>
+      ${linhaCnpj}
       <div class="pf-advanced-hint" style="margin-top:6px">Nome preenchido no campo de
         busca acima com a grafia do LinkedIn.</div>
       ${destaque}
@@ -5726,3 +5750,131 @@ async function bdEmpBuscar() {
 }
 
 if (bdEmpBtn) bdEmpBtn.addEventListener('click', bdEmpBuscar);
+
+/* ══════════════════════════════════════════════════════════════════════
+   DECISORES DO LINKEDIN — o botão que faltava
+
+   O endpoint /api/funil/decisores-linkedin já existia e estava pronto, mas
+   nenhuma tela o chamava: código vivo e inalcançável. É a terceira fonte de
+   pessoas, e é a que enxerga quem as outras duas não enxergam.
+
+     sócios do QSA        quem é DONO — nenhum empregado
+     decisores Assertiva  quem a folha registra como gestor; defasa, e
+                          empresa nova não tem
+     LinkedIn (este)      quem SE DECLARA diretor, head, gerente — o gestor
+                          contratado que não é sócio e ainda não apareceu em
+                          cadastro trabalhista
+
+   Medido: na Google Brasil a Assertiva deu 602 pessoas e NENHUMA estava no
+   quadro societário; na BLU foi o contrário, 2 sócios e zero decisores.
+   Nenhuma cobre a outra — por isso este caminho é adicional, e não
+   substituto.
+
+   Custa: cada perfil entregue pela Bright Data é cobrado, e o telefone de
+   quem fecha CPF também. Por isso tem teto de gasto explícito na tela.
+   ══════════════════════════════════════════════════════════════════════ */
+const decLiBtn = document.getElementById('pf-dec-linkedin');
+
+function decLiEmpresaAlvo() {
+  /* Prioridade: empresa marcada na tabela > primeira da lista > o que estiver
+     digitado. Marcar uma e clicar é o gesto natural; sem marcar nenhuma, a
+     primeira é o palpite honesto. */
+  const st = (typeof prospState !== 'undefined') ? prospState : null;
+  if (st && st.selecionadas && st.selecionadas.size) {
+    const i = [...st.selecionadas][0];
+    const e = st.empresas && st.empresas[i];
+    if (e) return { nome: e.razao_social || e.nome_fantasia || '', cnpj: e.cnpj || '' };
+  }
+  if (st && st.empresas && st.empresas.length) {
+    const e = st.empresas[0];
+    return { nome: e.razao_social || e.nome_fantasia || '', cnpj: e.cnpj || '' };
+  }
+  const campo = document.getElementById('pf-nome-empresa');
+  return { nome: campo ? campo.value.trim() : '', cnpj: '' };
+}
+
+async function decLiBuscar() {
+  const alvo = decLiEmpresaAlvo();
+  if (!alvo.nome && !alvo.cnpj) {
+    alert('Marque uma empresa na lista, ou digite o nome no campo de empresa.');
+    return;
+  }
+  const area = document.getElementById('prosp-results');
+  decLiBtn.disabled = true;
+  if (area) {
+    area.innerHTML = '<div class="info-box"><span class="spinner"></span> '
+      + 'Procurando decisores de <b>' + esc(alvo.nome || alvo.cnpj)
+      + '</b> no LinkedIn e resolvendo CPF…</div>';
+  }
+  try {
+    const maxDec = parseInt(document.getElementById('pf-maxdec')?.value) || 0;
+    const maxSoc = parseInt(document.getElementById('pf-maxsocios')?.value) || 0;
+    const soTel = (document.getElementById('pf-so-com-tel')?.checked ?? true);
+    const d = await fetch(`${API}/api/funil/decisores-linkedin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        empresa: alvo.nome, cnpj: alvo.cnpj,
+        limite: 50,
+        teto_brl: parseFloat(document.getElementById('pf-dec-teto')?.value) || 6,
+        so_com_telefone: soTel,
+        max_decisores: maxDec, max_socios: maxSoc,
+        cargos: (typeof cargosSelecionados === 'function'
+                 ? cargosSelecionados() : '').split(',').filter(Boolean),
+      }),
+    }).then(r => r.json());
+
+    if (d.status !== 'ok') {
+      if (area) area.innerHTML = '<div class="warn-box">'
+        + esc(d.message || 'Não deu certo.') + '</div>';
+      return;
+    }
+    const linhas = (d.pessoas || []).map(p => {
+      const tels = (p.telefones || []).map(t => esc(t.numero || t.telefone || ''))
+        .filter(Boolean).join('<br>') || '—';
+      /* `novo` é o que justifica ter gasto: significa que o CPF não estava
+         nem no QSA nem na lista da Assertiva. Se vier tudo repetido, a
+         chamada não valeu a pena e a tela precisa deixar isso visível. */
+      const novo = p.novo === true
+        ? '<span title="CPF não estava no QSA nem na Assertiva" '
+          + 'style="color:var(--green-600,#16a34a)">novo</span>'
+        : (p.novo === false ? '<span style="color:var(--gray-500)">repetido</span>' : '—');
+      return '<tr><td><b>' + esc(p.nome || '') + '</b></td>'
+        + '<td>' + esc(p.cargo || '—') + '</td>'
+        + '<td>' + (p.cpf ? esc(p.cpf) : '<span style="color:var(--gray-500)">'
+                    + esc(p.situacao || 'não identificado') + '</span>') + '</td>'
+        + '<td>' + tels + '</td>'
+        + '<td>' + esc(p.email || '—') + '</td>'
+        + '<td>' + novo + '</td></tr>';
+    }).join('');
+
+    let rodape = (d.total || 0) + ' pessoa(s) · ' + (d.com_cpf || 0) + ' com CPF · '
+      + (d.com_telefone || 0) + ' com telefone · ' + (d.com_email || 0) + ' com e-mail';
+    if (d.segundos != null) rodape += ' · ' + d.segundos + 's';
+    /* Empresa pulada por não ter ninguém com telefone precisa aparecer: a
+       pessoa clicou, esperou, e viu menos do que esperava. */
+    const puladas = (d.empresas_puladas || []).length
+      ? '<div class="info-box" style="margin-top:8px">'
+        + (d.empresas_puladas || []).length + ' empresa(s) fora da lista: '
+        + (d.empresas_puladas || []).map(e => esc(e.empresa || e.nome || '')
+            + (e.motivo ? ' (' + esc(e.motivo) + ')' : '')).join('; ')
+        + '</div>'
+      : '';
+
+    if (area) {
+      area.innerHTML = (linhas
+        ? '<table class="data-table"><thead><tr><th>Nome</th><th>Cargo</th>'
+          + '<th>CPF</th><th>Telefones</th><th>E-mail</th><th>Já tínhamos?</th>'
+          + '</tr></thead><tbody>' + linhas + '</tbody></table>'
+        : '<div class="info-box">Nenhum decisor do LinkedIn com esses filtros.</div>')
+        + '<p class="pf-advanced-hint" style="margin-top:6px">' + rodape + '</p>'
+        + puladas;
+    }
+  } catch (e) {
+    if (area) area.innerHTML = '<div class="warn-box">Não consegui falar com o servidor.</div>';
+  } finally {
+    decLiBtn.disabled = false;
+  }
+}
+
+if (decLiBtn) decLiBtn.addEventListener('click', decLiBuscar);

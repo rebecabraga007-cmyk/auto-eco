@@ -372,6 +372,46 @@ def resolver(nome: str = "", site: str = "", uf: str = "",
     return saida
 
 
+
+def dominio_do_cnpj(cnpj: str) -> str:
+    """Caminho INVERSO: do CNPJ para o dominio do site.
+
+    Serve para achar a empresa no LinkedIn partindo da Receita, que e o que a
+    aba B2B faz o tempo todo -- ela lista empresas da Receita e depois quer os
+    decisores no LinkedIn.
+
+    Sem isto, a busca de pessoas usa a RAZAO SOCIAL, e razao social quase
+    nunca e o nome que a empresa usa no LinkedIn. Medido: o CNPJ
+    17.688.085/0001-45 e "L3 SOLUCOES EM TECNOLOGIA LTDA" na Receita e "Even3"
+    no LinkedIn -- procurar por L3 devolvia zero, e a empresa tem 45 pessoas
+    la dentro.
+
+    Pega o dominio mais frequente entre os e-mails da RAIZ (nao so do
+    estabelecimento pedido): filial costuma cadastrar e-mail pessoal do gerente
+    e a matriz costuma ter o corporativo.
+    """
+    d = re.sub(r"\D", "", cnpj or "")
+    if len(d) < 8 or not os.path.exists(CNPJ_PATH):
+        return ""
+    try:
+        con = sqlite3.connect(_ro(CNPJ_PATH), uri=True, timeout=5)
+        linhas = con.execute(
+            "SELECT email FROM estabelecimentos WHERE cnpj_basico=? "
+            "AND email LIKE '%@%.%' LIMIT 200", (d[:8],)).fetchall()
+        con.close()
+    except Exception:
+        return ""
+    contagem: dict[str, int] = {}
+    for (em,) in linhas:
+        dom = str(em or "").strip().lower().rsplit("@", 1)[-1]
+        if not dom or dom in GENERICO:
+            continue
+        contagem[dom] = contagem.get(dom, 0) + 1
+    if not contagem:
+        return ""
+    return max(contagem.items(), key=lambda kv: kv[1])[0]
+
+
 def resolver_varias(registros: list[dict]) -> list[dict]:
     """Mesma coisa para uma lista -- o caso do filtro B2B em massa.
 
