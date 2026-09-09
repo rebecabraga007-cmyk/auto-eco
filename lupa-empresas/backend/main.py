@@ -1549,7 +1549,8 @@ async def company_leads(cnpj: str, decisores: bool = False,
                         max_decisores: int = 3,
                         pular_sem_decisor: bool = False,
                         fallback_hierarquia: int = 0,
-                        apenas_cargo: bool = False):
+                        apenas_cargo: bool = False,
+                        so_com_telefone: bool = True):
     """Enriquece UMA empresa com contatos (socios do QSA + telefones).
 
     Retorna {status, empresa:{...}, contatos:[{tipo, nome, cargo, cpf, telefones[]}]}.
@@ -1575,6 +1576,18 @@ async def company_leads(cnpj: str, decisores: bool = False,
     apenas_cargo: modo estrito — a lista fica SO com decisores do cargo pedido.
       Sem socios, sem fallback, e empresa que nao tem ninguem naquele cargo sai
       da lista. Serve pra campanha mirando um cargo especifico.
+    so_com_telefone: NASCE LIGADO (decisao da Rebeca). Corta da lista quem nao
+      voltou com nenhum telefone, e quando NINGUEM da empresa voltou com
+      telefone a empresa inteira sai -- com o motivo em `pulada`, para a tela
+      poder dizer por que ela sumiu em vez de a pessoa achar que e bug.
+
+      A lista existe para discar. Linha sem telefone nao e lead pela metade:
+      e uma linha que o operador vai percorrer com o olho e descartar, e que
+      na planilha empurra as boas para baixo.
+
+      Corta DEPOIS da consulta, e nao ha como ser antes -- so se sabe que nao
+      ha telefone tendo perguntado. Ou seja: ele limpa a planilha, nao reduz
+      o custo. Quem quer reduzir custo mexe em `max_decisores`.
     """
     # Base local (RFB) primeiro — instantânea e traz o QSA. Fallback: BrasilAPI.
     data = None
@@ -1772,8 +1785,22 @@ async def company_leads(cnpj: str, decisores: bool = False,
         except Exception:
             pass
 
+    if so_com_telefone:
+        com_tel = [c for c in contatos if (c.get("telefones") or [])]
+        if not com_tel:
+            # Empresa inteira sai. `contatos: []` com o motivo explicito, para
+            # a tela distinguir "nao achamos ninguem" de "achamos e nenhum
+            # tinha telefone" -- sao problemas diferentes e levam a acoes
+            # diferentes (mudar o filtro de cargo x mudar a fonte de telefone).
+            return {"status": "ok", "empresa": empresa, "contatos": [],
+                    "decisores_info": info_dec, "pulada": True,
+                    "motivo_pulo": ("%d pessoa(s) identificada(s), nenhuma com "
+                                    "telefone" % len(contatos)) if contatos
+                                   else "nenhuma pessoa identificada"}
+        contatos = com_tel
+
     return {"status": "ok", "empresa": empresa, "contatos": contatos,
-            "decisores_info": info_dec}
+            "decisores_info": info_dec, "pulada": False}
 
 
 # Colunas de EMPRESA no export enriquecido (padrão da planilha modelo Datastone).

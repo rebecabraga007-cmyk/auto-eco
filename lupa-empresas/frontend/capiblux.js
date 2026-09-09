@@ -1237,6 +1237,11 @@ function renderProspList() {
             </span>
           </label>
           <label class="toggle-wrap" style="flex-basis:100%">
+            <input id="pf-so-com-tel" type="checkbox" checked />
+            <span>Só quem tem <strong>telefone</strong>
+              <span class="pf-advanced-hint" style="display:inline">— tira da planilha decisor e sócio sem telefone; empresa em que ninguém teve telefone sai inteira. Elas já foram consultadas: isso limpa a planilha, não devolve o custo</span></span>
+          </label>
+          <label class="toggle-wrap" style="flex-basis:100%">
             <input id="pf-apenas-cargo" type="checkbox" />
             <span>Filtrar <strong>APENAS decisores nesse cargo</strong> <span class="pf-advanced-hint" style="display:inline">— lista só com quem tem o cargo marcado, sem sócios; empresa sem ninguém no cargo sai da lista</span></span>
           </label>
@@ -1678,6 +1683,11 @@ async function prospMontar() {
   const decCargos = cargosSelecionados();
   const pularSemDec = document.getElementById('pf-pular-sem-dec')?.checked ? 'true' : 'false';
   const apenasCargo = document.getElementById('pf-apenas-cargo')?.checked ? 'true' : 'false';
+  // Nasce LIGADA: a planilha existe para discar, e linha sem telefone nao e
+  // lead — e ruido que empurra as boas para baixo. `?? true` porque o
+  // elemento pode nao existir em telas antigas em cache.
+  const soComTel = (document.getElementById('pf-so-com-tel')?.checked ?? true)
+    ? 'true' : 'false';
   const fallbackN = document.getElementById('pf-fallback-dec')?.checked
     ? (parseInt(document.getElementById('pf-fallback-n')?.value) || 3) : 0;
   const continuar = document.getElementById('pf-continuar')?.checked;
@@ -1704,7 +1714,7 @@ async function prospMontar() {
   const fila = marcadas ? marcadas.slice() : prospState.empresas.slice();
   const limite = continuar ? (tetoTentativas || alvoQtd * 6) : alvoQtd;
 
-  const rowsAcc = [], leadsAcc = [], infoAcc = [];
+  const rowsAcc = [], leadsAcc = [], infoAcc = [], puladasSemTel = [];
   let ponteiro = 0, aceitas = 0, tentadas = 0, offsetBase = prospState.empresas.length;
   const tick = () => {
     const extra = continuar
@@ -1716,10 +1726,18 @@ async function prospMontar() {
 
   async function processa(emp) {
     try {
-      const r = await fetch(`${API}/api/company/${onlyDigits(emp.cnpj)}/leads?decisores=${decisores}&modo_tel=${modoTel}&max_tel=${maxTel}&fonte_tel=${fonteTel}&socios_modo=${sociosModo}&max_socios=${maxSocios}&modelo_id=${encodeURIComponent(modeloId)}&decisores_fonte=${decFonte}&decisores_cargos=${encodeURIComponent(decCargos)}&max_decisores=${maxDec}&pular_sem_decisor=${pularSemDec}&fallback_hierarquia=${fallbackN}&apenas_cargo=${apenasCargo}`).then(x => x.json());
+      const r = await fetch(`${API}/api/company/${onlyDigits(emp.cnpj)}/leads?decisores=${decisores}&modo_tel=${modoTel}&max_tel=${maxTel}&fonte_tel=${fonteTel}&socios_modo=${sociosModo}&max_socios=${maxSocios}&modelo_id=${encodeURIComponent(modeloId)}&decisores_fonte=${decFonte}&decisores_cargos=${encodeURIComponent(decCargos)}&max_decisores=${maxDec}&pular_sem_decisor=${pularSemDec}&fallback_hierarquia=${fallbackN}&apenas_cargo=${apenasCargo}&so_com_telefone=${soComTel}`).then(x => x.json());
       if (r.status !== 'ok') return { aceita: false };
       if (r.decisores_info) infoAcc.push(r.decisores_info);
       if (r.decisores_info && r.decisores_info.pular) return { aceita: false };
+      if (r.pulada) {
+        // Distingue de "nao achamos ninguem": aqui achamos e ninguem tinha
+        // telefone. Sao problemas diferentes — um pede outro filtro de cargo,
+        // o outro pede outra fonte de telefone.
+        puladasSemTel.push({ nome: r.empresa?.razao_social || r.empresa?.nome_fantasia
+                                   || emp.cnpj, motivo: r.motivo_pulo || '' });
+        return { aceita: false };
+      }
       const linhas = leadsToRows(r.empresa, r.contatos);
       rowsAcc.push(...linhas);
       leadsAcc.push({ empresa: r.empresa, contatos: r.contatos });
@@ -1785,9 +1803,31 @@ async function prospMontar() {
     prospState.decisoresInfo.bateuTeto = continuar && aceitas < alvoQtd && tentadas >= limite;
     prospState.decisoresInfo.baseAcabou = continuar && aceitas < alvoQtd && tentadas < limite;
   }
+  // Empresa que sumiu da planilha precisa aparecer em algum lugar, senao a
+  // pessoa conta as linhas, ve menos do que pediu e nao sabe por que.
+  prospState.puladasSemTel = puladasSemTel;
   prospState.building = false;
   btn.disabled = false;
   renderProspTable();
+  if (puladasSemTel.length) {
+    const wrap2 = document.getElementById('prosp-table-wrap');
+    if (wrap2) {
+      const lista = puladasSemTel.slice(0, 12)
+        .map(x => '<li>' + esc(x.nome) + ' <span style="color:var(--gray-500)">— '
+                  + esc(x.motivo) + '</span></li>').join('');
+      const resto = puladasSemTel.length > 12
+        ? '<li>e mais ' + (puladasSemTel.length - 12) + '…</li>' : '';
+      const aviso = document.createElement('div');
+      aviso.className = 'info-box';
+      aviso.style.marginTop = '10px';
+      aviso.innerHTML = '<b>' + puladasSemTel.length + ' empresa(s) fora da planilha'
+        + '</b> porque ninguem nela voltou com telefone. Elas foram consultadas e '
+        + 'cobradas — o filtro limpa a planilha, nao devolve o custo. Para trazer '
+        + 'mesmo assim, desmarque <i>So quem tem telefone</i>.'
+        + '<ul style="margin:6px 0 0 18px">' + lista + resto + '</ul>';
+      wrap2.appendChild(aviso);
+    }
+  }
 }
 
 // Explica por que vieram (ou não vieram) decisores. Sem isso, "Decisores 0" na

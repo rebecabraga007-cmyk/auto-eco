@@ -1260,7 +1260,8 @@ async def _telefones_do_cpf(cpf: str, gasto: Gasto) -> list[dict[str, Any]]:
 
 
 async def resolver_simples(perfil: dict[str, Any], emp: Empresa,
-                           gasto: Gasto) -> dict[str, Any]:
+                           gasto: Gasto,
+                           com_telefone: bool = False) -> dict[str, Any]:
     """Funil curto da aba B2B: telefone de sócio e decisor, com teto baixo.
 
     O funil completo (11 etapas) vale quando se procura UMA pessoa específica e
@@ -1282,6 +1283,18 @@ async def resolver_simples(perfil: dict[str, Any], emp: Empresa,
     desempatar custa até R$ 2,38 por pessoa e aqui há cinquenta delas.
 
     O telefone vem do MK em qualquer um dos caminhos: cota grátis.
+
+    TELEFONE SÓ COM `com_telefone=True`, E ELE NASCE DESLIGADO. A regra é da
+    Rebeca e vale para a aba inteira: a chamada paga de telefone acontece em
+    "Montar planilha", não na busca. O motivo é a conta — uma busca lista 50 a
+    100 empresas para a pessoa OLHAR, e a maioria delas ela descarta na hora;
+    pagar telefone de quem vai ser descartado na tela seguinte é jogar
+    dinheiro fora em escala.
+
+    Está como parâmetro, e não como decisão de quem chama, porque o resto do
+    funil já roda na busca: sem a trava, ligar `resolver_simples` na busca
+    traria o telefone junto sem ninguém perceber. O padrão desligado faz o
+    caminho caro ser uma escolha explícita.
     """
     t0 = time.time()
     nome = (perfil.get("nome") or "").strip()
@@ -1290,7 +1303,7 @@ async def resolver_simples(perfil: dict[str, Any], emp: Empresa,
     etapas: list[str] = []
 
     async def pronto(situacao, cpf, forte, porque):
-        tels = await _telefones_do_cpf(cpf, gasto) if cpf else []
+        tels = await _telefones_do_cpf(cpf, gasto) if (cpf and com_telefone) else []
         return {"nome": nome, "cargo": cargo, "empresa": emp.nome,
                 "email": email, "cpf": cpf, "situacao": situacao,
                 "forte": forte, "porque": porque, "telefones": tels,
@@ -1463,7 +1476,12 @@ async def decisores_do_linkedin(empresa: str, cnpj: str = "", cidade: str = "",
         res = await resolver_simples({
             "nome": h.get("nome"), "cargo": h.get("cargo") or "",
             "empresa": empresa, "cidade": h.get("cidade") or "",
-            "email": h.get("email") or "", "url": h.get("url") or ""}, emp, gasto)
+            "email": h.get("email") or "", "url": h.get("url") or ""},
+            emp, gasto,
+            # AQUI o telefone e o produto: `prospeccao_b2b` E o passo de
+            # montar planilha. Passa explicito porque o padrao de
+            # `resolver_simples` e desligado -- ver a nota la sobre a busca.
+            com_telefone=True)
         res["novo"] = bool(res.get("cpf")) and res["cpf"] not in conhecidos
         saidas.append(res)
 
