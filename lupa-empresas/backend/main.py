@@ -47,6 +47,7 @@ import dossie
 import mistral
 import workapi
 import brightdata_pessoas
+import empresas_li
 import linkedin_cache
 import cargos
 import funcoes
@@ -1544,6 +1545,31 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
 
     pedidos_li = [k for k in FILTROS_SO_LINKEDIN if filtros.get(k)]
 
+    # A BASE LOCAL PRIMEIRO. É o que faz a tela parecer a da Datastone: quando
+    # o filtro cabe dentro da fatia já ingerida, a resposta sai do disco, em
+    # milissegundos, de graça, e sem perguntar nada a ninguém. Só fora dela é
+    # que a pergunta "posso gastar?" volta a fazer sentido.
+    #
+    # `completa` é a condição, e ela é estrita: a ingestão registra "func>200
+    # terminou" e só então uma busca por porte >= 200 pode ser respondida
+    # inteiramente daqui. Abaixo do piso a base tem parte das empresas, e
+    # apresentá-la como tudo faria a pessoa concluir que o resto não existe.
+    local = None
+    if pedidos_li and empresas_li.disponivel():
+        local = empresas_li.buscar(
+            porte_min=int(filtros.get("porte_min") or 0),
+            tipos=filtros.get("tipos"),
+            fundada_apos=int(filtros.get("fundada_apos") or 0),
+            setores=filtros.get("setores"),
+            nomes=filtros.get("nomes") or filtros.get("texto") or "",
+            ufs=filtros.get("uf") or filtros.get("ufs"),
+            limite=min(int(payload.get("limite_linkedin") or 50), 200))
+        if local.get("status") != "ok" or not local.get("completa"):
+            local = None
+    if local is not None:
+        pedidos_li = []          # respondidos aqui, sem custo
+        quer_linkedin = True     # e o lado LinkedIn já está resolvido
+
     # ---- lado Receita ------------------------------------------------
     #
     # NAO roda quando o LinkedIn vai comandar. Parece desperdicio deixar de
@@ -1556,7 +1582,7 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
     # Lista que desobedece o filtro e pior que lista curta: a pessoa confia
     # no que pediu e liga para a empresa errada.
     base = {"empresas": [], "total": 0}
-    receita_comanda = not (pedidos_li and quer_linkedin)
+    receita_comanda = local is None and not (pedidos_li and quer_linkedin)
     if _cnpj_local() and receita_comanda:
         base = cnpj_lookup.search(filtros, limite=limite, offset=offset)
     por_cnpj: dict[str, dict] = {}
@@ -1597,7 +1623,7 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
     cobrados = 0
     custo = 0.0
     total_li = None
-    if quer_linkedin and not pedidos_li:
+    if quer_linkedin and not pedidos_li and local is None:
         # RECEITA COMANDA. Cada linha dela vira uma consulta de 1 registro
         # para achar a mesma empresa no LinkedIn pelo domínio. Tem teto porque
         # isso é por empresa: 50 linhas são 50 registros.
@@ -1627,25 +1653,36 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
             }
             for k in por_raiz[raiz]:
                 por_cnpj[k]["li"] = dados
-    elif quer_linkedin:
-        r = await brightdata_pessoas.buscar_empresas_por_filtro(
-            pais=str(filtros.get("pais") or "BR"),
-            nomes=filtros.get("nomes") or filtros.get("texto") or "",
-            sites=filtros.get("sites"),
-            porte_min=int(filtros.get("porte_min") or 0),
-            tipos=filtros.get("tipos"),
-            fundada_apos=int(filtros.get("fundada_apos") or 0),
-            setores=filtros.get("setores"),
-            # A UF TEM que ir junto. Sem ela o lado LinkedIn ignora o estado
-            # escolhido e a lista mistura empresa de SC com empresa de
-            # qualquer lugar -- e pior, parece certa na tela. Foi o resultado
-            # do primeiro teste desta fusão: 0 empresas em comum entre as
-            # fontes, porque cada uma estava procurando outra coisa.
-            ufs=filtros.get("uf") or filtros.get("ufs"),
-            cidade=str(filtros.get("municipio") or filtros.get("cidade") or ""),
-            so_com_cnpj=False,          # a fusão decide depois, não a fonte
-            limite=min(int(payload.get("limite_linkedin") or 25), 100),
-            usuario=(request.headers.get("x-user-email") or ""))
+    elif local is not None or quer_linkedin:
+        # As duas origens do lado LinkedIn -- disco e API -- devolvem a MESMA
+        # forma de resposta, de propósito. Só a origem muda aqui; o que
+        # acontece com o resultado é um bloco só, embaixo.
+        #
+        # A primeira versão atribuía `r = local` num `elif` e deixava o código
+        # que consome `r` dentro do `elif` seguinte, que não era tomado: a
+        # busca local respondia certo, de graça, e a lista saía vazia. Custo
+        # zero e resultado zero parecem a mesma coisa na tela.
+        if local is not None:
+            r = local
+        else:
+            r = await brightdata_pessoas.buscar_empresas_por_filtro(
+                pais=str(filtros.get("pais") or "BR"),
+                nomes=filtros.get("nomes") or filtros.get("texto") or "",
+                sites=filtros.get("sites"),
+                porte_min=int(filtros.get("porte_min") or 0),
+                tipos=filtros.get("tipos"),
+                fundada_apos=int(filtros.get("fundada_apos") or 0),
+                setores=filtros.get("setores"),
+                # A UF TEM que ir junto. Sem ela o lado LinkedIn ignora o estado
+                # escolhido e a lista mistura empresa de SC com empresa de
+                # qualquer lugar -- e pior, parece certa na tela. Foi o resultado
+                # do primeiro teste desta fusão: 0 empresas em comum entre as
+                # fontes, porque cada uma estava procurando outra coisa.
+                ufs=filtros.get("uf") or filtros.get("ufs"),
+                cidade=str(filtros.get("municipio") or filtros.get("cidade") or ""),
+                so_com_cnpj=False,          # a fusão decide depois, não a fonte
+                limite=min(int(payload.get("limite_linkedin") or 25), 100),
+                usuario=(request.headers.get("x-user-email") or ""))
         if r.get("status") != "ok":
             # A Receita já respondeu: devolve o que tem em vez de perder tudo.
             return {"status": "ok",
