@@ -5558,3 +5558,131 @@ function b2bOfertaBuscar(f, quantosTem) {
     }
   });
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   BUSCA DE EMPRESAS NO LINKEDIN (Bright Data)
+
+   Separada da busca na Receita porque as duas custam coisas diferentes: a
+   da Receita é nossa e é grátis, esta cobra por empresa entregue. Por isso
+   tem botão próprio, e o preço aparece ANTES do clique, não depois.
+
+   O CNPJ não vem do LinkedIn — é deduzido no servidor pelo domínio do site
+   contra o e-mail da Receita. Quando não dá para decidir entre empresas
+   diferentes, o backend devolve vazio de propósito, e a tela diz isso em
+   vez de inventar. Ver backend/empresa_cnpj.py.
+   ══════════════════════════════════════════════════════════════════════ */
+const bdEmpBtn = document.getElementById('pf-li-buscar');
+const bdEmpAviso = document.getElementById('pf-li-aviso');
+
+function bdEmpFiltros() {
+  const el = id => document.getElementById(id);
+  return {
+    pais: 'BR',
+    porte_min: parseInt(el('pf-tamanho') ? el('pf-tamanho').value : '', 10) || 0,
+    tipos: el('pf-org-tipo') ? el('pf-org-tipo').value : '',
+    fundada_apos: parseInt(el('pf-li-fundada') ? el('pf-li-fundada').value : '', 10) || 0,
+    setores: el('pf-li-setor') ? el('pf-li-setor').value.trim() : '',
+    nomes: el('pf-nome-empresa') ? el('pf-nome-empresa').value.trim() : '',
+    so_com_cnpj: !!(el('pf-li-so-cnpj') && el('pf-li-so-cnpj').checked),
+  };
+}
+
+/* O aviso de custo é calculado na tela e não pelo servidor: ele precisa
+   existir ANTES da chamada, que é justamente o que se paga. US$ 0,0025 por
+   empresa é o preço medido da Bright Data. */
+function bdEmpAtualizaAviso() {
+  if (!bdEmpAviso) return;
+  const f = bdEmpFiltros();
+  const n = parseInt((document.getElementById('pf-li-limite') || {}).value || '25', 10);
+  const temFiltro = f.porte_min || f.tipos || f.fundada_apos || f.setores || f.nomes;
+  if (!temFiltro) {
+    bdEmpAviso.innerHTML = 'Escolha ao menos tamanho, tipo, fundação, setor ou nome — '
+      + 'sem filtro a busca traria 1,3 milhão de empresas e cobraria por todas.';
+    return;
+  }
+  const usd = (n * 0.0025);
+  bdEmpAviso.innerHTML = 'Vai buscar até <b>' + n + '</b> empresas · custo estimado <b>US$ '
+    + usd.toFixed(2) + '</b> (cobra por empresa entregue, não por busca).';
+}
+
+['pf-tamanho', 'pf-org-tipo', 'pf-li-fundada', 'pf-li-setor', 'pf-li-limite',
+ 'pf-nome-empresa'].forEach(id => {
+  const e = document.getElementById(id);
+  if (e) e.addEventListener('input', bdEmpAtualizaAviso);
+  if (e) e.addEventListener('change', bdEmpAtualizaAviso);
+});
+bdEmpAtualizaAviso();
+
+function bdEmpLinha(e) {
+  /* O selo de confiança do CNPJ não é enfeite. "alta" saiu do domínio do
+     site, que é chave literal; "média" saiu de semelhança de nome, que
+     erra. Mostrar os dois iguais seria mentir sobre a qualidade do dado. */
+  const selo = e.cnpj_confianca === 'alta'
+    ? '<span title="' + (e.cnpj_motivo || '') + '" style="color:var(--green-600,#16a34a)">✓</span>'
+    : (e.cnpj_confianca === 'media'
+       ? '<span title="' + (e.cnpj_motivo || '') + '" style="color:var(--amber-600,#d97706)">~</span>'
+       : '');
+  const cnpj = e.cnpj
+    ? selo + ' ' + e.cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
+    : '<span style="color:var(--gray-500)" title="' + (e.cnpj_motivo || '')
+      + '">não deu para identificar</span>';
+  return '<tr>'
+    + '<td><b>' + (e.nome || '') + '</b>'
+    + (e.url ? ' <a href="' + e.url + '" target="_blank" rel="noopener">↗</a>' : '')
+    + '</td>'
+    + '<td>' + cnpj + '</td>'
+    + '<td>' + (e.funcionarios_linkedin != null ? e.funcionarios_linkedin : '—') + '</td>'
+    + '<td>' + (e.tipo || '—') + '</td>'
+    + '<td>' + (e.setor || '—') + '</td>'
+    + '<td>' + (e.sede || '—') + '</td>'
+    + '</tr>';
+}
+
+async function bdEmpBuscar() {
+  const alvo = document.getElementById('prosp-results');
+  const cont = document.getElementById('pf-count');
+  const sub = document.getElementById('pf-count-sub');
+  bdEmpBtn.disabled = true;
+  if (alvo) alvo.innerHTML = '<div class="info-box">Buscando no LinkedIn…</div>';
+  try {
+    const n = parseInt((document.getElementById('pf-li-limite') || {}).value || '25', 10);
+    const d = await fetch(`${API}/api/empresas/brightdata`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filtros: bdEmpFiltros(), limite: n }),
+    }).then(r => r.json());
+
+    if (d.status !== 'ok') {
+      if (alvo) alvo.innerHTML = '<div class="warn-box">' + (d.message || 'Não deu certo.') + '</div>';
+      return;
+    }
+    if (cont) cont.textContent = d.total + (d.total === 1 ? ' empresa' : ' empresas');
+    if (sub) {
+      /* Duas contas diferentes e é importante que apareçam separadas: o
+         filtro "só as que fecharam CNPJ" esconde linhas DEPOIS da cobrança.
+         Quem vê "12 empresas" precisa saber que pagou por 25. */
+      let t = d.total_no_dataset != null
+        ? 'De ' + d.total_no_dataset.toLocaleString('pt-BR') + ' que casam com o filtro. ' : '';
+      t += d.com_cnpj + ' com CNPJ identificado, ' + d.sem_cnpj + ' sem.';
+      if (d.registros_cobrados !== d.total) {
+        t += ' Foram cobradas ' + d.registros_cobrados + ' — o filtro de CNPJ '
+           + 'esconde da tela, não desfaz a cobrança.';
+      }
+      sub.textContent = t;
+    }
+    if (alvo) {
+      alvo.innerHTML = d.empresas.length
+        ? '<table class="data-table"><thead><tr><th>Empresa</th><th>CNPJ</th>'
+          + '<th>Pessoas no LinkedIn</th><th>Tipo</th><th>Setor</th><th>Sede</th>'
+          + '</tr></thead><tbody>'
+          + d.empresas.map(bdEmpLinha).join('') + '</tbody></table>'
+        : '<div class="info-box">Nenhuma empresa com esses filtros.</div>';
+    }
+  } catch (e) {
+    if (alvo) alvo.innerHTML = '<div class="warn-box">Não consegui falar com o servidor.</div>';
+  } finally {
+    bdEmpBtn.disabled = false;
+  }
+}
+
+if (bdEmpBtn) bdEmpBtn.addEventListener('click', bdEmpBuscar);

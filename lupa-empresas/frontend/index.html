@@ -530,14 +530,71 @@
             </div>
           </div>
           <div class="pf-field">
-            <label>👥 Tamanho (funcionários) <span class="pf-soon" title="Requer dataset de perfis/empresas com contagem de funcionários">🔜</span></label>
-            <select id="pf-tamanho" disabled>
-              <option value="">Escolha o número de funcionários</option>
-              <option>0-1</option><option>2-10</option><option>11-50</option><option>51-200</option>
-              <option>201-500</option><option>501-1000</option><option>1001-5000</option>
-              <option>5001-10000</option><option>10001+</option>
+            <label>👥 Tamanho (funcionários no LinkedIn)</label>
+            <select id="pf-tamanho">
+              <option value="">Qualquer tamanho</option>
+              <option value="0">1 a 10 — 808.423 empresas</option>
+              <option value="10">11 a 50 — 218.955</option>
+              <option value="50">51 a 200 — 51.075</option>
+              <option value="200">201 a 500 — 11.197</option>
+              <option value="500">501 a 1.000 — 3.620</option>
+              <option value="1000">1.001 a 5.000 — 2.732</option>
+              <option value="5000">5.001 a 10.000 — 302</option>
+              <option value="10000">mais de 10.000 — 170</option>
+            </select>
+            <div class="pf-advanced-hint" style="margin:4px 0 0">
+              Vem do LinkedIn, não da Receita — por isso usa a
+              <b>busca no LinkedIn</b> logo abaixo. As contagens são do
+              Brasil inteiro e foram medidas na base.
+            </div>
+          </div>
+
+          <!-- BUSCA NO LINKEDIN — separada da busca na Receita de propósito.
+               A de cima é nossa, grátis e instantânea. Esta cobra por empresa
+               entregue, então precisa de botão próprio e de preço na cara:
+               um botão só esconderia de quem clica que aquilo custa. -->
+          <div class="pf-divider"></div>
+          <div class="pf-advanced-hint" style="margin-top:-4px">Buscar no LinkedIn (Bright Data)</div>
+          <div class="pf-field">
+            <label>🏷️ Tipo de organização</label>
+            <select id="pf-org-tipo">
+              <option value="">Qualquer tipo</option>
+              <option value="Privately Held">Capital fechado — 412.081</option>
+              <option value="Partnership">Sociedade — 81.315</option>
+              <option value="Self-Employed">Autônomo — 42.382</option>
+              <option value="Educational">Educacional — 20.091</option>
+              <option value="Nonprofit">Sem fins lucrativos — 18.470</option>
+              <option value="Public Company">Capital aberto — 8.406</option>
+              <option value="Government Agency">Órgão público — 3.800</option>
             </select>
           </div>
+          <div class="pf-field pf-row2">
+            <div><label>🚩 Fundada depois de</label>
+              <input id="pf-li-fundada" type="number" min="1900" max="2026"
+                     placeholder="Ex.: 2015" /></div>
+            <div><label>🏭 Setor</label>
+              <input id="pf-li-setor" type="text" placeholder="Ex.: Software"
+                     autocomplete="off" /></div>
+          </div>
+          <div class="pf-field">
+            <label>🔢 Quantas trazer</label>
+            <select id="pf-li-limite">
+              <option value="10">10 empresas</option>
+              <option value="25" selected>25 empresas</option>
+              <option value="50">50 empresas</option>
+              <option value="100">100 empresas (o máximo)</option>
+            </select>
+          </div>
+          <div class="pf-toggles">
+            <label class="toggle-row" title="O CNPJ não vem do LinkedIn: ele é deduzido aqui pelo domínio do site contra a Receita. Marcar esconde as que não fecharam — mas elas já foram cobradas.">
+              <span>Só as que fecharam CNPJ</span>
+              <input id="pf-li-so-cnpj" type="checkbox" />
+            </label>
+          </div>
+          <button id="pf-li-buscar" class="btn-secondary" style="width:100%;margin-top:6px">
+            Buscar empresas no LinkedIn
+          </button>
+          <div id="pf-li-aviso" class="pf-advanced-hint" style="margin:6px 0 0"></div>
           <div class="pf-field">
             <label>💵 Receita anual <span class="pf-soon" title="Receita Federal não expõe faturamento; usamos Capital Social abaixo">🔜</span></label>
             <select id="pf-receita" disabled>
