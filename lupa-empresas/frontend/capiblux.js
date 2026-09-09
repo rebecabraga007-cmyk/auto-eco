@@ -1110,6 +1110,13 @@ function prospFiltros() {
     fundada_ate: document.getElementById('pf-fundada-ate').value,
     nome_empresa: document.getElementById('pf-nome-empresa').value.trim(),
     tipo_empresa: document.getElementById('pf-tipo-empresa').value,
+    // Filtros que SÓ o LinkedIn responde. Vão no mesmo objeto porque, do
+    // ponto de vista de quem usa, é um filtro só — quem decide qual base
+    // atender é o backend, que sabe o que cada uma tem.
+    porte_min: parseInt(document.getElementById('pf-tamanho')?.value, 10) || 0,
+    tipos: document.getElementById('pf-org-tipo')?.value || '',
+    fundada_apos: parseInt(document.getElementById('pf-li-fundada')?.value, 10) || 0,
+    setores: document.getElementById('pf-li-setor')?.value.trim() || '',
   };
 }
 
@@ -1123,11 +1130,24 @@ async function prospBuscar() {
   if (cntSub) cntSub.textContent = '';
   out.innerHTML = spinner();
   try {
-    const res = await fetch(`${API}/api/companies/search`, {
+    /* Lista unificada: Receita + LinkedIn na mesma tabela, como a Datastone.
+       `linkedin` é explícito e nasce falso — a Receita é grátis, o LinkedIn
+       cobra por empresa entregue, e busca que gasta sozinha é busca que gasta
+       sem ninguém decidir. Quando algum filtro só existir no LinkedIn, o
+       backend devolve `linkedin_necessario` e a tela pergunta. */
+    const res = await fetch(`${API}/api/empresas/unificada`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filtros: prospFiltros(), limite: 500 }),
+      body: JSON.stringify({
+        filtros: prospFiltros(),
+        limite: 500,
+        linkedin: !!prospState.usarLinkedIn,
+        limite_linkedin: 25,
+        enriquecer_ate: 25,
+        so_com_cnpj: !!document.getElementById('pf-possui-cnpj')?.checked,
+      }),
     }).then(r => r.json());
+    prospState.usarLinkedIn = false;   // volta a nascer desligado a cada busca
 
     if (res.status !== 'ok') {
       out.innerHTML = `<p class="msg error">${esc(motivoErro(res) || 'Falha na busca.')}</p>`;
@@ -1142,7 +1162,24 @@ async function prospBuscar() {
     const fonteTag = prospState.fonte === 'local' ? 'base local RFB' : (prospState.fonte === 'casadosdados' ? 'Casa dos Dados' : '');
     const totalStr = res.total_aprox ? `${prospState.total.toLocaleString('pt-BR')}+` : prospState.total.toLocaleString('pt-BR');
     cnt.textContent = `${totalStr} empresa${prospState.total === 1 ? '' : 's'} bate${prospState.total === 1 ? '' : 'm'} com seus filtros`;
-    if (cntSub) cntSub.textContent = `${capMsg.trim() || ('Mostrando ' + prospState.empresas.length)}${fonteTag ? ' · ' + fonteTag : ''}`.replace(/^\(|\)$/g, '');
+    if (cntSub) {
+      /* Três números que NÃO são a mesma coisa e que a Datastone também
+         separa: quantas apareceram, quantas vieram das duas bases ao mesmo
+         tempo, e quantas foram COBRADAS. Juntar tudo em "45 empresas"
+         esconderia o que a busca custou. */
+      const partes = [];
+      if (res.nas_duas_fontes) partes.push(`${res.nas_duas_fontes} nas duas bases`);
+      if (res.sem_cnpj) {
+        partes.push(`${res.sem_cnpj} sem CNPJ${document.getElementById('pf-possui-cnpj')?.checked ? ' (escondidas)' : ''}`);
+      }
+      if (res.registros_cobrados) {
+        partes.push(`${res.registros_cobrados} cobrada(s) no LinkedIn`);
+      }
+      cntSub.textContent = [capMsg.trim() || ('Mostrando ' + prospState.empresas.length),
+                            partes.join(' · ')].filter(Boolean).join(' · ')
+                           .replace(/^\(|\)$/g, '');
+    }
+    prospAvisaLinkedIn(res);
     renderProspList();
     const excluirMeetime = document.getElementById('pf-excluir-meetime');
     if (excluirMeetime && excluirMeetime.checked) prospDedupMeetime();
@@ -5683,76 +5720,9 @@ function bdEmpAtualizaAviso() {
 });
 bdEmpAtualizaAviso();
 
-function bdEmpLinha(e) {
-  /* O selo de confiança do CNPJ não é enfeite. "alta" saiu do domínio do
-     site, que é chave literal; "média" saiu de semelhança de nome, que
-     erra. Mostrar os dois iguais seria mentir sobre a qualidade do dado. */
-  const selo = e.cnpj_confianca === 'alta'
-    ? '<span title="' + (e.cnpj_motivo || '') + '" style="color:var(--green-600,#16a34a)">✓</span>'
-    : (e.cnpj_confianca === 'media'
-       ? '<span title="' + (e.cnpj_motivo || '') + '" style="color:var(--amber-600,#d97706)">~</span>'
-       : '');
-  const cnpj = e.cnpj
-    ? selo + ' ' + e.cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
-    : '<span style="color:var(--gray-500)" title="' + (e.cnpj_motivo || '')
-      + '">não deu para identificar</span>';
-  return '<tr>'
-    + '<td><b>' + (e.nome || '') + '</b>'
-    + (e.url ? ' <a href="' + e.url + '" target="_blank" rel="noopener">↗</a>' : '')
-    + '</td>'
-    + '<td>' + cnpj + '</td>'
-    + '<td>' + (e.funcionarios_linkedin != null ? e.funcionarios_linkedin : '—') + '</td>'
-    + '<td>' + (e.tipo || '—') + '</td>'
-    + '<td>' + (e.setor || '—') + '</td>'
-    + '<td>' + (e.sede || '—') + '</td>'
-    + '</tr>';
-}
-
 async function bdEmpBuscar() {
-  const alvo = document.getElementById('prosp-results');
-  const cont = document.getElementById('pf-count');
-  const sub = document.getElementById('pf-count-sub');
-  bdEmpBtn.disabled = true;
-  if (alvo) alvo.innerHTML = '<div class="info-box">Buscando no LinkedIn…</div>';
-  try {
-    const n = parseInt((document.getElementById('pf-li-limite') || {}).value || '25', 10);
-    const d = await fetch(`${API}/api/empresas/brightdata`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filtros: bdEmpFiltros(), limite: n }),
-    }).then(r => r.json());
-
-    if (d.status !== 'ok') {
-      if (alvo) alvo.innerHTML = '<div class="warn-box">' + (d.message || 'Não deu certo.') + '</div>';
-      return;
-    }
-    if (cont) cont.textContent = d.total + (d.total === 1 ? ' empresa' : ' empresas');
-    if (sub) {
-      /* Duas contas diferentes e é importante que apareçam separadas: o
-         filtro "só as que fecharam CNPJ" esconde linhas DEPOIS da cobrança.
-         Quem vê "12 empresas" precisa saber que pagou por 25. */
-      let t = d.total_no_dataset != null
-        ? 'De ' + d.total_no_dataset.toLocaleString('pt-BR') + ' que casam com o filtro. ' : '';
-      t += d.com_cnpj + ' com CNPJ identificado, ' + d.sem_cnpj + ' sem.';
-      if (d.registros_cobrados !== d.total) {
-        t += ' Foram cobradas ' + d.registros_cobrados + ' — o filtro de CNPJ '
-           + 'esconde da tela, não desfaz a cobrança.';
-      }
-      sub.textContent = t;
-    }
-    if (alvo) {
-      alvo.innerHTML = d.empresas.length
-        ? '<table class="data-table"><thead><tr><th>Empresa</th><th>CNPJ</th>'
-          + '<th>Pessoas no LinkedIn</th><th>Tipo</th><th>Setor</th><th>Sede</th>'
-          + '</tr></thead><tbody>'
-          + d.empresas.map(bdEmpLinha).join('') + '</tbody></table>'
-        : '<div class="info-box">Nenhuma empresa com esses filtros.</div>';
-    }
-  } catch (e) {
-    if (alvo) alvo.innerHTML = '<div class="warn-box">Não consegui falar com o servidor.</div>';
-  } finally {
-    bdEmpBtn.disabled = false;
-  }
+  prospState.usarLinkedIn = true;
+  await prospBuscar();
 }
 
 if (bdEmpBtn) bdEmpBtn.addEventListener('click', bdEmpBuscar);
@@ -5981,4 +5951,56 @@ function ofereceLinkedIn() {
   out.appendChild(box);
   document.getElementById('pf-pessoas-li')
     .addEventListener('click', () => pessoasNoLinkedIn(n));
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   O AVISO DE FILTRO NÃO APLICADO
+
+   Alguns filtros — tamanho por funcionários, tipo de organização, fundação
+   pelo perfil — só existem no LinkedIn. A Receita não sabe quantas pessoas
+   trabalham numa empresa, e não vai saber.
+
+   Quando um desses está ligado e a busca não foi ao LinkedIn, o backend
+   devolve `linkedin_necessario` com a lista do que ignorou. A tela TEM que
+   dizer isso: uma lista que parece respeitar "51 a 200 funcionários" e não
+   respeita nada é pior que uma lista vazia, porque a pessoa liga confiando.
+
+   O botão refaz a mesma busca com o LinkedIn ligado, e o preço aparece
+   antes do clique.
+   ══════════════════════════════════════════════════════════════════════ */
+const _ROTULO_FILTRO = {
+  porte_min: 'tamanho por funcionários',
+  tipos: 'tipo de organização',
+  fundada_apos: 'fundada depois de',
+  sites: 'site',
+};
+
+function prospAvisaLinkedIn(res) {
+  const out = document.getElementById('prosp-results');
+  const velho = document.getElementById('pf-aviso-li');
+  if (velho) velho.remove();
+  if (!out || !res || !res.linkedin_necessario) return;
+
+  const nomes = (res.filtros_ignorados || []).map(k => _ROTULO_FILTRO[k] || k);
+  const n = 25;
+  const box = document.createElement('div');
+  box.id = 'pf-aviso-li';
+  box.className = 'warn-box';
+  box.style.margin = '10px 0';
+  box.innerHTML =
+    '<b>' + (nomes.length === 1 ? 'Este filtro não foi aplicado' : 'Estes filtros não foram aplicados')
+    + ':</b> ' + esc(nomes.join(', ')) + '.'
+    + ' A Receita não sabe quantas pessoas trabalham numa empresa — isso só'
+    + ' existe no LinkedIn. A lista abaixo <b>ignora</b> esse filtro.'
+    + '<div style="margin-top:8px">'
+    + '<button type="button" id="pf-refazer-li" class="btn-secondary">'
+    + 'Refazer buscando no LinkedIn</button>'
+    + ' <span class="pf-advanced-hint">até ' + n + ' empresas · US$ '
+    + (n * 0.0025).toFixed(2) + ' — cobra por empresa entregue</span>'
+    + '</div>';
+  out.prepend(box);
+  document.getElementById('pf-refazer-li').addEventListener('click', () => {
+    prospState.usarLinkedIn = true;
+    prospBuscar();
+  });
 }

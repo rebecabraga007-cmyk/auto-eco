@@ -27,6 +27,7 @@ from typing import Any
 import httpx
 
 import cargos
+import cidades
 import funcoes
 import linkedin_cache
 
@@ -1075,10 +1076,32 @@ def _empresa(rec: dict[str, Any]) -> dict[str, Any]:
     return d
 
 
+def _nome_do_estado(uf: str) -> str:
+    """"SC" -> "Santa Catarina", que e como o LinkedIn escreve.
+
+    O filtro de local do dataset e `headquarters includes`, e la o estado vem
+    por extenso. Mandar a sigla nao casa quase nada: medido, "Santa Catarina"
+    devolve 42.809 empresas.
+
+    O mapa e o de `cidades.UF_POR_NOME`, invertido -- reaproveitado em vez de
+    redigitado para as duas telas nao divergirem com o tempo.
+    """
+    u = (uf or "").strip().upper()[:2]
+    if not u:
+        return ""
+    for nome, sigla in cidades.UF_POR_NOME.items():
+        # so as entradas em portugues; as em ingles ("STATE OF ...") existem
+        # para LER o que o LinkedIn escreve, nao para escrever a consulta
+        if sigla == u and not nome.startswith("STATE OF") and " DISTRICT" not in nome:
+            return nome.title()
+    return ""
+
+
 async def buscar_empresas_por_filtro(
         pais: str = "BR", nomes: Any = None, sites: Any = None,
         porte_min: int = 0, tipos: Any = None, fundada_apos: int = 0,
         setores: Any = None, so_com_cnpj: bool = False,
+        ufs: Any = None, cidade: str = "",
         limite: int = 25, usuario: str = "") -> dict[str, Any]:
     """Busca de EMPRESAS no dataset da Bright Data.
 
@@ -1128,6 +1151,19 @@ async def buscar_empresas_por_filtro(
     if int(fundada_apos or 0) > 0:
         cond.append({"name": "founded", "operator": ">",
                      "value": int(fundada_apos)})
+
+    # LOCAL. Sem isto a busca do LinkedIn ignora a UF que a pessoa escolheu e
+    # a lista mistura empresa de SC com empresa de qualquer lugar -- foi o que
+    # aconteceu no primeiro teste da lista unificada, e o pior e que parecia
+    # certo na tela. `headquarters` e a SEDE; `locations` traria filial de
+    # empresa sediada longe, que nao e o que "empresa de SC" significa.
+    estados = [n for n in (_nome_do_estado(u) for u in _l(ufs)) if n]
+    g = _grupo_or("headquarters", estados)
+    if g:
+        cond.append(g)
+    if (cidade or "").strip():
+        cond.append({"name": "headquarters", "operator": "includes",
+                     "value": cidade.strip()})
 
     if len(cond) <= 1:
         return {"status": "error", "empresas": [],
@@ -1231,9 +1267,17 @@ async def nome_no_linkedin(cnpj: str = "", site: str = "") -> dict[str, Any]:
     if not dom:
         return {"status": "not_found", "motivo": "empresa sem dominio proprio"}
 
-    corpo = {"size": 1, "filter": {"operator": "and", "filters": [
-        {"name": "country_code", "operator": "=", "value": "BR"},
-        {"name": "website_simplified", "operator": "=", "value": dom}]}}
+    # ORDENADO POR TAMANHO, e isso nao e detalhe. Um dominio corporativo
+    # costuma ter varias paginas no LinkedIn -- selbetti.com.br tem 5 --  e
+    # sem ordenacao a API devolve uma qualquer. Medido: vinha "Selbetti Retail
+    # Experience" com 30 pessoas no lugar de "Selbetti Tecnologia" com 1.977.
+    # A maior e a empresa; as outras sao braco, marca ou unidade.
+    # Custa o mesmo 1 registro.
+    corpo = {"size": 1,
+             "filter": {"operator": "and", "filters": [
+                 {"name": "country_code", "operator": "=", "value": "BR"},
+                 {"name": "website_simplified", "operator": "=", "value": dom}]},
+             "sort": [{"employees_in_linkedin": "desc"}]}
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as cli:
             r = await cli.post(SEARCH_URL + DATASET_EMPRESA,

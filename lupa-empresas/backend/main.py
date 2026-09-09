@@ -1429,6 +1429,302 @@ async def companies_search(payload: dict = Body(default={})):
     return res
 
 
+# ---------------------------------------------------------------------
+# LISTA UNIFICADA DE EMPRESAS — Receita + LinkedIn na mesma tabela
+# ---------------------------------------------------------------------
+#
+# É o desenho da Datastone, e ele foi copiado de propósito depois de olhar as
+# capturas do backoffice deles. O que eles fazem, e que faz sentido:
+#
+#   - uma base só, onde PARTE das empresas tem CNPJ e parte não
+#   - um toggle "Possui CNPJ" (tooltip literal deles: "Esta opção indica se a
+#     empresa possui CNPJ") — ou seja, eles assumem a falha em vez de escondê-la
+#   - `/internal/v1/company/employees/` recebe `companyId` E `cnpj` juntos,
+#     porque qualquer um dos dois pode faltar
+#
+# Aqui as duas fontes são complementares e nenhuma cobre a outra:
+#
+#   Receita   1,3 mi de estabelecimentos ativos com CNPJ, CNAE, situação,
+#             capital, endereço. Grátis e instantânea. NÃO sabe quantas
+#             pessoas trabalham lá nem o que a empresa diz de si.
+#   LinkedIn  1,36 mi de páginas com contagem real de funcionários, tipo de
+#             organização e fundação. COBRA por empresa entregue e não tem
+#             CNPJ — ele é deduzido pelo domínio (ver empresa_cnpj).
+#
+# A fusão é por CNPJ. Empresa que aparece nas duas vira UMA linha com as
+# colunas das duas; empresa que só existe num lado vem assim mesmo, marcada.
+
+# Filtros que SÓ o LinkedIn responde. Se um deles estiver ligado e a busca não
+# for ao LinkedIn, ele não filtra nada — e um filtro que silenciosamente não
+# faz nada é pior que um filtro ausente, porque a pessoa confia no resultado.
+FILTROS_SO_LINKEDIN = ("porte_min", "tipos", "fundada_apos", "sites")
+
+
+def _digitos(v) -> str:
+    return re.sub(r"\D", "", str(v or ""))
+
+
+def _cnpj_bonito(v) -> str:
+    """00.000.000/0000-00. A Receita ja devolve formatado e a deducao do
+    LinkedIn devolve so digitos -- numa lista fundida isso apareceria como
+    duas colunas diferentes na mesma coluna."""
+    d = _digitos(v)
+    if len(d) != 14:
+        return str(v or "")
+    return "%s.%s.%s/%s-%s" % (d[:2], d[2:5], d[5:8], d[8:12], d[12:])
+
+
+def _linha_unificada(base: dict | None, li: dict | None) -> dict:
+    """Uma linha da tabela, vinda de uma fonte ou das duas."""
+    base = base or {}
+    li = li or {}
+    fontes = []
+    if base:
+        fontes.append("receita")
+    if li:
+        fontes.append("linkedin")
+    return {
+        # --- lado Receita (vazio quando a empresa só existe no LinkedIn) ---
+        "cnpj": _cnpj_bonito(base.get("cnpj") or li.get("cnpj") or ""),
+        "razao_social": base.get("razao_social") or "",
+        "nome_fantasia": base.get("nome_fantasia") or "",
+        "uf": base.get("uf") or "",
+        "municipio": base.get("municipio") or "",
+        "situacao": base.get("situacao") or "",
+        "cnae": base.get("cnae") or "",
+        "cnae_codigo": base.get("cnae_codigo") or "",
+        "porte": base.get("porte") or "",
+        "capital_social": base.get("capital_social") or 0,
+        "telefone_1": base.get("telefone_1") or "",
+        "telefone_2": base.get("telefone_2") or "",
+        "email": base.get("email") or "",
+        # --- lado LinkedIn (vazio quando só a Receita conhece) ---
+        "nome_linkedin": li.get("nome") or "",
+        "url_linkedin": li.get("url") or "",
+        "company_id": li.get("company_id") or "",
+        "funcionarios_linkedin": li.get("funcionarios_linkedin"),
+        "setor_linkedin": li.get("setor") or "",
+        "tipo_organizacao": li.get("tipo") or "",
+        "fundada": li.get("fundada") or "",
+        "site": li.get("site") or "",
+        # --- de onde veio, e o que a linha permite fazer -------------------
+        "fontes": fontes,
+        # A tela precisa disto para explicar por que "Montar lista" não serve
+        # para esta linha: sem CNPJ não há QSA, não há sócio, não há decisor
+        # da Assertiva. É a mesma limitação que a Datastone tem.
+        "tem_cnpj": bool(_digitos(base.get("cnpj") or li.get("cnpj"))),
+        "cnpj_confianca": (li.get("cnpj_confianca") or "")
+                          if not base else ("receita" if base else ""),
+        "cnpj_motivo": li.get("cnpj_motivo") or "",
+    }
+
+
+@app.post("/api/empresas/unificada")
+async def empresas_unificada(request: Request, payload: dict = Body(default={})):
+    """Receita e LinkedIn na mesma lista, como a Datastone faz.
+
+    `linkedin` NÃO é automático. A Receita é grátis; o LinkedIn cobra por
+    empresa entregue, e uma busca que gasta sozinha é uma busca que gasta sem
+    ninguém decidir. Então:
+
+      linkedin=false (padrão)  só Receita. Se houver filtro que só o LinkedIn
+                               responde, a resposta traz `linkedin_necessario`
+                               com o motivo e o custo — a tela pergunta.
+      linkedin=true            busca nos dois e funde por CNPJ.
+
+    `so_com_cnpj` é o "Possui CNPJ" deles. Filtra a lista JÁ MONTADA, então
+    não reduz o que foi cobrado — reduz o que aparece. A resposta separa
+    `registros_cobrados` de `total` para a tela poder dizer isso.
+    """
+    filtros = payload.get("filtros") or {}
+    limite = min(int(payload.get("limite") or 50), 200)
+    offset = int(payload.get("offset") or 0)
+    quer_linkedin = bool(payload.get("linkedin"))
+    so_com_cnpj = bool(payload.get("so_com_cnpj"))
+
+    pedidos_li = [k for k in FILTROS_SO_LINKEDIN if filtros.get(k)]
+
+    # ---- lado Receita ------------------------------------------------
+    #
+    # NAO roda quando o LinkedIn vai comandar. Parece desperdicio deixar de
+    # usar uma base gratis, mas as linhas dela nao passariam pelo filtro que
+    # a pessoa pediu: numa busca por "+200 funcionarios" a Receita devolve
+    # MEIs, porque ela nao sabe quantos funcionarios ninguem tem. Medido --
+    # as 8 primeiras linhas da lista eram MEIs de uma pessoa so, no meio de
+    # um filtro de empresa grande.
+    #
+    # Lista que desobedece o filtro e pior que lista curta: a pessoa confia
+    # no que pediu e liga para a empresa errada.
+    base = {"empresas": [], "total": 0}
+    receita_comanda = not (pedidos_li and quer_linkedin)
+    if _cnpj_local() and receita_comanda:
+        base = cnpj_lookup.search(filtros, limite=limite, offset=offset)
+    por_cnpj: dict[str, dict] = {}
+    ordem: list[str] = []
+    for e in base.get("empresas") or []:
+        d = _digitos(e.get("cnpj"))
+        if d and d not in por_cnpj:
+            por_cnpj[d] = {"base": e, "li": None}
+            ordem.append(d)
+
+    # ---- o filtro que só o LinkedIn responde --------------------------
+    if pedidos_li and not quer_linkedin:
+        # Devolve o que a Receita achou, mas DIZ que aqueles filtros não foram
+        # aplicados. Silenciar aqui faria a pessoa acreditar que a lista
+        # respeita "51 a 200 funcionários" quando ela não respeita nada disso.
+        return {
+            "status": "ok",
+            "empresas": [_linha_unificada(por_cnpj[d]["base"], None) for d in ordem],
+            "total": len(ordem),
+            "total_receita": base.get("total") or 0,
+            "registros_cobrados": 0,
+            "custo_usd": 0.0,
+            "linkedin_necessario": True,
+            "filtros_ignorados": pedidos_li,
+            "message": ("Estes filtros só existem no LinkedIn e NÃO foram "
+                        "aplicados: %s. A lista abaixo é só da Receita."
+                        % ", ".join(pedidos_li)),
+        }
+
+    # ---- lado LinkedIn: só quando pedido, porque cobra ----------------
+    #
+    # QUEM COMANDA A BUSCA. Se há filtro que só o LinkedIn responde, é ele que
+    # seleciona e a Receita completa; senão a Receita seleciona e o LinkedIn
+    # completa. Nunca as duas em paralelo: a primeira versão fazia isso e
+    # media 0 empresas em comum, porque duas amostras de 8 e 10 linhas tiradas
+    # de milhares não se cruzam. Dava uma tela que parecia fundida e eram duas
+    # listas empilhadas.
+    cobrados = 0
+    custo = 0.0
+    total_li = None
+    if quer_linkedin and not pedidos_li:
+        # RECEITA COMANDA. Cada linha dela vira uma consulta de 1 registro
+        # para achar a mesma empresa no LinkedIn pelo domínio. Tem teto porque
+        # isso é por empresa: 50 linhas são 50 registros.
+        teto_enriq = min(int(payload.get("enriquecer_ate") or 25), 50)
+        # UMA CONSULTA POR RAIZ, nao por linha. Filial nao tem pagina propria
+        # no LinkedIn: as 6 filiais da Selbetti apontam para a mesma empresa,
+        # e a versao anterior pagava 6 vezes pela mesma resposta. A chave do
+        # LinkedIn e o dominio, e o dominio sai da RAIZ do CNPJ -- entao a
+        # consulta tambem tem que ser por raiz.
+        por_raiz: dict[str, list[str]] = {}
+        for k in ordem:
+            d = _digitos(k)
+            if len(d) == 14:
+                por_raiz.setdefault(d[:8], []).append(k)
+        for raiz in list(por_raiz)[:teto_enriq]:
+            achou = await brightdata_pessoas.nome_no_linkedin(cnpj=raiz)
+            if (achou or {}).get("status") != "ok":
+                continue
+            cobrados += 1
+            custo += float(achou.get("custo_usd") or 0)
+            dados = {
+                "nome": achou.get("nome") or "",
+                "url": achou.get("url") or "",
+                "company_id": achou.get("company_id") or "",
+                "funcionarios_linkedin": achou.get("funcionarios_linkedin"),
+                "site": achou.get("dominio") or "",
+            }
+            for k in por_raiz[raiz]:
+                por_cnpj[k]["li"] = dados
+    elif quer_linkedin:
+        r = await brightdata_pessoas.buscar_empresas_por_filtro(
+            pais=str(filtros.get("pais") or "BR"),
+            nomes=filtros.get("nomes") or filtros.get("texto") or "",
+            sites=filtros.get("sites"),
+            porte_min=int(filtros.get("porte_min") or 0),
+            tipos=filtros.get("tipos"),
+            fundada_apos=int(filtros.get("fundada_apos") or 0),
+            setores=filtros.get("setores"),
+            # A UF TEM que ir junto. Sem ela o lado LinkedIn ignora o estado
+            # escolhido e a lista mistura empresa de SC com empresa de
+            # qualquer lugar -- e pior, parece certa na tela. Foi o resultado
+            # do primeiro teste desta fusão: 0 empresas em comum entre as
+            # fontes, porque cada uma estava procurando outra coisa.
+            ufs=filtros.get("uf") or filtros.get("ufs"),
+            cidade=str(filtros.get("municipio") or filtros.get("cidade") or ""),
+            so_com_cnpj=False,          # a fusão decide depois, não a fonte
+            limite=min(int(payload.get("limite_linkedin") or 25), 100),
+            usuario=(request.headers.get("x-user-email") or ""))
+        if r.get("status") != "ok":
+            # A Receita já respondeu: devolve o que tem em vez de perder tudo.
+            return {"status": "ok",
+                    "empresas": [_linha_unificada(por_cnpj[d]["base"], None)
+                                 for d in ordem],
+                    "total": len(ordem), "registros_cobrados": 0,
+                    "custo_usd": 0.0,
+                    "message": "Receita ok; LinkedIn falhou: %s"
+                               % (r.get("message") or "")}
+        cobrados = int(r.get("registros_cobrados") or 0)
+        custo = float(r.get("custo_usd") or 0)
+        total_li = r.get("total_no_dataset")
+        for e in r.get("empresas") or []:
+            d = _digitos(e.get("cnpj"))
+            if d and d in por_cnpj:
+                por_cnpj[d]["li"] = e          # mesma empresa, duas fontes
+            elif d:
+                por_cnpj[d] = {"base": None, "li": e}
+                ordem.append(d)
+            else:
+                # Sem CNPJ não há chave para fundir. Entra como linha própria,
+                # e é justamente esta que o "Possui CNPJ" tira.
+                chave = "li:" + (e.get("url") or e.get("nome") or str(len(ordem)))
+                por_cnpj[chave] = {"base": None, "li": e}
+                ordem.append(chave)
+
+        # A RECEITA COMPLETA, e isso é de graça: base local, consulta por
+        # chave. Toda empresa que o LinkedIn trouxe com CNPJ ganha razão
+        # social, CNAE, situação e capital sem custo nenhum. Não fazer isso
+        # seria deixar metade da linha vazia por preguiça.
+        for k in ordem:
+            if por_cnpj[k]["base"] or not por_cnpj[k]["li"]:
+                continue
+            d = _digitos(por_cnpj[k]["li"].get("cnpj"))
+            if len(d) != 14:
+                continue
+            try:
+                co = cnpj_lookup.by_cnpj(d)
+            except Exception:
+                continue
+            if (co or {}).get("status") != "ok":
+                continue
+            c = co.get("company") or co
+            por_cnpj[k]["base"] = {
+                "cnpj": c.get("cnpj") or d,
+                "razao_social": c.get("razao_social") or "",
+                "nome_fantasia": c.get("nome_fantasia") or "",
+                "uf": c.get("uf") or "",
+                "municipio": c.get("municipio") or "",
+                "situacao": c.get("descricao_situacao_cadastral") or "",
+                "cnae": c.get("cnae_fiscal_descricao") or "",
+                "cnae_codigo": c.get("cnae_fiscal") or "",
+                "porte": c.get("porte") or "",
+                "capital_social": c.get("capital_social") or 0,
+                "telefone_1": c.get("ddd_telefone_1") or "",
+                "email": c.get("email") or "",
+            }
+
+    linhas = [_linha_unificada(por_cnpj[k]["base"], por_cnpj[k]["li"])
+              for k in ordem]
+    sem_cnpj = sum(1 for l in linhas if not l["tem_cnpj"])
+    nas_duas = sum(1 for l in linhas if len(l["fontes"]) == 2)
+    if so_com_cnpj:
+        linhas = [l for l in linhas if l["tem_cnpj"]]
+
+    return {
+        "status": "ok",
+        "empresas": linhas,
+        "total": len(linhas),
+        "total_receita": base.get("total") or 0,
+        "total_linkedin": total_li,
+        "nas_duas_fontes": nas_duas,
+        "sem_cnpj": sem_cnpj,
+        "registros_cobrados": cobrados,
+        "custo_usd": custo,
+        "linkedin_necessario": False,
+    }
+
+
 @app.post("/api/prospeccao/pessoas")
 async def prospeccao_pessoas(payload: dict = Body(default={})):
     """Busca de decisores. TRÊS CAMADAS, da mais barata para a mais cara.
