@@ -2179,6 +2179,7 @@ async function prospBuscarPessoas() {
     if (!pessoas.length) {
       cnt.textContent = `${totalStr} pessoas (sócios)`;
       out.innerHTML = `<p class="msg">Nenhuma pessoa encontrada com esses filtros.</p>`;
+      ofereceLinkedIn();
       return;
     }
 
@@ -2230,6 +2231,7 @@ async function prospBuscarPessoas() {
           </tbody>
         </table>
       </div>`;
+    ofereceLinkedIn();
   } catch (e) {
     out.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
   } finally {
@@ -5878,3 +5880,104 @@ async function decLiBuscar() {
 }
 
 if (decLiBtn) decLiBtn.addEventListener('click', decLiBuscar);
+
+/* ══════════════════════════════════════════════════════════════════════
+   TERCEIRA CAMADA DE PESSOAS — a paga, e por isso opt-in
+
+   A busca de pessoas tem três camadas, da mais barata para a mais cara:
+   cache do LinkedIn (grátis), sócios da Receita (grátis) e Bright Data
+   (cobra por perfil entregue). O backend só chega na terceira quando o
+   pedido traz `fonte: "brightdata"` — e nenhuma tela mandava isso, então a
+   camada existia e era inalcançável.
+
+   Fica como botão DEPOIS do resultado grátis, e não como opção do filtro,
+   porque essa é a ordem da decisão real: a pessoa busca, vê que faltou, e
+   só então decide pagar. Oferecer antes faria pagar quem não precisava.
+
+   Duas coisas que a camada paga enxerga e as grátis não: quem é gerente
+   contratado (a Receita só conhece SÓCIO) e o e-mail. O preço aparece antes
+   do clique — US$ 0,0025 por perfil, medido.
+   ══════════════════════════════════════════════════════════════════════ */
+async function pessoasNoLinkedIn(quantos) {
+  const out = document.getElementById('prosp-results');
+  const cnt = document.getElementById('pf-count');
+  const antes = out.innerHTML;
+  out.innerHTML = '<div class="info-box"><span class="spinner"></span> '
+    + 'Buscando perfis no LinkedIn…</div>';
+  try {
+    const res = await fetch(`${API}/api/prospeccao/pessoas`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filtros: prospFiltrosPessoa(), limite: quantos, fonte: 'brightdata',
+      }),
+    }).then(r => r.json());
+
+    if (res.status !== 'ok') {
+      out.innerHTML = antes
+        + '<div class="warn-box" style="margin-top:8px">'
+        + esc(res.message || 'Não deu certo.') + '</div>';
+      return;
+    }
+    const ps = res.pessoas || [];
+    if (cnt) {
+      cnt.textContent = ps.length + ' pessoa(s) do LinkedIn';
+    }
+    const linhas = ps.map(p => '<tr>'
+      + '<td>' + esc(p.nome || '') + '</td>'
+      + '<td>' + esc(p.cargo || '—') + '</td>'
+      + '<td>' + esc(p.empresa || '—') + '</td>'
+      + '<td>' + esc(p.cidade || '—') + '</td>'
+      + '<td>' + (p.email ? esc(p.email) : '—') + '</td>'
+      + '<td>' + (p.url ? '<a href="' + esc(p.url) + '" target="_blank" '
+                  + 'rel="noopener">perfil</a>' : '—') + '</td></tr>').join('');
+
+    /* Duas contas separadas de propósito: quantos vieram e quantos EXISTEM
+       com esse filtro. Ver "45 de 1.878" diz que dá para pedir mais; ver só
+       "45" não diz nada. */
+    let nota = ps.length + ' perfil(is) entregue(s)';
+    if (res.total_no_dataset != null) {
+      nota += ' de ' + res.total_no_dataset.toLocaleString('pt-BR')
+            + ' que casam com o filtro';
+    }
+    if (res.novos_no_cache != null) {
+      nota += ' · ' + res.novos_no_cache + ' novo(s) guardado(s) no cache '
+            + '(as próximas buscas por eles saem de graça)';
+    }
+
+    out.innerHTML = (linhas
+      ? '<div class="prosp-table-scroll"><table class="prosp-table"><thead><tr>'
+        + '<th>NOME</th><th>CARGO</th><th>EMPRESA</th><th>CIDADE</th>'
+        + '<th>E-MAIL</th><th>LINKEDIN</th></tr></thead><tbody>'
+        + linhas + '</tbody></table></div>'
+      : '<div class="info-box">Nenhum perfil no LinkedIn com esses filtros.</div>')
+      + '<p class="pf-advanced-hint" style="margin-top:6px">' + nota + '</p>';
+  } catch (e) {
+    out.innerHTML = antes
+      + '<div class="warn-box" style="margin-top:8px">Não consegui falar com o servidor.</div>';
+  }
+}
+
+/* Chamado no fim da busca grátis: acrescenta a oferta sem mexer no que já
+   está na tela. */
+function ofereceLinkedIn() {
+  const out = document.getElementById('prosp-results');
+  if (!out || document.getElementById('pf-pessoas-li')) return;
+  const n = 25;
+  const box = document.createElement('div');
+  box.className = 'info-box';
+  box.style.marginTop = '10px';
+  box.innerHTML =
+    '<b>Faltou gente?</b> Estes vieram das bases grátis — cache do LinkedIn e '
+    + 'sócios da Receita. A Receita só conhece quem é <i>sócio</i>: gerente e '
+    + 'diretor contratados não aparecem nela.'
+    + '<div style="margin-top:6px">'
+    + '<button type="button" id="pf-pessoas-li" class="btn-secondary">'
+    + 'Buscar ' + n + ' no LinkedIn</button>'
+    + ' <span class="pf-advanced-hint">custa US$ '
+    + (n * 0.0025).toFixed(2) + ' — cobra por perfil entregue, não por busca</span>'
+    + '</div>';
+  out.appendChild(box);
+  document.getElementById('pf-pessoas-li')
+    .addEventListener('click', () => pessoasNoLinkedIn(n));
+}
