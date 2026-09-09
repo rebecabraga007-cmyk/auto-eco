@@ -27,6 +27,7 @@ from typing import Any
 import httpx
 
 import cargos
+import funcoes
 import linkedin_cache
 
 CHAVE = os.environ.get("BRIGHTDATA_API_KEY", "").strip()
@@ -817,7 +818,8 @@ async def buscar_por_filtro(pais: str = "BR", empresas: Any = None,
                             cidade: str = "", palavras: Any = None,
                             min_seguidores: int = 0, so_com_foto: bool = False,
                             decisores: bool = False, limite: int = 50,
-                            usuario: str = "") -> dict[str, Any]:
+                            usuario: str = "", departamentos: Any = None,
+                            so_com_email: bool = False) -> dict[str, Any]:
     """Busca no dataset inteiro da Bright Data com os filtros da tela.
 
     Cobra por registro entregue. Devolve `custo_usd` para a tela poder mostrar
@@ -850,6 +852,22 @@ async def buscar_por_filtro(pais: str = "BR", empresas: Any = None,
             condicoes.append(g)
 
     termos_cargo = _l(cargos_termos)
+
+    # DEPARTAMENTO vira termo de `position` na PRÓPRIA consulta, não filtro
+    # nosso depois. Decisão da Rebeca: mais barato e menos preciso.
+    #
+    # Mais barato porque a Bright Data cobra por registro ENTREGUE — filtrando
+    # lá, não se paga por quem não interessa. Menos preciso porque o `or` deles
+    # trava em 4 termos e uma área tem dezenas de radicais: "Comercial/Vendas"
+    # vira `vend, comerci, represent, revend` e perde "closer", "account
+    # executive", "BDR". Quem quiser a cauda longa usa o campo de cargo livre.
+    #
+    # `seniority` e `department` NÃO existem como filtro deles (testado: os
+    # dois dão `unsupported filters`). São classificação nossa sobre `position`,
+    # que tem 96% de cobertura — por isso o caminho é por `position`.
+    for dep in _l(departamentos):
+        termos_cargo += funcoes.termos_para_busca(dep)
+    termos_cargo = list(dict.fromkeys(termos_cargo))
     if termos_cargo:
         condicoes.append(_grupo_or("position", [_norm(t) for t in termos_cargo]))
     elif decisores:
@@ -872,6 +890,11 @@ async def buscar_por_filtro(pais: str = "BR", empresas: Any = None,
                           "value": int(min_seguidores)})
     if so_com_foto:
         condicoes.append({"name": "default_avatar", "operator": "=", "value": False})
+    if so_com_email:
+        # 5,05% dos brasileiros têm (2.181.331), mas a fatia sobe para ~10%
+        # entre decisores e chega a 29% em "head". Filtrar aqui evita pagar
+        # pelos 95% sem e-mail quando é o e-mail que se procura.
+        condicoes.append({"name": "email", "operator": "is_not_null"})
 
     # Sem nenhuma condicao alem do pais, a busca traria 21 milhoes de perfis
     # aleatorios e cobraria por todos. Melhor recusar.

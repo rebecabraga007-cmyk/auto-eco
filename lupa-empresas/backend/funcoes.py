@@ -477,6 +477,72 @@ def casa_escolha(texto, escolhas: list) -> bool:
     return False
 
 
+# Os 23 DEPARTAMENTOS da tela (vocabulário copiado da Datastone, em
+# `cargos.DEPARTAMENTOS`) contra as 17 ÁREAS deste dicionário. São listas
+# diferentes feitas para fins diferentes, e a ponte tem que ser explícita:
+# sem ela, escolher "TI (Tecnologia da Informação)" na tela não produzia termo
+# de busca nenhum e o filtro passava batido, sem erro.
+#
+# Seis departamentos não têm área correspondente e caem para "" de propósito:
+# Consultoria e Imobiliário não são função, são setor; Planejamento, Projetos,
+# Qualidade e P&D atravessam todas as áreas. Forçá-los numa área daria filtro
+# errado com cara de certo.
+DEPARTAMENTO_PARA_AREA = {
+    # As chaves estão como `_norm()` as produz: ele troca / ( ) & , por espaço,
+    # então "Comercial/Vendas" chega aqui como "comercial vendas". Escrever a
+    # chave com a barra fazia metade do mapa nunca casar, em silêncio.
+    "administrativo": "administrativo",
+    "agronegocios": "agro",
+    "atendimento suporte ao cliente": "atendimento",
+    "educacao": "educacao",
+    "engenharia": "engenharia",
+    "logistica suprimentos": "logistica",
+    "manutencao": "producao",
+    "operacoes producao": "producao",
+    "pesquisa desenvolvimento p d": "engenharia",
+    "projetos": "engenharia",
+    "qualidade": "producao",
+    "saude": "saude",
+    "seguranca saude e meio ambiente": "seguranca",
+    "varejo": "vendas",
+    "comercial vendas": "vendas",
+    "financeiro contabil": "financeiro",
+    "ti tecnologia da informacao": "ti",
+    "marketing comunicacao": "marketing",
+    "recursos humanos": "rh",
+}
+
+
+def area_do_departamento(departamento: str) -> str:
+    """Nome do departamento da tela -> chave de área deste dicionário, ou ""."""
+    d = " ".join(_norm(departamento).lower().split())
+    if d in AREAS:
+        return d
+    return DEPARTAMENTO_PARA_AREA.get(d, "")
+
+
+def termos_para_busca(area_ou_departamento: str, teto: int = 4) -> list[str]:
+    """Radicais de uma área, prontos para filtrar `position` na Bright Data.
+
+    ESCOLHA DE CUSTO (decisão da Rebeca): mandar os termos como filtro na
+    consulta é mais barato e menos preciso que puxar tudo e classificar aqui.
+    Mais barato porque a Bright Data cobra por registro ENTREGUE — filtrando
+    lá, só chega quem interessa. Menos preciso porque o `or` deles aceita no
+    máximo 4 termos, e uma área tem dezenas de radicais.
+
+    Então este teto de 4 não é detalhe de implementação: é o filtro inteiro.
+    Os quatro escolhidos são os PRIMEIROS da lista de radicais, que estão em
+    ordem de frequência nos 4.000 cargos reais do cache — "vend" antes de
+    "key account". Perde-se a cauda longa; ganha-se não pagar por ela.
+    """
+    a = area_do_departamento(area_ou_departamento)
+    d = AREAS.get(a)
+    if not d:
+        return []
+    # radicais primeiro (casam por prefixo, pegam flexão); siglas só se sobrar
+    return (d["radicais"] + d["siglas"])[:teto]
+
+
 if __name__ == "__main__":
     # Casos que já falharam de verdade neste projeto.
     CASOS = [
