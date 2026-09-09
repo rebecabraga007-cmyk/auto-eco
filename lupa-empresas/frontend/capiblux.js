@@ -1333,7 +1333,7 @@ function renderProspList() {
       <table class="prosp-table prosp-empresas-table prosp-ds-table">
         <thead><tr>
           <th><input type="checkbox" id="pf-sel-cabecalho" title="Marcar/desmarcar as desta página" /></th>
-          <th>Empresa e sócio</th><th>Cidade</th><th>O que a empresa faz</th><th>Situação</th>
+          <th>Empresa e sócio</th><th>Cidade</th><th>O que a empresa faz</th><th title="Pessoas que se declaram nesta empresa no LinkedIn">Pessoas</th><th>Situação</th>
         </tr></thead>
         <tbody id="prosp-emp-body"></tbody>
       </table>
@@ -1637,19 +1637,38 @@ function renderEmpPage() {
   if (!body) return;
   body.innerHTML = emp.slice(page * perPage, page * perPage + perPage).map((e, k) => {
     const i = page * perPage + k;
-    const nome = e.razao_social || e.nome_fantasia || '—';
+    // Empresa que só existe no LinkedIn não tem razão social — cair no "—"
+    // esconderia justamente a linha nova.
+    const nome = e.razao_social || e.nome_fantasia || e.nome_linkedin || '—';
     const porteBaixo = (e.porte || '').toLowerCase();
     const porteLabel = porteBaixo.includes('micro') ? 'micro empresa' : porteBaixo.includes('pequeno') ? 'pequeno porte' : (e.porte || '');
+    /* SEM CNPJ NÃO DÁ PARA MONTAR LISTA, e isso não é opinião: sócio vem do
+       QSA e decisor vem da Assertiva, os dois indexados por CNPJ. Deixar a
+       linha selecionável levaria a uma consulta com CNPJ vazio e a uma
+       empresa que some da planilha sem explicação. Então o checkbox trava e
+       diz por quê — a linha continua visível, que é o pedido. */
+    const semCnpj = e.tem_cnpj === false || !onlyDigits(e.cnpj || '');
+    const fontes = e.fontes || [];
+    const selo = !fontes.length ? ''
+      : fontes.length === 2
+        ? '<span class="prosp-co-fonte" title="Achada na Receita e no LinkedIn — as duas descrevem a mesma empresa">Receita + LinkedIn</span>'
+        : (fontes[0] === 'linkedin'
+           ? '<span class="prosp-co-fonte" title="Só o LinkedIn conhece esta empresa">LinkedIn</span>'
+           : '');
+    const pessoas = (e.funcionarios_linkedin != null)
+      ? Number(e.funcionarios_linkedin).toLocaleString('pt-BR')
+      : '—';
     return `
-      <tr>
-        <td><input type="checkbox" class="prosp-co-check" data-i="${i}"${prospState.selecionadas && prospState.selecionadas.has(i) ? ' checked' : ''} /></td>
+      <tr${semCnpj ? ' style="opacity:.72"' : ''}>
+        <td><input type="checkbox" class="prosp-co-check" data-i="${i}"${semCnpj ? ' disabled title="Sem CNPJ não dá para buscar sócio nem decisor — os dois são indexados por CNPJ. Esta linha serve para consulta, não para montar lista."' : ''}${prospState.selecionadas && prospState.selecionadas.has(i) ? ' checked' : ''} /></td>
         <td>
-          <div class="prosp-co-name">${esc(nome)}</div>
-          <div class="prosp-co-meta mono" title="${esc(fmtCnpj(e.cnpj))}">${esc(fmtCnpj(e.cnpj))}${porteLabel ? ' · ' + esc(porteLabel) : ''}</div>
+          <div class="prosp-co-name">${esc(nome)}${selo}</div>
+          <div class="prosp-co-meta mono" title="${esc(fmtCnpj(e.cnpj))}">${semCnpj ? '<span title="O LinkedIn não informa CNPJ; ele é deduzido pelo domínio do site e aqui não deu para decidir">sem CNPJ</span>' : esc(fmtCnpj(e.cnpj))}${porteLabel ? ' · ' + esc(porteLabel) : ''}</div>
           ${e.nome_fantasia && e.nome_fantasia !== e.razao_social ? `<div class="prosp-co-fantasia">${esc(e.nome_fantasia)}</div>` : ''}
         </td>
         <td>${[e.municipio, e.uf].filter(Boolean).length ? esc([e.municipio, e.uf].filter(Boolean).join(', ')) : '—'}</td>
-        <td class="prosp-co-cnae" title="${esc(e.cnae || '')}">${e.cnae ? esc(e.cnae) : '—'}</td>
+        <td class="prosp-co-cnae" title="${esc(e.cnae || e.setor_linkedin || '')}">${esc(e.cnae || e.setor_linkedin || '—')}</td>
+        <td class="mono" title="Pessoas que se declaram nesta empresa no LinkedIn">${pessoas}</td>
         <td>${badgeSit(e.situacao)}</td>
       </tr>`;
   }).join('');
@@ -1775,6 +1794,17 @@ async function prospMontar() {
   tick();
 
   async function processa(emp) {
+    // Segunda tranca, e ela precisa existir mesmo com o checkbox travado: a
+    // seleção também é feita por "aplicar N primeiras" e por "marcar todas",
+    // que não passam pelo checkbox. Sem CNPJ a URL viraria /api/company//leads
+    // e a empresa sumiria da planilha sem ninguém saber por quê.
+    if (!onlyDigits(emp && emp.cnpj || '')) {
+      puladasSemTel.push({
+        nome: emp?.razao_social || emp?.nome_linkedin || 'empresa sem CNPJ',
+        motivo: 'sem CNPJ — sócio e decisor são indexados por CNPJ',
+      });
+      return { aceita: false };
+    }
     try {
       const r = await fetch(`${API}/api/company/${onlyDigits(emp.cnpj)}/leads?decisores=${decisores}&modo_tel=${modoTel}&max_tel=${maxTel}&fonte_tel=${fonteTel}&socios_modo=${sociosModo}&max_socios=${maxSocios}&modelo_id=${encodeURIComponent(modeloId)}&decisores_fonte=${decFonte}&decisores_cargos=${encodeURIComponent(decCargos)}&max_decisores=${maxDec}&pular_sem_decisor=${pularSemDec}&fallback_hierarquia=${fallbackN}&apenas_cargo=${apenasCargo}&so_com_telefone=${soComTel}`).then(x => x.json());
       if (r.status !== 'ok') return { aceita: false };
@@ -1788,7 +1818,7 @@ async function prospMontar() {
                                    || emp.cnpj, motivo: r.motivo_pulo || '' });
         return { aceita: false };
       }
-      const linhas = leadsToRows(r.empresa, r.contatos);
+      const linhas = leadsToRows(r.empresa, r.contatos, emp);
       rowsAcc.push(...linhas);
       leadsAcc.push({ empresa: r.empresa, contatos: r.contatos });
       return { aceita: true };
@@ -1870,10 +1900,26 @@ async function prospMontar() {
       const aviso = document.createElement('div');
       aviso.className = 'info-box';
       aviso.style.marginTop = '10px';
-      aviso.innerHTML = '<b>' + puladasSemTel.length + ' empresa(s) fora da planilha'
-        + '</b> porque ninguem nela voltou com telefone. Elas foram consultadas e '
-        + 'cobradas — o filtro limpa a planilha, nao devolve o custo. Para trazer '
-        + 'mesmo assim, desmarque <i>So quem tem telefone</i>.'
+      /* Dois motivos diferentes caem aqui e a explicação tem que servir aos
+         dois, senão a nota mente sobre metade das linhas: empresa sem
+         telefone (foi consultada e cobrada) e empresa sem CNPJ (não chegou a
+         ser consultada, porque não havia como). */
+      const semCnpjN = puladasSemTel.filter(x => /sem CNPJ/.test(x.motivo || '')).length;
+      const semTelN = puladasSemTel.length - semCnpjN;
+      const partes = [];
+      if (semTelN) {
+        partes.push('<b>' + semTelN + '</b> porque ninguém nela voltou com '
+          + 'telefone — essas foram consultadas e cobradas, o filtro limpa a '
+          + 'planilha e não devolve o custo (desmarque <i>Só quem tem '
+          + 'telefone</i> para trazê-las)');
+      }
+      if (semCnpjN) {
+        partes.push('<b>' + semCnpjN + '</b> por não ter CNPJ — sócio e decisor '
+          + 'são indexados por CNPJ, então não havia o que consultar; essas '
+          + 'não custaram nada');
+      }
+      aviso.innerHTML = '<b>' + puladasSemTel.length + ' empresa(s) fora da '
+        + 'planilha:</b> ' + partes.join('; ') + '.'
         + '<ul style="margin:6px 0 0 18px">' + lista + resto + '</ul>';
       wrap2.appendChild(aviso);
     }
@@ -1940,11 +1986,20 @@ function catLabel(cat) {
 }
 
 // Uma linha por telefone de cada contato (contatos sem telefone geram 1 linha em branco)
-function leadsToRows(empresa, contatos) {
+function leadsToRows(empresa, contatos, doLinkedIn) {
+  /* `doLinkedIn` é a linha da lista unificada. A resposta de /leads vem da
+     Receita e não conhece nada do LinkedIn — sem isso a planilha sairia sem
+     as colunas que motivaram fundir as duas bases, e a coluna "Funcionarios"
+     do modelo de exportação continuaria em branco como sempre esteve. */
+  const li = doLinkedIn || {};
   const base = {
     razao_social: empresa.razao_social, nome_fantasia: empresa.nome_fantasia,
     cnpj: fmtCnpj(empresa.cnpj), municipio: empresa.municipio, uf: empresa.uf,
     porte: empresa.porte, cnae: empresa.cnae, situacao: empresa.situacao,
+    funcionarios: (li.funcionarios_linkedin != null) ? li.funcionarios_linkedin : '',
+    site: li.site || '',
+    linkedin_empresa: li.url_linkedin || '',
+    tipo_organizacao: li.tipo_organizacao || '',
   };
   const rows = [];
   (contatos || []).forEach(c => {

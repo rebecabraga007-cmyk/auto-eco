@@ -582,6 +582,19 @@ body {
 .prosp-co-name { font-weight: 600; color: var(--gray-800); }
 .prosp-co-meta { font-size: .78rem; color: var(--gray-500); margin-top: 2px; }
 .prosp-co-fantasia { font-size: .74rem; color: var(--gray-500); margin-top: 1px; }
+
+/* Selo de origem da linha na lista unificada. Discreto de propósito: é
+   procedência, não destaque — quem lê a tabela está atrás da empresa, e só
+   olha a origem quando ela importa. */
+.prosp-co-fonte {
+  display: inline-block; margin-left: 6px; padding: 1px 6px;
+  border-radius: 9px; font-size: .66rem; font-weight: 600;
+  letter-spacing: .02em; vertical-align: middle;
+  color: var(--gray-600, #4b5563);
+  background: var(--gray-100, #f3f4f6);
+  border: 1px solid var(--gray-200, #e5e7eb);
+}
+
 .prosp-co-cnae { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .prosp-empresas-table th:first-child, .prosp-empresas-table td:first-child { width: 28px; }
 
