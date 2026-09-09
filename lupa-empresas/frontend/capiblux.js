@@ -1407,6 +1407,10 @@ function initDecisoresBox() {
   };
   estrito?.addEventListener('change', sincronizaEstrito);
   document.getElementById('pf-testar-cobertura')?.addEventListener('click', testarCobertura);
+  // Aqui e nao no fim do arquivo: este painel e injetado por JS, entao no
+  // carregamento da pagina o botao ainda nao existe. Ligar la fora pegava
+  // `null` e o botao nunca respondia -- so a tela provou isso.
+  document.getElementById('pf-dec-linkedin')?.addEventListener('click', decLiBuscar);
   ['pf-decfonte', 'pf-maxdec', 'pf-qtd', 'pf-continuar', 'pf-max-tentativas', 'pf-pular-sem-dec'].forEach(id => {
     document.getElementById(id)?.addEventListener('input', atualizar);
     document.getElementById(id)?.addEventListener('change', atualizar);
@@ -5775,8 +5779,6 @@ if (bdEmpBtn) bdEmpBtn.addEventListener('click', bdEmpBuscar);
    Custa: cada perfil entregue pela Bright Data é cobrado, e o telefone de
    quem fecha CPF também. Por isso tem teto de gasto explícito na tela.
    ══════════════════════════════════════════════════════════════════════ */
-const decLiBtn = document.getElementById('pf-dec-linkedin');
-
 function decLiEmpresaAlvo() {
   /* Prioridade: empresa marcada na tabela > primeira da lista > o que estiver
      digitado. Marcar uma e clicar é o gesto natural; sem marcar nenhuma, a
@@ -5802,7 +5804,8 @@ async function decLiBuscar() {
     return;
   }
   const area = document.getElementById('prosp-results');
-  decLiBtn.disabled = true;
+  const decLiBtn = document.getElementById('pf-dec-linkedin');
+  if (decLiBtn) decLiBtn.disabled = true;
   if (area) {
     area.innerHTML = '<div class="info-box"><span class="spinner"></span> '
       + 'Procurando decisores de <b>' + esc(alvo.nome || alvo.cnpj)
@@ -5875,11 +5878,9 @@ async function decLiBuscar() {
   } catch (e) {
     if (area) area.innerHTML = '<div class="warn-box">Não consegui falar com o servidor.</div>';
   } finally {
-    decLiBtn.disabled = false;
+    if (decLiBtn) decLiBtn.disabled = false;
   }
 }
-
-if (decLiBtn) decLiBtn.addEventListener('click', decLiBuscar);
 
 /* ══════════════════════════════════════════════════════════════════════
    TERCEIRA CAMADA DE PESSOAS — a paga, e por isso opt-in
