@@ -90,6 +90,17 @@
     const mc = document.getElementById('menu-config'); if (mc) mc.hidden = !isAdmin;
     const na = document.getElementById('nav-admin'); if (na) na.hidden = !isAdmin;
     const nal = document.getElementById('nav-admin-label'); if (nal) nal.hidden = !isAdmin;
+    // Chamados é leitura de relato de outras pessoas: só admin vê o botão, e
+    // o backend recusa de novo por conta própria — esconder no front é
+    // conveniência, não é a tranca.
+    const nc = document.getElementById('nav-chamados'); if (nc) nc.hidden = !isAdmin;
+    if (isAdmin && typeof chamadosBadge === 'function') {
+      chamadosBadge();
+      // A bolinha é o ponto todo: ela precisa aparecer sem ninguém abrir a
+      // aba. Dois minutos é frequente o bastante para o admin perceber no
+      // mesmo expediente e raro o bastante para não pesar.
+      setInterval(chamadosBadge, 120000);
+    }
     // Dossiê é só de admin: some do menu e os botões de PDF espalhados pelas
     // outras abas ficam escondidos por CSS (o backend também recusa, então
     // esconder aqui é conveniência, não a trava de verdade).

@@ -49,6 +49,19 @@
 
     <div class="nav-group-label" id="nav-admin-label" hidden>Administração</div>
     <button class="nav-btn" data-tab="admin" id="nav-admin" hidden>Painel administrativo<span class="nav-btn-sub">navegação e custo de todos</span></button>
+    <!-- A bolinha vermelha fica no BOTÃO e não dentro da aba: o objetivo é
+         ser vista sem abrir nada. -->
+    <button class="nav-btn" data-tab="chamados" id="nav-chamados" hidden>Chamados<span class="nav-btn-sub">bugs e pedidos de quem usa</span><span class="nav-badge" id="nav-chamados-badge" hidden>0</span></button>
+
+    <!-- Reportar fica no PÉ da navegação, separado por uma linha: não é uma
+         ferramenta como as de cima, é o canal para falar sobre elas. E fica
+         em toda tela porque o momento de reportar é o momento em que a
+         pessoa esbarrou no problema — mandar procurar um formulário em outro
+         lugar é onde o relato se perde. -->
+    <div class="nav-sep"></div>
+    <button class="nav-btn nav-btn-report" id="nav-reportar" type="button">
+      🐞 Reportar bug ou melhoria<span class="nav-btn-sub">o que quebrou, o que falta</span>
+    </button>
   </nav>
 
   <div class="sidebar-user" id="user-menu">
@@ -756,6 +769,68 @@
         <div id="prosp-results" class="results-area"></div>
       </div>
     </div>
+  </section>
+
+  <!-- ══ REPORTAR BUG / MELHORIA ══ -->
+  <div id="reportar-fundo" class="modal-fundo" hidden>
+    <div class="modal-caixa" role="dialog" aria-labelledby="reportar-titulo">
+      <div class="modal-topo">
+        <h3 id="reportar-titulo">Reportar bug ou pedir melhoria</h3>
+        <button type="button" class="modal-x" id="reportar-fechar" aria-label="Fechar">×</button>
+      </div>
+
+      <div class="modal-corpo">
+        <div class="filter-row" id="reportar-tipo" style="margin:0 0 10px">
+          <button type="button" class="pf-cargo active" data-tipo="bug">🐞 Algo está errado</button>
+          <button type="button" class="pf-cargo" data-tipo="melhoria">💡 Queria que tivesse</button>
+        </div>
+
+        <div class="pf-field">
+          <label for="reportar-titulo-campo">Em uma linha, o que é?</label>
+          <input id="reportar-titulo-campo" type="text" maxlength="160"
+                 placeholder="Ex.: o filtro de CNAE não muda o resultado" autocomplete="off" />
+        </div>
+
+        <div class="pf-field">
+          <label for="reportar-desc">Conte com suas palavras</label>
+          <textarea id="reportar-desc" rows="5"
+            placeholder="O que você fez, o que esperava e o que aconteceu. Não precisa ser técnico."></textarea>
+        </div>
+
+        <div class="pf-field">
+          <label for="reportar-arquivos">Print da tela <span class="pf-advanced-hint" style="display:inline">— opcional, mas é o que mais ajuda</span></label>
+          <input id="reportar-arquivos" type="file" accept="image/*" multiple />
+          <div id="reportar-previas" class="report-previas"></div>
+          <div class="pf-advanced-hint">Pode colar direto com Ctrl+V. Até 4 imagens, 6 MB cada.</div>
+        </div>
+
+        <!-- Mostrado, e não escondido: a pessoa tem o direito de saber o que
+             está indo junto com o relato dela. -->
+        <div class="pf-advanced-hint" id="reportar-contexto"></div>
+      </div>
+
+      <div class="modal-pe">
+        <span id="reportar-aviso" class="pf-advanced-hint"></span>
+        <button type="button" class="btn-secondary" id="reportar-cancelar">Cancelar</button>
+        <button type="button" class="btn-primary" id="reportar-enviar">Enviar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ CHAMADOS (admin) ══ -->
+  <section id="tab-chamados" class="tab-section">
+    <div class="module-header">
+      <div class="module-overline">Administração</div>
+      <h2 class="module-title">Chamados</h2>
+      <p class="module-sub">O que a operação reportou, com a aba e os filtros de quando aconteceu.</p>
+    </div>
+    <div class="filter-row" id="chamados-filtro" style="margin-bottom:10px">
+      <button type="button" class="pf-cargo active" data-f="">Todos</button>
+      <button type="button" class="pf-cargo" data-f="aberto">Abertos</button>
+      <button type="button" class="pf-cargo" data-f="visto">Em análise</button>
+      <button type="button" class="pf-cargo" data-f="resolvido">Resolvidos</button>
+    </div>
+    <div id="chamados-lista" class="results-area"></div>
   </section>
 
   <!-- ══ MÓDULO TELEFONE REVERSO ══ -->

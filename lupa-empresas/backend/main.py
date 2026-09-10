@@ -23,7 +23,7 @@ import re
 import sys
 import uuid
 
-from fastapi import Body, FastAPI, File, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -51,6 +51,7 @@ import empresas_li
 import linkedin_cache
 import rodadas
 import cargos
+import chamados
 import funcoes
 import identidade
 import funil
@@ -3241,6 +3242,92 @@ async def enrich_export(payload: dict = Body(default={})):
 
 def _is_admin(request: Request) -> bool:
     return (request.headers.get("x-user-role") or "").lower() == "admin"
+
+
+# ---------------------------------------------------------------------
+# CHAMADOS — bug e melhoria reportados por quem usa
+# ---------------------------------------------------------------------
+@app.post("/api/chamados")
+async def chamado_abrir(request: Request,
+                        tipo: str = Form("bug"),
+                        titulo: str = Form(""),
+                        descricao: str = Form(""),
+                        aba: str = Form(""),
+                        contexto: str = Form(""),
+                        anexos: list[UploadFile] = File(default=[])):
+    """Abre um chamado. QUALQUER usuário logado — não é admin.
+
+    É `multipart` e não JSON por causa do print: mandar imagem em JSON exige
+    base64, que infla 33% e ainda passa pela memória do processo inteira
+    antes de virar arquivo.
+
+    `aba` e `contexto` vêm da tela e valem tanto quanto o texto: "não
+    funciona" com a aba e os filtros junto é reproduzível; sem eles, alguém
+    vai ter que adivinhar onde aquilo acontecia.
+    """
+    guardados = []
+    for arq in (anexos or [])[:chamados.MAX_ANEXOS]:
+        try:
+            conteudo = await arq.read()
+        except Exception:
+            continue
+        nome = chamados.salvar_anexo(arq.filename or "", conteudo,
+                                     arq.content_type or "")
+        if nome:
+            guardados.append(nome)
+    r = chamados.abrir(
+        tipo=tipo, titulo=titulo, descricao=descricao,
+        usuario=(request.headers.get("x-user-email") or ""),
+        aba=aba, contexto=contexto, anexos=guardados)
+    if r.get("status") == "ok":
+        r["anexos_recebidos"] = len(guardados)
+        # Diz quantos foram RECUSADOS. Print que some sem aviso faz a pessoa
+        # achar que mandou e o admin achar que ela não mandou.
+        r["anexos_recusados"] = len(anexos or []) - len(guardados)
+    return r
+
+
+@app.get("/api/chamados")
+async def chamados_listar(request: Request, status: str = "", limite: int = 100):
+    """Lista os chamados. SÓ ADMIN — são relatos de outras pessoas."""
+    if not _is_admin(request):
+        return {"status": "forbidden", "chamados": [], "novos": 0}
+    return chamados.listar(status=status, limite=min(int(limite or 100), 500))
+
+
+@app.get("/api/chamados/novos")
+async def chamados_novos(request: Request):
+    """Só a contagem, para a bolinha vermelha do menu.
+
+    Endpoint próprio porque a tela consulta isto de tempos em tempos: trazer
+    a lista inteira para mostrar um número seria carregar todos os chamados
+    a cada ciclo.
+    """
+    if not _is_admin(request):
+        return {"status": "ok", "novos": 0}
+    return {"status": "ok", "novos": chamados.contar_novos()}
+
+
+@app.post("/api/chamados/{ident}/status")
+async def chamado_status(ident: str, request: Request,
+                         payload: dict = Body(default={})):
+    if not _is_admin(request):
+        return {"status": "forbidden"}
+    return chamados.marcar(ident, str(payload.get("status") or ""),
+                           str(payload.get("resposta") or ""))
+
+
+@app.get("/api/chamados/anexo/{nome}")
+async def chamado_anexo(nome: str, request: Request):
+    """Serve um print. SÓ ADMIN, e o nome é validado contra o formato que
+    `chamados.salvar_anexo` gera — nome de arquivo vindo da URL é caminho
+    vindo de fora."""
+    if not _is_admin(request):
+        return JSONResponse({"status": "forbidden"}, status_code=403)
+    caminho = chamados.caminho_anexo(nome)
+    if not caminho:
+        return JSONResponse({"status": "not_found"}, status_code=404)
+    return FileResponse(caminho)
 
 
 @app.post("/api/navlog")

@@ -6166,3 +6166,240 @@ function avisaFiltrosPessoa(res) {
     if (t && t.includes(',')) { e.preventDefault(); adiciona(t); }
   });
 })();
+
+/* ══════════════════════════════════════════════════════════════════════
+   REPORTAR BUG / MELHORIA  +  CHAMADOS DO ADMIN
+
+   O relato chega hoje por WhatsApp, no meio de outra conversa, sem print e
+   sem contexto — e metade do trabalho de consertar é descobrir em que tela
+   aquilo acontecia. Por isso o formulário manda junto a ABA aberta e os
+   FILTROS que estavam na tela, e mostra isso para a pessoa antes de enviar:
+   ela tem o direito de saber o que vai junto com o relato dela.
+
+   O botão vive no pé da navegação, visível de qualquer tela, porque o
+   momento de reportar é o momento em que a pessoa esbarrou no problema.
+   Mandar procurar um formulário em outro lugar é onde o relato se perde.
+   ══════════════════════════════════════════════════════════════════════ */
+const repFundo = document.getElementById('reportar-fundo');
+let repTipo = 'bug';
+let repArquivos = [];
+
+function repAbaAtual() {
+  const b = document.querySelector('.nav-btn.active');
+  if (!b) return '';
+  /* Só o primeiro nó de texto. `textContent` cola o rótulo com o subtítulo
+     do botão e sai "Iníciopor onde começar hoje" — e esse nome ia parar no
+     chamado, que é justamente o campo que serve para achar a tela. */
+  const primeiro = [...b.childNodes]
+    .find(n => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
+  return (primeiro ? primeiro.textContent : b.textContent).trim().slice(0, 60);
+}
+
+/* O contexto é o que transforma "não funciona" em caso reproduzível. Vai só
+   o que a pessoa preencheu — filtro vazio não diz nada e só faria volume. */
+function repContexto() {
+  const dados = {};
+  try {
+    if (typeof prospFiltros === 'function' &&
+        document.getElementById('tab-prospec')?.classList.contains('active')) {
+      const f = (prospState && prospState.perfil === 'pessoa' && typeof prospFiltrosPessoa === 'function')
+        ? prospFiltrosPessoa() : prospFiltros();
+      Object.entries(f).forEach(([k, v]) => {
+        if (v && !(Array.isArray(v) && !v.length)) dados[k] = v;
+      });
+    }
+  } catch (e) { /* contexto é ajuda, não requisito: sem ele o relato ainda vale */ }
+  return dados;
+}
+
+function repDesenhaPrevias() {
+  const alvo = document.getElementById('reportar-previas');
+  if (!alvo) return;
+  alvo.innerHTML = '';
+  repArquivos.forEach((f, i) => {
+    const div = document.createElement('div');
+    div.className = 'report-previa';
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(f);
+    img.alt = f.name || 'print';
+    const x = document.createElement('button');
+    x.type = 'button'; x.textContent = '×'; x.title = 'Tirar este print';
+    x.addEventListener('click', () => { repArquivos.splice(i, 1); repDesenhaPrevias(); });
+    div.append(img, x);
+    alvo.appendChild(div);
+  });
+}
+
+function repAdicionaArquivos(lista) {
+  [...(lista || [])].forEach(f => {
+    if (!f.type || !f.type.startsWith('image/')) return;
+    // Recusa na hora e com motivo. Silenciar aqui faria o print sumir e a
+    // pessoa acreditar que mandou.
+    if (f.size > 6 * 1024 * 1024) {
+      document.getElementById('reportar-aviso').textContent =
+        `"${f.name}" tem mais de 6 MB e não foi anexado.`;
+      return;
+    }
+    if (repArquivos.length >= 4) return;
+    repArquivos.push(f);
+  });
+  repDesenhaPrevias();
+}
+
+function repAbrir() {
+  if (!repFundo) return;
+  repArquivos = [];
+  repDesenhaPrevias();
+  document.getElementById('reportar-titulo-campo').value = '';
+  document.getElementById('reportar-desc').value = '';
+  document.getElementById('reportar-aviso').textContent = '';
+  const ctx = repContexto();
+  const chaves = Object.keys(ctx);
+  document.getElementById('reportar-contexto').textContent = chaves.length
+    ? `Vai junto: aba "${repAbaAtual()}" e ${chaves.length} filtro(s) — ${chaves.join(', ')}.`
+    : `Vai junto: a aba "${repAbaAtual()}".`;
+  repFundo.hidden = false;
+  document.getElementById('reportar-titulo-campo').focus();
+}
+
+function repFechar() { if (repFundo) repFundo.hidden = true; }
+
+document.getElementById('nav-reportar')?.addEventListener('click', repAbrir);
+document.getElementById('reportar-fechar')?.addEventListener('click', repFechar);
+document.getElementById('reportar-cancelar')?.addEventListener('click', repFechar);
+repFundo?.addEventListener('click', e => { if (e.target === repFundo) repFechar(); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && repFundo && !repFundo.hidden) repFechar();
+});
+document.getElementById('reportar-arquivos')?.addEventListener('change', e =>
+  repAdicionaArquivos(e.target.files));
+/* Ctrl+V com print na área de transferência: é assim que a pessoa tira print
+   no Windows (Win+Shift+S) e é o caminho mais curto do problema ao relato. */
+document.addEventListener('paste', e => {
+  if (!repFundo || repFundo.hidden) return;
+  const itens = [...(e.clipboardData?.items || [])]
+    .filter(i => i.type && i.type.startsWith('image/'))
+    .map(i => i.getAsFile()).filter(Boolean);
+  if (itens.length) { e.preventDefault(); repAdicionaArquivos(itens); }
+});
+document.querySelectorAll('#reportar-tipo .pf-cargo').forEach(b =>
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#reportar-tipo .pf-cargo')
+      .forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    repTipo = b.dataset.tipo;
+  }));
+
+document.getElementById('reportar-enviar')?.addEventListener('click', async () => {
+  const btn = document.getElementById('reportar-enviar');
+  const aviso = document.getElementById('reportar-aviso');
+  const titulo = document.getElementById('reportar-titulo-campo').value.trim();
+  const desc = document.getElementById('reportar-desc').value.trim();
+  if (!titulo && !desc) { aviso.textContent = 'Escreva pelo menos uma linha.'; return; }
+  btn.disabled = true; aviso.textContent = 'Enviando…';
+  try {
+    const fd = new FormData();
+    fd.append('tipo', repTipo);
+    fd.append('titulo', titulo);
+    fd.append('descricao', desc);
+    fd.append('aba', repAbaAtual());
+    fd.append('contexto', JSON.stringify(repContexto()));
+    repArquivos.forEach(f => fd.append('anexos', f, f.name || 'print.png'));
+    const j = await fetch(`${API}/api/chamados`, { method: 'POST', body: fd })
+      .then(r => r.json());
+    if (j.status !== 'ok') { aviso.textContent = j.message || 'Não consegui enviar.'; return; }
+    aviso.textContent = '';
+    repFechar();
+    const recusados = j.anexos_recusados || 0;
+    alert('Recebido, obrigado! ' + (recusados
+      ? `(${recusados} imagem(ns) não foram aceitas — formato ou tamanho.)`
+      : 'Vamos olhar.'));
+  } catch (e) {
+    aviso.textContent = 'Não consegui falar com o servidor.';
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/* ── lado do admin ─────────────────────────────────────────────────── */
+async function chamadosBadge() {
+  const badge = document.getElementById('nav-chamados-badge');
+  if (!badge) return;
+  try {
+    const j = await fetch(`${API}/api/chamados/novos`).then(r => r.json());
+    const n = j.novos || 0;
+    badge.textContent = n > 99 ? '99+' : String(n);
+    badge.hidden = !n;
+  } catch (e) { badge.hidden = true; }
+}
+
+let chamadosFiltro = '';
+async function chamadosCarregar() {
+  const alvo = document.getElementById('chamados-lista');
+  if (!alvo) return;
+  alvo.innerHTML = '<div class="info-box">Carregando…</div>';
+  try {
+    const j = await fetch(`${API}/api/chamados?status=${chamadosFiltro}`)
+      .then(r => r.json());
+    if (j.status === 'forbidden') {
+      alvo.innerHTML = '<div class="warn-box">Só administradores.</div>'; return;
+    }
+    const cs = j.chamados || [];
+    if (!cs.length) { alvo.innerHTML = '<div class="info-box">Nenhum chamado.</div>'; return; }
+    alvo.innerHTML = cs.map(c => {
+      const quando = new Date((c.criado_em || 0) * 1000)
+        .toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+      let ctx = '';
+      try {
+        const o = JSON.parse(c.contexto || '{}');
+        if (Object.keys(o).length) {
+          ctx = `<div class="chamado-ctx">${esc(Object.entries(o)
+            .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join('/') : v}`)
+            .join('  ·  '))}</div>`;
+        }
+      } catch (e) { /* contexto ilegível não impede ler o chamado */ }
+      const imgs = (c.anexos || []).map(a =>
+        `<a href="${API}/api/chamados/anexo/${esc(a)}" target="_blank" rel="noopener">
+           <img src="${API}/api/chamados/anexo/${esc(a)}" alt="print" /></a>`).join('');
+      return `
+        <div class="chamado-card ${esc(c.status_chamado)}">
+          <div><b>${c.tipo === 'bug' ? '🐞' : '💡'} ${esc(c.titulo)}</b></div>
+          <div class="chamado-meta">${esc(c.usuario || 'sem identificação')} ·
+            ${esc(quando)}${c.aba ? ' · aba ' + esc(c.aba) : ''} ·
+            <b>${esc(c.status_chamado)}</b></div>
+          ${c.descricao ? `<p style="margin:8px 0 0;white-space:pre-wrap">${esc(c.descricao)}</p>` : ''}
+          ${ctx}
+          ${imgs ? `<div class="chamado-anexos">${imgs}</div>` : ''}
+          <div class="filter-row" style="margin:10px 0 0">
+            <button type="button" class="btn-secondary ch-acao" data-id="${esc(c.id)}" data-s="visto">Em análise</button>
+            <button type="button" class="btn-secondary ch-acao" data-id="${esc(c.id)}" data-s="resolvido">Resolvido</button>
+            <button type="button" class="btn-secondary ch-acao" data-id="${esc(c.id)}" data-s="aberto">Reabrir</button>
+          </div>
+        </div>`;
+    }).join('');
+    alvo.querySelectorAll('.ch-acao').forEach(b =>
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        await fetch(`${API}/api/chamados/${b.dataset.id}/status`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: b.dataset.s }),
+        });
+        await chamadosCarregar();
+        chamadosBadge();
+      }));
+  } catch (e) {
+    alvo.innerHTML = '<div class="warn-box">Não consegui carregar.</div>';
+  }
+}
+
+document.querySelectorAll('#chamados-filtro .pf-cargo').forEach(b =>
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#chamados-filtro .pf-cargo')
+      .forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    chamadosFiltro = b.dataset.f || '';
+    chamadosCarregar();
+  }));
+
+document.querySelector('[data-tab="chamados"]')
+  ?.addEventListener('click', chamadosCarregar);
