@@ -49,6 +49,7 @@ import workapi
 import brightdata_pessoas
 import empresas_li
 import linkedin_cache
+import rodadas
 import cargos
 import funcoes
 import identidade
@@ -1583,8 +1584,16 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
     # no que pediu e liga para a empresa errada.
     base = {"empresas": [], "total": 0}
     receita_comanda = local is None and not (pedidos_li and quer_linkedin)
+    # ROTACAO. A mesma busca repetida continua de onde parou, em vez de
+    # devolver as mesmas empresas -- ver rodadas.py sobre por que avancar e
+    # melhor que embaralhar. Só quando a tela não pediu uma página específica.
+    giro = rodadas.ler(filtros) if not offset else {"offset": 0, "cursor": None}
     if _cnpj_local() and receita_comanda:
-        base = cnpj_lookup.search(filtros, limite=limite, offset=offset)
+        base = cnpj_lookup.search(filtros, limite=limite,
+                                  offset=offset or giro["offset"])
+        if not offset:
+            trazidas = len(base.get("empresas") or [])
+            rodadas.avancar(filtros, trazidas, acabou=(trazidas < limite))
     por_cnpj: dict[str, dict] = {}
     ordem: list[str] = []
     for e in base.get("empresas") or []:
@@ -1682,6 +1691,10 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
                 cidade=str(filtros.get("municipio") or filtros.get("cidade") or ""),
                 so_com_cnpj=False,          # a fusão decide depois, não a fonte
                 limite=min(int(payload.get("limite_linkedin") or 25), 100),
+                # CURSOR GUARDADO. Sem ele, repetir a busca traz os MESMOS
+                # primeiros N registros e cobra por eles de novo -- o pedido
+                # de "trazer empresas novas" produziria o oposto.
+                cursor=giro.get("cursor"),
                 usuario=(request.headers.get("x-user-email") or ""))
         if r.get("status") != "ok":
             # A Receita já respondeu: devolve o que tem em vez de perder tudo.
@@ -1695,6 +1708,8 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
         cobrados = int(r.get("registros_cobrados") or 0)
         custo = float(r.get("custo_usd") or 0)
         total_li = r.get("total_no_dataset")
+        if not offset and r.get("cursor"):
+            rodadas.avancar(filtros, 0, cursor=r.get("cursor"))
         for e in r.get("empresas") or []:
             d = _digitos(e.get("cnpj"))
             if d and d in por_cnpj:

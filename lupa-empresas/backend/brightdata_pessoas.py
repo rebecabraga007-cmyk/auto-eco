@@ -1101,7 +1101,7 @@ async def buscar_empresas_por_filtro(
         pais: str = "BR", nomes: Any = None, sites: Any = None,
         porte_min: int = 0, tipos: Any = None, fundada_apos: int = 0,
         setores: Any = None, so_com_cnpj: bool = False,
-        ufs: Any = None, cidade: str = "",
+        ufs: Any = None, cidade: str = "", cursor: Any = None,
         limite: int = 25, usuario: str = "") -> dict[str, Any]:
     """Busca de EMPRESAS no dataset da Bright Data.
 
@@ -1174,6 +1174,12 @@ async def buscar_empresas_por_filtro(
     corpo = {"size": max(1, min(int(limite or 25), SEARCH_TETO)),
              "filter": {"operator": "and", "filters": cond},
              "sort": [{"timestamp": "asc"}]}
+    # CONTINUA DE ONDE A ULTIMA RODADA PAROU. Sem o cursor, repetir a mesma
+    # busca devolve os mesmos primeiros N registros -- E COBRA POR ELES DE
+    # NOVO. Ordenar por `timestamp` existe justamente para o cursor ser
+    # estavel entre chamadas.
+    if cursor:
+        corpo["search_after"] = cursor if isinstance(cursor, list) else [cursor]
 
     t0 = time.time()
     try:
