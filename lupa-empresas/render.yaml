@@ -21,6 +21,17 @@ services:
         sync: false
       - key: AUTH_DB_PATH          # users DB no disco persistente
         value: /data/capiblu_auth.db
+      # Cadastro pelo proprio usuario ("Criar conta" na tela de acesso).
+      # Padrao: aberto, so e-mail @blusalesgroup.com.br, conta pendente de admin.
+      # Descomente para mudar (veja deploy/README.md):
+      # - key: SIGNUP_ABERTO
+      #   value: "1"
+      # - key: SIGNUP_DOMINIOS
+      #   value: blusalesgroup.com.br
+      # - key: SIGNUP_APROVACAO
+      #   value: "1"
+      # - key: SIGNUP_CODIGO       # convite: quem acerta o codigo entra na hora
+      #   sync: false
     disk:
       name: capiblu-auth
       mountPath: /data

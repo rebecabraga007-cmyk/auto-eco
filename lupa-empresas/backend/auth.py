@@ -3,8 +3,12 @@
 Armazenamento: SQLite (AUTH_DB_PATH, default ./capiblu_auth.db). Pequeno e portável —
 no Render pode apontar pra um disco persistente ou trocar por Postgres depois.
 
-Cadastro é SÓ por admin: não há auto-registro público. O 1º admin é criado no
-bootstrap a partir de ADMIN_EMAIL/ADMIN_PASSWORD (ou um default logado uma vez).
+Cadastro tem DOIS caminhos: um admin cria a conta pronta em 👥 Usuários, ou a
+própria pessoa se cadastra na tela de acesso (POST /api/auth/signup). O caminho
+público é fechado por padrão em três camadas — domínio de e-mail, código de
+convite opcional e aprovação do admin — porque o painel gasta consulta paga.
+O 1º admin é criado no bootstrap a partir de ADMIN_EMAIL/ADMIN_PASSWORD (ou um
+default logado uma vez).
 """
 import os
 import re
@@ -32,6 +36,20 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _UNSET = object()  # sentinela p/ distinguir "não mandou o campo" de "mandou vazio/None"
 
 LIMITE_DIARIO_DEFAULT = int(os.environ.get("LIMITE_DIARIO_DEFAULT", "100"))
+
+# ---- Cadastro público (a pessoa cria a própria conta na tela de acesso) ----
+# Padrão conservador de propósito: só e-mail do domínio da empresa e conta nasce
+# INATIVA até um admin liberar. Cada consulta do painel custa dinheiro (Assertiva/
+# WorkAPI), então saber a URL não pode ser suficiente pra entrar. Quem recebeu o
+# código de convite (SIGNUP_CODIGO) entra na hora, sem fila de aprovação.
+SIGNUP_DOMINIOS_DEFAULT = "blusalesgroup.com.br"
+_SIGNUP_JANELA_S = 3600     # janela do limite de cadastros por IP
+_SIGNUP_MAX_POR_IP = 5      # contas criadas do mesmo IP dentro da janela
+_signup_por_ip: dict[str, list[float]] = {}
+
+
+class SignupFechado(Exception):
+    """Cadastro público desligado no ambiente (SIGNUP_ABERTO=0)."""
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS users (
@@ -179,7 +197,9 @@ def list_users() -> list[dict]:
     return [_row_to_user(r) for r in rows]
 
 
-def create_user(email: str, nome: str, senha: str, role: str = "user", grupo_id: str = "") -> dict:
+def create_user(email: str, nome: str, senha: str, role: str = "user", grupo_id: str = "",
+                ativo: bool = True) -> dict:
+    """Cria o usuário. `ativo=False` deixa a conta na fila de aprovação do admin."""
     email = (email or "").strip().lower()
     if not _EMAIL_RE.match(email):
         raise ValueError("E-mail inválido.")
@@ -191,8 +211,9 @@ def create_user(email: str, nome: str, senha: str, role: str = "user", grupo_id:
         raise ValueError("Já existe um usuário com esse e-mail.")
     con = _conn()
     cur = con.execute(
-        "INSERT INTO users (email,nome,senha_hash,role,ativo,criado_em,grupo_id) VALUES (?,?,?,?,1,?,?)",
-        (email, (nome or "").strip(), _hash(senha), role, int(time.time()), grupo_id or None))
+        "INSERT INTO users (email,nome,senha_hash,role,ativo,criado_em,grupo_id) VALUES (?,?,?,?,?,?,?)",
+        (email, (nome or "").strip(), _hash(senha), role, int(bool(ativo)),
+         int(time.time()), grupo_id or None))
     con.commit()
     uid = cur.lastrowid
     r = con.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
@@ -228,6 +249,86 @@ def update_user(uid: int, *, nome=None, role=None, ativo=None, grupo_id=_UNSET, 
     r = con.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
     con.close()
     return _row_to_user(r)
+
+
+# ---- Cadastro público: a pessoa cria a própria conta ----
+
+def _env_flag(nome: str, default: bool) -> bool:
+    v = (os.environ.get(nome) or "").strip().lower()
+    if not v:
+        return default
+    return v not in ("0", "false", "no", "nao", "não", "off")
+
+
+def dominios_signup() -> list[str]:
+    """Domínios de e-mail aceitos no cadastro público. Lista vazia = qualquer um."""
+    bruto = os.environ.get("SIGNUP_DOMINIOS")
+    if bruto is None:
+        bruto = SIGNUP_DOMINIOS_DEFAULT
+    if bruto.strip() in ("*", "any", "todos"):
+        return []
+    return [d.strip().lower().lstrip("@") for d in bruto.split(",") if d.strip()]
+
+
+def codigo_signup() -> str:
+    return (os.environ.get("SIGNUP_CODIGO") or "").strip()
+
+
+def signup_config() -> dict:
+    """O que a tela de acesso precisa saber antes de oferecer "Criar conta"."""
+    return {
+        "aberto": _env_flag("SIGNUP_ABERTO", True),
+        "dominios": dominios_signup(),
+        "exige_codigo": bool(codigo_signup()),
+        # Sem código de convite a conta nasce pendente: consulta no painel é paga,
+        # ninguém entra só por descobrir a URL.
+        "aprovacao_admin": _env_flag("SIGNUP_APROVACAO", True),
+    }
+
+
+def _signup_liberado_por_ip(ip: str) -> bool:
+    agora = time.time()
+    hist = [t for t in _signup_por_ip.get(ip, []) if agora - t < _SIGNUP_JANELA_S]
+    _signup_por_ip[ip] = hist
+    return len(hist) < _SIGNUP_MAX_POR_IP
+
+
+def _registrar_signup_ip(ip: str) -> None:
+    _signup_por_ip.setdefault(ip, []).append(time.time())
+
+
+def criar_conta_publica(nome: str, email: str, senha: str, codigo: str = "",
+                        ip: str = "") -> dict:
+    """Cria a conta do próprio usuário pela tela de acesso. Sempre role 'user'.
+
+    Retorna {"user", "pendente"}. `pendente=True` significa que a conta existe
+    mas só entra depois que um admin ativar em 👥 Usuários.
+    """
+    cfg = signup_config()
+    if not cfg["aberto"]:
+        raise SignupFechado("O cadastro pelo painel está desligado. Peça sua conta a um administrador.")
+
+    email = (email or "").strip().lower()
+    if not _EMAIL_RE.match(email):
+        raise ValueError("E-mail inválido.")
+    dominios = cfg["dominios"]
+    if dominios and email.rsplit("@", 1)[-1] not in dominios:
+        permitidos = ", ".join("@" + d for d in dominios)
+        raise ValueError(f"Use seu e-mail corporativo ({permitidos}).")
+
+    esperado = codigo_signup()
+    codigo_ok = bool(esperado) and secrets.compare_digest((codigo or "").strip(), esperado)
+    if esperado and not codigo_ok:
+        raise ValueError("Código de convite inválido.")
+
+    if ip and not _signup_liberado_por_ip(ip):
+        raise ValueError("Muitas contas criadas deste acesso. Tente novamente mais tarde.")
+
+    ativo = codigo_ok or not cfg["aprovacao_admin"]
+    user = create_user(email, nome, senha, role="user", ativo=ativo)
+    if ip:
+        _registrar_signup_ip(ip)
+    return {"user": user, "pendente": not ativo}
 
 
 # ---- Grupos (cada grupo tem seu proprio token Meetime, gerenciado no servico de dados) ----
@@ -425,6 +526,18 @@ def _https(request: Request) -> bool:
         return True
 
 
+def _ip_do_cliente(request: Request) -> str:
+    """IP real do cliente. Atrás do Render/Cloudflare o socket é do proxy, então o
+    que vale é o primeiro salto do x-forwarded-for."""
+    try:
+        fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        if fwd:
+            return fwd
+        return (request.client.host if request.client else "") or ""
+    except Exception:
+        return ""
+
+
 def set_cookie_sessao(response, token: str, seguro: bool = True) -> None:
     """Grava o cookie de sessão.
 
@@ -483,13 +596,58 @@ async def emergency_reset(payload: dict = Body(default={})):
 
 @router.post("/api/auth/login")
 async def login(request: Request, response: Response, payload: dict = Body(default={})):
-    u = authenticate(payload.get("email", ""), payload.get("senha", "") or payload.get("password", ""))
+    email = payload.get("email", "")
+    senha = payload.get("senha", "") or payload.get("password", "")
+    u = authenticate(email, senha)
     if not u:
+        # Senha certa em conta desativada/pendente: dizer "senha incorreta" faria a
+        # pessoa trocar a senha à toa. O que falta é a liberação do admin.
+        pendente = get_by_email(email)
+        if pendente and not pendente["ativo"] and _check(senha, pendente["senha_hash"]):
+            raise HTTPException(
+                status_code=403,
+                detail="Sua conta ainda não foi liberada por um administrador.")
         raise HTTPException(status_code=401, detail="E-mail ou senha incorretos.")
     token = make_token(u)
     # Cookie de sessão httpOnly — robusto (não depende de localStorage do navegador).
     set_cookie_sessao(response, token, seguro=_https(request))
     return {"token": token, "user": _row_to_user(u)}
+
+
+@router.get("/api/auth/signup-config")
+async def signup_config_publico():
+    """Aberto de propósito: a tela de acesso precisa saber se mostra "Criar conta",
+    se pede código de convite e qual domínio de e-mail é aceito."""
+    return signup_config()
+
+
+@router.post("/api/auth/signup")
+async def signup(request: Request, response: Response, payload: dict = Body(default={})):
+    """Cadastro pelo próprio usuário. Conta liberada na hora só com código de
+    convite (ou SIGNUP_APROVACAO=0); nos outros casos fica pendente de admin."""
+    try:
+        r = criar_conta_publica(
+            payload.get("nome", ""),
+            payload.get("email", ""),
+            payload.get("senha", "") or payload.get("password", ""),
+            payload.get("codigo", ""),
+            _ip_do_cliente(request),
+        )
+    except SignupFechado as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if r["pendente"]:
+        return {"ok": True, "pendente": True, "user": r["user"],
+                "mensagem": "Conta criada. Um administrador precisa liberar seu acesso — "
+                            "você já pode entrar assim que isso acontecer."}
+
+    # Sem fila de aprovação: entra direto, com a mesma sessão do login.
+    completo = get_by_email(r["user"]["email"])
+    token = make_token(completo)
+    set_cookie_sessao(response, token, seguro=_https(request))
+    return {"ok": True, "pendente": False, "token": token, "user": r["user"]}
 
 
 @router.post("/api/auth/logout")

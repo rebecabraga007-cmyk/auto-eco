@@ -1,5 +1,5 @@
 // ══════════════════════════════════════════════════════
-//  CapiBLU — autenticação (login gate + admin de usuários)
+//  CapiBLU — autenticação (login gate + criar conta + admin de usuários)
 //  Carregado ANTES do capiblu.js: instala o wrapper de fetch
 //  que injeta o JWT em toda chamada /api.
 // ══════════════════════════════════════════════════════
@@ -41,6 +41,7 @@
   async function init() {
     vigiarSessao();
     wireLogin();
+    wireSignup();
     wireMenu();
     wireUsersModal();
     wirePassModal();
@@ -59,6 +60,8 @@
   function showLogin(motivo) {
     document.getElementById('login-overlay').hidden = false;
     document.body.classList.add('locked');
+    // Só quem vê a tela precisa saber se o cadastro está aberto — e uma vez basta.
+    if (!_signupCfg) carregarSignupConfig();
     // Login mudo parece queda de sistema. Se a sessão venceu, diga isso.
     const err = document.getElementById('login-err');
     if (err && motivo) err.textContent = motivo;
@@ -118,6 +121,87 @@
         });
         const j = await r.json();
         if (!r.ok) { err.textContent = j.detail || 'Falha no login.'; return; }
+        setToken(j.token);
+        location.reload();
+      } catch (e2) { err.textContent = 'Erro de conexão.'; }
+      finally { btn.disabled = false; }
+    });
+  }
+
+  // ---- Criar conta (self-service na tela de acesso) ----
+  let _signupCfg = null;
+
+  function trocarAuthView(view) {
+    const cadastro = view === 'signup';
+    document.getElementById('login-form').hidden = cadastro;
+    document.getElementById('signup-form').hidden = !cadastro;
+    document.querySelectorAll('.login-tab').forEach(b =>
+      b.classList.toggle('active', b.dataset.authView === view));
+    document.getElementById('login-err').textContent = '';
+    document.getElementById('signup-err').textContent = '';
+  }
+
+  async function carregarSignupConfig() {
+    try {
+      const r = await _fetch('/api/auth/signup-config', { credentials: 'same-origin' });
+      if (!r.ok) throw new Error();
+      _signupCfg = await r.json();
+    } catch (e) {
+      _signupCfg = { aberto: false };  // sem config = sem aba de cadastro
+    }
+    document.getElementById('login-tabs').hidden = !_signupCfg.aberto;
+    if (!_signupCfg.aberto) return;
+    document.getElementById('su-codigo-wrap').hidden = !_signupCfg.exige_codigo;
+    document.getElementById('su-codigo').required = !!_signupCfg.exige_codigo;
+    // Dizer as regras ANTES do erro: domínio e fila de aprovação surpreendem menos assim.
+    const dicas = [];
+    const doms = _signupCfg.dominios || [];
+    if (doms.length) dicas.push('Aceita só e-mail ' + doms.map(d => '@' + d).join(' ou ') + '.');
+    if (_signupCfg.exige_codigo) dicas.push('O código de convite vem de um administrador.');
+    else if (_signupCfg.aprovacao_admin) dicas.push('Depois do cadastro, um administrador libera seu acesso.');
+    document.getElementById('su-hint').textContent = dicas.join(' ');
+  }
+
+  function wireSignup() {
+    document.querySelectorAll('.login-tab').forEach(b =>
+      b.addEventListener('click', () => trocarAuthView(b.dataset.authView)));
+
+    const form = document.getElementById('signup-form');
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const err = document.getElementById('signup-err');
+      const ok = document.getElementById('signup-ok');
+      const btn = document.getElementById('signup-btn');
+      err.textContent = ''; ok.hidden = true;
+      const senha = document.getElementById('su-senha').value;
+      if (senha !== document.getElementById('su-senha2').value) {
+        err.textContent = 'As duas senhas não são iguais.';
+        return;
+      }
+      btn.disabled = true;
+      try {
+        const r = await _fetch('/api/auth/signup', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            nome: document.getElementById('su-nome').value.trim(),
+            email: document.getElementById('su-email').value.trim(),
+            senha,
+            codigo: document.getElementById('su-codigo').value.trim(),
+          }),
+        });
+        const j = await r.json();
+        if (!r.ok) { err.textContent = j.detail || 'Falha ao criar a conta.'; return; }
+        if (j.pendente) {
+          // Conta na fila do admin: não há sessão pra abrir, então explica e
+          // deixa o e-mail já preenchido na aba Entrar.
+          const email = (j.user && j.user.email) || '';
+          form.reset();
+          ok.textContent = j.mensagem || 'Conta criada. Aguarde a liberação de um administrador.';
+          ok.hidden = false;
+          document.getElementById('login-email').value = email;
+          return;
+        }
         setToken(j.token);
         location.reload();
       } catch (e2) { err.textContent = 'Erro de conexão.'; }

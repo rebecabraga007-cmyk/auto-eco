@@ -720,6 +720,12 @@ body {
 body.locked { overflow: hidden; }
 .login-overlay { position: fixed; inset: 0; z-index: 1000; background: var(--blue-dark); display: flex; align-items: center; justify-content: center; }
 .login-card { background: #fff; border-radius: var(--radius-sm); padding: 34px 30px; width: 340px; max-width: 92vw; box-shadow: var(--shadow-float); display: flex; flex-direction: column; gap: 12px; }
+.login-form { display: flex; flex-direction: column; gap: 12px; }
+.login-tabs { display: flex; gap: 4px; background: var(--gray-100); border-radius: var(--radius-sm); padding: 4px; margin-bottom: 4px; }
+.login-tab { flex: 1; padding: 8px 6px; border: none; background: none; border-radius: var(--radius-sm); font: inherit; font-size: .84rem; font-weight: 600; color: var(--gray-500); cursor: pointer; }
+.login-tab.active { background: #fff; color: var(--blue); }
+.login-hint { font-size: .74rem; line-height: 1.35; color: var(--gray-500); margin: -4px 0 0; }
+.login-ok { background: var(--green-soft); color: var(--green); border-radius: var(--radius-sm); padding: 10px 12px; font-size: .8rem; line-height: 1.4; }
 .login-brand { font-size: 1.5rem; text-align: center; }
 .login-sub { text-align: center; color: var(--gray-500); font-size: .82rem; margin: -6px 0 8px; }
 .login-card label { display: flex; flex-direction: column; gap: 5px; font-size: .82rem; font-weight: 600; color: var(--gray-700); }

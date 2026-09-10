@@ -2,7 +2,8 @@
 
 Responsabilidades:
 - Servir o frontend estático.
-- Autenticação: login (JWT), gestão de usuários (admin) — via `auth.py`.
+- Autenticação: login (JWT), cadastro do próprio usuário (/api/auth/signup)
+  e gestão de usuários (admin) — via `auth.py`.
 - PROXY: reencaminha as rotas de dados (/api/* que não sejam auth) para o
   SERVIÇO DE DADOS local, através do Cloudflare Tunnel, com o segredo de proxy.
 
@@ -67,7 +68,9 @@ app.include_router(_auth.router)
 from api_v1 import router as _api_v1_router  # noqa: E402
 app.include_router(_api_v1_router)
 
-_PUBLIC_API = {"/api/auth/login", "/api/auth/logout"}
+_PUBLIC_API = {"/api/auth/login", "/api/auth/logout",
+                # Cadastro é por definição pré-sessão: quem chega aqui não tem conta.
+                "/api/auth/signup", "/api/auth/signup-config"}
 
 
 @app.exception_handler(StarletteHTTPException)

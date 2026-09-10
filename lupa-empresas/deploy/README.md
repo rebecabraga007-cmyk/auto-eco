@@ -37,6 +37,30 @@ Isso faz login, cria o túnel `capiblu-data`, aponta o DNS e gera o `config.yml`
    - `JWT_SECRET` = valor fixo e forte
    - `ADMIN_EMAIL` / `ADMIN_PASSWORD`
 
+## Acesso e criacao de contas
+
+Duas formas de uma pessoa ganhar conta no painel:
+
+1. **Admin cria pronta** — entre como admin, menu do usuario > 👥 Usuarios, preencha
+   nome/e-mail/senha e clique **+ Criar**. A conta ja nasce ativa.
+2. **A pessoa se cadastra** — na tela de acesso, aba **Criar conta**. Por padrao
+   so aceita e-mail `@blusalesgroup.com.br` e a conta nasce **inativa**: aparece em
+   👥 Usuarios como `⚪ inativo` e um admin clica em **Ativar**. Quem tenta entrar
+   antes disso recebe "sua conta ainda nao foi liberada" (nao "senha incorreta").
+
+Envs que controlam o cadastro (todas opcionais):
+
+| Env | Padrao | Efeito |
+|-----|--------|--------|
+| `SIGNUP_ABERTO` | `1` | `0` esconde a aba **Criar conta** e recusa a rota. |
+| `SIGNUP_DOMINIOS` | `blusalesgroup.com.br` | Lista separada por virgula; `*` aceita qualquer dominio. |
+| `SIGNUP_CODIGO` | vazio | Se preenchido, o cadastro exige o codigo — e quem acerta entra na hora. |
+| `SIGNUP_APROVACAO` | `1` | `0` libera o acesso no ato do cadastro, sem fila de admin. |
+
+O padrao e conservador de proposito: cada consulta do painel custa dinheiro
+(Assertiva/WorkAPI), entao saber a URL nao pode ser suficiente para entrar. Ha
+tambem um limite de 5 cadastros por IP por hora.
+
 ## Importante
 
 - O "online" depende do **PC ligado** com `start-capiblu.ps1` rodando.

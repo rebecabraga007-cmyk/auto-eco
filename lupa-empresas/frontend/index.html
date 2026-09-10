@@ -861,14 +861,35 @@
 
 <!-- Tela de login (cobre tudo até autenticar) -->
 <div id="login-overlay" class="login-overlay" hidden>
-  <form id="login-form" class="login-card">
+  <div class="login-card">
     <div class="login-brand"><span class="logo-icon">🦫</span> Capi<strong>BLU</strong></div>
     <p class="login-sub">Acesso restrito · BLU Sales Group</p>
-    <label>E-mail<input id="login-email" type="email" autocomplete="username" required /></label>
-    <label>Senha<input id="login-senha" type="password" autocomplete="current-password" required /></label>
-    <div id="login-err" class="login-err"></div>
-    <button type="submit" class="btn-primary" id="login-btn">Entrar</button>
-  </form>
+
+    <!-- As abas só aparecem quando o cadastro pelo painel está ligado (/api/auth/signup-config). -->
+    <div class="login-tabs" id="login-tabs" hidden>
+      <button type="button" class="login-tab active" data-auth-view="login">Entrar</button>
+      <button type="button" class="login-tab" data-auth-view="signup">Criar conta</button>
+    </div>
+
+    <form id="login-form" class="login-form">
+      <label>E-mail<input id="login-email" type="email" autocomplete="username" required /></label>
+      <label>Senha<input id="login-senha" type="password" autocomplete="current-password" required /></label>
+      <div id="login-err" class="login-err"></div>
+      <button type="submit" class="btn-primary" id="login-btn">Entrar</button>
+    </form>
+
+    <form id="signup-form" class="login-form" hidden>
+      <label>Nome<input id="su-nome" type="text" autocomplete="name" required /></label>
+      <label>E-mail<input id="su-email" type="email" autocomplete="email" required /></label>
+      <label>Senha (mín. 8)<input id="su-senha" type="password" minlength="8" autocomplete="new-password" required /></label>
+      <label>Repetir senha<input id="su-senha2" type="password" minlength="8" autocomplete="new-password" required /></label>
+      <label id="su-codigo-wrap" hidden>Código de convite<input id="su-codigo" type="text" autocomplete="off" /></label>
+      <p class="login-hint" id="su-hint"></p>
+      <div id="signup-err" class="login-err"></div>
+      <div id="signup-ok" class="login-ok" hidden></div>
+      <button type="submit" class="btn-primary" id="signup-btn">Criar conta</button>
+    </form>
+  </div>
 </div>
 
 <!-- Modal: gestão de usuários (admin) -->
