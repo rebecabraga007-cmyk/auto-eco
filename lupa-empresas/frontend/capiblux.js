@@ -1284,8 +1284,11 @@ function renderProspList() {
           </label>
           <div class="filter-row" style="margin:0;flex-basis:100%">
             <button type="button" id="pf-dec-linkedin" class="btn-secondary"
-              title="Traz quem SE DECLARA diretor/head/gerente no LinkedIn — o gestor contratado que não é sócio e ainda não aparece em cadastro trabalhista. É a fonte que as outras duas não enxergam. Custa: cada perfil entregue é cobrado.">
+              title="UMA empresa: a marcada na lista, ou a primeira. Traz quem SE DECLARA diretor/head/gerente no LinkedIn — o gestor contratado que não é sócio e ainda não aparece em cadastro trabalhista.">
               💼 Decisores do LinkedIn</button>
+            <button type="button" id="pf-dec-massa" class="btn-secondary"
+              title="TODAS as empresas da lista de uma vez, com funil curto. Usa o que já compramos (grátis); só busca na Bright Data se você mandar.">
+              📚 …de todas as empresas</button>
             <span class="pf-advanced-hint" style="display:inline">teto R$</span>
             <input id="pf-dec-teto" type="number" min="1" max="60" value="6" step="1"
               class="filter-num" style="width:64px"
@@ -1448,6 +1451,7 @@ function initDecisoresBox() {
   // carregamento da pagina o botao ainda nao existe. Ligar la fora pegava
   // `null` e o botao nunca respondia -- so a tela provou isso.
   document.getElementById('pf-dec-linkedin')?.addEventListener('click', decLiBuscar);
+  document.getElementById('pf-dec-massa')?.addEventListener('click', decMassaBuscar);
   ['pf-decfonte', 'pf-maxdec', 'pf-qtd', 'pf-continuar', 'pf-max-tentativas', 'pf-pular-sem-dec'].forEach(id => {
     document.getElementById(id)?.addEventListener('input', atualizar);
     document.getElementById(id)?.addEventListener('change', atualizar);
@@ -6640,3 +6644,100 @@ document.getElementById('pf-li-emp-conferir')?.addEventListener('click', async (
     btn.disabled = false;
   }
 });
+
+/* ══════════════════════════════════════════════════════════════════════
+   DECISORES DO LINKEDIN, TODAS AS EMPRESAS DE UMA VEZ
+
+   O botão ao lado resolve UMA empresa com o funil de onze etapas. Este
+   resolve a lista inteira com um funil curto, que é o que a Rebeca pediu
+   para a lista em massa: "50, 100 ao mesmo tempo, então o funil não pode
+   ser grande".
+
+   O funil curto para no primeiro sinal barato — sócio do QSA, decisor do
+   CNPJ, e-mail exato, JBR com nome único — e desiste do resto. Desempatar
+   homônimo custa até R$ 2,38 por pessoa, e numa lista de cinquenta isso é
+   a diferença entre uma lista e uma fatura.
+
+   Começa pelo que já foi comprado, de graça. Comprar é um segundo clique.
+   ══════════════════════════════════════════════════════════════════════ */
+async function decMassaBuscar(fonte) {
+  const btn = document.getElementById('pf-dec-massa');
+  const area = document.getElementById('prosp-results');
+  const empresas = (prospState.selecionadas && prospState.selecionadas.size)
+    ? [...prospState.selecionadas].map(i => prospState.empresas[i]).filter(Boolean)
+    : (prospState.empresas || []);
+  if (!empresas.length) { alert('Busque empresas antes.'); return; }
+
+  const naBrightData = fonte === 'brightdata';
+  if (btn) btn.disabled = true;
+  if (area) {
+    area.innerHTML = '<div class="info-box"><span class="spinner"></span> '
+      + `Resolvendo decisores de ${empresas.length} empresa(s)`
+      + (naBrightData ? ' na Bright Data' : ' no que já temos') + '…</div>';
+  }
+  try {
+    const d = await fetch(`${API}/api/prospeccao/b2b-linkedin`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        empresas: empresas.slice(0, 100).map(e => ({
+          nome: e.razao_social || e.nome_fantasia || e.nome_linkedin, cnpj: e.cnpj })),
+        fonte: naBrightData ? 'brightdata' : 'cache',
+        cargos: (typeof cargosSelecionados === 'function'
+                 ? cargosSelecionados() : '').split(',').filter(Boolean),
+        max_por_empresa: parseInt(document.getElementById('pf-maxdec')?.value) || 3,
+        teto_brl: parseFloat(document.getElementById('pf-dec-teto')?.value) || 6,
+        so_com_telefone: (document.getElementById('pf-so-com-tel')?.checked ?? true),
+      }),
+    }).then(r => r.json());
+
+    if (d.status !== 'ok') {
+      area.innerHTML = `<div class="warn-box">${esc(d.message || 'Não deu certo.')}</div>`;
+      return;
+    }
+    const linhas = (d.pessoas || []).map(p => {
+      const tels = (p.telefones || []).map(t => esc(t.numero || t.telefone || ''))
+        .filter(Boolean).join('<br>') || '—';
+      return `<tr><td>${esc(p.nome || '')}</td><td>${esc(p.cargo || '—')}</td>`
+        + `<td>${esc(p.empresa || '—')}</td>`
+        + `<td>${p.cpf ? esc(p.cpf) : `<span style="color:var(--gray-500)" title="${esc(p.porque || '')}">${esc(p.situacao || '—')}</span>`}</td>`
+        + `<td>${tels}</td><td>${esc(p.email || '—')}</td></tr>`;
+    }).join('');
+
+    /* Empresa pulada precisa aparecer com o motivo. Sem isso a pessoa conta
+       as linhas, vê menos empresas do que pediu, e não sabe se a busca
+       falhou ou se a base não tem ninguém. */
+    const puladas = (d.empresas_puladas || []).length
+      ? `<div class="info-box" style="margin-top:8px"><b>${d.empresas_puladas.length} `
+        + 'empresa(s) fora da lista:</b> '
+        + d.empresas_puladas.map(e => `${esc(e.razao || e.empresa)} `
+            + `<span style="color:var(--gray-500)">(${esc(e.motivo || '')})</span>`).join('; ')
+        + '</div>'
+      : '';
+
+    const semNada = !linhas && !naBrightData;
+    area.innerHTML = (linhas
+      ? '<div class="prosp-table-scroll"><table class="prosp-table"><thead><tr>'
+        + '<th>NOME</th><th>CARGO</th><th>EMPRESA</th><th>CPF</th>'
+        + '<th>TELEFONES</th><th>E-MAIL</th></tr></thead><tbody>'
+        + linhas + '</tbody></table></div>'
+      : `<div class="info-box">${esc(d.message || 'Ninguém com esses filtros.')}</div>`)
+      + `<p class="pf-advanced-hint" style="margin-top:6px">`
+      + `${d.total || 0} pessoa(s) · ${d.com_cpf || 0} com CPF · `
+      + `${d.com_telefone || 0} com telefone · ${d.com_email || 0} com e-mail`
+      + (d.segundos != null ? ` · ${d.segundos}s` : '')
+      + ` · fonte: ${esc(d.fonte || '')}</p>`
+      + puladas
+      + (semNada
+          ? '<div class="info-box" style="margin-top:8px">Nada no que já foi '
+            + 'comprado. <button type="button" id="pf-dec-massa-bd" '
+            + 'class="btn-secondary">Buscar na Bright Data</button> '
+            + '<span class="pf-advanced-hint">cobra por perfil entregue</span></div>'
+          : '');
+    document.getElementById('pf-dec-massa-bd')
+      ?.addEventListener('click', () => decMassaBuscar('brightdata'));
+  } catch (e) {
+    area.innerHTML = '<div class="warn-box">Não consegui falar com o servidor.</div>';
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}

@@ -1186,6 +1186,109 @@ async def company_decisores(cnpj: str, conexoes: bool = False):
     return saida
 
 
+@app.post("/api/prospeccao/b2b-linkedin")
+async def prospeccao_b2b_linkedin(request: Request, payload: dict = Body(default={})):
+    """Decisores do LinkedIn para VÁRIAS empresas de uma vez, funil curto.
+
+    Estava escrito e sem porta de entrada: `funil.prospeccao_b2b` não tinha
+    nenhuma referência fora do próprio arquivo. É o funil rápido que a Rebeca
+    pediu para a lista em massa -- "50, 100 ao mesmo tempo, então o funil não
+    pode ser grande".
+
+    POR QUE ELE EXISTE, tendo `/api/company/{cnpj}/leads`: as três fontes
+    enxergam gente DIFERENTE e nenhuma cobre a outra. Sócio do QSA é DONO;
+    decisor da Assertiva é quem a folha registra como gestor e defasa; o
+    LinkedIn é o único que vê o gerente contratado que ainda não apareceu em
+    cadastro trabalhista. Medido antes: na Google Brasil a Assertiva deu 602
+    pessoas e NENHUMA estava no quadro societário.
+
+    O FUNIL É CURTO DE PROPÓSITO. Ele para no primeiro sinal barato: sócio do
+    QSA, decisor do CNPJ, e-mail exato, JBR com nome único. Não faz WorkAPI,
+    não paga busca por nome, não desempata homônimo -- desempatar custa até
+    R$ 2,38 por pessoa, e aqui há cinquenta delas.
+
+    `fonte`: "cache" (padrão, grátis) ou "brightdata" (cobra por perfil).
+    """
+    empresas = payload.get("empresas") or []
+    if not empresas:
+        return {"status": "error", "message": "Nenhuma empresa na lista."}
+    # Teto duro de empresas por chamada. Não é limitação técnica: é que
+    # cinquenta empresas já são a lista de um dia, e mil seriam uma conta de
+    # telefone que ninguém pediu.
+    empresas = empresas[:100]
+    nomes = [str(e.get("nome") or e.get("razao_social") or "").strip()
+             for e in empresas if isinstance(e, dict)]
+    nomes = [n for n in nomes if n]
+    if not nomes:
+        return {"status": "error", "message": "As empresas vieram sem nome."}
+
+    fonte = str(payload.get("fonte") or "cache").strip().lower()
+    cargos = payload.get("cargos") or []
+    max_por_empresa = max(1, min(int(payload.get("max_por_empresa") or 3), 20))
+
+    perfis: list[dict] = []
+    custo_usd = 0.0
+    if fonte == "brightdata":
+        r = await brightdata_pessoas.buscar_por_filtro(
+            pais="BR", empresas=nomes,
+            cargos_termos=(cargos if cargos else None),
+            decisores=not cargos,
+            limite=min(int(payload.get("limite") or 50), 100),
+            usuario=(request.headers.get("x-user-email") or ""))
+        if r.get("status") != "ok":
+            return {"status": "error", "message": r.get("message") or "Bright Data falhou."}
+        perfis = r.get("pessoas") or []
+        custo_usd = float(r.get("custo_usd") or 0)
+    else:
+        # GRÁTIS E INSTANTÂNEO, e é o padrão: uma consulta para N empresas,
+        # como a Datastone faz. Só depois de ver o que já temos é que faz
+        # sentido decidir comprar.
+        try:
+            perfis = linkedin_cache.por_empresas(
+                nomes, pais="BR", limite=300,
+                departamento=str(payload.get("departamento") or ""),
+                senioridade=str(payload.get("senioridade") or ""))
+        except Exception as exc:
+            return {"status": "error", "message": str(exc)[:180]}
+
+    if cargos:
+        perfis = [p for p in perfis
+                  if funcoes.casa_escolha(p.get("cargo") or "", cargos)]
+
+    # Teto POR EMPRESA, e não global: sem isso uma empresa grande consome a
+    # cota inteira e as outras 49 saem vazias.
+    porempresa: dict[str, list] = {}
+    cortados = []
+    for p in perfis:
+        chave = (p.get("empresa") or "").strip().lower()
+        if len(porempresa.setdefault(chave, [])) < max_por_empresa:
+            porempresa[chave].append(p)
+            cortados.append(p)
+    perfis = cortados
+
+    if not perfis:
+        return {"status": "ok", "pessoas": [], "total": 0,
+                "empresas_puladas": [],
+                "message": ("Nenhum perfil dessas empresas no que já temos. "
+                            "Busque na Bright Data para trazer de lá."
+                            if fonte != "brightdata"
+                            else "Nenhum perfil com esses filtros.")}
+
+    cnpj_unico = re.sub(r"\D", "", str(empresas[0].get("cnpj") or "")) \
+        if len(empresas) == 1 else ""
+    try:
+        r = await funil.prospeccao_b2b(
+            perfis,
+            uf=str(payload.get("uf") or "").strip().upper()[:2],
+            cnpj=cnpj_unico,
+            teto_brl=max(0.0, min(float(payload.get("teto_brl") or 6.0), 60.0)),
+            so_com_telefone=payload.get("so_com_telefone", True) is not False)
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:200]}
+    r = {"status": "ok", "fonte": fonte, "custo_usd_brightdata": custo_usd, **r}
+    return r if _is_admin(request) else _limpa_custo(r)
+
+
 @app.post("/api/prospeccao/cobertura-decisores")
 async def cobertura_decisores(payload: dict = Body(default={})):
     """Mede quantas empresas da amostra têm decisor na Assertiva, SEM puxar telefone.
