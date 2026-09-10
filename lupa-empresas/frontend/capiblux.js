@@ -6467,3 +6467,98 @@ document.getElementById('pf-meetime-testar')?.addEventListener('click', async ()
     btn.disabled = false;
   }
 });
+
+/* ══════════════════════════════════════════════════════════════════════
+   MINHA CONTA MEETIME — o operador troca o próprio token
+
+   Antes havia dois lugares e nenhum servia para quem troca com frequência:
+   o token do GRUPO, que só o admin configura, e um campo dentro do painel
+   de filtros que valia para uma busca só.
+
+   Colar o token a cada busca parece mais seguro e não é — o segredo
+   atravessa o navegador toda vez. Guardado no servidor ele passa uma vez,
+   na troca, e nunca volta: a tela só recebe os quatro últimos dígitos.
+   ══════════════════════════════════════════════════════════════════════ */
+const mtFundo = document.getElementById('meetime-fundo');
+
+async function mtCarregaStatus() {
+  const caixa = document.getElementById('meetime-atual');
+  if (!caixa) return;
+  caixa.textContent = 'Consultando…';
+  try {
+    const j = await fetch(`${API}/api/meetime/meu-token`).then(r => r.json());
+    if (j.em_uso === 'proprio') {
+      caixa.innerHTML = `Usando <b>o seu token</b> (final ${esc(j.final || '••••')}).`;
+    } else if (j.em_uso === 'grupo') {
+      caixa.innerHTML = 'Usando o <b>token do seu grupo</b>. Salve um token aqui '
+        + 'para filtrar contra outra conta.';
+    } else {
+      caixa.innerHTML = '<b>Nenhuma conta ativa.</b> Sem token, a exclusão de quem '
+        + 'já está no CRM não funciona.';
+    }
+  } catch (e) {
+    caixa.textContent = 'Não consegui consultar.';
+  }
+}
+
+function mtAbrir() {
+  if (!mtFundo) return;
+  document.getElementById('meetime-token-campo').value = '';
+  document.getElementById('meetime-resultado').textContent = '';
+  mtFundo.hidden = false;
+  mtCarregaStatus();
+  document.getElementById('user-dropdown').hidden = true;
+}
+function mtFechar() { if (mtFundo) mtFundo.hidden = true; }
+
+document.getElementById('menu-meetime')?.addEventListener('click', mtAbrir);
+document.getElementById('meetime-fechar')?.addEventListener('click', mtFechar);
+mtFundo?.addEventListener('click', e => { if (e.target === mtFundo) mtFechar(); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && mtFundo && !mtFundo.hidden) mtFechar();
+});
+
+/* Testa ANTES de salvar. Salvar um token errado e só descobrir na próxima
+   dedup deixaria a exclusão desligada sem ninguém notar — e o resultado
+   disso é ligar para quem já é cliente. */
+document.getElementById('meetime-testar-conta')?.addEventListener('click', async () => {
+  const saida = document.getElementById('meetime-resultado');
+  const token = document.getElementById('meetime-token-campo').value.trim();
+  saida.textContent = 'testando…';
+  try {
+    const j = await fetch(`${API}/api/meetime/testar`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    }).then(r => r.json());
+    if (j.status !== 'ok') {
+      saida.innerHTML = `<span style="color:#dc2626">✗ ${esc(j.message || 'não deu certo')}</span>`;
+      return;
+    }
+    saida.innerHTML = `<span style="color:#16a34a">✓ válido</span> · `
+      + `${(j.leads_na_conta || 0).toLocaleString('pt-BR')} leads nesta conta`
+      + (j.ja_conhecida ? ` · ${(j.leads_guardados || 0).toLocaleString('pt-BR')} já indexados`
+                        : ' · primeira vez, a primeira dedup demora mais');
+  } catch (e) {
+    saida.innerHTML = '<span style="color:#dc2626">✗ servidor não respondeu</span>';
+  }
+});
+
+async function mtSalvar(token) {
+  const saida = document.getElementById('meetime-resultado');
+  saida.textContent = 'salvando…';
+  try {
+    const j = await fetch(`${API}/api/meetime/meu-token`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    }).then(r => r.json());
+    if (j.status !== 'ok') { saida.textContent = j.message || 'não deu certo'; return; }
+    document.getElementById('meetime-token-campo').value = '';
+    saida.innerHTML = '<span style="color:#16a34a">✓ salvo</span>';
+    mtCarregaStatus();
+  } catch (e) {
+    saida.textContent = 'servidor não respondeu';
+  }
+}
+document.getElementById('meetime-salvar')?.addEventListener('click', () =>
+  mtSalvar(document.getElementById('meetime-token-campo').value.trim()));
+document.getElementById('meetime-apagar')?.addEventListener('click', () => mtSalvar(''));

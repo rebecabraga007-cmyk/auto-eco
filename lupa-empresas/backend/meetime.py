@@ -56,7 +56,80 @@ def status_grupos() -> dict:
     return {gid: {"configurado": bool((v or {}).get("token"))} for gid, v in _grupos_tokens().items()}
 
 
-def _token(grupo_id: str = "") -> str:
+# ---------------------------------------------------------------------
+# TOKEN POR USUARIO
+#
+# Ate aqui havia dois lugares: o token do GRUPO, que so o admin configura, e
+# um campo avulso no painel de filtros que valia para uma busca so e nao era
+# guardado.
+#
+# Isso servia para quem usa a conta do grupo e nao muda nunca. Nao serve para
+# quem TROCA de conta com frequencia -- e e o caso: cada troca exigiria pedir
+# ao admin, ou recolar o token em cada busca.
+#
+# Recolar em cada busca parece mais seguro e nao e: o segredo atravessa o
+# navegador toda vez, em vez de uma vez so. Guardar no servidor, indexado
+# pelo usuario, e devolver so um resumo mascarado expoe MENOS.
+#
+# O valor nunca volta para a tela. `status_usuario` devolve os quatro
+# ultimos digitos e a contagem de leads -- o suficiente para a pessoa
+# reconhecer qual conta esta ativa sem que a credencial trafegue de novo.
+def _tokens_usuarios() -> dict:
+    v = config_store.get("meetime_usuarios") or {}
+    return v if isinstance(v, dict) else {}
+
+
+def _chave_usuario(email: str) -> str:
+    return (email or "").strip().lower()
+
+
+def set_token_usuario(email: str, token: str) -> dict:
+    """Grava (ou apaga, com token vazio) o token de UM usuario."""
+    chave = _chave_usuario(email)
+    if not chave:
+        return {"status": "error", "message": "Sem usuário identificado."}
+    usuarios = _tokens_usuarios()
+    token = (token or "").strip()
+    if token:
+        usuarios[chave] = {"token": token}
+    else:
+        usuarios.pop(chave, None)
+    config_store.set_many({"meetime_usuarios": usuarios})
+    # O cache de memoria e por conta: trocar de token tem que descartar o
+    # indice da conta anterior, senao a dedup seguiria comparando contra a
+    # base errada -- e silenciosamente, que e o pior jeito de errar aqui.
+    _cache.clear()
+    return {"status": "ok", "configurado": bool(token)}
+
+
+def token_do_usuario(email: str) -> str:
+    return str((_tokens_usuarios().get(_chave_usuario(email)) or {})
+               .get("token") or "").strip()
+
+
+def status_usuario(email: str, grupo_id: str = "") -> dict:
+    """O que a tela precisa saber, sem o segredo."""
+    meu = token_do_usuario(email)
+    return {
+        "tem_proprio": bool(meu),
+        # Quatro digitos bastam para reconhecer qual conta esta ativa e nao
+        # bastam para usar o token.
+        "final": meu[-4:] if len(meu) > 4 else "",
+        "tem_grupo": bool(_token(grupo_id)),
+        "em_uso": "proprio" if meu else ("grupo" if _token(grupo_id) else "nenhum"),
+    }
+
+
+def _token(grupo_id: str = "", usuario: str = "") -> str:
+    """Ordem: token do proprio usuario > token do grupo > token global.
+
+    O do usuario vem primeiro porque e o mais especifico e o mais recente --
+    quem acabou de trocar espera que a troca valha.
+    """
+    if usuario:
+        meu = token_do_usuario(usuario)
+        if meu:
+            return meu
     if grupo_id:
         tok = (_grupos_tokens().get(grupo_id) or {}).get("token")
         if tok:
@@ -124,14 +197,15 @@ _cache: dict[str, dict[str, Any]] = {}
 _CACHE_TTL = 1800  # 30 min
 
 
-def enabled(grupo_id: str = "", token_avulso: str = "") -> bool:
+def enabled(grupo_id: str = "", token_avulso: str = "",
+            usuario: str = "") -> bool:
     """Dá para consultar a Meetime? Token do grupo OU o que o operador digitou.
 
     O `token_avulso` conta aqui: sem isso, quem digita um token para filtrar
     contra outra conta levaria "Meetime não configurada" mesmo tendo acabado
     de fornecer a credencial.
     """
-    return bool((token_avulso.strip() or _token(grupo_id)) and _base_url())
+    return bool((token_avulso.strip() or _token(grupo_id, usuario)) and _base_url())
 
 
 def only_digits(s: str) -> str:
@@ -173,7 +247,8 @@ def _extrai_lead(rec: dict) -> tuple[str, list[str]]:
 
 
 async def fetch_existing(max_pages: int = 200, force: bool = False,
-                         grupo_id: str = "", token_avulso: str = "") -> dict:
+                         grupo_id: str = "", token_avulso: str = "",
+                         usuario: str = "") -> dict:
     """Baixa (paginando) os leads da Meetime → {cnpjs:set, nomes:[(norm, tokens)]}.
 
     Cada grupo tem sua própria conta/token, então o cache também é por grupo.
@@ -196,7 +271,7 @@ async def fetch_existing(max_pages: int = 200, force: bool = False,
             token_avulso.strip().encode()).hexdigest()[:16]
     else:
         cache_key = grupo_id or "__default__"
-    if not enabled(grupo_id, token_avulso):
+    if not enabled(grupo_id, token_avulso, usuario):
         return {"status": "unavailable", "message": "Meetime não configurada para este grupo (token ausente).",
                 "cnpjs": set(), "nomes": []}
     now = time.time()
@@ -207,7 +282,7 @@ async def fetch_existing(max_pages: int = 200, force: bool = False,
 
     headers = {"Accept": "application/json",
                _auth_header(): (token_avulso.strip() if token_avulso
-                                else _token(grupo_id))}
+                                else _token(grupo_id, usuario))}
 
     # ---- RETOMA DE ONDE PAROU ----------------------------------------
     # A API nao aceita filtro por data (`start_date` -> HTTP 400) nem
@@ -217,7 +292,11 @@ async def fetch_existing(max_pages: int = 200, force: bool = False,
     #
     # Sem isso, cada sincronizacao refaz a base inteira: medido, 20.689
     # leads dao 207 requisicoes e 118 segundos.
-    conta = meetime_base.id_da_conta(token_avulso, grupo_id)
+    # A conta segue o token QUE VAI SER USADO, e nao so o avulso: com token
+    # proprio do usuario, o indice tem que ser o dele -- senao a dedup
+    # compararia contra a base do grupo enquanto le a base dele.
+    conta = meetime_base.id_da_conta(
+        token_avulso or token_do_usuario(usuario), grupo_id)
     ja = meetime_base.estado(conta)
     guardado = meetime_base.carregar(conta) if ja["conhecida"] else None
     cnpjs = set(guardado["cnpjs"]) if guardado else set()
@@ -341,7 +420,8 @@ def dedup(candidatos: list[dict], existing: dict) -> dict:
             "n_novos": len(novos), "n_removidos": len(removidos)}
 
 
-async def testar_token(token: str = "", grupo_id: str = "") -> dict:
+async def testar_token(token: str = "", grupo_id: str = "",
+                       usuario: str = "") -> dict:
     """Diz, em UMA requisicao, se o token serve e o que ele enxerga.
 
     Existe porque hoje a unica forma de descobrir que o token esta errado e
@@ -355,11 +435,11 @@ async def testar_token(token: str = "", grupo_id: str = "") -> dict:
     existe na outra, o que ja pareceu bug de casamento e nao era.
     """
     alvo = (token or "").strip()
-    if not alvo and not enabled(grupo_id):
+    if not alvo and not enabled(grupo_id, "", usuario):
         return {"status": "unavailable",
                 "message": "Nenhum token configurado para o seu grupo."}
     headers = {"Accept": "application/json",
-               _auth_header(): (alvo or _token(grupo_id))}
+               _auth_header(): (alvo or _token(grupo_id, usuario))}
     url = url_leads()
     t0 = time.time()
     try:
@@ -389,7 +469,7 @@ async def testar_token(token: str = "", grupo_id: str = "") -> dict:
         except (TypeError, ValueError):
             total = 0
 
-    conta = meetime_base.id_da_conta(alvo, grupo_id)
+    conta = meetime_base.id_da_conta(alvo or token_do_usuario(usuario), grupo_id)
     st = meetime_base.estado(conta)
     return {
         "status": "ok",

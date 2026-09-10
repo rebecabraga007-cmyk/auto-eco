@@ -70,6 +70,7 @@
     <div class="user-dropdown" id="user-dropdown" hidden>
       <button id="menu-users" hidden>👥 Usuários</button>
       <button id="menu-config" hidden>⚙️ Configurações</button>
+      <button id="menu-meetime">🔗 Minha conta Meetime</button>
       <button id="menu-password">🔑 Trocar senha</button>
       <button id="menu-docs" onclick="window.open('/docs','_blank','noopener')">📖 API do CapiBLU</button>
       <button id="menu-logout">🚪 Sair</button>
@@ -777,6 +778,39 @@
       </div>
     </div>
   </section>
+
+  <!-- ══ MINHA CONTA MEETIME ══ -->
+  <div id="meetime-fundo" class="modal-fundo" hidden>
+    <div class="modal-caixa" style="max-width:520px" role="dialog" aria-labelledby="meetime-titulo">
+      <div class="modal-topo">
+        <h3 id="meetime-titulo">Minha conta Meetime</h3>
+        <button type="button" class="modal-x" id="meetime-fechar" aria-label="Fechar">×</button>
+      </div>
+      <div class="modal-corpo">
+        <div id="meetime-atual" class="info-box" style="margin-bottom:10px">—</div>
+
+        <div class="pf-field">
+          <label for="meetime-token-campo">Token da sua conta Meetime</label>
+          <input id="meetime-token-campo" type="password" autocomplete="off"
+                 placeholder="cole o token aqui" />
+          <div class="pf-advanced-hint">
+            Fica guardado no servidor e <b>nunca volta para a tela</b> — só os
+            quatro últimos dígitos, para você reconhecer qual conta está ativa.
+            Deixe vazio e salve para voltar a usar o token do seu grupo.
+          </div>
+        </div>
+
+        <div class="filter-row" style="margin:8px 0 0">
+          <button type="button" class="btn-secondary" id="meetime-testar-conta">Testar</button>
+          <span id="meetime-resultado" class="pf-advanced-hint" style="display:inline"></span>
+        </div>
+      </div>
+      <div class="modal-pe">
+        <button type="button" class="btn-secondary" id="meetime-apagar">Usar o do grupo</button>
+        <button type="button" class="btn-primary" id="meetime-salvar">Salvar</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ══ REPORTAR BUG / MELHORIA ══ -->
   <div id="reportar-fundo" class="modal-fundo" hidden>

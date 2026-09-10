@@ -3420,12 +3420,45 @@ async def config_meetime(request: Request, payload: dict = Body(default={})):
 @app.get("/api/meetime/status")
 async def meetime_status(request: Request, refresh: bool = False):
     grupo_id = request.headers.get("x-user-grupo") or ""
-    if not meetime.enabled(grupo_id):
+    usuario = request.headers.get("x-user-email") or ""
+    if not meetime.enabled(grupo_id, "", usuario):
         return {"enabled": False}
-    ex = await meetime.fetch_existing(force=refresh, grupo_id=grupo_id)
+    ex = await meetime.fetch_existing(force=refresh, grupo_id=grupo_id,
+                                      usuario=usuario)
     return {"enabled": True, "status": ex.get("status"), "message": ex.get("message"),
             "total_cnpjs": len(ex.get("cnpjs") or []),
             "total_nomes": len(ex.get("nomes") or []), "cache": ex.get("cache")}
+
+
+@app.get("/api/meetime/meu-token")
+async def meetime_meu_token(request: Request):
+    """Qual conta Meetime está ativa para mim — SEM devolver o token.
+
+    Volta só os quatro últimos dígitos e de onde ele vem (meu, do grupo, ou
+    nenhum). É o bastante para a pessoa reconhecer a conta e não é o
+    bastante para usar a credencial.
+    """
+    return {"status": "ok", **meetime.status_usuario(
+        request.headers.get("x-user-email") or "",
+        request.headers.get("x-user-grupo") or "")}
+
+
+@app.post("/api/meetime/meu-token")
+async def meetime_salvar_token(request: Request, payload: dict = Body(default={})):
+    """Troca o MEU token. Não é admin: é a conta do próprio operador.
+
+    Guardar no servidor expõe MENOS que o campo antigo do painel de filtros,
+    que fazia o segredo atravessar o navegador a cada busca. Aqui ele passa
+    uma vez, na troca, e nunca volta.
+
+    Token vazio apaga — é como a pessoa volta a usar o token do grupo.
+    """
+    email = request.headers.get("x-user-email") or ""
+    r = meetime.set_token_usuario(email, str(payload.get("token") or ""))
+    if r.get("status") != "ok":
+        return r
+    return {**r, **meetime.status_usuario(
+        email, request.headers.get("x-user-grupo") or "")}
 
 
 @app.post("/api/meetime/testar")
@@ -3442,7 +3475,8 @@ async def meetime_testar(request: Request, payload: dict = Body(default={})):
     """
     return await meetime.testar_token(
         token=str(payload.get("token") or ""),
-        grupo_id=str(payload.get("grupo_id") or ""))
+        grupo_id=str(payload.get("grupo_id") or ""),
+        usuario=(request.headers.get("x-user-email") or ""))
 
 
 @app.post("/api/meetime/dedup")
@@ -3455,13 +3489,16 @@ async def meetime_dedup(request: Request, payload: dict = Body(default={})):
     # do grupo dele. Vale só para esta chamada: não é gravado em lugar nenhum
     # e não volta na resposta.
     token_avulso = str(payload.get("token") or "").strip()
-    if not meetime.enabled(grupo_id, token_avulso):
+    if not meetime.enabled(grupo_id, token_avulso,
+                           request.headers.get("x-user-email") or ""):
         return {"status": "unavailable",
-                "message": "Meetime não configurada para o seu grupo — peça ao admin "
-                           "para configurar em Usuários, ou informe um token nesta busca.",
+                "message": "Nenhuma conta Meetime ativa. Guarde o seu token em "
+                           "\"Minha conta Meetime\", no menu do seu usuário, "
+                           "ou cole um token só para esta busca.",
                 "novos": empresas, "removidos": []}
     ex = await meetime.fetch_existing(force=bool(payload.get("refresh")),
-                                      grupo_id=grupo_id, token_avulso=token_avulso)
+                                      grupo_id=grupo_id, token_avulso=token_avulso,
+                                      usuario=(request.headers.get("x-user-email") or ""))
     if ex.get("status") and ex["status"] != "ok":
         return {"status": ex["status"], "message": ex.get("message"),
                 "novos": empresas, "removidos": []}
