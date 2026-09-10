@@ -655,9 +655,16 @@
                      class="filter-select" style="width:100%;font-size:12px"
                      placeholder="Token de outra conta Meetime (opcional)"
                      title="Deixe vazio para usar o token do seu grupo, que o admin já configurou. Preencha só para filtrar contra OUTRA conta — o token vale apenas para esta busca e não fica guardado." />
+              <div class="filter-row" style="margin:5px 0 0">
+                <button type="button" class="btn-secondary" id="pf-meetime-testar"
+                        style="font-size:12px;padding:3px 9px">Testar token</button>
+                <span id="pf-meetime-teste" class="pf-advanced-hint" style="display:inline"></span>
+              </div>
               <span class="pf-advanced-hint" style="display:block;margin-top:3px">
                 Vazio usa o token do seu grupo. Um token digitado aqui vale
-                <b>só para esta busca</b> e não é guardado.
+                <b>só para esta busca</b> e o token em si não é guardado —
+                fica salvo apenas a <i>lista de leads</i> que ele enxerga,
+                para a próxima consulta ser rápida.
               </span>
             </div>
             <label class="toggle-row"><span>Filiais — quero só a sede</span><input id="pf-matriz" type="checkbox" /></label>

@@ -26,6 +26,8 @@ from typing import Any
 
 import httpx
 
+import meetime_base
+
 import config_store
 
 # Config vem do store (admin define pela UI) com fallback pro ambiente.
@@ -63,18 +65,50 @@ def _token(grupo_id: str = "") -> str:
 
 
 def _base_url() -> str:
-    return _cfg("meetime_base_url", "MEETIME_BASE_URL", "https://api.meetime.com.br").rstrip("/")
+    return _cfg("meetime_base_url", "MEETIME_BASE_URL",
+                "https://api.meetime.com.br").rstrip("/")
 
 
 def _leads_path() -> str:
     return _cfg("meetime_leads_path", "MEETIME_LEADS_PATH", "/v2/leads")
 
 
+def url_leads() -> str:
+    """Base + caminho SEM repetir a versão.
+
+    Isto existe porque aconteceu: a configuração guardada tinha base
+    `https://api.meetime.com.br/v2` e caminho `/v2/leads`, e a concatenação
+    dava `/v2/v2/leads` -> HTTP 404 em toda chamada. A dedup contra a Meetime
+    nunca funcionou nesse ambiente, e o sintoma era um aviso genérico de
+    falha que ninguém associou a uma barra a mais.
+
+    Os padrões do código sempre estiveram certos; quem quebrou foi um valor
+    digitado no painel do admin. Por isso a proteção fica AQUI, no ponto que
+    monta a URL, e não numa correção do valor guardado -- o painel continua
+    aberto e o mesmo erro pode voltar amanhã.
+    """
+    base = _base_url()
+    caminho = _leads_path()
+    if not caminho.startswith("/"):
+        caminho = "/" + caminho
+    primeiro = caminho.strip("/").split("/")[0]
+    if primeiro and base.rstrip("/").endswith("/" + primeiro):
+        base = base.rstrip("/")[: -(len(primeiro) + 1)]
+    return base.rstrip("/") + caminho
+
+
 def _auth_header() -> str:
-    return _cfg("meetime_auth_header", "MEETIME_AUTH_HEADER", "api-token")
+    # MEDIDO em 10/set/2026: `Authorization: <token>` devolve 200 e 12.440
+    # leads; `api-token` devolve 401. O padrão antigo era `api-token`, e a
+    # configuração guardada repetia o erro -- duas fontes concordando na
+    # coisa errada.
+    return _cfg("meetime_auth_header", "MEETIME_AUTH_HEADER", "Authorization")
 
 
-PAGE_SIZE = int(os.environ.get("MEETIME_PAGE_SIZE", "50") or "50")
+# 100 e o TETO da API: medido, 500 e 1000 devolvem HTTP 400. Estava em 50,
+# o que dobrava o numero de requisicoes -- e cada uma tem 1,2s de espera
+# entre elas, entao 12.440 leads levavam 249 chamadas em vez de 125.
+PAGE_SIZE = int(os.environ.get("MEETIME_PAGE_SIZE", "100") or "100")
 _TIMEOUT = httpx.Timeout(40.0)
 
 # Sufixos societários irrelevantes para comparar nomes.
@@ -174,9 +208,29 @@ async def fetch_existing(max_pages: int = 200, force: bool = False,
     headers = {"Accept": "application/json",
                _auth_header(): (token_avulso.strip() if token_avulso
                                 else _token(grupo_id))}
-    cnpjs, nomes = set(), []
-    url = _base_url() + _leads_path()
-    start = 0
+
+    # ---- RETOMA DE ONDE PAROU ----------------------------------------
+    # A API nao aceita filtro por data (`start_date` -> HTTP 400) nem
+    # ordenacao: a ordem e crescente e fixa. Entao "so o que e novo" se
+    # obtem pelo OFFSET -- se da ultima vez a conta tinha 12.158 leads,
+    # comeca em 12.158. O novo esta no fim.
+    #
+    # Sem isso, cada sincronizacao refaz a base inteira: medido, 20.689
+    # leads dao 207 requisicoes e 118 segundos.
+    conta = meetime_base.id_da_conta(token_avulso, grupo_id)
+    ja = meetime_base.estado(conta)
+    guardado = meetime_base.carregar(conta) if ja["conhecida"] else None
+    cnpjs = set(guardado["cnpjs"]) if guardado else set()
+    nomes = [(n, _tokens(n)) for n in (guardado["nomes"] if guardado else [])]
+    url = url_leads()
+    start = 0 if (force or not ja["conhecida"]) else int(ja["offset"])
+    if start:
+        # Recua uma pagina de proposito. Custa uma requisicao e cobre o caso
+        # do lote anterior ter sido cortado no meio por erro de rede.
+        start = max(0, start - PAGE_SIZE)
+    base_inicial = start
+    novos_cnpjs, novos_nomes = set(), []
+    total_relatado = 0
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             for _ in range(max_pages):
@@ -198,25 +252,50 @@ async def fetch_existing(max_pages: int = 200, force: bool = False,
                     j.get("data") or j.get("results") or j.get("leads") or j.get("items") or [])
                 if not lote:
                     break
+                if isinstance(j, dict) and j.get("totalItems"):
+                    try:
+                        total_relatado = int(j["totalItems"])
+                    except (TypeError, ValueError):
+                        pass
                 for rec in lote:
                     cnpj, nms = _extrai_lead(rec)
                     if cnpj:
                         cnpjs.add(cnpj)
+                        novos_cnpjs.add(cnpj)
                     for nm in nms:
                         nn = norm_nome(nm)
                         if nn:
                             nomes.append((nn, _tokens(nn)))
+                            novos_nomes.append(nn)
+                start += len(lote)
                 if len(lote) < PAGE_SIZE:
                     break
-                start += PAGE_SIZE
                 await asyncio.sleep(1.2)
     except Exception as exc:
         return {"status": "error", "message": f"Erro de conexão Meetime: {str(exc)[:150]}",
                 "cnpjs": cnpjs, "nomes": nomes}
 
+    # LEAD APAGADO DESALINHA OS OFFSETS. Se a conta encolheu, o ponto de
+    # retomada nao vale mais e a base e refeita -- preferir refazer a
+    # arrastar um indice furado que ninguem percebe.
+    encolheu = bool(total_relatado and ja["conhecida"]
+                    and total_relatado < ja["total_visto"])
+    if encolheu:
+        meetime_base.esquecer(conta)
+    else:
+        meetime_base.guardar(conta, novos_cnpjs, novos_nomes,
+                             offset_fim=start,
+                             total_visto=total_relatado or start,
+                             zerar_antes=(base_inicial == 0 and force))
+
     _cache[cache_key] = {"ts": now, "cnpjs": cnpjs, "nomes": nomes}
     return {"status": "ok", "cnpjs": cnpjs, "nomes": nomes,
-            "total_cnpjs": len(cnpjs), "total_nomes": len(nomes), "cache": False}
+            "total_cnpjs": len(cnpjs), "total_nomes": len(nomes),
+            "cache": False,
+            "conta": conta,
+            "incremental": base_inicial > 0,
+            "novos_nesta_sync": len(novos_cnpjs),
+            "refez_do_zero": encolheu}
 
 
 def _nome_bate(cand_norm: str, cand_tokens: set, existentes: list) -> bool:
@@ -260,3 +339,68 @@ def dedup(candidatos: list[dict], existing: dict) -> dict:
             novos.append(c)
     return {"novos": novos, "removidos": removidos,
             "n_novos": len(novos), "n_removidos": len(removidos)}
+
+
+async def testar_token(token: str = "", grupo_id: str = "") -> dict:
+    """Diz, em UMA requisicao, se o token serve e o que ele enxerga.
+
+    Existe porque hoje a unica forma de descobrir que o token esta errado e
+    rodar a dedup inteira e ver dar errado no fim -- depois de esperar. Um
+    teste de 1 requisicao responde na hora.
+
+    Devolve o TAMANHO DA BASE junto, e isso nao e enfeite: existem duas
+    contas Meetime na casa, uma que ve 20.689 leads e outra que ve 12.158.
+    Saber qual delas o token abriu e a diferenca entre deduplicar contra a
+    base certa e contra a errada -- o Banco do Brasil existe numa e nao
+    existe na outra, o que ja pareceu bug de casamento e nao era.
+    """
+    alvo = (token or "").strip()
+    if not alvo and not enabled(grupo_id):
+        return {"status": "unavailable",
+                "message": "Nenhum token configurado para o seu grupo."}
+    headers = {"Accept": "application/json",
+               _auth_header(): (alvo or _token(grupo_id))}
+    url = url_leads()
+    t0 = time.time()
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            # `limit=1` de proposito: e um teste, nao uma leitura.
+            r = await client.get(url, params={"limit": 1, "start": 0},
+                                 headers=headers)
+    except Exception as exc:
+        return {"status": "error",
+                "message": "Não consegui falar com a Meetime: %s" % str(exc)[:120]}
+    if r.status_code == 401:
+        return {"status": "invalido",
+                "message": "A Meetime recusou este token (401). Confira se "
+                           "copiou inteiro e sem espaços."}
+    if r.status_code >= 400:
+        return {"status": "error",
+                "message": "Meetime devolveu %s: %s" % (r.status_code, r.text[:120])}
+    try:
+        j = r.json()
+    except Exception:
+        return {"status": "error", "message": "Resposta ilegível da Meetime."}
+
+    total = 0
+    if isinstance(j, dict):
+        try:
+            total = int(j.get("totalItems") or 0)
+        except (TypeError, ValueError):
+            total = 0
+
+    conta = meetime_base.id_da_conta(alvo, grupo_id)
+    st = meetime_base.estado(conta)
+    return {
+        "status": "ok",
+        "message": "Token válido.",
+        "leads_na_conta": total,
+        "ms": int((time.time() - t0) * 1000),
+        # O que ja temos guardado desta conta -- e o que diz se a proxima
+        # dedup vai levar 2 segundos ou 2 minutos.
+        "conta": conta,
+        "ja_conhecida": st["conhecida"],
+        "leads_guardados": st["leads"],
+        "sincronizado_em": st["sincronizado"],
+        "faltam_sincronizar": max(0, total - int(st["total_visto"] or 0)),
+    }

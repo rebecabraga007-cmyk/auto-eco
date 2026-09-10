@@ -1739,6 +1739,32 @@ function fmtMoneyShort(v) {
 
 async function prospMontar() {
   if (prospState.building) return;
+
+  /* GARANTIA NO MOMENTO DA PLANILHA, e não só na busca.
+     A dedup contra a Meetime rodava depois de buscar. Isso deixava uma
+     fresta: quem buscou antes de marcar a opção, ou quem repetiu a busca e
+     trouxe empresas novas pela rotação, montava a planilha com empresa que
+     já está no CRM. E o custo do erro é assimétrico — CNPJ repetido na
+     planilha vira ligação para quem já é cliente ou já está em cadência.
+     Aqui a checagem acontece imediatamente antes de montar, sobre a lista
+     que vai ser usada de fato. */
+  if (document.getElementById('pf-excluir-meetime')?.checked) {
+    const antes = prospState.empresas.length;
+    await prospDedupMeetime();
+    const tiradas = antes - prospState.empresas.length;
+    if (tiradas > 0) {
+      const nota = document.getElementById('pf-dedup-note');
+      if (nota) {
+        nota.innerHTML = `✅ ${tiradas} empresa(s) já na Meetime ficaram de fora `
+          + 'da planilha.';
+      }
+    }
+    if (!prospState.empresas.length) {
+      alert('Todas as empresas da lista já estão na Meetime. Nada a montar.');
+      return;
+    }
+  }
+
   const qtd = parseInt(document.getElementById('pf-qtd').value) || 25;
   const decisores = document.getElementById('pf-decisores').checked;
   const modoTel = document.getElementById('pf-modotel').value;
@@ -6403,3 +6429,41 @@ document.querySelectorAll('#chamados-filtro .pf-cargo').forEach(b =>
 
 document.querySelector('[data-tab="chamados"]')
   ?.addEventListener('click', chamadosCarregar);
+
+/* Testar o token na hora, em vez de descobrir no fim da dedup.
+   Antes a única forma de saber que o token estava errado era rodar a
+   varredura inteira e vê-la falhar — depois de esperar. Uma requisição
+   responde em ~260 ms.
+
+   Mostra também QUANTOS leads a conta enxerga, e isso não é enfeite: há
+   duas contas Meetime na casa, com bases diferentes. Saber qual delas o
+   token abriu é a diferença entre deduplicar contra a base certa e contra
+   a errada. */
+document.getElementById('pf-meetime-testar')?.addEventListener('click', async () => {
+  const btn = document.getElementById('pf-meetime-testar');
+  const saida = document.getElementById('pf-meetime-teste');
+  const token = (document.getElementById('pf-meetime-token')?.value || '').trim();
+  btn.disabled = true;
+  saida.textContent = 'testando…';
+  try {
+    const j = await fetch(`${API}/api/meetime/testar`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    }).then(r => r.json());
+    if (j.status !== 'ok') {
+      saida.innerHTML = `<span style="color:#dc2626">✗ ${esc(j.message || 'não deu certo')}</span>`;
+      return;
+    }
+    const falta = j.faltam_sincronizar || 0;
+    saida.innerHTML = `<span style="color:#16a34a">✓ válido</span> · `
+      + `${(j.leads_na_conta || 0).toLocaleString('pt-BR')} leads na conta`
+      + (j.ja_conhecida
+          ? ` · ${(j.leads_guardados || 0).toLocaleString('pt-BR')} já indexados aqui`
+            + (falta ? `, faltam ${falta.toLocaleString('pt-BR')}` : ', em dia')
+          : ' · primeira vez com este token, a primeira dedup vai demorar mais');
+  } catch (e) {
+    saida.innerHTML = '<span style="color:#dc2626">✗ não consegui falar com o servidor</span>';
+  } finally {
+    btn.disabled = false;
+  }
+});

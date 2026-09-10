@@ -3428,6 +3428,23 @@ async def meetime_status(request: Request, refresh: bool = False):
             "total_nomes": len(ex.get("nomes") or []), "cache": ex.get("cache")}
 
 
+@app.post("/api/meetime/testar")
+async def meetime_testar(request: Request, payload: dict = Body(default={})):
+    """Diz se o token serve — em uma requisição, sem rodar a dedup inteira.
+
+    QUALQUER usuário, e não só admin: quem cola o token na tela de busca é o
+    operador, e mandá-lo esperar a dedup inteira falhar para descobrir que
+    errou uma letra é o pior jeito possível de dar essa resposta.
+
+    O token não é gravado nem devolvido. O que volta é o que ele ENXERGA:
+    quantos leads a conta tem, quantos já estão guardados aqui e quantos
+    faltam sincronizar.
+    """
+    return await meetime.testar_token(
+        token=str(payload.get("token") or ""),
+        grupo_id=str(payload.get("grupo_id") or ""))
+
+
 @app.post("/api/meetime/dedup")
 async def meetime_dedup(request: Request, payload: dict = Body(default={})):
     """Body: {empresas:[{cnpj, razao_social}]}. Remove quem já está na Meetime
