@@ -1805,14 +1805,33 @@ async def prospeccao_pessoas(payload: dict = Body(default={})):
                     "message": str(exc)[:200], "pessoas": []}
 
     # ---- camada 1: o cache, de graça ---------------------------------
+    #
+    # SÓ RESPONDE QUANDO SABE HONRAR TODOS OS FILTROS. O cache guarda perfil
+    # do LinkedIn: ele conhece nome, empresa, cargo, cidade. Não conhece CNAE,
+    # situação cadastral, capital social nem matriz/filial — isso é cadastro
+    # da Receita e não existe num perfil.
+    #
+    # Antes ele respondia mesmo assim, e como é a PRIMEIRA camada, a resposta
+    # dele encerrava a busca: uma consulta por "alimentos" em SC devolvia
+    # "BLU Sales Group" e "Braskem", porque só o UF tinha sido aplicado e o
+    # resto foi descartado no caminho. Quanto MAIS filtros a pessoa usava,
+    # pior ficava — e a camada da Receita, que filtraria certo, nunca era
+    # alcançada.
+    _CADASTRAIS = ("cnae", "setor", "situacao", "capital_min", "capital_max",
+                   "somente_matriz", "mei_optante", "mei_excluir",
+                   "natureza", "porte", "fundada_de", "fundada_ate",
+                   "com_telefone", "tipo_empresa", "anos_min", "anos_max")
+    cache_pode = not any(filtros.get(k) for k in _CADASTRAIS)
     try:
         do_cache = linkedin_cache.procurar(
+            # `texto` é a lupa da tela e também não estava sendo passada.
+            q=filtros.get("texto") or "",
             nome=filtros.get("nome") or "", empresa=filtros.get("nome_empresa") or "",
             cargo=filtros.get("cargo") or "",
             departamento=filtros.get("departamento") or "",
             senioridade=filtros.get("senioridade") or "",
             ufs=filtros.get("uf") or "", cidade=filtros.get("cidade") or "",
-            limite=limite)
+            limite=limite) if cache_pode else []
     except Exception:
         do_cache = []
     if do_cache:
@@ -1826,10 +1845,32 @@ async def prospeccao_pessoas(payload: dict = Body(default={})):
                 "message": "Base local indisponível.", "pessoas": []}
     r = cnpj_lookup.search_pessoas(filtros, limite=limite, offset=offset)
     r["fonte"] = "receita"
-    if filtros.get("departamento") or filtros.get("senioridade"):
-        r["aviso"] = ("Departamento e senioridade não se aplicam a sócios da "
-                      "Receita, que têm qualificação societária. Busque na "
-                      "Bright Data para usar esses filtros.")
+
+    # OS QUATRO QUE ESTA CAMADA NÃO SABE RESPONDER, e o motivo é o mesmo: a
+    # Receita conhece SÓCIO, não pessoa. Sócio tem qualificação societária
+    # ("Sócio-Administrador"), não departamento nem senioridade; e o cadastro
+    # não traz e-mail nem telefone DA PESSOA — os contatos são da empresa.
+    #
+    # Estruturado, e não só um texto: a tela precisa saber QUAIS foram
+    # ignorados para oferecer a camada que os responde. Auditado em
+    # 10/set/2026 — os quatro estavam sendo aceitos e descartados em silêncio,
+    # junto com outros seis que agora funcionam.
+    _SO_LINKEDIN = {
+        "departamento": "departamento",
+        "senioridade": "senioridade",
+        "so_com_email": "só com e-mail",
+        "so_com_telefone": "só com telefone",
+    }
+    ignorados = [rotulo for chave, rotulo in _SO_LINKEDIN.items()
+                 if filtros.get(chave)]
+    if ignorados:
+        r["filtros_ignorados"] = ignorados
+        r["linkedin_necessario"] = True
+        r["aviso"] = (
+            "Não foi aplicado: %s. A Receita conhece SÓCIO, não pessoa — sócio "
+            "tem qualificação societária, não departamento nem senioridade, e o "
+            "cadastro não traz contato da pessoa. Esses filtros existem na busca "
+            "do LinkedIn." % ", ".join(ignorados))
     return r
 
 

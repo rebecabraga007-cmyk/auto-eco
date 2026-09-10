@@ -248,6 +248,24 @@ def _build_where(f: dict, skip_texto: bool = False):
         where.append("e.cnae_principal IN (%s)" % ",".join("?" * len(codes)) if codes else "1=0")
         params += codes
 
+    # NOME DA EMPRESA. Campo proprio na tela, enviado pelo front, e que esta
+    # funcao nunca lia -- auditado em 10/set/2026. Nao e redundante com a
+    # lupa: a lupa pode estar com o escopo em CNAE ou natureza, e este aqui
+    # e sempre sobre o nome. Mesmo caminho do `nome_empresa` da busca de
+    # pessoas, que ja fazia certo: FTS, porque LIKE '%..%' em 68 milhoes de
+    # estabelecimentos e varredura de 20s+.
+    nome_emp = (f.get("nome_empresa") or "").strip()
+    if nome_emp:
+        expr = _fts_text_expr(nome_emp, ["razao", "fantasia"])
+        if expr and _fts_ready():
+            where.append("e.cnpj_basico IN (SELECT DISTINCT substr(cnpj,1,8) "
+                         "FROM ftsx.estab_fts WHERE estab_fts MATCH ? LIMIT 8000)")
+            params.append(expr)
+        else:
+            where.append("(UPPER(emp.razao_social) LIKE ? OR "
+                         "UPPER(e.nome_fantasia) LIKE ?)")
+            params += ["%" + nome_emp.upper() + "%"] * 2
+
     # "Fundada": data de abertura da empresa (dado real da Receita).
     fde = re.sub(r"\D", "", f.get("fundada_de") or "")
     fate = re.sub(r"\D", "", f.get("fundada_ate") or "")
@@ -562,6 +580,58 @@ def search_pessoas(filtros: dict, limite: int = 50, offset: int = 0) -> dict:
     if naturezas:
         where.append("emp.natureza IN (%s)" % ",".join("?" * len(naturezas)))
         params += naturezas
+
+    # ------------------------------------------------------------------
+    # OS SEIS QUE A TELA MOSTRAVA E ESTA FUNCAO IGNORAVA
+    #
+    # Auditado chave a chave em 10/set/2026: `texto`, `situacao`,
+    # `capital_min/max`, `somente_matriz` e `com_telefone` nao eram lidos
+    # aqui, embora a mesma tela os enviasse e a busca de EMPRESAS os
+    # aplicasse. O sintoma era mudo: a lista saia plausivel, so que sem
+    # respeitar o que foi pedido.
+    # ------------------------------------------------------------------
+
+    # PALAVRA-CHAVE. Mesmo comportamento da busca de empresas: casa em razao
+    # social, fantasia e descricao do CNAE. Via FTS quando ele existe, porque
+    # LIKE '%...%' em 68 milhoes de estabelecimentos e varredura de 20s+.
+    texto = (filtros.get("texto") or "").strip()
+    if texto:
+        expr = _fts_text_expr(texto, filtros.get("texto_escopo")
+                              or ["razao", "fantasia"])
+        if expr and _fts_ready():
+            where.append("e.cnpj_basico IN (SELECT DISTINCT substr(cnpj,1,8) "
+                         "FROM ftsx.estab_fts WHERE estab_fts MATCH ? LIMIT 8000)")
+            params.append(expr)
+        else:
+            # Sem FTS o jeito e o LIKE. Fica caro, mas devolver o filtro
+            # aplicado devagar e melhor que devolver rapido e errado.
+            alvo = texto.upper()
+            ors = ["UPPER(emp.razao_social) LIKE ?", "UPPER(e.nome_fantasia) LIKE ?"]
+            params += ["%" + alvo + "%", "%" + alvo + "%"]
+            codes = _codes_by_desc("cnae", texto, limit=80)
+            if codes:
+                ors.append("e.cnae_principal IN (%s)" % ",".join("?" * len(codes)))
+                params += codes
+            where.append("(" + " OR ".join(ors) + ")")
+
+    situacoes = _as_list(filtros.get("situacao"))
+    if situacoes:
+        codes = [SITUACAO.get(str(x).upper(), str(x)) for x in situacoes]
+        where.append("e.situacao IN (%s)" % ",".join("?" * len(codes)))
+        params += codes
+
+    cap_min = int(filtros.get("capital_min") or 0)
+    cap_max = int(filtros.get("capital_max") or 0)
+    if cap_min:
+        where.append("emp.capital_social >= ?"); params.append(cap_min)
+    if cap_max:
+        where.append("emp.capital_social <= ?"); params.append(cap_max)
+
+    if filtros.get("somente_matriz"):
+        where.append("e.matriz_filial = '1'")
+
+    if filtros.get("com_telefone"):
+        where.append("(e.tel1 IS NOT NULL AND e.tel1 <> '')")
 
     porte = _as_list(filtros.get("porte"))
     if porte:

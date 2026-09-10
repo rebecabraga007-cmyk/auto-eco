@@ -2226,7 +2226,21 @@ document.getElementById('pf-nome').addEventListener('keydown', e => e.key === 'E
 // ── Busca de PESSOAS (sócios como proxy — ver nota no painel) ───────────
 function prospFiltrosPessoa() {
   const list = v => (v || '').split(',').map(s => s.trim()).filter(Boolean);
+  /* A LUPA TAMBÉM VALE AQUI. Este objeto não mandava `texto`, então digitar
+     "alimentos" no campo de busca da aba de decisores não chegava ao
+     servidor — e a lista voltava com empresa de qualquer área, parecendo que
+     o filtro tinha sido aplicado e ignorado. Eram dois buracos empilhados: o
+     front não enviava e o backend não lia. */
+  const escopoMarcado = [...document.querySelectorAll('.pf-esc:checked')]
+    .map(c => c.value);
   return {
+    texto: document.getElementById('pf-texto').value.trim(),
+    texto_escopo: escopoMarcado.length ? escopoMarcado : ['razao', 'fantasia'],
+    situacao: list(document.getElementById('pf-situacao').value),
+    capital_min: parseInt(document.getElementById('pf-cap-min').value) || 0,
+    capital_max: parseInt(document.getElementById('pf-cap-max').value) || 0,
+    somente_matriz: document.getElementById('pf-matriz').checked,
+    com_telefone: document.getElementById('pf-com-tel').checked,
     nome: document.getElementById('pf-nome').value.trim(),
     sobrenome: document.getElementById('pf-sobrenome').value.trim(),
     cargo: document.getElementById('pf-cargo').value.trim(),
@@ -2275,6 +2289,7 @@ async function prospBuscarPessoas() {
     if (!pessoas.length) {
       cnt.textContent = `${totalStr} pessoas (sócios)`;
       out.innerHTML = `<p class="msg">Nenhuma pessoa encontrada com esses filtros.</p>`;
+      avisaFiltrosPessoa(res);
       ofereceLinkedIn();
       return;
     }
@@ -2327,6 +2342,7 @@ async function prospBuscarPessoas() {
           </tbody>
         </table>
       </div>`;
+    avisaFiltrosPessoa(res);
     ofereceLinkedIn();
   } catch (e) {
     out.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
@@ -6058,4 +6074,26 @@ function prospAvisaLinkedIn(res) {
     prospState.usarLinkedIn = true;
     prospBuscar();
   });
+}
+
+
+/* O backend já dizia quais filtros não se aplicam à camada da Receita, num
+   campo `aviso` — e NENHUMA tela lia esse campo. O aviso existia e morria no
+   JSON, que é o mesmo defeito do filtro morto, um nível acima: a informação
+   certa produzida e descartada.
+
+   Vale para departamento, senioridade e os dois "só com contato": a Receita
+   conhece SÓCIO, não pessoa. Sócio tem qualificação societária, e o cadastro
+   traz contato da EMPRESA, não da pessoa. */
+function avisaFiltrosPessoa(res) {
+  const out = document.getElementById('prosp-results');
+  const velho = document.getElementById('pf-aviso-pessoa');
+  if (velho) velho.remove();
+  if (!out || !res || !res.aviso) return;
+  const box = document.createElement('div');
+  box.id = 'pf-aviso-pessoa';
+  box.className = 'warn-box';
+  box.style.margin = '10px 0';
+  box.innerHTML = esc(res.aviso);
+  out.prepend(box);
 }
