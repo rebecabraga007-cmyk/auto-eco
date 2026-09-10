@@ -2289,6 +2289,13 @@ function prospFiltrosPessoa() {
     so_com_telefone: document.getElementById('pf-pessoa-com-tel')?.checked || false,
     departamento: document.getElementById('pf-depto-pessoa')?.value || '',
     senioridade: document.getElementById('pf-senioridade')?.value || '',
+    /* Os quatro que estavam desabilitados com "🔜". O dataset que eles
+       esperavam existe; continuam sendo do lado LinkedIn, e o backend avisa
+       quando a resposta veio da Receita e eles não puderam ser aplicados. */
+    localizacao_pessoa: document.getElementById('pf-loc-pessoa')?.value.trim() || '',
+    especialidades: document.getElementById('pf-especialidades')?.value.trim() || '',
+    linkedin_url: document.getElementById('pf-linkedin-pessoa')?.value.trim() || '',
+    so_com_linkedin: document.getElementById('pf-pessoa-com-linkedin')?.checked || false,
   };
 }
 
@@ -2310,7 +2317,7 @@ async function prospBuscarPessoas() {
       out.innerHTML = `<p class="msg error">${esc(motivoErro(res) || 'Falha na busca.')}</p>`;
       return;
     }
-    const pessoas = res.pessoas || [];
+    let pessoas = res.pessoas || [];
     const totalStr = res.total_aprox ? `${(res.total || pessoas.length).toLocaleString('pt-BR')}+` : (res.total || pessoas.length).toLocaleString('pt-BR');
     if (!pessoas.length) {
       cnt.textContent = `${totalStr} pessoas (sócios)`;
@@ -2336,6 +2343,26 @@ async function prospBuscarPessoas() {
     const chave = s => (s || '').toLowerCase()
       .normalize('NFD').replace(/[̀-ͯ]/g, '')
       .replace(/[^a-z0-9 ]+/g, ' ').trim().split(/\s+/).join(' ');
+
+    /* "Só contatos com perfil LinkedIn": aplicável de graça, porque o
+       cruzamento com o cache já aconteceu logo acima. Estava marcado como
+       "não se aplica à Receita" e isso era verdade sobre a CONSULTA, não
+       sobre o resultado — depois de cruzar, dá para saber quem tem perfil.
+       Filtrar aqui é o único jeito, já que a Receita não sabe responder
+       isso na própria busca. */
+    if (document.getElementById('pf-pessoa-com-linkedin')?.checked) {
+      const antesDoCorte = pessoas.length;
+      pessoas = pessoas.filter(p => achados[chave(p.nome)]);
+      if (!pessoas.length) {
+        cnt.textContent = '0 de ' + antesDoCorte + ' têm perfil no LinkedIn';
+        out.innerHTML = '<p class="msg">Nenhum dos sócios encontrados tem perfil '
+          + 'no nosso cache do LinkedIn. Desmarque "Contatos com perfil LinkedIn" '
+          + 'para ver todos.</p>';
+        avisaFiltrosPessoa(res);
+        ofereceLinkedIn();
+        return;
+      }
+    }
 
     const nAchados = Object.keys(achados).length;
     cnt.textContent = `${totalStr} pessoas (sócios da Receita)`
@@ -6562,3 +6589,54 @@ async function mtSalvar(token) {
 document.getElementById('meetime-salvar')?.addEventListener('click', () =>
   mtSalvar(document.getElementById('meetime-token-campo').value.trim()));
 document.getElementById('meetime-apagar')?.addEventListener('click', () => mtSalvar(''));
+
+/* Conferir a empresa pelo link do LinkedIn, na aba de prospecção.
+
+   O campo existia desabilitado com "requer dataset de perfis/empresas do
+   LinkedIn". O dataset existe, e `empresa_por_url` já funcionava havia
+   tempo — o campo é que não tinha nenhuma linha de código atrás dele.
+
+   Além do nome exato e do tamanho, agora vem o CNPJ deduzido pelo domínio,
+   e é ele que preenche o campo de CNPJ: colar um link do LinkedIn passa a
+   ser um jeito de achar a empresa na Receita. */
+document.getElementById('pf-li-emp-conferir')?.addEventListener('click', async () => {
+  const btn = document.getElementById('pf-li-emp-conferir');
+  const campo = document.getElementById('pf-linkedin-empresa');
+  const info = document.getElementById('pf-li-emp-info');
+  const url = (campo?.value || '').trim();
+  if (!url) { info.textContent = 'Cole o link da página da empresa.'; return; }
+  btn.disabled = true;
+  info.textContent = 'Consultando o LinkedIn…';
+  try {
+    const d = await fetch(`${API}/api/linkedin/empresa`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    }).then(r => r.json());
+    if (d.status !== 'ok') {
+      info.textContent = d.message || 'Não encontrei essa empresa.';
+      return;
+    }
+    const pessoas = (typeof d.funcionarios_linkedin === 'number')
+      ? d.funcionarios_linkedin.toLocaleString('pt-BR') + ' pessoas' : '';
+    const partes = [`<b>${esc(d.nome)}</b>`, pessoas, esc(d.setor || ''),
+                    esc(d.sede || '')].filter(Boolean);
+    if (d.cnpj) {
+      const fmt = d.cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+      partes.push(`CNPJ <b>${esc(fmt)}</b>`
+        + (d.cnpj_confianca === 'alta' ? ' ✓' : ' <span title="deduzido por semelhança de nome — confira">~</span>'));
+      // Preenche os campos de busca: é o que transforma "conferi a empresa"
+      // em "agora busco por ela".
+      const cnpjCampo = document.getElementById('pf-cnpj');
+      if (cnpjCampo && !cnpjCampo.value.trim()) cnpjCampo.value = fmt;
+    } else {
+      partes.push('<span style="color:var(--gray-500)">sem CNPJ identificado</span>');
+    }
+    const nomeCampo = document.getElementById('pf-nome-empresa');
+    if (nomeCampo && !nomeCampo.value.trim()) nomeCampo.value = d.nome || '';
+    info.innerHTML = partes.join(' · ');
+  } catch (e) {
+    info.textContent = 'Não consegui falar com o servidor.';
+  } finally {
+    btn.disabled = false;
+  }
+});

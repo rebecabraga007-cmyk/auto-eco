@@ -1809,8 +1809,14 @@ async def prospeccao_pessoas(payload: dict = Body(default={})):
                 cargos_termos=filtros.get("cargo") or "",
                 nome=filtros.get("nome") or "",
                 sobrenome=filtros.get("sobrenome") or "",
-                cidade=filtros.get("cidade") or "",
+                cidade=(filtros.get("cidade")
+                        or filtros.get("localizacao_pessoa") or ""),
                 departamentos=filtros.get("departamento") or "",
+                # "Especialidades" casa no campo `about` do perfil, que é onde
+                # a pessoa descreve o que faz. Estava desabilitado com o aviso
+                # "requer dataset de perfis profissionais" -- o dataset existe
+                # desde que a busca por filtro foi ligada.
+                palavras=filtros.get("especialidades") or "",
                 so_com_email=bool(filtros.get("so_com_email")),
                 limite=min(limite, 100),
                 usuario=str(payload.get("usuario") or ""))
@@ -1846,7 +1852,13 @@ async def prospeccao_pessoas(payload: dict = Body(default={})):
             cargo=filtros.get("cargo") or "",
             departamento=filtros.get("departamento") or "",
             senioridade=filtros.get("senioridade") or "",
-            ufs=filtros.get("uf") or "", cidade=filtros.get("cidade") or "",
+            ufs=filtros.get("uf") or "",
+            cidade=(filtros.get("cidade")
+                    or filtros.get("localizacao_pessoa") or ""),
+            palavras=filtros.get("especialidades") or "",
+            # URL identifica UMA pessoa: quando vem preenchida, é ela que se
+            # procura, e os outros filtros só podem restringir.
+            linkedin_url=filtros.get("linkedin_url") or "",
             limite=limite) if cache_pode else []
     except Exception:
         do_cache = []
@@ -1876,6 +1888,17 @@ async def prospeccao_pessoas(payload: dict = Body(default={})):
         "senioridade": "senioridade",
         "so_com_email": "só com e-mail",
         "so_com_telefone": "só com telefone",
+        # Estes três estavam desabilitados na tela com um "🔜". O dataset que
+        # eles esperavam existe agora — mas continuam sendo do LADO LinkedIn:
+        # a Receita registra o endereço da EMPRESA, não o da pessoa, e não
+        # sabe o que ela declara saber fazer.
+        "localizacao_pessoa": "localização da pessoa",
+        "especialidades": "especialidades",
+        "linkedin_url": "perfil do LinkedIn",
+        # `so_com_linkedin` NÃO entra aqui: a Receita não sabe responder isso
+        # na consulta, mas a tela cruza o resultado com o cache logo depois e
+        # aí dá para saber quem tem perfil. Ela aplica o corte. Listar aqui
+        # seria avisar que um filtro foi ignorado quando ele não foi.
     }
     ignorados = [rotulo for chave, rotulo in _SO_LINKEDIN.items()
                  if filtros.get(chave)]

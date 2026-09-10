@@ -492,8 +492,10 @@
               <div><label>📆 Anos na empresa (máx.)</label><input id="pf-anos-max" type="number" placeholder="0" min="0" /></div>
             </div>
             <div class="pf-field">
-              <label>📍 Localização pessoa <span class="pf-soon" title="Sem endereço de sócio na Receita; use Localização empresa">🔜</span></label>
-              <select id="pf-loc-pessoa" disabled><option value="">Selecione uma ou mais UF</option></select>
+              <label>📍 Localização da pessoa</label>
+              <input id="pf-loc-pessoa" type="text" autocomplete="off"
+                     placeholder="Cidade onde a pessoa mora (ex.: Joinville)"
+                     title="Vem do perfil do LinkedIn, não da Receita — a Receita registra o endereço da EMPRESA, não o da pessoa. Só se aplica às buscas no LinkedIn." />
             </div>
             <div class="pf-field">
               <label>🧑 Nome</label>
@@ -504,8 +506,10 @@
               <input id="pf-sobrenome" type="text" placeholder="Digite um sobrenome…" autocomplete="off" />
             </div>
             <div class="pf-field">
-              <label>🔗 Perfil LinkedIn <span class="pf-soon" title="Requer dataset de perfis profissionais">🔜</span></label>
-              <input id="pf-linkedin-pessoa" type="text" placeholder="Insira a URL do perfil LinkedIn" disabled />
+              <label>🔗 Perfil LinkedIn</label>
+              <input id="pf-linkedin-pessoa" type="text" autocomplete="off"
+                     placeholder="linkedin.com/in/…"
+                     title="Procura ESTA pessoa. Quando preenchido, os outros filtros só restringem." />
             </div>
             <div class="pf-field">
               <label>✉️ E-mail <span class="pf-soon" title="Receita não fornece e-mail de pessoa física">🔜</span></label>
@@ -517,7 +521,7 @@
                    de quem nem sabe que o filtro existe. -->
               <label class="toggle-row" title="Traz só perfis com e-mail corporativo — 5% do total, mas ~10% entre decisores e 29% em cargos de head. Cada um é acionável sem precisar de CPF nem telefone."><span>Contatos com e-mail</span><input id="pf-pessoa-com-email" type="checkbox" /></label>
               <label class="toggle-row"><span title="Telefone é resolvido ao montar a lista (Mk Buscas)">Contatos com telefone</span><input id="pf-pessoa-com-tel" type="checkbox" /></label>
-              <label class="toggle-row"><span>Contatos com perfil LinkedIn <span class="pf-soon">🔜</span></span><input id="pf-pessoa-com-linkedin" type="checkbox" disabled /></label>
+              <label class="toggle-row" title="Cruza com os perfis que já compramos e mantém só quem tem perfil. Não custa nada — olha o que já está no cache."><span>Contatos com perfil LinkedIn</span><input id="pf-pessoa-com-linkedin" type="checkbox" /></label>
             </div>
             <div class="pf-divider"></div>
           </div>
@@ -626,8 +630,10 @@
             </select>
           </div>
           <div class="pf-field">
-            <label>⭐ Especialidades <span class="pf-soon" title="Requer dataset de perfis profissionais">🔜</span></label>
-            <input id="pf-especialidades" type="text" placeholder="Pesquise especialidades…" disabled />
+            <label>⭐ Especialidades</label>
+            <input id="pf-especialidades" type="text" autocomplete="off"
+                   placeholder="Ex.: logística, exportação, food service"
+                   title="Casa no texto que a pessoa escreveu sobre si no LinkedIn. Só se aplica às buscas no LinkedIn." />
           </div>
           <div class="pf-field">
             <label>Tamanho da empresa</label>
@@ -724,8 +730,14 @@
                 </div>
               </div>
               <div class="pf-field">
-                <label>🔗 Perfil LinkedIn <span class="pf-soon" title="Requer dataset de perfis/empresas do LinkedIn">🔜</span></label>
-                <input id="pf-linkedin-empresa" type="text" placeholder="Insira a URL do perfil LinkedIn" disabled />
+                <label>🔗 Perfil LinkedIn da empresa</label>
+                <div class="filter-row" style="margin:0">
+                  <input id="pf-linkedin-empresa" type="text" autocomplete="off"
+                         placeholder="linkedin.com/company/…" style="flex:1" />
+                  <button type="button" class="btn-secondary" id="pf-li-emp-conferir"
+                          style="font-size:12px;padding:3px 9px">Conferir</button>
+                </div>
+                <div id="pf-li-emp-info" class="pf-advanced-hint"></div>
               </div>
               <div class="pf-field">
                 <label>📋 Omitir Listas <span class="pf-soon" title="CapiBLU ainda não tem listas salvas/CRM">🔜</span></label>
