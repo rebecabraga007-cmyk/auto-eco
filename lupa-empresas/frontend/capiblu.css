@@ -769,6 +769,23 @@ body.locked { overflow: hidden; }
 }
 .uf-chip:hover { border-color: var(--blue-mid); }
 .uf-chip.active { background: var(--blue-mid); color: #fff; border-color: var(--blue-mid); }
+
+/* Fichas de cargo — mesmo idioma visual das UFs, porque é a mesma ideia:
+   escolher vários de uma lista aberta. A diferença é que cargo é digitado,
+   não escolhido de um conjunto fechado. */
+.chips-box { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 5px; }
+.chips-box:empty { display: none; }
+.chip-cargo {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 6px 3px 9px; border-radius: 12px; font-size: .76rem;
+  background: var(--blue-mid, #2563eb); color: #fff; border: 0;
+}
+.chip-cargo button {
+  border: 0; background: transparent; color: inherit; cursor: pointer;
+  font-size: .9rem; line-height: 1; padding: 0 1px; opacity: .8;
+}
+.chip-cargo button:hover { opacity: 1; }
+
 .combo-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
 .combo-chip { display: inline-flex; align-items: center; gap: 5px; background: var(--blue-soft); color: var(--blue-mid); border-radius: 999px; padding: 2px 8px; font-size: .74rem; }
 .combo-chip b { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }

@@ -446,8 +446,16 @@
           <!-- ═══ Campos exclusivos do perfil PESSOA ═══ -->
           <div id="pf-group-pessoa" hidden>
             <div class="pf-field">
-              <label>👤 Cargo</label>
-              <input id="pf-cargo" type="text" placeholder="Pesquise um cargo (ex.: administrador, diretor)…" autocomplete="off" />
+              <label>👤 Cargo <span class="pf-advanced-hint" style="display:inline">— vírgula ou Enter adiciona outro</span></label>
+              <!-- Vários cargos ao mesmo tempo, como as UFs. O campo continua
+                   sendo `pf-cargo` e continua sendo um input de texto: quem lê
+                   (prospFiltrosPessoa, cargosSelecionados) não muda, e o valor
+                   segue saindo separado por vírgula. As fichas são a mesma
+                   coisa mostrada de outro jeito. -->
+              <div id="pf-cargo-chips" class="chips-box"></div>
+              <input id="pf-cargo-entrada" type="text" autocomplete="off"
+                     placeholder="Digite um cargo e tecle vírgula (ex.: diretor, gerente comercial)…" />
+              <input id="pf-cargo" type="hidden" />
             </div>
             <div class="pf-field">
               <!-- O 🔜 saiu: o dataset de perfis profissionais está ligado

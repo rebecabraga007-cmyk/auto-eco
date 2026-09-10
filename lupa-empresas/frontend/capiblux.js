@@ -6097,3 +6097,72 @@ function avisaFiltrosPessoa(res) {
   box.innerHTML = esc(res.aviso);
   out.prepend(box);
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   FICHAS DE CARGO — vários cargos numa busca só
+
+   Mesma ideia das UFs, com uma diferença: UF é conjunto fechado e vira
+   botão; cargo é aberto e precisa ser digitado. Vírgula ou Enter fecha a
+   ficha e libera o campo para o próximo.
+
+   O input original `pf-cargo` continua existindo, agora escondido, e
+   continua guardando os cargos separados por vírgula. Isso é deliberado:
+   `prospFiltrosPessoa()` e `cargosSelecionados()` leem esse campo e não
+   precisam saber que a tela mudou. Trocar a aparência sem trocar o contrato
+   é o que evita quebrar o que já funciona.
+   ══════════════════════════════════════════════════════════════════════ */
+(function fichasDeCargo() {
+  const oculto = document.getElementById('pf-cargo');
+  const entrada = document.getElementById('pf-cargo-entrada');
+  const caixa = document.getElementById('pf-cargo-chips');
+  if (!oculto || !entrada || !caixa) return;
+
+  let cargos = [];
+
+  const sincroniza = () => { oculto.value = cargos.join(', '); };
+
+  function desenha() {
+    caixa.innerHTML = cargos.map((c, i) =>
+      `<span class="chip-cargo">${esc(c)}<button type="button" data-i="${i}"
+         title="Tirar ${esc(c)}" aria-label="Tirar ${esc(c)}">×</button></span>`
+    ).join('');
+    caixa.querySelectorAll('button').forEach(b =>
+      b.addEventListener('click', () => {
+        cargos.splice(parseInt(b.dataset.i, 10), 1);
+        sincroniza(); desenha();
+      }));
+    sincroniza();
+  }
+
+  function adiciona(texto) {
+    (texto || '').split(',').forEach(parte => {
+      const c = parte.trim();
+      // Repetido não vira ficha nova: duas fichas iguais filtrariam o mesmo
+      // e só ocupariam espaço.
+      if (c && !cargos.some(x => x.toLowerCase() === c.toLowerCase())) {
+        cargos.push(c);
+      }
+    });
+    entrada.value = '';
+    desenha();
+  }
+
+  entrada.addEventListener('keydown', e => {
+    if (e.key === ',' || e.key === 'Enter') {
+      e.preventDefault();
+      adiciona(entrada.value);
+    } else if (e.key === 'Backspace' && !entrada.value && cargos.length) {
+      // Apagar com o campo vazio tira a última ficha — é o que todo campo de
+      // etiquetas faz, e sem isso a pessoa procura o × com o mouse.
+      cargos.pop(); desenha();
+    }
+  });
+  // Sair do campo com texto pendente não pode perder o que foi digitado: a
+  // pessoa digita "diretor", clica em Buscar, e esperava que contasse.
+  entrada.addEventListener('blur', () => { if (entrada.value.trim()) adiciona(entrada.value); });
+  // Colar "diretor, gerente, head" cria as três de uma vez.
+  entrada.addEventListener('paste', e => {
+    const t = (e.clipboardData || window.clipboardData).getData('text');
+    if (t && t.includes(',')) { e.preventDefault(); adiciona(t); }
+  });
+})();
