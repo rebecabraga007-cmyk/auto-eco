@@ -1629,14 +1629,14 @@ def _linha_unificada(base: dict | None, li: dict | None) -> dict:
 async def empresas_unificada(request: Request, payload: dict = Body(default={})):
     """Receita e LinkedIn na mesma lista, como a Datastone faz.
 
-    `linkedin` NÃO é automático. A Receita é grátis; o LinkedIn cobra por
-    empresa entregue, e uma busca que gasta sozinha é uma busca que gasta sem
-    ninguém decidir. Então:
+    A Receita responde sozinha o que ela sabe. Quando o filtro só existe no
+    LinkedIn -- porte, tipo de organização, fundação -- a busca vai lá SEM
+    PERGUNTAR: quem prospecta escolhe o perfil da empresa, não o orçamento.
 
-      linkedin=false (padrão)  só Receita. Se houver filtro que só o LinkedIn
-                               responde, a resposta traz `linkedin_necessario`
-                               com o motivo e o custo — a tela pergunta.
-      linkedin=true            busca nos dois e funde por CNPJ.
+    O controle de gasto não sumiu, mudou de lugar. Fica em `limite_linkedin`
+    (teto baixo por padrão), na base local que absorve tudo que já foi
+    comprado, e no extrato da aba de administração. Nenhum deles atrapalha
+    quem está montando lista.
 
     `so_com_cnpj` é o "Possui CNPJ" deles. Filtra a lista JÁ MONTADA, então
     não reduz o que foi cobrado — reduz o que aparece. A resposta separa
@@ -1655,6 +1655,23 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
     # rotação morreu junto: a mesma busca devolvia as mesmas três empresas
     # para sempre, de graça — grátis e inútil.
     giro = rodadas.ler(filtros) if not offset else {"offset": 0, "cursor": None}
+
+    # FILTRO QUE SÓ O LINKEDIN RESPONDE VAI SOZINHO, SEM PERGUNTAR.
+    #
+    # E ISTO TEM QUE SER DECIDIDO AQUI, antes de escolher quem comanda a
+    # busca. Estava depois, e o efeito era silencioso e grave: `quer_linkedin`
+    # ainda era falso quando a Receita decidia entrar, então uma busca por
+    # "mais de 300 funcionários" vinha com consulado e cartório dentro --
+    # linhas que a Receita devolveu e que não satisfazem o filtro nenhum,
+    # porque a Receita não sabe quantas pessoas trabalham em lugar algum.
+    #
+    # A tela de permissão que existia aqui foi removida: ela empurrava para
+    # o operador uma decisão de custo que não é dele. Quem prospecta escolhe
+    # o perfil da empresa; o orçamento é do admin, que tem o extrato na aba
+    # de administração. O limite continua em `limite_linkedin`, que tem teto
+    # e padrão baixo.
+    if pedidos_li:
+        quer_linkedin = True
 
     # A BASE LOCAL PRIMEIRO. É o que faz a tela parecer a da Datastone: quando
     # o filtro cabe dentro da fatia já ingerida, a resposta sai do disco, em
@@ -1697,13 +1714,24 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
         # e a tela usa isso para oferecer "buscar mais" sem mentir que a
         # lista acabou.
         pagina = min(int(payload.get("limite_linkedin") or 25), 100)
-        trouxe = len(local.get("empresas") or [])
-        # PÁGINA CURTA = ACABOU O QUE O DISCO TEM para este filtro, nesta
-        # altura da rotação. É a hora certa de comprar mais: não antes, que
-        # seria pagar pelo que já está aqui, e não nunca, que seria a lista
-        # parar de crescer.
-        bastante = trouxe >= pagina
-        if local.get("status") != "ok" or not (local.get("completa") or bastante):
+        # O DISCO NÃO SUBSTITUI A BUSCA, ele a acumula.
+        #
+        # Eu tinha feito o disco responder sempre que tivesse uma página
+        # cheia, para economizar. A Rebeca corrigiu a premissa: o preço por
+        # empresa é baixo e o objetivo da aba é justamente trazer empresa
+        # NOVA a cada busca. Sob essa premissa, deixar o disco responder é
+        # servir o que já foi visto quando se queria o que ainda não foi.
+        #
+        # Então o disco só responde quando a fatia está INTEIRA ingerida --
+        # aí ele tem o universo do filtro e não há nada novo para buscar
+        # fora dele. Nos outros casos a busca vai à Bright Data, que
+        # continua do cursor e por construção devolve inédito, e o que vier
+        # fica guardado aqui.
+        #
+        # O acúmulo continua valendo por outros motivos: alimenta a ponte do
+        # CNPJ, sobrevive a falha da API, e é o que faz a fatia comprada
+        # valer alguma coisa.
+        if local.get("status") != "ok" or not local.get("completa"):
             local = None
     if local is not None:
         pedidos_li = []          # respondidos aqui, sem custo
@@ -1739,24 +1767,6 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
             por_cnpj[d] = {"base": e, "li": None}
             ordem.append(d)
 
-    # ---- o filtro que só o LinkedIn responde --------------------------
-    if pedidos_li and not quer_linkedin:
-        # Devolve o que a Receita achou, mas DIZ que aqueles filtros não foram
-        # aplicados. Silenciar aqui faria a pessoa acreditar que a lista
-        # respeita "51 a 200 funcionários" quando ela não respeita nada disso.
-        return {
-            "status": "ok",
-            "empresas": [_linha_unificada(por_cnpj[d]["base"], None) for d in ordem],
-            "total": len(ordem),
-            "total_receita": base.get("total") or 0,
-            "registros_cobrados": 0,
-            "custo_usd": 0.0,
-            "linkedin_necessario": True,
-            "filtros_ignorados": pedidos_li,
-            "message": ("Estes filtros só existem no LinkedIn e NÃO foram "
-                        "aplicados: %s. A lista abaixo é só da Receita."
-                        % ", ".join(pedidos_li)),
-        }
 
     # ---- lado LinkedIn: só quando pedido, porque cobra ----------------
     #

@@ -1163,17 +1163,13 @@ async function prospBuscar() {
     const totalStr = res.total_aprox ? `${prospState.total.toLocaleString('pt-BR')}+` : prospState.total.toLocaleString('pt-BR');
     cnt.textContent = `${totalStr} empresa${prospState.total === 1 ? '' : 's'} bate${prospState.total === 1 ? '' : 'm'} com seus filtros`;
     if (cntSub) {
-      /* Três números que NÃO são a mesma coisa e que a Datastone também
-         separa: quantas apareceram, quantas vieram das duas bases ao mesmo
-         tempo, e quantas foram COBRADAS. Juntar tudo em "45 empresas"
-         esconderia o que a busca custou. */
+      /* Quantas apareceram e quantas vieram das duas bases. O que foi
+         cobrado NÃO entra aqui: é informação de orçamento, e quem monta
+         lista não decide orçamento. O extrato fica na aba de administração. */
       const partes = [];
       if (res.nas_duas_fontes) partes.push(`${res.nas_duas_fontes} nas duas bases`);
       if (res.sem_cnpj) {
         partes.push(`${res.sem_cnpj} sem CNPJ${document.getElementById('pf-possui-cnpj')?.checked ? ' (escondidas)' : ''}`);
-      }
-      if (res.registros_cobrados) {
-        partes.push(`${res.registros_cobrados} cobrada(s) no LinkedIn`);
       }
       cntSub.textContent = [capMsg.trim() || ('Mostrando ' + prospState.empresas.length),
                             partes.join(' · ')].filter(Boolean).join(' · ')
@@ -5835,9 +5831,7 @@ function bdEmpAtualizaAviso() {
       + 'sem filtro a busca traria 1,3 milhão de empresas e cobraria por todas.';
     return;
   }
-  const usd = (n * 0.0025);
-  bdEmpAviso.innerHTML = 'Vai buscar até <b>' + n + '</b> empresas · custo estimado <b>US$ '
-    + usd.toFixed(2) + '</b> (cobra por empresa entregue, não por busca).';
+  bdEmpAviso.innerHTML = 'Vai buscar até <b>' + n + '</b> empresas no LinkedIn.';
 }
 
 ['pf-tamanho', 'pf-org-tipo', 'pf-li-fundada', 'pf-li-setor', 'pf-li-limite',
@@ -6073,8 +6067,6 @@ function ofereceLinkedIn() {
     + '<div style="margin-top:6px">'
     + '<button type="button" id="pf-pessoas-li" class="btn-secondary">'
     + 'Buscar ' + n + ' no LinkedIn</button>'
-    + ' <span class="pf-advanced-hint">custa US$ '
-    + (n * 0.0025).toFixed(2) + ' — cobra por perfil entregue, não por busca</span>'
     + '</div>';
   out.appendChild(box);
   document.getElementById('pf-pessoas-li')
@@ -6096,41 +6088,14 @@ function ofereceLinkedIn() {
    O botão refaz a mesma busca com o LinkedIn ligado, e o preço aparece
    antes do clique.
    ══════════════════════════════════════════════════════════════════════ */
-const _ROTULO_FILTRO = {
-  porte_min: 'tamanho por funcionários',
-  tipos: 'tipo de organização',
-  fundada_apos: 'fundada depois de',
-  sites: 'site',
-};
-
-function prospAvisaLinkedIn(res) {
-  const out = document.getElementById('prosp-results');
+/* A tela de "estes filtros não foram aplicados, quer buscar no LinkedIn?"
+   deixou de existir: a busca vai sozinha quando o filtro só existe lá. Quem
+   prospecta escolhe o perfil da empresa; o orçamento é do admin, e ele tem o
+   extrato na aba de administração. Perguntar a cada filtro transformava
+   navegar em decidir gastar. */
+function prospAvisaLinkedIn() {
   const velho = document.getElementById('pf-aviso-li');
   if (velho) velho.remove();
-  if (!out || !res || !res.linkedin_necessario) return;
-
-  const nomes = (res.filtros_ignorados || []).map(k => _ROTULO_FILTRO[k] || k);
-  const n = 25;
-  const box = document.createElement('div');
-  box.id = 'pf-aviso-li';
-  box.className = 'warn-box';
-  box.style.margin = '10px 0';
-  box.innerHTML =
-    '<b>' + (nomes.length === 1 ? 'Este filtro não foi aplicado' : 'Estes filtros não foram aplicados')
-    + ':</b> ' + esc(nomes.join(', ')) + '.'
-    + ' A Receita não sabe quantas pessoas trabalham numa empresa — isso só'
-    + ' existe no LinkedIn. A lista abaixo <b>ignora</b> esse filtro.'
-    + '<div style="margin-top:8px">'
-    + '<button type="button" id="pf-refazer-li" class="btn-secondary">'
-    + 'Refazer buscando no LinkedIn</button>'
-    + ' <span class="pf-advanced-hint">até ' + n + ' empresas · US$ '
-    + (n * 0.0025).toFixed(2) + ' — cobra por empresa entregue</span>'
-    + '</div>';
-  out.prepend(box);
-  document.getElementById('pf-refazer-li').addEventListener('click', () => {
-    prospState.usarLinkedIn = true;
-    prospBuscar();
-  });
 }
 
 
@@ -6730,8 +6695,7 @@ async function decMassaBuscar(fonte) {
       + (semNada
           ? '<div class="info-box" style="margin-top:8px">Nada no que já foi '
             + 'comprado. <button type="button" id="pf-dec-massa-bd" '
-            + 'class="btn-secondary">Buscar na Bright Data</button> '
-            + '<span class="pf-advanced-hint">cobra por perfil entregue</span></div>'
+            + 'class="btn-secondary">Buscar no LinkedIn</button></div>'
           : '');
     document.getElementById('pf-dec-massa-bd')
       ?.addEventListener('click', () => decMassaBuscar('brightdata'));
