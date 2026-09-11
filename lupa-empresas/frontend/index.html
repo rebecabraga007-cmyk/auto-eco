@@ -558,15 +558,19 @@
           <div class="pf-field">
             <label>👥 Tamanho (funcionários no LinkedIn)</label>
             <select id="pf-tamanho">
+              <!-- O valor carrega a FAIXA INTEIRA, "piso-teto". Antes era só
+                   o piso, e "51 a 200" devolvia tudo acima de 50 — o Itaú,
+                   com 112 mil funcionários, dentro de uma faixa que diz 200.
+                   Teto 0 significa "sem teto", que só a última faixa tem. -->
               <option value="">Qualquer tamanho</option>
-              <option value="0">1 a 10 — 808.423 empresas</option>
-              <option value="10">11 a 50 — 218.955</option>
-              <option value="50">51 a 200 — 51.075</option>
-              <option value="200">201 a 500 — 11.197</option>
-              <option value="500">501 a 1.000 — 3.620</option>
-              <option value="1000">1.001 a 5.000 — 2.732</option>
-              <option value="5000">5.001 a 10.000 — 302</option>
-              <option value="10000">mais de 10.000 — 170</option>
+              <option value="0-11">1 a 10 — 808.423 empresas</option>
+              <option value="10-51">11 a 50 — 218.955</option>
+              <option value="50-201">51 a 200 — 51.075</option>
+              <option value="200-501">201 a 500 — 11.197</option>
+              <option value="500-1001">501 a 1.000 — 3.620</option>
+              <option value="1000-5001">1.001 a 5.000 — 2.732</option>
+              <option value="5000-10001">5.001 a 10.000 — 302</option>
+              <option value="10000-0">mais de 10.000 — 170</option>
             </select>
             <div class="pf-advanced-hint" style="margin:4px 0 0">
               Vem do LinkedIn, não da Receita — por isso usa a

@@ -93,7 +93,7 @@ def _linha(r: sqlite3.Row) -> dict[str, Any]:
 
 def buscar(porte_min: int = 0, tipos: Any = None, fundada_apos: int = 0,
            setores: Any = None, nomes: Any = None, ufs: Any = None,
-           so_com_cnpj: bool = False, limite: int = 50,
+           so_com_cnpj: bool = False, porte_max: int = 0, limite: int = 50,
            offset: int = 0) -> dict[str, Any]:
     """Mesma forma de resposta de `brightdata_pessoas.buscar_empresas_por_filtro`,
     para os dois serem intercambiaveis -- so que esta custa zero.
@@ -112,6 +112,11 @@ def buscar(porte_min: int = 0, tipos: Any = None, fundada_apos: int = 0,
     if int(porte_min or 0) > 0:
         onde.append("funcionarios > ?")
         args.append(int(porte_min))
+    # Teto da faixa. A base local tem que responder igual a API, senão a
+    # mesma pergunta devolve conjuntos diferentes conforme a fonte.
+    if int(porte_max or 0) > 0:
+        onde.append("funcionarios < ?")
+        args.append(int(porte_max))
     for grupo, campo in ((_l(tipos), "tipo"), (_l(ufs), "uf")):
         if grupo:
             onde.append("(%s)" % " OR ".join("%s = ?" % campo for _ in grupo))

@@ -1079,6 +1079,18 @@ const prospState = {
   validating: false,
 };
 
+
+/* A faixa de tamanho vem do select como "piso-teto" — "50-201" é "51 a 200".
+   Era só o piso, e a busca devolvia tudo acima dele: escolher "51 a 200"
+   trazia empresa de 112 mil funcionários. Medido: `>50` sozinho são 69.095
+   empresas, `>50 e <200` são 50.972 — dezoito mil fora do que foi pedido,
+   sem nada na tela indicando. Teto 0 = sem teto (só a última faixa). */
+function faixaPorte() {
+  const v = document.getElementById('pf-tamanho')?.value || '';
+  const [min, max] = v.split('-');
+  return { min: parseInt(min, 10) || 0, max: parseInt(max, 10) || 0 };
+}
+
 function prospFiltros() {
   const list = v => (v || '').split(',').map(s => s.trim()).filter(Boolean);
   const escopo = [...document.querySelectorAll('.pf-esc:checked')].map(c => c.value);
@@ -1113,7 +1125,8 @@ function prospFiltros() {
     // Filtros que SÓ o LinkedIn responde. Vão no mesmo objeto porque, do
     // ponto de vista de quem usa, é um filtro só — quem decide qual base
     // atender é o backend, que sabe o que cada uma tem.
-    porte_min: parseInt(document.getElementById('pf-tamanho')?.value, 10) || 0,
+    porte_min: faixaPorte().min,
+    porte_max: faixaPorte().max,
     tipos: document.getElementById('pf-org-tipo')?.value || '',
     fundada_apos: parseInt(document.getElementById('pf-li-fundada')?.value, 10) || 0,
     setores: document.getElementById('pf-li-setor')?.value.trim() || '',
@@ -5809,7 +5822,8 @@ function bdEmpFiltros() {
   const el = id => document.getElementById(id);
   return {
     pais: 'BR',
-    porte_min: parseInt(el('pf-tamanho') ? el('pf-tamanho').value : '', 10) || 0,
+    porte_min: faixaPorte().min,
+    porte_max: faixaPorte().max,
     tipos: el('pf-org-tipo') ? el('pf-org-tipo').value : '',
     fundada_apos: parseInt(el('pf-li-fundada') ? el('pf-li-fundada').value : '', 10) || 0,
     setores: el('pf-li-setor') ? el('pf-li-setor').value.trim() : '',

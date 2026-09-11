@@ -1686,6 +1686,7 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
     if pedidos_li and empresas_li.disponivel():
         local = empresas_li.buscar(
             porte_min=int(filtros.get("porte_min") or 0),
+            porte_max=int(filtros.get("porte_max") or 0),
             tipos=filtros.get("tipos"),
             fundada_apos=int(filtros.get("fundada_apos") or 0),
             setores=filtros.get("setores"),
@@ -1830,6 +1831,7 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
                 nomes=filtros.get("nomes") or filtros.get("texto") or "",
                 sites=filtros.get("sites"),
                 porte_min=int(filtros.get("porte_min") or 0),
+                porte_max=int(filtros.get("porte_max") or 0),
                 tipos=filtros.get("tipos"),
                 fundada_apos=int(filtros.get("fundada_apos") or 0),
                 setores=filtros.get("setores"),

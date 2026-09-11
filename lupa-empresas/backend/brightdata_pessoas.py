@@ -1102,6 +1102,7 @@ async def buscar_empresas_por_filtro(
         porte_min: int = 0, tipos: Any = None, fundada_apos: int = 0,
         setores: Any = None, so_com_cnpj: bool = False,
         ufs: Any = None, cidade: str = "", cursor: Any = None,
+        porte_max: int = 0,
         limite: int = 25, usuario: str = "") -> dict[str, Any]:
     """Busca de EMPRESAS no dataset da Bright Data.
 
@@ -1148,6 +1149,16 @@ async def buscar_empresas_por_filtro(
     if int(porte_min or 0) > 0:
         cond.append({"name": "employees_in_linkedin", "operator": ">",
                      "value": int(porte_min)})
+    # O TETO DA FAIXA, e ele faltava.
+    #
+    # A tela oferece "51 a 200" e só o piso era enviado, então a busca
+    # devolvia tudo acima de 50 -- Itaú com 112 mil funcionários dentro de
+    # uma faixa que diz 200. Medido: `>50` sozinho dá 69.095 empresas;
+    # `>50 e <200` dá 50.972. Eram 18 mil empresas fora do que a pessoa
+    # pediu, e nada na tela indicava isso.
+    if int(porte_max or 0) > 0:
+        cond.append({"name": "employees_in_linkedin", "operator": "<",
+                     "value": int(porte_max)})
     if int(fundada_apos or 0) > 0:
         cond.append({"name": "founded", "operator": ">",
                      "value": int(fundada_apos)})
