@@ -1216,6 +1216,22 @@ async def buscar_empresas_por_filtro(
                  "cnpj_confianca": e.get("cnpj_confianca")})
         except Exception:
             pass
+    # E TAMBEM NA BASE RAPIDA, que e o que faz o dinheiro virar ativo.
+    #
+    # Sem isto, o que se compra sob demanda vai so para o cache de empresas,
+    # que a busca instantanea nao le -- entao o mesmo filtro, amanha, paga de
+    # novo pelas mesmas empresas. Gravando aqui, cada compra ENGORDA a base
+    # local: a parte do universo que a operacao realmente usa se acumula
+    # sozinha, paga uma vez.
+    #
+    # E o que torna viavel "ir puxando aos poucos" em vez de comprar uma
+    # fatia inteira de uma vez.
+    ineditas = 0
+    try:
+        import empresas_li
+        ineditas = empresas_li.guardar_varias(brutas)
+    except Exception:
+        pass
     linkedin_cache.registrar_gasto(
         "search-empresas",
         detalhe=(", ".join(_l(nomes) or _l(sites) or ["filtro"]))[:200],
@@ -1231,6 +1247,10 @@ async def buscar_empresas_por_filtro(
         "sem_cnpj": cobrados - com_cnpj,
         "registros_cobrados": cobrados,
         "custo_usd": custo,
+        # Quantas dessas nunca tinham sido compradas. E o numero que diz se a
+        # compra valeu: zero ineditas significa que se pagou de novo por
+        # empresa que ja estava no disco.
+        "ineditas": ineditas,
         "cursor": d.get("search_after"),
         "ms": int((time.time() - t0) * 1000),
     }

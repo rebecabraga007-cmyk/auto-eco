@@ -1669,7 +1669,26 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
             nomes=filtros.get("nomes") or filtros.get("texto") or "",
             ufs=filtros.get("uf") or filtros.get("ufs"),
             limite=min(int(payload.get("limite_linkedin") or 50), 200))
-        if local.get("status") != "ok" or not local.get("completa"):
+        # QUANDO O DISCO BASTA.
+        #
+        # A primeira versão só aceitava o disco quando a fatia estava
+        # INTEIRA ingerida (`completa`). Isso fazia sentido para uma base
+        # comprada de uma vez, e nenhum para uma base que cresce sozinha a
+        # cada compra: acumulando aos poucos, `completa` nunca fica
+        # verdadeira, e o disco -- que já tem a resposta -- nunca seria
+        # usado. Pagaríamos de novo por empresa que já está aqui.
+        #
+        # O critério que serve para os dois casos é este: o disco responde
+        # quando ele TEM UMA PÁGINA CHEIA. Se tem, a pessoa recebe resultado
+        # grátis e instantâneo; se falta, aí sim vale perguntar lá fora.
+        #
+        # A diferença entre os dois casos não some, ela vira rótulo:
+        # `completa` continua dizendo se aquilo é TUDO que existe no filtro,
+        # e a tela usa isso para oferecer "buscar mais" sem mentir que a
+        # lista acabou.
+        pagina = min(int(payload.get("limite_linkedin") or 25), 100)
+        bastante = len(local.get("empresas") or []) >= pagina
+        if local.get("status") != "ok" or not (local.get("completa") or bastante):
             local = None
     if local is not None:
         pedidos_li = []          # respondidos aqui, sem custo
@@ -1878,6 +1897,11 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
         "registros_cobrados": cobrados,
         "custo_usd": custo,
         "linkedin_necessario": False,
+        # Veio do disco, e o disco pode não ter o universo todo deste filtro.
+        # Dizer isso é o que permite oferecer "buscar mais" sem dar a
+        # entender que a lista acabou.
+        "do_disco": local is not None,
+        "disco_completo": bool(local and local.get("completa")),
     }
 
 

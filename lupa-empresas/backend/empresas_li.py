@@ -162,3 +162,86 @@ def buscar(porte_min: int = 0, tipos: Any = None, fundada_apos: int = 0,
         "completa": completa,
         "piso_local": cob["piso"],
     }
+
+
+def guardar_varias(empresas: list[dict]) -> int:
+    """Guarda na base rápida o que foi COMPRADO agora.
+
+    POR QUE ISTO FALTAVA, E O QUE CUSTAVA
+    -------------------------------------
+    A busca paga gravava em `linkedin_cache.empresas`, que a busca instantânea
+    não lê. Resultado: pagava-se por 25 empresas e, no dia seguinte, o mesmo
+    filtro pagava de novo pelas mesmas 25. O dinheiro comprava um resultado,
+    não um ativo.
+
+    Com isto, cada compra sob demanda ENGORDA a base local. É o que torna
+    viável "ir puxando aos poucos" em vez de comprar uma fatia inteira de
+    uma vez: a parte que a operação realmente usa se acumula sozinha, paga
+    uma vez só, e nunca mais é cobrada.
+
+    Devolve quantas eram inéditas -- o número que diz se a compra valeu.
+    """
+    if not empresas:
+        return 0
+    import time as _t
+    linhas = []
+    for e in empresas:
+        url = (e.get("url") or "").strip()
+        if not url:
+            continue
+        linhas.append((
+            url, str(e.get("company_id") or ""), e.get("nome") or "",
+            e.get("site") or "", (e.get("site") or "").lower(),
+            e.get("funcionarios_linkedin"), e.get("setor") or "",
+            e.get("tipo") or "", str(e.get("fundada") or ""),
+            e.get("seguidores"), e.get("sede") or "", e.get("uf") or "",
+            e.get("cnpj") or "", e.get("cnpj_confianca") or "",
+            e.get("cnpj_motivo") or "", int(_t.time())))
+    if not linhas:
+        return 0
+    try:
+        # Escrita: não pode usar a conexão de leitura (`mode=ro`).
+        con = sqlite3.connect(DB, timeout=10)
+        con.executescript(_DDL_ESCRITA)
+        antes = con.execute("SELECT count(*) FROM empresas_li").fetchone()[0]
+        con.executemany("""
+            INSERT INTO empresas_li (url,company_id,nome,site,dominio,
+                funcionarios,setor,tipo,fundada,seguidores,sede,uf,
+                cnpj,cnpj_confianca,cnpj_motivo,visto_em)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(url) DO UPDATE SET
+              nome=excluded.nome, funcionarios=excluded.funcionarios,
+              setor=excluded.setor, tipo=excluded.tipo,
+              seguidores=excluded.seguidores, visto_em=excluded.visto_em,
+              -- CNPJ vazio não apaga o que já foi deduzido antes.
+              cnpj=CASE WHEN excluded.cnpj<>'' THEN excluded.cnpj
+                        ELSE empresas_li.cnpj END
+        """, linhas)
+        depois = con.execute("SELECT count(*) FROM empresas_li").fetchone()[0]
+        con.commit()
+        con.close()
+        return depois - antes
+    except Exception:
+        return 0
+
+
+# DDL mínimo para o caso de a base ainda não existir: a primeira compra sob
+# demanda pode acontecer antes de qualquer ingestão em massa, e ela não pode
+# falhar por isso.
+_DDL_ESCRITA = """
+CREATE TABLE IF NOT EXISTS empresas_li (
+  url TEXT PRIMARY KEY, company_id TEXT, nome TEXT, site TEXT, dominio TEXT,
+  funcionarios INTEGER, setor TEXT, tipo TEXT, fundada TEXT, seguidores INTEGER,
+  sede TEXT, uf TEXT, cnpj TEXT, cnpj_confianca TEXT, cnpj_motivo TEXT,
+  visto_em INTEGER
+);
+CREATE INDEX IF NOT EXISTS ix_li_cnpj ON empresas_li(cnpj);
+CREATE INDEX IF NOT EXISTS ix_li_func ON empresas_li(funcionarios);
+CREATE INDEX IF NOT EXISTS ix_li_tipo ON empresas_li(tipo);
+CREATE INDEX IF NOT EXISTS ix_li_uf   ON empresas_li(uf);
+CREATE INDEX IF NOT EXISTS ix_li_dom  ON empresas_li(dominio);
+CREATE TABLE IF NOT EXISTS progresso (
+  chave TEXT PRIMARY KEY, cursor TEXT, trazidos INTEGER, gasto_usd REAL,
+  atualizado INTEGER
+);
+"""
