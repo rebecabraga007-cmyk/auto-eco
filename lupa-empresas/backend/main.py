@@ -1693,6 +1693,25 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
     if pedidos_li:
         quer_linkedin = True
 
+    # A API COMANDA; O BANCO COMPLETA.
+    #
+    # Decisão da Rebeca: não buscar pelo banco a menos que a API não ache
+    # empresa suficiente. O motivo é o que a operação quer da aba -- empresa
+    # que ela ainda não viu. A base da Receita é a mesma todo dia; o LinkedIn
+    # é onde aparece quem entrou agora, e é lá que estão porte, tipo e setor
+    # como a própria empresa se descreve.
+    #
+    # A API só pode comandar quando entende ALGUM filtro. Ela não sabe ler
+    # código CNAE, situação cadastral, capital social nem natureza jurídica
+    # -- isso é cadastro, e cadastro é da Receita. Numa busca feita só com
+    # esses, mandar a API seria pedir "todas as empresas do Brasil" e pagar
+    # por uma amostra aleatória.
+    _API_ENTENDE = ("texto", "nomes", "nome_empresa", "setores", "sites",
+                    "porte_min", "tipos", "fundada_apos", "uf", "ufs",
+                    "municipio", "cidade")
+    if any(filtros.get(k) for k in _API_ENTENDE):
+        quer_linkedin = True
+
     # A BASE LOCAL PRIMEIRO. É o que faz a tela parecer a da Datastone: quando
     # o filtro cabe dentro da fatia já ingerida, a resposta sai do disco, em
     # milissegundos, de graça, e sem perguntar nada a ninguém. Só fora dela é
@@ -1770,7 +1789,10 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
     # Lista que desobedece o filtro e pior que lista curta: a pessoa confia
     # no que pediu e liga para a empresa errada.
     base = {"empresas": [], "total": 0}
-    receita_comanda = local is None and not (pedidos_li and quer_linkedin)
+    # A Receita comanda só quando a API não pode -- ou seja, quando a busca
+    # usou apenas filtros de cadastro. Nos outros casos ela entra depois,
+    # completando o que faltou e enriquecendo por CNPJ, de graça.
+    receita_comanda = local is None and not quer_linkedin
     # ROTACAO. A mesma busca repetida continua de onde parou, em vez de
     # devolver as mesmas empresas -- ver rodadas.py sobre por que avancar e
     # melhor que embaralhar. Só quando a tela não pediu uma página específica.
@@ -1800,10 +1822,18 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
     cobrados = 0
     custo = 0.0
     total_li = None
-    if quer_linkedin and not pedidos_li and local is None:
-        # RECEITA COMANDA. Cada linha dela vira uma consulta de 1 registro
-        # para achar a mesma empresa no LinkedIn pelo domínio. Tem teto porque
-        # isso é por empresa: 50 linhas são 50 registros.
+    if receita_comanda and local is None:
+        # RECEITA COMANDA -- e agora isso só acontece quando a API NÃO PODE,
+        # ou seja, numa busca feita só com filtros de cadastro. A condição
+        # antes era `quer_linkedin and not pedidos_li`, e com a API passando
+        # a comandar por padrão ela ficou invertida: entrava-se aqui para
+        # enriquecer uma lista da Receita que nunca tinha sido buscada, e o
+        # resultado era a API devolver zero e o banco completar tudo --
+        # exatamente o contrário do que foi pedido.
+        #
+        # Cada linha vira uma consulta de 1 registro para achar a mesma
+        # empresa no LinkedIn pelo domínio. Tem teto porque é por empresa:
+        # 50 linhas são 50 registros.
         teto_enriq = min(int(payload.get("enriquecer_ate") or 25), 50)
         # UMA CONSULTA POR RAIZ, nao por linha. Filial nao tem pagina propria
         # no LinkedIn: as 6 filiais da Selbetti apontam para a mesma empresa,
@@ -1929,6 +1959,32 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
                 "email": c.get("email") or "",
             }
 
+    # ---- o banco COMPLETA quando a API nao achou o suficiente ---------
+    #
+    # É o "a menos que" do pedido. Lista curta é pior que lista com empresa
+    # já conhecida: quem precisa de 25 para ligar hoje não pode receber 4
+    # porque o LinkedIn não conhecia as outras 21.
+    completou_do_banco = 0
+    if (quer_linkedin and _cnpj_local() and not receita_comanda
+            and len(ordem) < limite):
+        falta = limite - len(ordem)
+        try:
+            extra = cnpj_lookup.search(filtros, limite=falta * 2,
+                                       offset=offset or giro["offset"])
+        except Exception:
+            extra = {"empresas": []}
+        for e in extra.get("empresas") or []:
+            if len(ordem) >= limite:
+                break
+            d = _digitos(e.get("cnpj"))
+            # Não duplica quem a API já trouxe: a mesma empresa apareceria
+            # duas vezes, uma com as colunas do LinkedIn e outra sem.
+            if not d or d in por_cnpj:
+                continue
+            por_cnpj[d] = {"base": e, "li": None}
+            ordem.append(d)
+            completou_do_banco += 1
+
     linhas = [_linha_unificada(por_cnpj[k]["base"], por_cnpj[k]["li"])
               for k in ordem]
     sem_cnpj = sum(1 for l in linhas if not l["tem_cnpj"])
@@ -1952,6 +2008,10 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
         # entender que a lista acabou.
         "do_disco": local is not None,
         "disco_completo": bool(local and local.get("completa")),
+        # Quantas vieram do banco por falta de resultado na API. "O LinkedIn
+        # achou 4, completamos com 21 da Receita" é diferente de "achamos 25
+        # no LinkedIn", e a tela precisa poder dizer qual dos dois foi.
+        "completou_do_banco": completou_do_banco,
     }
 
 
