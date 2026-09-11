@@ -422,8 +422,14 @@ async def telefones_documento(doc: str, tipo: str = "CPF",
                               finalidade: int | None = None) -> dict[str, Any]:
     """Telefones de um CPF/CNPJ via consulta principal do Localize.
 
-    Retorna {status, telefones:[{ddd,number,telefone,tipo,whatsapp}], protocolo}.
+    Retorna {status, telefones:[...], emails:[str], protocolo}.
     A lista sai crua (sem filtro) — quem chama aplica mkbuscas.refine_phones.
+
+    OS E-MAILS VÊM DE GRAÇA e estavam sendo jogados fora. Esta função faz a
+    mesma consulta paga que `contato_cpf` e a resposta traz telefone E e-mail
+    no mesmo corpo; devolver só o telefone significava pagar pelos dois e usar
+    um. A planilha tem colunas "Email 1" e "Email 2" desde sempre, e elas
+    saíam vazias por causa disso.
     """
     tipo = (tipo or "CPF").upper()
     r = await (consulta_cnpj(doc, finalidade) if tipo == "CNPJ"
@@ -433,9 +439,16 @@ async def telefones_documento(doc: str, tipo: str = "CPF",
     data = r.get("data") or {}
     resp = data.get("resposta") or {}
     tels = _flatten_tel(resp.get("telefones")) + _flatten_tel(resp.get("telefonesAdicionados"))
+    emails = []
+    for e in (resp.get("emails") or []) + (resp.get("emailsAdicionados") or []):
+        val = (e.get("email") or e.get("enderecoEmail") or "") if isinstance(e, dict) else str(e)
+        val = (val or "").strip()
+        if val and val not in emails:
+            emails.append(val)
     return {
         "status": "ok",
         "telefones": tels,
+        "emails": emails,
         "protocolo": (data.get("cabecalho") or {}).get("protocolo", ""),
     }
 

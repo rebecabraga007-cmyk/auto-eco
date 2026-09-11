@@ -1483,26 +1483,46 @@ async def _phones_for_cpf(cpf: str, modo: str = "celular", max_tel: int = 3,
     modelo_id/modelo_nome: se a fonte for assertiva, cada chamada é logada
     (custos.py) atribuída a esse modelo, pra rastrear gasto por planilha.
     """
+    tels, _ = await _contato_for_cpf(cpf, modo, max_tel, fonte, modelo_id,
+                                     modelo_nome, cnpj)
+    return tels
+
+
+async def _contato_for_cpf(cpf: str, modo: str = "celular", max_tel: int = 3,
+                           fonte: str = "mk", modelo_id: str = "",
+                           modelo_nome: str = "", cnpj: str = "") -> tuple:
+    """Telefones E e-mails de um CPF, na MESMA consulta paga.
+
+    Existe porque o e-mail estava sendo comprado e jogado fora: a resposta do
+    Localize traz telefone e e-mail no mesmo corpo, e só o telefone era lido.
+    A planilha tem colunas "Email 1" e "Email 2" desde sempre e elas saíam
+    vazias -- não por falta de dado, por falta de leitura.
+
+    O MK não devolve e-mail, então por ali a lista volta vazia. Isso importa
+    na escolha da fonte: quem precisa de e-mail tem que usar a Assertiva.
+    """
     if not cpf:
-        return []
+        return [], []
     try:
         if fonte == "assertiva":
             if not assertiva.enabled():
-                return []
+                return [], []
             r = await assertiva.telefones_documento(cpf, tipo="CPF")
             custos.log_assertiva(modelo_id=modelo_id, modelo_nome=modelo_nome, cnpj=cnpj, cpf=cpf)
             if r.get("status") == "ok":
-                return mkbuscas.refine_phones(r.get("telefones") or [], modo=modo, max_n=max_tel)
-            return []
+                return (mkbuscas.refine_phones(r.get("telefones") or [],
+                                               modo=modo, max_n=max_tel),
+                        r.get("emails") or [])
+            return [], []
         if not mkbuscas.enabled():
-            return []
+            return [], []
         mk = await mkbuscas.consulta_cpf(cpf)
         if mk.get("status") == "ok":
             raw = mkbuscas._extract_phones(mk.get("data") or {})
-            return mkbuscas.refine_phones(raw, modo=modo, max_n=max_tel)
+            return mkbuscas.refine_phones(raw, modo=modo, max_n=max_tel), []
     except Exception:
         pass
-    return []
+    return [], []
 
 
 def _fmt_phone_digits(p: dict) -> str:
@@ -2229,11 +2249,11 @@ async def company_leads(cnpj: str, decisores: bool = False,
     # Telefones de todos os socios em paralelo (era 1 a 1 => lento).
     modelo_nome = _resolve_modelo(modelo_id)
     tels_por_socio = await asyncio.gather(*[
-        _phones_for_cpf(s.get("cpf_completo") or "", modo_tel, max_tel, fonte_tel,
-                        modelo_id=modelo_id, modelo_nome=modelo_nome, cnpj=cnpj) for s in socios
+        _contato_for_cpf(s.get("cpf_completo") or "", modo_tel, max_tel, fonte_tel,
+                         modelo_id=modelo_id, modelo_nome=modelo_nome, cnpj=cnpj) for s in socios
     ])
     contatos = []
-    for socio, tels in zip(socios, tels_por_socio):
+    for socio, (tels, emails) in zip(socios, tels_por_socio):
         cpf = socio.get("cpf_completo") or ""
         contatos.append({
             "tipo": "socio",
@@ -2242,6 +2262,8 @@ async def company_leads(cnpj: str, decisores: bool = False,
             "cpf": cpf,
             "cpf_status": socio.get("cpf_status") or ("resolved" if cpf else "not_found"),
             "telefones": _tel_payload(tels),
+            # Vieram na MESMA consulta do telefone. Estavam sendo descartados.
+            "emails": emails,
         })
 
     # Por que veio 0 decisor? Sem isto a tela mostra "Decisores 0" e a usuária
@@ -2295,11 +2317,11 @@ async def company_leads(cnpj: str, decisores: bool = False,
             ja_tem = {c.get("cpf") for c in contatos if c.get("cpf")}
             escolhidos = [p for p in escolhidos if p.get("cpf") and p["cpf"] not in ja_tem]
             tels_dec = await asyncio.gather(*[
-                _phones_for_cpf(p["cpf"], modo_tel, max_tel, fonte_tel,
+                _contato_for_cpf(p["cpf"], modo_tel, max_tel, fonte_tel,
                                 modelo_id=modelo_id, modelo_nome=modelo_nome, cnpj=cnpj)
                 for p in escolhidos
             ])
-            for p, tels in zip(escolhidos, tels_dec):
+            for p, (tels, emails) in zip(escolhidos, tels_dec):
                 contatos.append({
                     "tipo": "decisor",
                     "nome": p.get("nome") or "",
@@ -2310,6 +2332,7 @@ async def company_leads(cnpj: str, decisores: bool = False,
                     "cpf": p["cpf"],
                     "cpf_status": "resolved",
                     "telefones": _tel_payload(tels),
+                    "emails": emails,
                 })
             info_dec["escolhidos"] = len(escolhidos)
             if not info_dec["motivo"]:
