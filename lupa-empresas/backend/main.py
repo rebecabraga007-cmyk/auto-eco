@@ -1650,6 +1650,12 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
 
     pedidos_li = [k for k in FILTROS_SO_LINKEDIN if filtros.get(k)]
 
+    # A ROTAÇÃO É LIDA AQUI EM CIMA porque ela vale para as DUAS fontes.
+    # Ficava só no caminho da Receita, e quando o disco passou a responder a
+    # rotação morreu junto: a mesma busca devolvia as mesmas três empresas
+    # para sempre, de graça — grátis e inútil.
+    giro = rodadas.ler(filtros) if not offset else {"offset": 0, "cursor": None}
+
     # A BASE LOCAL PRIMEIRO. É o que faz a tela parecer a da Datastone: quando
     # o filtro cabe dentro da fatia já ingerida, a resposta sai do disco, em
     # milissegundos, de graça, e sem perguntar nada a ninguém. Só fora dela é
@@ -1668,7 +1674,11 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
             setores=filtros.get("setores"),
             nomes=filtros.get("nomes") or filtros.get("texto") or "",
             ufs=filtros.get("uf") or filtros.get("ufs"),
-            limite=min(int(payload.get("limite_linkedin") or 50), 200))
+            limite=min(int(payload.get("limite_linkedin") or 50), 200),
+            # Continua de onde a rodada anterior parou -- é isto que faz a
+            # mesma busca trazer empresa diferente, e de graça enquanto o
+            # disco tiver.
+            offset=giro["offset"])
         # QUANDO O DISCO BASTA.
         #
         # A primeira versão só aceitava o disco quando a fatia estava
@@ -1687,7 +1697,12 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
         # e a tela usa isso para oferecer "buscar mais" sem mentir que a
         # lista acabou.
         pagina = min(int(payload.get("limite_linkedin") or 25), 100)
-        bastante = len(local.get("empresas") or []) >= pagina
+        trouxe = len(local.get("empresas") or [])
+        # PÁGINA CURTA = ACABOU O QUE O DISCO TEM para este filtro, nesta
+        # altura da rotação. É a hora certa de comprar mais: não antes, que
+        # seria pagar pelo que já está aqui, e não nunca, que seria a lista
+        # parar de crescer.
+        bastante = trouxe >= pagina
         if local.get("status") != "ok" or not (local.get("completa") or bastante):
             local = None
     if local is not None:
@@ -1710,7 +1725,6 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
     # ROTACAO. A mesma busca repetida continua de onde parou, em vez de
     # devolver as mesmas empresas -- ver rodadas.py sobre por que avancar e
     # melhor que embaralhar. Só quando a tela não pediu uma página específica.
-    giro = rodadas.ler(filtros) if not offset else {"offset": 0, "cursor": None}
     if _cnpj_local() and receita_comanda:
         base = cnpj_lookup.search(filtros, limite=limite,
                                   offset=offset or giro["offset"])
@@ -1796,6 +1810,10 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
         # zero e resultado zero parecem a mesma coisa na tela.
         if local is not None:
             r = local
+            if not offset:
+                trazidas = len(r.get("empresas") or [])
+                rodadas.avancar(filtros, trazidas,
+                                acabou=(trazidas < pagina))
         else:
             r = await brightdata_pessoas.buscar_empresas_por_filtro(
                 pais=str(filtros.get("pais") or "BR"),
