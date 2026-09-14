@@ -3696,6 +3696,7 @@ async def _enrich_cnpj(cnpj: str, want: set,
         try:
             teto = max(1, int(max_dec or 3))
             escolhidos: list[dict] = []
+            pendentes: list[dict] = []
             fonte_usada = ""
 
             # ---- LINKEDIN PRIMEIRO -------------------------------------
@@ -3722,6 +3723,22 @@ async def _enrich_cnpj(cnpj: str, want: set,
                     so_com_telefone=False,
                     max_decisores=teto, max_socios=0,
                     cargos_escolhidos=cargos_li)
+                # QUEM O FUNIL CURTO NAO FECHOU fica guardado para a consulta
+                # profunda. O curto para cedo de proposito -- se a JBR nao
+                # desempata sozinha, ele desiste, porque desempatar custa ate
+                # R$ 2,38 por pessoa e a planilha tem dezenas. A consulta
+                # profunda e esse gasto, feito de propria vontade e so em quem
+                # ficou faltando.
+                for p_li in (r_li.get("pessoas") or []):
+                    if not p_li.get("telefones"):
+                        pendentes.append({
+                            "nome": p_li.get("nome") or "",
+                            "cargo": p_li.get("cargo") or "",
+                            "url": p_li.get("url") or "",
+                            "cidade": p_li.get("cidade") or "",
+                            "email": p_li.get("email") or "",
+                            "cpf": p_li.get("cpf") or "",
+                            "cnpj": digits})
                 for p_li in (r_li.get("pessoas") or []):
                     escolhidos.append({
                         "nome": p_li.get("nome") or "",
@@ -3806,6 +3823,8 @@ async def _enrich_cnpj(cnpj: str, want: set,
             out["_de_com_tel"] = sum(
                 1 for k in ("de_dec1_celular", "de_dec2_celular", "de_dec3_celular")
                 if out.get(k))
+            if pendentes:
+                out["_de_pendentes"] = pendentes[:10]
         except Exception as exc:
             # FALHA NAO PODE VIRAR SILENCIO. Ate hoje este `except` so
             # guardava a mensagem num campo que ninguem lia: a empresa saia
@@ -3939,6 +3958,7 @@ async def enrich_run(payload: dict = Body(default={})):
             achados = r.pop("_de_achados", None)
             com_tel = r.pop("_de_com_tel", 0)
             erro = r.pop("_de_erro", None)
+            pend = r.pop("_de_pendentes", None)
             if erro:
                 erros_dec.append({"cnpj": str(r.get(cnpj_col) or ""),
                                   "erro": erro})
@@ -3959,7 +3979,10 @@ async def enrich_run(payload: dict = Body(default={})):
             elif not com_tel:
                 sem_telefone.append({"empresa": str(nome_emp)[:80],
                                      "cnpj": str(r.get(cnpj_col) or ""),
-                                     "decisores": achados})
+                                     "decisores": achados,
+                                     # Os perfis que o funil curto nao fechou,
+                                     # prontos para a consulta profunda.
+                                     "perfis": pend or []})
     label_of = {k: lbl for g in _ENRICH_CATALOG for (k, lbl) in g["campos"]}
     added_cols = [{"key": f, "label": label_of.get(f, f)} for f in fields]
     if unir_tel:

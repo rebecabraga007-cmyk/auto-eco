@@ -7023,16 +7023,24 @@ function enrichAvisaDecisores() {
       + `conhece ninguém dessa empresa, ou o filtro de cargo cortou todos — `
       + `vale afrouxar o cargo antes de gastar mais.` + lista(semDec) + '</div>';
   }
-  const alvo = [...semTel, ...semDec];
-  html += `<div style="margin-top:10px">
+  /* SÓ ENTRA NA FILA QUEM TEM PERFIL PENDENTE.
+     Empresa que voltou sem NINGUÉM não tem o que aprofundar: o funil completo
+     desempata pessoa, não inventa pessoa. Para essas o caminho é afrouxar o
+     cargo, e é isso que o aviso diz. */
+  const alvo = semTel.filter(e => (e.perfis || []).length);
+  if (alvo.length) {
+    const quantos = alvo.reduce((a, e) => a + (e.perfis || []).length, 0);
+    html += `<div style="margin-top:10px">
       <button type="button" id="en-profunda" class="btn-secondary">
-        🔬 Consulta profunda nessas ${alvo.length}</button>
-      <span class="pf-advanced-hint" style="display:inline">— usa o funil
-      completo do LinkedIn, o mesmo da aba "Funcionários no LinkedIn": procura
-      quem se declara decisor lá, resolve o CPF e busca o telefone. É lento e
-      caro por pessoa, por isso roda só nestas.</span>
-    </div>
-    <div id="en-profunda-saida" style="margin-top:8px"></div>`;
+        🔬 Consulta profunda em ${quantos} pessoa(s)</button>
+      <span class="pf-advanced-hint" style="display:inline">— o decisor já foi
+      encontrado no LinkedIn; o que faltou foi fechar o CPF. Isto roda as dez
+      etapas do funil completo (WorkAPI, busca por nome, partição por cidade,
+      conferência candidato a candidato) — o mesmo da aba "Funcionários no
+      LinkedIn". É lento e caro por pessoa, por isso só nestas.</span>
+    </div>`;
+  }
+  html += '<div id="en-profunda-saida" style="margin-top:8px"></div>';
   box.innerHTML = html;
   out.appendChild(box);
 
@@ -7046,22 +7054,64 @@ function enrichAvisaDecisores() {
       saida.innerHTML = `<span class="spinner"></span> ${i + 1} de ${alvo.length}: `
         + `${esc(e.empresa || e.cnpj)}…`;
       try {
-        const d = await fetch(`${API}/api/funil/decisores-linkedin`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            empresa: e.empresa || '', cnpj: onlyDigits(e.cnpj || ''),
-            limite: 30, teto_brl: 6,
-            max_decisores: parseInt(document.getElementById('en-maxdec')?.value) || 3,
-            // O MESMO que o enriquecimento usou: se a consulta profunda
-            // procurasse outro cargo, ela traria contato de quem não estava
-            // sendo pedido -- e a pessoa nem saberia por quê.
-            cargos: enrichCargos().split(',').map(x => x.trim()).filter(Boolean),
-            // Aqui o telefone é o objetivo: a empresa entrou nesta lista
-            // justamente por não ter nenhum.
-            so_com_telefone: true,
-          }),
-        }).then(r => r.json());
-        (d.pessoas || []).forEach(p => achados.push({ ...p, _empresa: e.empresa }));
+        /* O FUNIL COMPLETO NOS PERFIS QUE O CURTO NÃO FECHOU.
+
+           Enquanto o enriquecimento usava a folha, "consulta profunda" queria
+           dizer "vá ao LinkedIn". Agora ele JÁ vai ao LinkedIn, então repetir
+           aquela chamada devolveria exatamente o mesmo resultado — um botão
+           que parece fazer algo e não faz é pior que botão nenhum.
+
+           O que ainda falta nesses casos é o desempate: o funil curto para
+           quando a JBR não fecha o nome sozinha, porque desempatar custa até
+           R$ 2,38 por pessoa e a planilha tem dezenas. Aqui são poucas, e a
+           pessoa pediu — então roda as dez etapas: WorkAPI, busca paga por
+           nome, partição por cidade e conferência candidato a candidato. */
+        const perfis = (e.perfis || []).filter(p => p && p.nome);
+        if (!perfis.length) continue;
+
+        /* POR CIDADE, e não tudo num lote só.
+           Rede nacional sem cidade o funil se RECUSA a buscar — medido na
+           Magazine Luiza: "precisa_escolher_filial" nos três, porque procurar
+           "Felipe Mattoso na Magazine Luiza" no Brasil inteiro é pagar por
+           homônimo. A cidade está no perfil de quem se procura; mandá-la é o
+           que destrava a busca e, de quebra, é o que a torna barata. */
+        const porCidade = {};
+        perfis.forEach(p => {
+          const c = (p.cidade || '').split(',')[0].trim();
+          (porCidade[c] = porCidade[c] || []).push(p);
+        });
+        const d = { pessoas: [] };
+        for (const [cidade, grupo] of Object.entries(porCidade)) {
+          const parcial = await fetch(`${API}/api/funil/resolver`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              perfis: grupo, cnpj: onlyDigits(e.cnpj || ''), cidade,
+              usar_pagas: true,
+              // Teto por empresa, não do lote inteiro: uma empresa cara não
+              // pode consumir o orçamento das outras da fila.
+              teto_brl: 8,
+            }),
+          }).then(r => r.json());
+          (parcial.pessoas || []).forEach(x => d.pessoas.push(x));
+        }
+        /* O funil completo devolve CPF, não telefone: ele é o funil de
+           IDENTIFICAÇÃO. Achado o CPF, o telefone é uma consulta direta --
+           e sem ela a consulta profunda entregaria um número de CPF para
+           quem estava atrás de um número de telefone. */
+        for (const p of (d.pessoas || [])) {
+          if (!p || !p.cpf) continue;
+          let tels = p.telefones || [];
+          if (!tels.length) {
+            try {
+              const dp = await fetch(`${API}/api/funil/pessoa`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cpf: p.cpf, teto_brl: 3 }),
+              }).then(r => r.json());
+              tels = dp.telefones || (dp.pessoa || {}).telefones || [];
+            } catch (err) { /* fica sem telefone, com o CPF que já é ganho */ }
+          }
+          achados.push({ ...p, telefones: tels, _empresa: e.empresa });
+        }
       } catch (err) { /* uma empresa falhar não pode parar as outras */ }
     }
     if (!achados.length) {

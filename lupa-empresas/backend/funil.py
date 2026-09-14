@@ -1533,6 +1533,14 @@ async def decisores_do_linkedin(empresa: str, cnpj: str = "", cidade: str = "",
             # `resolver_simples` e desligado -- ver a nota la sobre a busca.
             com_telefone=True)
         res["novo"] = bool(res.get("cpf")) and res["cpf"] not in conhecidos
+        # O PERFIL DE ORIGEM VAI JUNTO. `resolver_simples` devolve so o que ele
+        # apurou (nome, cpf, telefone) e perde a URL e a cidade do LinkedIn --
+        # que sao exatamente o que o funil COMPLETO precisa para tentar de
+        # novo: a URL carrega o nome inteiro que o display corta, e a cidade
+        # desempata homonimo. Sem elas, a consulta profunda recomeca pior do
+        # que a rasa terminou.
+        res["url"] = res.get("url") or h.get("url") or ""
+        res["cidade"] = res.get("cidade") or h.get("cidade") or ""
         saidas.append(res)
 
     # SÓCIOS: entram na mesma lista, com telefone, porque a aba B2B quer os
