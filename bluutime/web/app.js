@@ -247,13 +247,15 @@ async function boot() {
   aplicarPermissoesNav(state.me.nivel || "sdr");
   document.body.classList.remove("app-loading");
   loginShell.classList.add("hidden");
-  const [clients, users, cadences, reasons] = await Promise.all([
+  const [clients, users, cadences, reasons, dialerCfg] = await Promise.all([
     api("/api/clients"), api("/api/users"), api("/api/flow/cadences"), api("/api/flow/lost-reasons"),
+    api("/api/dialer/configuration"),
   ]);
   state.clients = clients;
   state.users = users.data;
   state.cadences = cadences;
   state.lostReasons = reasons;
+  state.dialerConfig = dialerCfg;
   go(location.hash.slice(1) || "dashboard");
 }
 
@@ -652,6 +654,7 @@ function openExecuteModal(act) {
     .replace(/\{\{company\}\}/g, act.lead.company);
 
   const script = act.activity ? merge(act.activity.instruction) : "";
+  const callerIds = (state.dialerConfig && state.dialerConfig.callerIds) || [];
   const callBlock = act.type === "CALL" ? `
     <div class="field-row">
       <div class="field"><label>Resultado da ligação</label>
@@ -663,6 +666,10 @@ function openExecuteModal(act) {
         </select></div>
       <div class="field"><label>Duração (segundos)</label>
         <input class="form-control" type="number" min="0" id="callDuration" value="0"></div>
+      ${callerIds.length ? `<div class="field"><label>Número de origem</label>
+        <select class="form-control" id="callOrigin">
+          ${callerIds.map((n) => `<option value="${h(n)}">${h(n)}</option>`).join("")}
+        </select></div>` : ""}
     </div>` : "";
 
   const m = modal({
@@ -692,11 +699,13 @@ function openExecuteModal(act) {
     const notes = m.root.querySelector("#execNotes").value;
     if (act.type === "CALL") {
       const output = m.root.querySelector("#callOutput").value;
+      const originSelect = m.root.querySelector("#callOrigin");
       await api("/api/dialer/calls", { method: "POST", body: {
         leadId: act.lead.id, userId: state.me.id,
         status: output ? "CONNECTED" : "NOT_PERFORMED", output,
         duration: Number(m.root.querySelector("#callDuration").value) || 0,
         receiverPhone: act.lead.phone,
+        originPhone: originSelect ? originSelect.value : "",
       } });
     }
     await api(`/api/flow/execution/activities/${act.id}/execute`, { method: "POST", body: { notes } });
@@ -1609,6 +1618,47 @@ PAGES.extrato = {
         { value: res.data.length, label: "Usuários com consumo", tone: "info" },
       ])}
       ${panel("Consumo por usuário", table(["Usuário", "Ligações", "Minutos", "Custo"], rows))}`;
+  },
+};
+
+PAGES["dialer-ajustes"] = {
+  area: "Ligações", title: "Ajustes",
+  async render() {
+    const cfg = await api("/api/dialer/configuration");
+    view.innerHTML = `
+      ${panel("Tipo de chamada", `
+        <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
+          <label><input type="checkbox" id="dcVoip"${cfg.voipEnabled ? " checked" : ""}> VOIP habilitado</label>
+          <label><input type="checkbox" id="dcPhone"${cfg.phoneEnabled ? " checked" : ""}> Telefone habilitado</label>
+        </div>
+        <div class="field"><label class="text-muted text-size-small">Tipo padrão</label>
+          <select class="form-control input-sm" id="dcDefault" style="max-width:200px">
+            <option value="VOIP"${cfg.defaultType === "VOIP" ? " selected" : ""}>VOIP</option>
+            <option value="PHONE"${cfg.defaultType === "PHONE" ? " selected" : ""}>Telefone</option>
+          </select></div>`)}
+      ${panel("Números de origem (Caller ID)", `
+        <div class="field"><label class="text-muted text-size-small">Um número por linha
+          <span class="text-grey">— aparece pro SDR escolher de onde a ligação saiu, ao concluir a atividade</span></label>
+          <textarea class="form-control" id="dcCallerIds" rows="4" placeholder="+5547999998888">${h(cfg.callerIds.join("\n"))}</textarea></div>
+        <div class="toolbar mt-10" style="border:0;padding:0;background:none">
+          <span class="spacer"></span>
+          <button class="btn btn-main btn-sm" id="dcSalvar">Salvar</button>
+        </div>`)}`;
+
+    document.getElementById("dcSalvar").onclick = async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        state.dialerConfig = await api("/api/dialer/configuration", { method: "PATCH", body: {
+          voipEnabled: document.getElementById("dcVoip").checked,
+          phoneEnabled: document.getElementById("dcPhone").checked,
+          defaultType: document.getElementById("dcDefault").value,
+          callerIds: document.getElementById("dcCallerIds").value.split("\n").map((s) => s.trim()).filter(Boolean),
+        } });
+        toast("Configurações salvas.", "ok");
+        go("dialer-ajustes");
+      } catch (err) { toast(err.message, "err"); btn.disabled = false; }
+    };
   },
 };
 

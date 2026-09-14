@@ -66,6 +66,13 @@ class Company(Base):
     deal_feedback_tags: Mapped[str] = mapped_column(Text, default="")  # uma pergunta por linha
     deal_feedback_automation_cadence_id: Mapped[int | None] = mapped_column(ForeignKey("cadence.id"))
 
+    # Config do dialer — não existia tela nenhuma; o SDR registrava a ligação
+    # sem escolher de qual número da empresa ela saiu.
+    voip_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    phone_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    default_call_type: Mapped[str] = mapped_column(String(10), default="VOIP")  # VOIP | PHONE
+    caller_ids: Mapped[str] = mapped_column(Text, default="")  # um número por linha
+
 
 class Client(Base):
     """A entidade que o Meetime não tem: o cliente para quem a BLU prospecta."""

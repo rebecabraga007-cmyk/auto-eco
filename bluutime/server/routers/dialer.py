@@ -7,12 +7,45 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Call, Lead, User
-from .. import serial
+from ..models import Call, Company, Lead, User
+from .. import perm, serial
 
 router = APIRouter(prefix="/api/dialer")
 
 MINUTE_PRICE = 0.47  # R$/min — mesma ordem de grandeza do extrato Meetime
+
+
+def _company(db: Session) -> Company:
+    c = db.query(Company).first()
+    if not c:
+        raise HTTPException(500, "Empresa não inicializada.")
+    return c
+
+
+@router.get("/configuration")
+def dialer_configuration(db: Session = Depends(get_db)):
+    c = _company(db)
+    return {"voipEnabled": c.voip_enabled, "phoneEnabled": c.phone_enabled,
+            "defaultType": c.default_call_type,
+            "callerIds": [n for n in c.caller_ids.splitlines() if n.strip()]}
+
+
+@router.patch("/configuration")
+def update_dialer_configuration(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Não existia tela nenhuma pra isso — o SDR registrava a ligação sem
+    escolher de qual número da empresa ela saiu."""
+    perm.ator(db).exigir("gestor", "configurar o dialer")
+    c = _company(db)
+    if "voipEnabled" in payload:
+        c.voip_enabled = bool(payload["voipEnabled"])
+    if "phoneEnabled" in payload:
+        c.phone_enabled = bool(payload["phoneEnabled"])
+    if "defaultType" in payload and payload["defaultType"] in ("VOIP", "PHONE"):
+        c.default_call_type = payload["defaultType"]
+    if "callerIds" in payload:
+        c.caller_ids = "\n".join(str(n).strip() for n in payload["callerIds"] if str(n).strip())
+    db.commit()
+    return dialer_configuration(db)
 
 
 def _range(since: str | None, until: str | None) -> tuple[datetime, datetime]:
