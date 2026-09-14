@@ -664,6 +664,15 @@ body {
   .search-row { flex-wrap: wrap; }
   .input-wrap.input-sm { flex: 1 1 100%; }
   .filter-row { gap: 6px; }
+
+  /* Modais no celular: largura toda e formularios empilhados. Seis campos lado a
+     lado em 390px viravam colunas de 120px inutilizaveis. */
+  .modal-overlay { padding: 12px; }
+  .modal-card, .modal-card.modal-lg { width: 100%; max-width: 100%; padding: 16px; }
+  .user-create-row { flex-direction: column; align-items: stretch; }
+  .user-create-row input,
+  .user-create-row select,
+  .user-create-row button { width: 100%; min-width: 0; flex: none; }
 }
 
 @media (max-width: 900px) {
@@ -744,8 +753,13 @@ body.locked { overflow: hidden; }
 .user-dropdown button { text-align: left; padding: 10px 14px; background: none; border: none; cursor: pointer; font-size: .88rem; color: var(--gray-700); }
 .user-dropdown button:hover { background: var(--blue-soft); }
 
-.modal-overlay { position: fixed; inset: 0; z-index: 900; background: rgba(26,29,33,.55); display: flex; align-items: center; justify-content: center; padding: 20px; }
-.modal-card { background: #fff; border-radius: var(--radius-sm); padding: 22px; width: 420px; max-width: 94vw; display: flex; flex-direction: column; gap: 12px; box-shadow: var(--shadow-float); }
+/* align-items:center CORTA o topo quando o card e mais alto que a tela, e o pedaco
+   cortado nao da pra alcancar (em 👥 Usuarios com a lista cheia, o formulario
+   "+ Criar" ficava ~750px acima do viewport — no celular E no desktop).
+   flex-start + margin:auto no card centraliza quando cabe e nao corta quando nao
+   cabe — e ai o overlay rola. */
+.modal-overlay { position: fixed; inset: 0; z-index: 900; background: rgba(26,29,33,.55); display: flex; align-items: flex-start; justify-content: center; padding: 20px; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.modal-card { background: #fff; border-radius: var(--radius-sm); padding: 22px; width: 420px; max-width: 94vw; margin: auto; display: flex; flex-direction: column; gap: 12px; box-shadow: var(--shadow-float); }
 .modal-card.modal-lg { width: 760px; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; }
 .modal-head h3 { margin: 0; }
