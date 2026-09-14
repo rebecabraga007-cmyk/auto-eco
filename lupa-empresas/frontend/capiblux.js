@@ -2906,14 +2906,79 @@ const enrichState = { upload_id: null, sheets: [], result: null };
       limite: parseInt(document.getElementById('en-limite').value) || 50,
     };
     document.getElementById('en-run').disabled = true;
-    out.innerHTML = `<div class="prosp-progress"><span class="spinner"></span> Enriquecendo ${body.limite} linhas (RFB + Assertiva + integralX)…</div>`;
+
+    /* EM LOTES, e isto conserta um defeito grave.
+       Era uma requisição só, e a tela oferece até 2.000 linhas. Medido: 7
+       linhas com Assertiva levam 5,1 s, ou seja ~0,73 s por linha. A
+       Cloudflare corta em ~100 s — então acima de ~135 linhas a requisição
+       MORRIA, e morria depois de já ter consultado (e pago) tudo que tinha
+       processado. Lento, cobrado e perdido.
+
+       50 por lote: com Assertiva dá ~37 s, folgado sob o teto; só com a
+       Receita dá 2 s, e as idas e vindas a mais não custam nada. */
+    const LOTE = 50;
+    enrichState.cancelar = false;
+    const acumulado = [];
+    let base = null, offset = 0, alvo = body.limite;
+    const t0 = Date.now();
+
+    const pinta = (feitas, total) => {
+      const seg = Math.round((Date.now() - t0) / 1000);
+      const falta = feitas > 0
+        ? Math.round((seg / feitas) * (total - feitas)) : null;
+      out.innerHTML = `<div class="prosp-progress">
+        <span class="spinner"></span>
+        Enriquecendo <b>${feitas}</b> de ${total} linhas… ${seg}s
+        ${falta != null && falta > 3 ? ` · faltam ~${falta}s` : ''}
+        <button type="button" id="en-parar" class="btn-secondary"
+                style="margin-left:10px;font-size:12px;padding:2px 8px">Parar</button>
+      </div>`;
+      document.getElementById('en-parar')?.addEventListener('click', () => {
+        enrichState.cancelar = true;
+      });
+    };
+    pinta(0, alvo);
+
     try {
-      const j = await fetch(`${API}/api/enrich/run`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      }).then(r => r.json());
-      if (j.status !== 'ok') { out.innerHTML = `<p class="msg error">${esc(j.message)}</p>`; return; }
-      enrichState.result = j;
-      renderEnrich(j);
+      while (offset < alvo && !enrichState.cancelar) {
+        const pedaco = { ...body, offset, limite: Math.min(LOTE, alvo - offset) };
+        const j = await fetch(`${API}/api/enrich/run`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(pedaco),
+        }).then(r => r.json());
+        if (j.status !== 'ok') {
+          /* Falhou no meio: mostra o que JÁ foi enriquecido em vez de jogar
+             fora. Essas linhas já foram consultadas e pagas — descartá-las
+             por causa do erro seria cobrar duas vezes pelo mesmo. */
+          if (acumulado.length && base) {
+            base.rows = acumulado; base.enriquecidas = acumulado.length;
+            enrichState.result = base;
+            renderEnrich(base);
+            out.insertAdjacentHTML('afterbegin',
+              `<p class="msg error">Parou em ${acumulado.length} linhas: ${esc(j.message || 'falha')}. `
+              + `O que já foi enriquecido está abaixo e pode ser exportado.</p>`);
+          } else {
+            out.innerHTML = `<p class="msg error">${esc(j.message || 'Falhou.')}</p>`;
+          }
+          return;
+        }
+        base = base || j;
+        acumulado.push(...(j.rows || []));
+        // A aba pode ter menos linhas que o pedido: o alvo é o menor dos dois.
+        alvo = Math.min(alvo, j.total_aba || alvo);
+        offset += (j.rows || []).length;
+        pinta(acumulado.length, alvo);
+        if (j.proximo == null) break;     // acabou a aba
+      }
+      if (!base) { out.innerHTML = `<p class="msg">Nenhuma linha para enriquecer.</p>`; return; }
+      base.rows = acumulado;
+      base.enriquecidas = acumulado.length;
+      enrichState.result = base;
+      renderEnrich(base);
+      if (enrichState.cancelar) {
+        out.insertAdjacentHTML('afterbegin',
+          `<p class="msg">Parado a pedido, com ${acumulado.length} linhas prontas.</p>`);
+      }
     } catch (e) { out.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`; }
     finally { document.getElementById('en-run').disabled = false; }
   });

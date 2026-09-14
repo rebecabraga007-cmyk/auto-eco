@@ -4,6 +4,7 @@ Serve a API (busca, dados da empresa, funcionarios do LinkedIn) e tambem os
 arquivos estaticos do frontend, tudo em http://localhost:8010.
 """
 
+import json
 import os
 
 # Carrega .env (se existir) ANTES de importar modulos que leem env no import.
@@ -3186,6 +3187,61 @@ _ENRICH_KEYS = {k for g in _ENRICH_CATALOG for (k, _) in g["campos"]}
 # Store em memória das planilhas enviadas (ferramenta local, 1 usuário).
 _UPLOADS: dict[str, dict] = {}
 
+# As planilhas enviadas tambem vao para DISCO. Só em memoria, qualquer
+# reinicio -- um deploy, um restart -- apagava o trabalho de quem estava no
+# meio do fluxo, e a mensagem dizia "Upload expirado", sugerindo tempo quando
+# a causa era outra. Quem subiu 800 linhas e viu isso reenvia sem entender.
+_UPLOADS_DIR = os.path.join(os.environ.get("CAPIBLU_DATA_DIR",
+                                           os.path.dirname(os.path.abspath(__file__))),
+                            "uploads_planilha")
+
+
+def _upload_guardar(up_id: str, store: dict) -> None:
+    """Grava a planilha no disco, de forma atomica e RUIDOSA quando falha.
+
+    As duas coisas vieram de um erro meu, na primeira versao desta funcao:
+    ela escrevia direto no arquivo final e engolia qualquer excecao com um
+    `except: pass`. `json` nao estava importado no topo do modulo -- so
+    localmente, como `_json`, dentro de outras duas funcoes -- entao
+    `json.dump` levantava NameError, o except engolia, e sobrava um arquivo
+    de ZERO BYTES. A tela dizia "Upload expirado" e o arquivo estava la,
+    vazio, sem nenhum rastro do motivo.
+
+    Grava em temporario e renomeia: renomear e atomico, entao ou o arquivo
+    esta inteiro ou nao existe -- nunca meio escrito. E a falha vai para o
+    log em vez de sumir.
+    """
+    alvo = os.path.join(_UPLOADS_DIR, "%s.json" % up_id)
+    tmp = alvo + ".parcial"
+    try:
+        os.makedirs(_UPLOADS_DIR, exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(store, f, ensure_ascii=False, default=str)
+        os.replace(tmp, alvo)
+    except Exception as exc:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        print("[enrich] nao consegui guardar o upload %s: %s: %s"
+              % (up_id, type(exc).__name__, str(exc)[:160]), flush=True)
+
+
+def _upload_ler(up_id: str) -> dict | None:
+    """Da memoria, e se nao houver, do disco."""
+    if up_id in _UPLOADS:
+        return _UPLOADS[up_id]
+    if not up_id or not re.fullmatch(r"[0-9a-f]{6,40}", str(up_id)):
+        return None            # id vem do cliente: nao vira caminho de arquivo
+    caminho = os.path.join(_UPLOADS_DIR, "%s.json" % up_id)
+    try:
+        with open(caminho, encoding="utf-8") as f:
+            store = json.load(f)
+        _UPLOADS[up_id] = store
+        return store
+    except Exception:
+        return None
+
 
 def _guess_cnpj_col(columns: list[str]) -> str:
     for c in columns:
@@ -3235,6 +3291,7 @@ async def enrich_upload(file: UploadFile = File(...)):
         sheets.append({"name": title, "columns": sh["columns"], "linhas": len(sh["rows"]),
                        "preview": sh["rows"][:3], "cnpj_col": _guess_cnpj_col(sh["columns"])})
     _UPLOADS[up_id] = store
+    _upload_guardar(up_id, store)
     return {"status": "ok", "upload_id": up_id, "sheets": sheets, "aviso": aviso}
 
 
@@ -3430,7 +3487,7 @@ async def enrich_linha(payload: dict = Body(default={})):
 async def enrich_run(payload: dict = Body(default={})):
     """Enriquece as linhas de uma aba. Body: {upload_id, sheet, cnpj_col, fields:[], limite}."""
     up_id = payload.get("upload_id")
-    store = _UPLOADS.get(up_id)
+    store = _upload_ler(up_id)
     if not store:
         return {"status": "error", "message": "Upload expirado — reenvie a planilha."}
     sheet = payload.get("sheet") or next(iter(store))
@@ -3441,7 +3498,18 @@ async def enrich_run(payload: dict = Body(default={})):
     if not fields:
         return {"status": "error", "message": "Selecione ao menos um campo para enriquecer."}
     limite = int(payload.get("limite") or 100)
-    rows = store[sheet]["rows"][:limite]
+    # FATIA, e nao "as N primeiras". A tela processa em lotes e manda `offset`
+    # a cada rodada.
+    #
+    # POR QUE ISSO PRECISOU EXISTIR: a chamada era uma so, bloqueante, e a
+    # tela oferecia ate 2.000 linhas. Medido: 7 linhas com Assertiva levam
+    # 5,1s, ou seja ~0,73s por linha. A Cloudflare corta em ~100 segundos.
+    # Passando de ~135 linhas a requisicao MORRE -- e morre depois de ja ter
+    # consultado (e pago) tudo que processou ate ali. Lento, cobrado e
+    # perdido, que e a pior combinacao possivel.
+    inicio = max(0, int(payload.get("offset") or 0))
+    todas = store[sheet]["rows"]
+    rows = todas[inicio:inicio + limite]
     want = set(fields)
 
     # Concorrência controlada (Assertiva/integralX têm limite diário).
@@ -3460,7 +3528,9 @@ async def enrich_run(payload: dict = Body(default={})):
     return {"status": "ok", "sheet": sheet, "cnpj_col": cnpj_col,
             "base_cols": store[sheet]["columns"], "added_cols": added_cols,
             "rows": enriched, "enriquecidas": len(enriched),
-            "total_aba": len(store[sheet]["rows"])}
+            "offset": inicio,
+            "proximo": (inicio + len(enriched)) if len(enriched) == limite else None,
+            "total_aba": len(todas)}
 
 
 @app.post("/api/enrich/export")
