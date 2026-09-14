@@ -461,6 +461,20 @@
           <div id="pf-group-pessoa" hidden>
             <div class="pf-field">
               <label>👤 Cargo <span class="pf-advanced-hint" style="display:inline">— vírgula ou Enter adiciona outro</span></label>
+              <!-- MEDIDO em 14/set/2026: o campo que o LinkedIn deixa filtrar
+                   é o `position`, e nesse dataset ele é a LINHA DE BAIXO DO
+                   NOME (headline), não o título formal do emprego. Em 5 de 6
+                   perfis os dois eram diferentes -- headline "Gestora de Frota
+                   leve | Analista financeiro | Ambev" para quem tem o cargo
+                   registrado como "Auxiliar Administrativo". Filtrar pelo
+                   título do emprego não é possível: `title`, `job_title` e
+                   `experience.title` voltam "unsupported filters", e
+                   `experience` dá timeout. Dizer isso na tela é o que separa
+                   um resultado estranho de um resultado inexplicável. -->
+              <div class="pf-advanced-hint" style="margin:-2px 0 4px">
+                Procura na linha abaixo do nome do perfil (o “título” que a
+                pessoa escreve), não no texto do <i>Sobre</i> — esse é o campo
+                Especialidades.</div>
               <!-- Vários cargos ao mesmo tempo, como as UFs. O campo continua
                    sendo `pf-cargo` e continua sendo um input de texto: quem lê
                    (prospFiltrosPessoa, cargosSelecionados) não muda, e o valor
@@ -634,7 +648,7 @@
             </select>
           </div>
           <div class="pf-field">
-            <label>⭐ Especialidades</label>
+            <label>⭐ Especialidades <span class="pf-advanced-hint" style="display:inline">— procura no texto do “Sobre” do perfil</span></label>
             <input id="pf-especialidades" type="text" autocomplete="off"
                    placeholder="Ex.: logística, exportação, food service"
                    title="Casa no texto que a pessoa escreveu sobre si no LinkedIn. Só se aplica às buscas no LinkedIn." />
