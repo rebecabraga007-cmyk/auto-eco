@@ -216,6 +216,35 @@ def update_flow_config(payload: dict = Body(...), db: Session = Depends(get_db))
     return flow_config(db)
 
 
+@router.get("/flow/deal-feedback/configuration")
+def deal_feedback_config(db: Session = Depends(get_db)):
+    c = _company(db)
+    return {"dealFeedbackEnabled": c.deal_feedback_enabled,
+            "qualificationTags": [t for t in c.deal_feedback_tags.splitlines() if t.strip()],
+            "automationCadenceId": c.deal_feedback_automation_cadence_id}
+
+
+@router.patch("/flow/deal-feedback/configuration")
+def update_deal_feedback_config(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Feedback de oportunidade: liga a pergunta ao vendedor após o ganho e,
+    opcionalmente, reencaminha pra uma cadência quem respondeu 'sem reunião'."""
+    perm.ator(db).exigir("gestor", "configurar feedback de oportunidade")
+    from ..models import Cadence
+    c = _company(db)
+    if "dealFeedbackEnabled" in payload:
+        c.deal_feedback_enabled = bool(payload["dealFeedbackEnabled"])
+    if "qualificationTags" in payload:
+        c.deal_feedback_tags = "\n".join(
+            str(t).strip() for t in payload["qualificationTags"] if str(t).strip())
+    if "automationCadenceId" in payload:
+        cid = payload["automationCadenceId"]
+        if cid and not db.get(Cadence, int(cid)):
+            raise HTTPException(400, "Cadência de automação inválida.")
+        c.deal_feedback_automation_cadence_id = int(cid) if cid else None
+    db.commit()
+    return deal_feedback_config(db)
+
+
 @router.get("/flow/lost-reasons")
 def lost_reasons(db: Session = Depends(get_db)):
     return [{"id": r.id, "name": r.name} for r in db.query(LostReason).order_by(LostReason.name)]

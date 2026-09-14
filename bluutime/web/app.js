@@ -1732,6 +1732,93 @@ PAGES.relatorios = {
   },
 };
 
+PAGES["feedback-oportunidade"] = {
+  area: "Estatísticas", title: "Feedback de oportunidade",
+  async render() {
+    const modo = state.feedbackAba || "pendentes";
+    const [pendentes, stats] = await Promise.all([
+      api("/api/flow/deal-feedbacks?status=pending"),
+      api("/api/flow/statistics/deal-feedbacks"),
+    ]);
+
+    view.innerHTML = `
+      <ul class="nav nav-tabs">
+        <li${modo === "pendentes" ? ' class="active"' : ""}><a data-fbmodo="pendentes">Pendentes
+          <span class="badge${modo === "pendentes" ? " badge-success" : ""}">${stats.pending}</span></a></li>
+        <li${modo === "respondidos" ? ' class="active"' : ""}><a data-fbmodo="respondidos">Respondidos
+          <span class="badge${modo === "respondidos" ? " badge-success" : ""}">${stats.filled}</span></a></li>
+      </ul>
+      <div id="fbBody" class="mt-10"></div>`;
+
+    document.querySelectorAll("[data-fbmodo]").forEach((a) => {
+      a.onclick = () => { state.feedbackAba = a.dataset.fbmodo; go("feedback-oportunidade"); };
+    });
+
+    const body = document.getElementById("fbBody");
+    if (modo === "pendentes") {
+      body.innerHTML = table(["Lead", "Empresa", "Vendedor", "Ganho em", ""],
+        pendentes.map((f) => ({ cells: [
+          h(f.leadName), h(f.company || "—"), f.user ? h(f.user.name) : "—", fmtDate(f.createdAt),
+          `<button class="btn btn-main btn-xs" data-responder="${f.id}">Responder</button>`,
+        ] })), { empty: "Nenhum feedback pendente — tudo respondido." });
+      body.querySelectorAll("[data-responder]").forEach((b) => {
+        b.onclick = () => abrirFormFeedback(pendentes.find((f) => f.id === Number(b.dataset.responder)));
+      });
+    } else {
+      body.innerHTML = `
+        ${panel("Reuniões", grade([
+          campo("Respondidos", stats.filled), campo("Teve reunião", stats.meetingHappened),
+          campo("Não teve reunião", stats.meetingNotHappened),
+        ], 3))}
+        ${panel("Qualificação", stats.tags.length ? stats.tags.map((t) => `
+          <div class="mb-10"><strong>${h(t.tag)}</strong>
+            <div class="progress" style="height:18px">
+              <div class="progress-bar progress-bar--primary" style="width:${t.simPercentual}%"></div>
+            </div>
+            <span class="text-muted text-size-small">Sim: ${t.sim} · Não: ${t.nao} (${t.simPercentual}%)</span>
+          </div>`).join("") : emptyState("Nenhuma resposta ainda."))}`;
+    }
+  },
+};
+
+async function abrirFormFeedback(f) {
+  const cfg = await api("/api/flow/deal-feedback/configuration");
+  const m = modal({
+    title: `Feedback — ${f.leadName}`,
+    body: `
+      <div class="field"><label>A reunião aconteceu?</label>
+        <div class="chip-grid" id="fbReuniao">
+          <button type="button" class="chip" data-v="1">Sim</button>
+          <button type="button" class="chip" data-v="0">Não</button>
+        </div></div>
+      ${cfg.qualificationTags.map((t) => `
+        <div class="field"><label><input type="checkbox" class="fb-tag" data-tag="${h(t)}"> ${h(t)}</label></div>`).join("")
+        || `<p class="text-muted">Nenhuma pergunta de qualificação cadastrada em Ajustes.</p>`}
+      <div class="field"><label>Observações</label><textarea class="form-control" id="fbNotes" rows="2"></textarea></div>`,
+    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+             <button class="btn btn-main btn-sm" data-save>Enviar</button>`,
+  });
+  let reuniao = null;
+  m.root.querySelector("#fbReuniao").onclick = (e) => {
+    const b = e.target.closest(".chip"); if (!b) return;
+    m.root.querySelectorAll("#fbReuniao .chip").forEach((c) => c.classList.remove("active"));
+    b.classList.add("active");
+    reuniao = b.dataset.v === "1";
+  };
+  m.root.querySelector("[data-cancel]").onclick = m.close;
+  m.root.querySelector("[data-save]").onclick = async () => {
+    if (reuniao === null) return toast("Diga se a reunião aconteceu.", "err");
+    const qualification = {};
+    m.root.querySelectorAll(".fb-tag").forEach((c) => { qualification[c.dataset.tag] = c.checked; });
+    try {
+      await api(`/api/flow/deal-feedbacks/${f.id}`, { method: "POST", body: {
+        meetingHappened: reuniao, qualification, notes: m.root.querySelector("#fbNotes").value.trim(),
+      } });
+      m.close(); toast("Feedback enviado.", "ok"); go("feedback-oportunidade");
+    } catch (e) { toast(e.message, "err"); }
+  };
+}
+
 /* ── CapiBLU ─────────────────────────────────────────────────────────── */
 PAGES["capiblu-ferramentas"] = {
   area: "CapiBLU", title: "Todas as ferramentas",
@@ -3981,10 +4068,10 @@ const DIAS_SEMANA = [[1, "Seg"], [2, "Ter"], [3, "Qua"], [4, "Qui"], [5, "Sex"],
 PAGES.ajustes = {
   area: "Prospecção", title: "Ajustes",
   async render() {
-    const [cfg, reasons, fields, holidays, fitscore] = await Promise.all([
+    const [cfg, reasons, fields, holidays, fitscore, feedbackCfg] = await Promise.all([
       api("/api/flow/configuration"), api("/api/flow/lost-reasons"),
       api("/api/flow/new-lead-fields"), api("/api/flow/configuration/holidays"),
-      api("/api/flow/fitscore")]);
+      api("/api/flow/fitscore"), api("/api/flow/deal-feedback/configuration")]);
     const camposPersonalizados = fields.filter((f) => f.customField);
 
     view.innerHTML = `
@@ -4061,6 +4148,29 @@ PAGES.ajustes = {
             ? "Some os pontos das regras que baterem — dá pra priorizar lead por características dele, não só por atraso."
             : "Crie um campo personalizado abaixo antes de montar uma regra de pontuação." })}
 
+      ${panel("Feedback de oportunidade", `
+        <div class="alert alert-info alert-styled-left">
+          Quando um lead vira ganho, o vendedor responsável recebe uma pendência pra dizer se a reunião aconteceu
+          e qualificar o lead pelas perguntas abaixo. Acompanhe as respostas em
+          <a data-page="feedback-oportunidade">Estatísticas &gt; Feedback de oportunidade</a>.
+        </div>
+        <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
+          <label><input type="checkbox" id="dfEnabled"${feedbackCfg.dealFeedbackEnabled ? " checked" : ""}>
+            Ativar feedback de oportunidade</label>
+        </div>
+        <div class="field"><label class="text-muted text-size-small">Perguntas de qualificação — uma por linha</label>
+          <textarea class="form-control" id="dfTags" rows="4"
+            placeholder="Possui orçamento para contratar a solução?">${h(feedbackCfg.qualificationTags.join("\n"))}</textarea></div>
+        <div class="field"><label class="text-muted text-size-small">Automação — cadência para quem respondeu "não tive reunião"</label>
+          <select class="form-control input-sm" id="dfCadencia">
+            <option value="">Nenhuma — não reencaminha</option>
+            ${state.cadences.map((c) => `<option value="${c.id}"${feedbackCfg.automationCadenceId === c.id ? " selected" : ""}>${h(c.name)}</option>`).join("")}
+          </select></div>
+        <div class="toolbar mt-10" style="border:0;padding:0;background:none">
+          <span class="spacer"></span>
+          <button class="btn btn-main btn-sm" id="dfSalvar">Salvar</button>
+        </div>`)}
+
       ${panel("Calendário de trabalho",
         table(["Feriado", "Data"], holidays.map((x) => ({ cells: [h(x.name || "—"), fmtDate(x.date)] }))),
         { subtitle: `Dias úteis: ${cfg.workingDays.map((v) => DIAS_SEMANA.find(([d]) => d === v)[1]).join(", ")}. `
@@ -4084,6 +4194,19 @@ PAGES.ajustes = {
           smartQueueEnabled: document.getElementById("cfgFila").checked,
           workingDays: dias,
           blacklist: document.getElementById("cfgBlacklist").value.split("\n").map((s) => s.trim()).filter(Boolean),
+        } });
+        toast("Configurações salvas.", "ok");
+        go("ajustes");
+      } catch (err) { toast(err.message, "err"); btn.disabled = false; }
+    };
+    document.getElementById("dfSalvar").onclick = async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        await api("/api/flow/deal-feedback/configuration", { method: "PATCH", body: {
+          dealFeedbackEnabled: document.getElementById("dfEnabled").checked,
+          qualificationTags: document.getElementById("dfTags").value.split("\n").map((s) => s.trim()).filter(Boolean),
+          automationCadenceId: Number(document.getElementById("dfCadencia").value) || null,
         } });
         toast("Configurações salvas.", "ok");
         go("ajustes");

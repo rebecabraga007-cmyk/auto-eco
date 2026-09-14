@@ -59,6 +59,13 @@ class Company(Base):
     working_days: Mapped[str] = mapped_column(String(20), default="1,2,3,4,5")  # 1=segunda .. 7=domingo
     blacklist_domains: Mapped[str] = mapped_column(Text, default="")  # um domínio por linha
 
+    # Feedback de oportunidade — pós-venda: o vendedor responde se a reunião
+    # aconteceu e qualifica o lead ganho. Sem tag nenhuma cadastrada não tem
+    # o que perguntar, então "ativado" sem tags não faz nada.
+    deal_feedback_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    deal_feedback_tags: Mapped[str] = mapped_column(Text, default="")  # uma pergunta por linha
+    deal_feedback_automation_cadence_id: Mapped[int | None] = mapped_column(ForeignKey("cadence.id"))
+
 
 class Client(Base):
     """A entidade que o Meetime não tem: o cliente para quem a BLU prospecta."""
@@ -448,3 +455,21 @@ class Delivery(Base):
     error: Mapped[str] = mapped_column(String(240), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     lead: Mapped["Lead | None"] = relationship()
+
+
+class LeadFeedback(Base):
+    """Feedback de oportunidade: nasce quando um lead é marcado como ganho (se
+    a empresa tiver a funcionalidade ativada) e fica pendente até o vendedor
+    responder se a reunião aconteceu e qualificar o lead pelas tags da
+    empresa. `filled_at` nulo é o que separa pendente de respondido."""
+    __tablename__ = "lead_feedback"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lead_id: Mapped[int] = mapped_column(ForeignKey("lead.id", ondelete="CASCADE"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    meeting_happened: Mapped[bool | None] = mapped_column(Boolean)
+    qualification: Mapped[str] = mapped_column(Text, default="{}")  # JSON {tag: bool}
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    filled_at: Mapped[datetime | None] = mapped_column(DateTime)
+    lead: Mapped["Lead"] = relationship()
+    user: Mapped["User | None"] = relationship()

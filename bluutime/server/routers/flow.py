@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import (Activity, Cadence, CadenceStep, CadenceUser, Client,
-                      CustomField, FitscoreRule, Lead, LeadActivity, LeadBase,
-                      LeadFieldValue, LostReason, Template, User, channel_of)
+                      Company, CustomField, FitscoreRule, Lead, LeadActivity,
+                      LeadBase, LeadFeedback, LeadFieldValue, LostReason,
+                      Template, User, channel_of)
 from .. import agenda, perm, render, serial, webhooks
 
 router = APIRouter(prefix="/api/flow")
@@ -789,6 +790,9 @@ def lead_outcome(lid: int, payload: dict = Body(...), db: Session = Depends(get_
     now = datetime.utcnow()
     if outcome == "WON":
         lead.status, lead.won_at = "WON", now
+        company = db.query(Company).first()
+        if company and company.deal_feedback_enabled:
+            db.add(LeadFeedback(lead_id=lid, user_id=lead.sdr_id))
     elif outcome == "LOST":
         reason_id = payload.get("lostReasonId")
         if reason_id and not db.get(LostReason, reason_id):
@@ -805,6 +809,67 @@ def lead_outcome(lid: int, payload: dict = Body(...), db: Session = Depends(get_
     _fire_webhooks(db, f"LEAD.{outcome}", serial.lead(lead))
     db.commit()
     return {"ok": True, "lead": serial.lead(lead)}
+
+
+# ── Feedback de oportunidade ──
+# Nasce (LeadFeedback sem filled_at) quando o lead vira WON com a
+# funcionalidade ligada; o vendedor responde depois da reunião (ou não).
+@router.get("/deal-feedbacks")
+def list_deal_feedbacks(status: str = "pending", db: Session = Depends(get_db)):
+    ator = perm.ator(db)
+    query = db.query(LeadFeedback)
+    if not ator.pelo_menos("gestor"):
+        query = query.filter(LeadFeedback.user_id == (ator.user_id or -1))
+    query = query.filter(LeadFeedback.filled_at.is_(None) if status == "pending"
+                         else LeadFeedback.filled_at.isnot(None))
+    rows = query.order_by(LeadFeedback.created_at.desc()).limit(200).all()
+    return [{"id": r.id, "leadId": r.lead_id, "leadName": r.lead.name if r.lead else "",
+            "company": r.lead.company if r.lead else "", "user": serial.user_min(r.user),
+            "meetingHappened": r.meeting_happened,
+            "qualification": json.loads(r.qualification or "{}"),
+            "notes": r.notes, "createdAt": serial.iso(r.created_at),
+            "filledAt": serial.iso(r.filled_at)} for r in rows]
+
+
+@router.post("/deal-feedbacks/{fid}")
+def fill_deal_feedback(fid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    fb = db.get(LeadFeedback, fid)
+    if not fb:
+        raise HTTPException(404, "Feedback não encontrado.")
+    fb.meeting_happened = bool(payload.get("meetingHappened"))
+    fb.qualification = json.dumps(
+        {str(k): bool(v) for k, v in (payload.get("qualification") or {}).items()})
+    fb.notes = (payload.get("notes") or "").strip()
+    fb.filled_at = datetime.utcnow()
+    # Quem não teve reunião pode ser reencaminhado a uma cadência específica
+    # pra buscar novo agendamento — só se a empresa configurou uma.
+    if fb.meeting_happened is False:
+        company = db.query(Company).first()
+        if company and company.deal_feedback_automation_cadence_id and fb.lead:
+            fb.lead.cadence_id = company.deal_feedback_automation_cadence_id
+            fb.lead.current_step = 0
+            fb.lead.status = "WAITING"
+            _schedule_cadence(db, fb.lead)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/statistics/deal-feedbacks")
+def deal_feedback_statistics(db: Session = Depends(get_db)):
+    filled = db.query(LeadFeedback).filter(LeadFeedback.filled_at.isnot(None)).all()
+    pending = db.query(func.count(LeadFeedback.id)).filter(LeadFeedback.filled_at.is_(None)).scalar()
+    meeting_yes = sum(1 for f in filled if f.meeting_happened)
+    meeting_no = sum(1 for f in filled if f.meeting_happened is False)
+    tag_counts: dict[str, dict[str, int]] = {}
+    for f in filled:
+        for tag, valor in json.loads(f.qualification or "{}").items():
+            slot = tag_counts.setdefault(tag, {"sim": 0, "nao": 0})
+            slot["sim" if valor else "nao"] += 1
+    tags = [{"tag": t, "sim": v["sim"], "nao": v["nao"],
+            "simPercentual": round(100 * v["sim"] / max(1, v["sim"] + v["nao"]))}
+           for t, v in tag_counts.items()]
+    return {"pending": pending, "filled": len(filled),
+            "meetingHappened": meeting_yes, "meetingNotHappened": meeting_no, "tags": tags}
 
 
 @router.post("/execution/activities/{aid}/reschedule")
