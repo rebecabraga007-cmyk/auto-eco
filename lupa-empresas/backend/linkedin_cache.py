@@ -339,8 +339,12 @@ def registrar_gasto(tipo: str, detalhe: str = "", registros: int = 0,
                      float(custo_usd or 0), float(economia_usd or 0)))
         con.commit()
         con.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        # Mesma regra do outro livro-caixa: nao levanta, mas deixa
+        # rastro. Sem isto o gasto da Bright Data some da conta e o
+        # extrato do admin passa a mentir para menos.
+        print('[gastos_bd] perdi um lancamento (%s): %s: %s'
+              % (tipo, type(exc).__name__, str(exc)[:140]), flush=True)
 
 
 def salvar_perfis(pessoas: list[dict[str, Any]], origem: str = "api") -> int:

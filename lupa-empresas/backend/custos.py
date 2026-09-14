@@ -100,8 +100,15 @@ def log_assertiva(modelo_id: str = "", modelo_nome: str = "", cnpj: str = "", cp
         try:
             with open(_path(), "a", encoding="utf-8") as fh:
                 fh.write(linha + "\n")
-        except Exception:
-            pass
+        except Exception as exc:
+            # NAO levanta: perder a consulta da usuaria porque a
+            # contabilidade falhou seria trocar um problema pequeno por um
+            # grande. Mas tambem nao some sem rastro -- este arquivo e o
+            # extrato do gasto REAL da Assertiva, e uma linha perdida em
+            # silencio vira uma fatura que nao bate e ninguem sabe por que.
+            print('[custos] perdi um lancamento (%s): %s: %s'
+                  % (cnpj or cpf or '?', type(exc).__name__, str(exc)[:140]),
+                  flush=True)
 
 
 def _ler_tudo() -> list[dict]:

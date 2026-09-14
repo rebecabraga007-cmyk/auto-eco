@@ -29,9 +29,26 @@ def get(key: str, default=None):
 
 
 def set_many(updates: dict) -> dict:
+    """Grava a configuracao de forma ATOMICA.
+
+    Escrevia direto no arquivo final. Este arquivo guarda os tokens da
+    Meetime -- o do grupo e os de cada usuario -- e as credenciais de
+    servico; uma queda no meio do `json.dump` deixaria o JSON truncado, e
+    `load()` devolve `{}` quando nao consegue ler. Ou seja: TODA a
+    configuracao sumiria de uma vez, em silencio, e a unica pista seria a
+    Meetime parar de deduplicar.
+
+    Gravar em temporario e renomear resolve: renomear e atomico, entao o
+    arquivo ou esta inteiro (novo ou antigo) ou nao muda.
+    """
     with _LOCK:
         cfg = load()
         cfg.update({k: v for k, v in updates.items() if v is not None})
-        with open(_path(), "w", encoding="utf-8") as fh:
+        alvo = _path()
+        tmp = alvo + ".parcial"
+        with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(cfg, fh, ensure_ascii=False, indent=1)
+            fh.flush()
+            os.fsync(fh.fileno())     # o rename so vale se os bytes sairam
+        os.replace(tmp, alvo)
         return cfg
