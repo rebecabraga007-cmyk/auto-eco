@@ -1677,7 +1677,15 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
     # Ficava só no caminho da Receita, e quando o disco passou a responder a
     # rotação morreu junto: a mesma busca devolvia as mesmas três empresas
     # para sempre, de graça — grátis e inútil.
-    giro = rodadas.ler(filtros) if not offset else {"offset": 0, "cursor": None}
+    # A CHAVE DA RODADA E O FILTRO COMO A PESSOA DIGITOU.
+    #
+    # Mais abaixo o setor e traduzido para o vocabulario do LinkedIn e
+    # espelhado para a Receita -- e isso MUDA o dicionario. Ler a rodada com
+    # o filtro original e gravar com o traduzido guarda o cursor numa chave
+    # que ninguem le nunca: a busca repetida volta ao comeco e devolve as
+    # mesmas empresas. Medido hoje: "logistica" em SC, 5 de 5 repetidas.
+    filtros_giro = dict(filtros)
+    giro = rodadas.ler(filtros_giro) if not offset else {"offset": 0, "cursor": None}
 
     # FILTRO QUE SÓ O LINKEDIN RESPONDE VAI SOZINHO, SEM PERGUNTAR.
     #
@@ -1839,7 +1847,7 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
                                   offset=offset or giro["offset"])
         if not offset:
             trazidas = len(base.get("empresas") or [])
-            rodadas.avancar(filtros, trazidas, acabou=(trazidas < limite))
+            rodadas.avancar(filtros_giro, trazidas, acabou=(trazidas < limite))
     por_cnpj: dict[str, dict] = {}
     ordem: list[str] = []
     for e in base.get("empresas") or []:
@@ -1911,7 +1919,7 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
             r = local
             if not offset:
                 trazidas = len(r.get("empresas") or [])
-                rodadas.avancar(filtros, trazidas,
+                rodadas.avancar(filtros_giro, trazidas,
                                 acabou=(trazidas < pagina))
         else:
             r = await brightdata_pessoas.buscar_empresas_por_filtro(
@@ -1950,7 +1958,7 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
         custo = float(r.get("custo_usd") or 0)
         total_li = r.get("total_no_dataset")
         if not offset and r.get("cursor"):
-            rodadas.avancar(filtros, 0, cursor=r.get("cursor"))
+            rodadas.avancar(filtros_giro, 0, cursor=r.get("cursor"))
         for e in r.get("empresas") or []:
             d = _digitos(e.get("cnpj"))
             if d and d in por_cnpj:
@@ -2296,6 +2304,20 @@ def _filtra_decisores(lista: list[dict], cargos: str, maximo: int) -> list[dict]
     número de nível ("1,2") ou pedaço do nome do cargo ("diretor,gerente").
     Vazio = todos. A ordem final é por nível (decisor mais alto primeiro).
     """
+    # LIXO DA BASE DE ORIGEM, FORA ANTES DE TUDO.
+    #
+    # Medido hoje no CNPJ do Banco do Brasil: o decisor 2 veio com o nome
+    # "CPF GERADO SEM NOME POR FALHA DO APLICATIVO". É um registro de defeito
+    # do cadastro de origem que virou linha de pessoa. Numa planilha entregue
+    # ao cliente essa linha ocupa a vaga de um decisor de verdade e ainda
+    # desmoraliza a lista inteira -- e ela vinha COM telefone, então nem
+    # aparecia no aviso de "ficou sem contato".
+    _LIXO = ("falha do aplicativo", "cpf gerado", "sem nome", "nome nao",
+             "nao informado", "titular nao", "***")
+    lista = [d for d in (lista or [])
+             if (d.get("nome") or "").strip()
+             and not any(x in (d.get("nome") or "").lower() for x in _LIXO)]
+
     escolhidos = [c.strip().lower() for c in (cargos or "").split(",") if c.strip()]
     if escolhidos:
         # TERCEIRA linguagem, nova: "gerencia:vendas" — nível E área juntos.
@@ -2311,7 +2333,26 @@ def _filtra_decisores(lista: list[dict], cargos: str, maximo: int) -> list[dict]
                  or any(t in (p.get("cargo") or "").lower() for t in termos)
                  or (com_area
                      and funcoes.casa_escolha(p.get("cargo") or "", com_area))]
-    lista = sorted(lista, key=lambda p: (p.get("nivel") or 9, p.get("nome") or ""))
+    # ORDEM: QUEM MANDA MAIS PRIMEIRO -- e era ordem alfabética.
+    #
+    # O `nivel` é um campo que a base de origem quase nunca preenche. Sem ele,
+    # a chave caía no desempate pelo NOME, e a promessa da tela ("decisor mais
+    # alto primeiro") virava lista telefônica. Medido hoje na Intelbras, com
+    # três decisores: ADILSON (coordenador), ADNEY (gerente), ADO (diretor) --
+    # A, A, A. Quem enriquece só a primeira coluna ficava com o coordenador e
+    # o diretor caía fora do corte.
+    #
+    # Na falta do campo, o nível sai do texto do cargo pelo classificador
+    # (clevel 6 > diretoria 5 > gerência 4 > coordenação 3...), convertido
+    # para a mesma escala do campo, onde 1 é o mais alto.
+    def _posto(p: dict) -> int:
+        n = p.get("nivel")
+        if isinstance(n, int) and n > 0:
+            return n
+        peso = funcoes.nivel(p.get("cargo") or "")[1]
+        return (7 - peso) if peso >= 0 else 9
+
+    lista = sorted(lista, key=lambda p: (_posto(p), p.get("nome") or ""))
     return lista[:maximo] if maximo and maximo > 0 else lista
 
 
@@ -3747,7 +3788,23 @@ async def enrich_run(payload: dict = Body(default={})):
             r.pop("_de_erro", None)
             if achados is None:
                 continue
-            nome_emp = (r.get("rfb_razao") or r.get(cnpj_col) or "")
+            # O NOME QUE A PESSOA RECONHECE.
+            #
+            # `rfb_razao` só existe quando ela pediu a razão social entre os
+            # campos -- e para enriquecer decisor ninguém pede. O aviso então
+            # listava CNPJ puro ("07175725000321 ficou sem telefone"), que não
+            # diz nada a quem está olhando a própria planilha. A planilha DELA
+            # quase sempre tem uma coluna com o nome; é essa que serve aqui.
+            nome_emp = r.get("rfb_razao") or ""
+            if not nome_emp:
+                for col in store[sheet]["columns"]:
+                    if col == cnpj_col:
+                        continue
+                    if re.search(r"empresa|razao|razão|raz.o|nome|cliente|fantasia",
+                                 str(col), re.I) and str(r.get(col) or "").strip():
+                        nome_emp = str(r.get(col)).strip()
+                        break
+            nome_emp = nome_emp or (r.get(cnpj_col) or "")
             if not achados:
                 sem_decisor.append({"empresa": str(nome_emp)[:80],
                                     "cnpj": str(r.get(cnpj_col) or "")})
