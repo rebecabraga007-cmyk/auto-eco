@@ -56,14 +56,24 @@ CREATE TABLE IF NOT EXISTS chamados (
   resposta   TEXT,
   anexos     TEXT,          -- nomes de arquivo, separados por vírgula
   criado_em  INTEGER,
-  visto_em   INTEGER
+  visto_em   INTEGER,
+  -- Só para ALERTA do sistema. É a identidade do PROBLEMA, não da
+  -- ocorrência: "descritores do capiblu-data". Enquanto o problema durar, a
+  -- mesma linha é atualizada em vez de nascer uma nova a cada verificação --
+  -- senão um alarme de dez em dez minutos viraria 144 avisos por dia do
+  -- mesmo assunto, e ninguém leria nenhum.
+  chave      TEXT,
+  medida     TEXT           -- o número que disparou, para dar dimensão
 );
 CREATE INDEX IF NOT EXISTS ix_ch_status ON chamados(status);
 CREATE INDEX IF NOT EXISTS ix_ch_criado ON chamados(criado_em);
 """
 
 STATUS = ("aberto", "visto", "resolvido")
-TIPOS = ("bug", "melhoria")
+# `alerta` é o sistema falando de si mesmo. Entra na MESMA lista e na
+# mesma bolinha: quem cuida da ferramenta olha um lugar só, e um alarme
+# num canto que ninguém abre é um alarme que não existe.
+TIPOS = ("bug", "melhoria", "alerta")
 
 
 def _con():
@@ -71,6 +81,17 @@ def _con():
     con = sqlite3.connect(DB, timeout=5)
     con.row_factory = sqlite3.Row
     con.executescript(DDL)
+    # COLUNAS NOVAS EM TABELA QUE JÁ EXISTE. `CREATE TABLE IF NOT EXISTS` não
+    # altera nada quando a tabela está lá -- o banco de produção já tinha
+    # chamados reais quando `chave` e `medida` foram criadas, e sem isto a
+    # primeira gravação de alerta quebraria com "no such column".
+    tem = {r[1] for r in con.execute("PRAGMA table_info(chamados)")}
+    for coluna in ("chave", "medida"):
+        if coluna not in tem:
+            con.execute("ALTER TABLE chamados ADD COLUMN %s TEXT" % coluna)
+    con.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_ch_chave ON chamados(chave) "
+                "WHERE chave IS NOT NULL AND chave <> ''")
+    con.commit()
     return con
 
 
@@ -147,6 +168,9 @@ def listar(status: str = "", limite: int = 100) -> dict[str, Any]:
                 "status_chamado": l["status"], "resposta": l["resposta"] or "",
                 "anexos": [a for a in (l["anexos"] or "").split(",") if a],
                 "criado_em": l["criado_em"],
+                # Só alerta tem. É o número que disparou -- "1023 de 1024" diz
+                # muito mais que "descritores acabando".
+                "medida": (l["medida"] if "medida" in l.keys() else "") or "",
             } for l in linhas]}
 
 
@@ -188,3 +212,67 @@ def caminho_anexo(nome: str) -> str:
         return ""
     caminho = os.path.join(ANEXOS, nome)
     return caminho if os.path.exists(caminho) else ""
+
+
+def alertar(chave: str, titulo: str, descricao: str = "",
+            medida: str = "") -> dict[str, Any]:
+    """Abre (ou atualiza) UM alerta do sistema.
+
+    A `chave` identifica o PROBLEMA, não a ocorrência. Enquanto ele durar, a
+    verificação passa aqui a cada ciclo e a mesma linha é atualizada -- um
+    alarme de dez em dez minutos viraria 144 avisos por dia do mesmo assunto,
+    e ninguém leria nenhum.
+
+    Um alerta que estava `resolvido` e volta a acontecer REABRE. Isso importa:
+    problema que retorna é informação diferente de problema novo, e deixá-lo
+    fechado esconderia justamente o caso que mais merece atenção.
+    """
+    chave = _limpo(chave, 80)
+    if not chave:
+        return {"status": "error", "message": "Alerta sem chave."}
+    agora = int(time.time())
+    con = _con()
+    r = con.execute("SELECT id, status FROM chamados WHERE chave=?",
+                    (chave,)).fetchone()
+    if r:
+        con.execute(
+            """UPDATE chamados SET titulo=?, descricao=?, medida=?,
+                 status=CASE WHEN status='resolvido' THEN 'aberto' ELSE status END,
+                 criado_em=CASE WHEN status='resolvido' THEN ? ELSE criado_em END
+               WHERE chave=?""",
+            (_limpo(titulo, 160), _limpo(descricao, 4000), _limpo(medida, 80),
+             agora, chave))
+        con.commit()
+        ident, reaberto = r["id"], (r["status"] == "resolvido")
+    else:
+        ident = uuid.uuid4().hex[:12]
+        con.execute(
+            """INSERT INTO chamados (id,tipo,titulo,descricao,aba,contexto,
+                                     usuario,status,anexos,criado_em,chave,medida)
+               VALUES (?,'alerta',?,?,'','','sistema','aberto','',?,?,?)""",
+            (ident, _limpo(titulo, 160), _limpo(descricao, 4000), agora,
+             chave, _limpo(medida, 80)))
+        con.commit()
+        reaberto = False
+    con.close()
+    return {"status": "ok", "id": ident, "reaberto": reaberto, "novo": not r}
+
+
+def resolver_alerta(chave: str) -> bool:
+    """Fecha sozinho quando o problema passou.
+
+    Sem isto o painel acumularia alarmes de coisas que já se resolveram, e a
+    bolinha vermelha viraria decoração -- o operador aprende a ignorá-la, e aí
+    o próximo alarme de verdade também é ignorado.
+    """
+    try:
+        con = _con()
+        n = con.execute(
+            "UPDATE chamados SET status='resolvido', visto_em=? "
+            "WHERE chave=? AND status<>'resolvido'",
+            (int(time.time()), _limpo(chave, 80))).rowcount
+        con.commit()
+        con.close()
+        return bool(n)
+    except Exception:
+        return False

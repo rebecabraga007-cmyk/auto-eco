@@ -1,0 +1,24 @@
+[Unit]
+Description=CapiBLU - vigia de saude (descritores, disco, servicos)
+# Roda FORA dos servicos que vigia, de proposito: um vigia que mora dentro do
+# que ele vigia para junto. O modo de falha que mais interessa aqui e o app
+# vivo, respondendo, e incapaz de abrir qualquer coisa nova.
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/capiblu/lupa-empresas/backend
+ExecStart=/opt/capiblu/venv/bin/python saude.py --quieto
+---8<---
+[Unit]
+Description=Verifica a saude do CapiBLU de 10 em 10 minutos
+
+[Timer]
+# 10 minutos: o vazamento de 14/set levou tres dias para encher, entao dez
+# minutos e de sobra para avisar cedo. Mais frequente so encheria o log sem
+# mudar nada -- estes numeros se movem devagar.
+OnBootSec=3min
+OnUnitActiveSec=10min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

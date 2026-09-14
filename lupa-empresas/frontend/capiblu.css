@@ -942,3 +942,16 @@ body.sem-dossie .btn-dossie { display: none !important; }
   max-height: 90px; border-radius: 6px; border: 1px solid var(--gray-300, #d1d5db);
   cursor: zoom-in;
 }
+
+/* Alerta do sistema: vermelho mais forte e fundo levemente tingido. Ele
+   divide a lista com bug e melhoria de propósito — um alarme num canto que
+   ninguém abre é um alarme que não existe —, mas precisa se distinguir de
+   relance de um pedido de melhoria. */
+.chamado-card.alerta { border-left-color: #b91c1c; background: #fef2f2; }
+.chamado-card.alerta.resolvido { background: var(--white, #fff); }
+.chamado-medida {
+  display: inline-block; margin-left: 6px; padding: 1px 7px;
+  border-radius: 9px; font-size: .7rem; font-weight: 600;
+  background: #fee2e2; color: #991b1b; border: 1px solid #fecaca;
+}
+.chamado-card.resolvido .chamado-medida { background: var(--gray-100, #f3f4f6); color: var(--gray-600, #4b5563); border-color: var(--gray-200, #e5e7eb); }

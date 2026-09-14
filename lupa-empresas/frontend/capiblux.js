@@ -6397,10 +6397,20 @@ async function chamadosCarregar() {
       const imgs = (c.anexos || []).map(a =>
         `<a href="${API}/api/chamados/anexo/${esc(a)}" target="_blank" rel="noopener">
            <img src="${API}/api/chamados/anexo/${esc(a)}" alt="print" /></a>`).join('');
+      /* Alerta do sistema entra na MESMA lista que bug e melhoria, mas
+         precisa ser reconhecível de relance: é o sistema falando de si
+         mesmo, não alguém pedindo algo. O selo e a medida fazem isso —
+         "1023 de 1024 (99%)" diz o tamanho do problema sem abrir nada. */
+      const ehAlerta = c.tipo === 'alerta';
+      const icone = ehAlerta ? '🚨' : (c.tipo === 'bug' ? '🐞' : '💡');
+      const medida = c.medida
+        ? ` <span class="chamado-medida">${esc(c.medida)}</span>` : '';
       return `
-        <div class="chamado-card ${esc(c.status_chamado)}">
-          <div><b>${c.tipo === 'bug' ? '🐞' : '💡'} ${esc(c.titulo)}</b></div>
-          <div class="chamado-meta">${esc(c.usuario || 'sem identificação')} ·
+        <div class="chamado-card ${esc(c.status_chamado)}${ehAlerta ? ' alerta' : ''}">
+          <div><b>${icone} ${esc(c.titulo)}</b>${medida}</div>
+          <div class="chamado-meta">${ehAlerta
+              ? 'detectado automaticamente'
+              : esc(c.usuario || 'sem identificação')} ·
             ${esc(quando)}${c.aba ? ' · aba ' + esc(c.aba) : ''} ·
             <b>${esc(c.status_chamado)}</b></div>
           ${c.descricao ? `<p style="margin:8px 0 0;white-space:pre-wrap">${esc(c.descricao)}</p>` : ''}
@@ -6410,6 +6420,9 @@ async function chamadosCarregar() {
             <button type="button" class="btn-secondary ch-acao" data-id="${esc(c.id)}" data-s="visto">Em análise</button>
             <button type="button" class="btn-secondary ch-acao" data-id="${esc(c.id)}" data-s="resolvido">Resolvido</button>
             <button type="button" class="btn-secondary ch-acao" data-id="${esc(c.id)}" data-s="aberto">Reabrir</button>
+            ${ehAlerta ? `<span class="pf-advanced-hint" style="display:inline">
+              — este fecha sozinho quando a medida voltar ao normal; marcar à
+              mão só o esconde até a próxima verificação</span>` : ''}
           </div>
         </div>`;
     }).join('');
