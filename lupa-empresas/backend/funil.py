@@ -1507,7 +1507,12 @@ async def decisores_do_linkedin(empresa: str, cnpj: str = "", cidade: str = "",
     # com os dois. Lista vazia = sem filtro, que é o padrão.
     if cargos_escolhidos:
         hits = [h for h in hits
-                if funcoes.casa_escolha(h.get("cargo") or "", cargos_escolhidos)]
+                # Os botões da tela mandam nível/área ("gerencia:vendas") e o
+                # campo de texto manda o cargo escrito à mão. Só o primeiro era
+                # entendido aqui, então "consulta profunda" com cargo digitado
+                # devolvia zero -- filtro que descarta tudo parece base vazia.
+                if (funcoes.casa_escolha(h.get("cargo") or "", cargos_escolhidos)
+                    or funcoes.casa_cargo(h.get("cargo") or "", cargos_escolhidos))]
     if max_decisores > 0:
         hits = hits[:max_decisores]
 

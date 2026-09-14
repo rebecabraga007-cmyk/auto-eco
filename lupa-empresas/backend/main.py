@@ -55,6 +55,7 @@ import cargos
 import chamados
 import funcoes
 import setores_li
+import telefones as tel_fmt
 import identidade
 import funil
 
@@ -1256,7 +1257,10 @@ async def prospeccao_b2b_linkedin(request: Request, payload: dict = Body(default
 
     if cargos:
         perfis = [p for p in perfis
-                  if funcoes.casa_escolha(p.get("cargo") or "", cargos)]
+                  # casa_escolha entende o que a tela CLICA; casa_cargo
+                  # entende o que a pessoa DIGITA. A tela manda os dois.
+                  if (funcoes.casa_escolha(p.get("cargo") or "", cargos)
+                      or funcoes.casa_cargo(p.get("cargo") or "", cargos))]
 
     # Teto POR EMPRESA, e não global: sem isso uma empresa grande consome a
     # cota inteira e as outras 49 saem vazias.
@@ -2147,6 +2151,20 @@ async def prospeccao_pessoas(payload: dict = Body(default={})):
             so_com_email=bool(filtros.get("so_com_email")),
             limite=min(lim, 100),
             usuario=str(payload.get("usuario") or ""))
+        # CARGO: a busca la foi AMPLA de proposito -- "gerente" vira
+        # `gerente, gerencia, gestor, gestora` para achar "Gestor de
+        # processos". O preco disso e o falso positivo: "Engenheiro Civil |
+        # MBA - Gerenciamento" tambem casa o radical. Aqui, com o texto na
+        # mao, a classificacao e nossa e o corte fica preciso.
+        #
+        # Se NADA sobreviver, devolve o que veio: a pessoa pediu um cargo que
+        # o dicionario nao conhece, e uma lista ampla e melhor que uma vazia
+        # -- ainda mais tendo sido paga.
+        cargo_q = str(filtros.get("cargo") or "").strip()
+        if cargo_q and r.get("pessoas"):
+            r["pessoas"] = [x for x in r["pessoas"]
+                            if funcoes.casa_cargo(x.get("cargo") or "", cargo_q)]                            or r["pessoas"]
+
         # SENIORIDADE nao existe como filtro deles (testado: `unsupported
         # filters`), e um radical de cargo nao separa "Gerente" de "Estagiario
         # de gerencia". A classificacao e nossa, entao o corte e aqui.
@@ -2328,9 +2346,14 @@ def _filtra_decisores(lista: list[dict], cargos: str, maximo: int) -> list[dict]
         simples = [c for c in escolhidos if c not in com_area]
         niveis = {int(c) for c in simples if c.isdigit()}
         termos = [c for c in simples if not c.isdigit()]
+        # `casa_cargo` no lugar de `t in cargo.lower()`: substring crua não
+        # sabe que "Diretora", "Superintendente", "Head of…" e "VP" são a
+        # mesma coisa que "diretor", e o acento derrubava "sócio" contra
+        # "SOCIO ADMINISTRADOR". Continua casando o literal por último, então
+        # cargo que o dicionário não conhece ("closer") segue funcionando.
         lista = [p for p in lista
                  if (p.get("nivel") in niveis)
-                 or any(t in (p.get("cargo") or "").lower() for t in termos)
+                 or funcoes.casa_cargo(p.get("cargo") or "", termos)
                  or (com_area
                      and funcoes.casa_escolha(p.get("cargo") or "", com_area))]
     # ORDEM: QUEM MANDA MAIS PRIMEIRO -- e era ordem alfabética.
@@ -3764,6 +3787,16 @@ async def enrich_run(payload: dict = Body(default={})):
     cargos_dec = str(payload.get("decisor_cargos") or "")
     max_dec = max(1, min(int(payload.get("max_decisores") or 3), 10))
 
+    # TELEFONE: uma coluna com todos, e o formato de quem vai receber.
+    #
+    # As colunas individuais ficam onde estao -- elas servem para LIGAR, cada
+    # numero ao lado de quem atende. A coluna unida serve para IMPORTAR, que e
+    # outra tarefa: a Meetime quer os telefones do lead numa celula so.
+    unir_tel = bool(payload.get("unir_telefones"))
+    modo_tel = str(payload.get("formato_telefone") or "").strip().lower()
+    if modo_tel not in ("", "bruto", "meetime", "zenvia"):
+        modo_tel = ""
+
     async def _one(row):
         async with sem:
             enr = await _enrich_cnpj(row.get(cnpj_col, ""), want,
@@ -3773,6 +3806,9 @@ async def enrich_run(payload: dict = Body(default={})):
         return merged
 
     enriched = await asyncio.gather(*[_one(r) for r in rows])
+    if unir_tel or modo_tel:
+        enriched = [tel_fmt.aplicar(r, unir_col=unir_tel, modo=modo_tel)
+                    for r in enriched]
 
     # QUEM FICOU SEM TELEFONE DE DECISOR, e a distinção entre os dois motivos.
     #
@@ -3814,6 +3850,11 @@ async def enrich_run(payload: dict = Body(default={})):
                                      "decisores": achados})
     label_of = {k: lbl for g in _ENRICH_CATALOG for (k, lbl) in g["campos"]}
     added_cols = [{"key": f, "label": label_of.get(f, f)} for f in fields]
+    if unir_tel:
+        # No fim, e nao no meio: a coluna unida e um RESUMO das outras, e
+        # resumo que vem antes do detalhe faz a pessoa ler duas vezes.
+        added_cols.append({"key": tel_fmt.COLUNA_UNIDA,
+                           "label": tel_fmt.ROTULO_UNIDA})
     return {"status": "ok", "sheet": sheet, "cnpj_col": cnpj_col,
             "base_cols": store[sheet]["columns"], "added_cols": added_cols,
             "rows": enriched, "enriquecidas": len(enriched),

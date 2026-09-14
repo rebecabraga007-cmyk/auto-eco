@@ -872,7 +872,12 @@ async def buscar_por_filtro(pais: str = "BR", empresas: Any = None,
         if g:
             condicoes.append(g)
 
-    termos_cargo = _l(cargos_termos)
+    # CARGO DIGITADO VIRA OS RADICAIS COMO ELE APARECE NOS PERFIS.
+    # "diretor" sozinho não acha "Diretora", "Superintendente" nem "Head of";
+    # e é por `position` que se paga barato, filtrando lá em vez de trazer
+    # tudo e classificar aqui.
+    termos_cargo = funcoes.termos_cargo_para_busca(_l(cargos_termos),
+                                                   teto=OR_TETO)
 
     # DEPARTAMENTO vira termo de `position` na PRÓPRIA consulta, não filtro
     # nosso depois. Decisão da Rebeca: mais barato e menos preciso.

@@ -293,7 +293,19 @@ def areas(texto) -> set:
 def nivel(texto) -> tuple[str, int]:
     """Senioridade mais ALTA mencionada. ('', -1) quando não dá pra dizer."""
     t = " " + _norm(texto) + " "
-    achados = [(g["peso"], k) for k, g in NIVEIS.items() if _casa(t, g)]
+
+    # VICE-PRESIDENTE É DIRETORIA, NÃO PRESIDÊNCIA.
+    #
+    # O radical "presidente" do C-level casa por prefixo de PALAVRA, e em
+    # "vice presidente" a palavra "presidente" está lá inteira -- então um VP
+    # era classificado como alta direção, acima de Diretor. Consequência
+    # medida: procurar por "diretor" não achava "Vice-Presidente de Vendas",
+    # que é exatamente o cargo que se procura. Só o C-level enxerga o texto
+    # com a palavra colada; a diretoria continua casando pelo radical dela.
+    t_clevel = (t.replace(" vice presidente", " vicepresidente")
+                 .replace(" vice presidencia", " vicepresidencia"))
+    achados = [(g["peso"], k) for k, g in NIVEIS.items()
+               if _casa(t_clevel if k == "clevel" else t, g)]
     if not achados:
         return "", -1
     peso, chave = max(achados)
@@ -792,3 +804,158 @@ def diagnostico(texto) -> dict:
     c = classificar(texto)
     c["situacao"] = ("cargo_classificado" if c["areas"] else "cargo_desconhecido")
     return c
+
+# ---------------------------------------------------------------------------
+# CARGO DIGITADO À MÃO: grafia, maiúscula e sinônimo
+#
+# A tela deixa escrever o cargo livremente, e a pessoa escreve do jeito dela:
+# "Diretor", "DIRETORA", "diretor", "Dir.", "Head", "CEO". Do outro lado, o
+# cargo vem do cadastro ou do perfil e também não segue padrão nenhum --
+# medido: "GERENTE DE RELACIONAMENTO COMERCIAL na CIELO", "Head of Engineering
+# & R&D", "super visor de vendas".
+#
+# A comparação antiga era `termo in cargo.lower()`: substring crua. Ela erra
+# dos dois lados -- "diretor" não acha "Diretora" (acha, por prefixo) mas não
+# acha "Superintendente" nem "Head"; e o acento derruba tudo ("sócio" nunca
+# acha "SOCIO"). O vocabulário para resolver isso já existe neste arquivo, em
+# NIVEIS e AREAS; faltava usá-lo para o texto que a pessoa DIGITA, e não só
+# para o que ela clica.
+# ---------------------------------------------------------------------------
+
+def _termo_nivel(termo: str) -> str:
+    """Nível que o termo digitado designa, ou "".
+
+    Aceita a chave ("gerencia"), o apelido ("gerente", "gestor") e qualquer
+    radical ou sigla do nível ("diretora", "superintendente", "head", "ceo").
+    """
+    t = " ".join(_norm(termo).split())
+    if not t:
+        return ""
+    if t in NIVEIS:
+        return t
+    if t in APELIDO_NIVEL:
+        return APELIDO_NIVEL[t]
+    return nivel(t)[0]
+
+
+def _termo_area(termo: str) -> str:
+    """Área que o termo designa -- SÓ quando ele é o nome da área.
+
+    Deliberadamente estreito. "vendas" é o nome de uma área e quem digita isso
+    quer a área inteira; "vendedor" só casa o radical dela, e tratar os dois
+    igual faria uma busca por "vendedor" devolver o Diretor Comercial. Quem
+    digita o cargo inteiro está sendo específico de propósito.
+    """
+    t = " ".join(_norm(termo).split())
+    return t if t in AREAS else ""
+
+
+def casa_cargo(texto, termos) -> bool:
+    """O cargo `texto` casa com algum termo digitado?
+
+    Três caminhos, do mais específico para o mais amplo:
+
+      "gerente comercial"  nível E área: exige os dois
+      "diretor"            nível: casa Diretora, Superintendente, Head, VP
+      "vendas"             área: casa qualquer cargo de vendas
+      "closer"             literal: prefixo de palavra, sem acento e sem caixa
+
+    Lista vazia = sem filtro. O literal é sempre tentado por último, então uma
+    palavra que o dicionário não conhece continua funcionando como antes.
+    """
+    if not termos:
+        return True
+    if isinstance(termos, str):
+        termos = [t for t in re.split(r"[;,]", termos) if t.strip()]
+
+    alvo = " " + _norm(texto) + " "
+    nvl = nivel(texto)[0]
+    ars = areas(texto)
+
+    for bruto in termos:
+        t = str(bruto or "").strip()
+        if not t:
+            continue
+
+        # "gerencia:vendas" e as escolhas dos botões continuam pelo caminho
+        # de sempre -- é a mesma pergunta, feita pela tela em vez do teclado.
+        if ":" in t or _norm(t).strip() in AREAS or _norm(t).strip() in NIVEIS:
+            if casa_escolha(texto, [_norm(t).strip()]):
+                return True
+
+        palavras = [p for p in _norm(t).split() if p]
+        tn = _termo_nivel(t)
+        ta = _termo_area(t)
+
+        # Duas palavras costumam ser nível + área: "gerente comercial",
+        # "diretor de TI", "coordenadora de marketing".
+        if not (tn and ta) and len(palavras) > 1:
+            niveis_p = [x for x in (_termo_nivel(p) for p in palavras) if x]
+            areas_p = [x for x in (_termo_area(p) for p in palavras) if x]
+            if not areas_p:
+                # "diretor comercial": "comercial" não é chave de área, mas o
+                # dicionário de áreas conhece o radical.
+                for p in palavras:
+                    if _termo_nivel(p):
+                        continue
+                    achadas = areas(p)
+                    if len(achadas) == 1:
+                        areas_p.append(achadas.pop())
+            if niveis_p and areas_p:
+                if nvl == niveis_p[0] and areas_p[0] in ars:
+                    return True
+                # Nível e área pedidos e o candidato não tem os dois: este
+                # termo não casa. Cair no literal aqui devolveria qualquer
+                # cargo que contivesse a palavra solta.
+                continue
+
+        if tn and not ta and nvl == tn:
+            return True
+        if ta and not tn and ta in ars:
+            return True
+
+        # LITERAL, por prefixo de palavra e sem acento: "socio" acha "SÓCIO
+        # ADMINISTRADOR", "closer" acha "Closer de Vendas".
+        alvo_t = " ".join(palavras)
+        if alvo_t and re.search(r"(^|\s)" + re.escape(alvo_t), alvo):
+            return True
+    return False
+
+
+def termos_cargo_para_busca(termos, teto: int = 4) -> list[str]:
+    """Cargo digitado -> radicais para filtrar `position` na Bright Data.
+
+    Mesma ideia de `termos_para_busca`, mas partindo do texto livre. "diretor"
+    vira `diretor, superintendent, head, vp` -- que é como o cargo aparece
+    escrito nos perfis reais.
+
+    INTERCALA quando há mais de um termo: o `or` deles trava em 4, e expandir
+    um termo de cada vez gastaria as quatro vagas no primeiro, sumindo com o
+    segundo sem aviso.
+    """
+    listas: list[list[str]] = []
+    if isinstance(termos, str):
+        termos = re.split(r"[;,]", termos)
+    for bruto in termos or []:
+        t = str(bruto or "").strip()
+        if not t:
+            continue
+        base = " ".join(_norm(t).split())
+        expandido = [base]
+        n = _termo_nivel(t)
+        if n and len(base.split()) == 1:
+            # Só para termo de uma palavra: "gerente comercial" já é
+            # específico, e trocá-lo pelos radicais do nível perderia a área.
+            g = NIVEIS[n]
+            expandido += list(g.get("radicais", ())) + list(g.get("siglas", ()))
+        a = _termo_area(t)
+        if a:
+            expandido += termos_para_busca(a, teto=teto)
+        listas.append(list(dict.fromkeys(x for x in expandido if x)))
+
+    saida: list[str] = []
+    for i in range(max((len(x) for x in listas), default=0)):
+        for lista in listas:
+            if i < len(lista):
+                saida.append(lista[i])
+    return list(dict.fromkeys(saida))[:teto]

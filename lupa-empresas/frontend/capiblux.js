@@ -2929,9 +2929,17 @@ const enrichState = { upload_id: null, sheets: [], result: null };
     const querDec = [...document.querySelectorAll('.en-field:checked')]
       .some(c => c.value.startsWith('de_'));
     const w = document.getElementById('en-dec-wrap');
+    const apareceuAgora = w && w.hidden && querDec;
     if (w) w.hidden = !querDec;
+    // O painel nasce escondido e fica ABAIXO do catálogo, que é comprido: ele
+    // aparecia fora da tela e a pessoa concluía que não dava para escolher
+    // cargo no enriquecimento. Aparecer e se mostrar são coisas diferentes.
+    if (apareceuAgora) w.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // A numeração dos passos anda junto com o painel que aparece.
+    const numTel = document.getElementById('en-num-tel');
+    if (numTel) numTel.textContent = querDec ? '5' : '4';
     const num = document.getElementById('en-num-run');
-    if (num) num.textContent = querDec ? '5' : '4';
+    if (num) num.textContent = querDec ? '6' : '5';
   });
 
   document.getElementById('en-run').addEventListener('click', async () => {
@@ -2941,8 +2949,10 @@ const enrichState = { upload_id: null, sheets: [], result: null };
       upload_id: enrichState.upload_id, sheet: sheetSel.value,
       cnpj_col: colSel.value, fields,
       limite: parseInt(document.getElementById('en-limite').value) || 50,
-      decisor_cargos: document.getElementById('en-cargo')?.value || '',
+      decisor_cargos: enrichCargos(),
       max_decisores: parseInt(document.getElementById('en-maxdec')?.value) || 3,
+      unir_telefones: !!document.getElementById('en-unir-tel')?.checked,
+      formato_telefone: enrichFormatoTel(),
     };
     document.getElementById('en-run').disabled = true;
 
@@ -6344,6 +6354,89 @@ ligaFichasDeCargo('pf-cargo', 'pf-cargo-entrada', 'pf-cargo-chips');
 ligaFichasDeCargo('en-cargo', 'en-cargo-entrada', 'en-cargo-chips');
 
 /* ══════════════════════════════════════════════════════════════════════
+   CARGO NO ENRIQUECIMENTO — os dois caminhos da prospecção B2B
+
+   Lá existem duas maneiras de dizer quem você quer: clicar o nível (Diretor,
+   Gerente…) ou digitar o cargo exato. Aqui só havia a segunda, e quem já
+   tinha aprendido a outra tela procurava os botões e concluía que não dava.
+
+   Os dois escrevem no mesmo lugar e valem JUNTOS: clicar "Diretor" e digitar
+   "head de vendas" pede os dois. É união, não substituição — o contrário
+   faria um dos controles apagar o outro em silêncio.
+   ══════════════════════════════════════════════════════════════════════ */
+document.querySelectorAll('#en-cargos .pf-cargo').forEach(b => b.addEventListener('click', () => {
+  const todos = document.querySelector('#en-cargos .pf-cargo[data-c=""]');
+  if (!b.dataset.c) {
+    document.querySelectorAll('#en-cargos .pf-cargo').forEach(x => x.classList.remove('active'));
+    todos.classList.add('active');
+  } else {
+    b.classList.toggle('active');
+    todos.classList.toggle('active',
+      !document.querySelector('#en-cargos .pf-cargo.active[data-c]:not([data-c=""])'));
+  }
+}));
+
+/* MEETIME E ZENVIA SÃO EXCLUSIVOS ENTRE SI.
+   Uma coluna só pode estar num formato; deixar os dois marcados sugeriria uma
+   planilha que serve para os dois ao mesmo tempo, e o segundo simplesmente
+   sobrescreveria o primeiro sem dizer nada. */
+['en-tel-meetime', 'en-tel-zenvia'].forEach((id, i, todos) => {
+  document.getElementById(id)?.addEventListener('change', e => {
+    if (e.target.checked) {
+      todos.filter(x => x !== id).forEach(x => {
+        const o = document.getElementById(x);
+        if (o) o.checked = false;
+      });
+    }
+    const nota = document.getElementById('en-tel-nota');
+    if (!nota) return;
+    const m = enrichFormatoTel();
+    nota.innerHTML = m
+      ? `No modo <b>${m === 'meetime' ? 'Meetime' : 'Zenvia'}</b> os telefones saem `
+        + 'como <code>+5548999998888</code>. Número que chegou sem DDD fica de '
+        + 'fora da coluna unida — o destino recusaria a linha inteira —, mas '
+        + 'continua na coluna individual dele.'
+      : 'Sem marcar nenhum, o telefone sai como veio da fonte — '
+        + '<code>(48) 99999-8888</code>.';
+  });
+});
+
+function enrichFormatoTel() {
+  if (document.getElementById('en-tel-meetime')?.checked) return 'meetime';
+  if (document.getElementById('en-tel-zenvia')?.checked) return 'zenvia';
+  return '';
+}
+
+function enrichCargos() {
+  const niveis = [...document.querySelectorAll('#en-cargos .pf-cargo.active')]
+    .map(b => b.dataset.c).filter(Boolean);
+  const digitados = (document.getElementById('en-cargo')?.value || '')
+    .split(',').map(x => x.trim()).filter(Boolean);
+  const area = document.getElementById('en-dec-area')?.value || '';
+
+  // A ÁREA SÓ VALE PARA OS BOTÕES. "gerencia:vendas" é o formato que o
+  // classificador entende, e ele só sabe combinar NÍVEL com área. Grudar a
+  // área num cargo digitado ("head de vendas:ti") não casaria com ninguém —
+  // quem digita o cargo inteiro já disse o que queria.
+  const comArea = area ? (niveis.length ? niveis.map(n => `${n}:${area}`) : [area])
+                       : niveis;
+  return [...new Set([...comArea, ...digitados])].join(',');
+}
+
+/* As 17 áreas vêm do backend, do MESMO dicionário que o filtro usa — lista
+   fixa aqui divergiria em silêncio no dia em que uma área nova entrasse. */
+(function carregarAreasEnriq() {
+  const sel = document.getElementById('en-dec-area');
+  if (!sel) return;
+  fetch(`${API}/api/funil/cargos`).then(r => r.json()).then(d => {
+    if (d.status !== 'ok') return;
+    sel.innerHTML = '<option value="">Qualquer área</option>'
+      + (d.areas || []).map(a =>
+          `<option value="${esc(a.chave)}">${esc(a.rotulo)}</option>`).join('');
+  }).catch(() => { /* fica "Qualquer área"; o resto do filtro segue */ });
+})();
+
+/* ══════════════════════════════════════════════════════════════════════
    REPORTAR BUG / MELHORIA  +  CHAMADOS DO ADMIN
 
    O relato chega hoje por WhatsApp, no meio de outra conversa, sem print e
@@ -6948,8 +7041,10 @@ function enrichAvisaDecisores() {
             empresa: e.empresa || '', cnpj: onlyDigits(e.cnpj || ''),
             limite: 30, teto_brl: 6,
             max_decisores: parseInt(document.getElementById('en-maxdec')?.value) || 3,
-            cargos: (document.getElementById('en-cargo')?.value || '')
-              .split(',').map(x => x.trim()).filter(Boolean),
+            // O MESMO que o enriquecimento usou: se a consulta profunda
+            // procurasse outro cargo, ela traria contato de quem não estava
+            // sendo pedido -- e a pessoa nem saberia por quê.
+            cargos: enrichCargos().split(',').map(x => x.trim()).filter(Boolean),
             // Aqui o telefone é o objetivo: a empresa entrou nesta lista
             // justamente por não ter nenhum.
             so_com_telefone: true,

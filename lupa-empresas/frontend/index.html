@@ -1031,11 +1031,35 @@
           <div class="en-fields-wrap">
             <div class="en-fields-head">
               <strong>Quais decisores você quer</strong>
-              <span class="en-src-note">vírgula ou Enter adiciona outro cargo</span>
+              <span class="en-src-note">vazio traz qualquer cargo</span>
             </div>
+
+            <!-- OS MESMOS CONTROLES DA PROSPECÇÃO B2B, e de propósito.
+                 Lá a pessoa clica no nível e/ou digita o cargo; aqui só dava
+                 para digitar, e quem já tinha aprendido a tela de lá procurava
+                 os botões. Os dois caminhos escrevem no MESMO campo escondido
+                 (`en-cargo`), no formato que o backend já entende: "diretor",
+                 "gerente" ou "gerencia:vendas". -->
+            <div class="filter-row" id="en-cargos" style="margin:0 0 6px">
+              <span class="filter-label">Cargos:</span>
+              <button type="button" class="pf-cargo active" data-c="">Todos</button>
+              <button type="button" class="pf-cargo" data-c="administrador">Administrador</button>
+              <button type="button" class="pf-cargo" data-c="representante">Representante legal</button>
+              <button type="button" class="pf-cargo" data-c="diretor">Diretor</button>
+              <button type="button" class="pf-cargo" data-c="gerente">Gerente</button>
+              <button type="button" class="pf-cargo" data-c="coordenador">Coordenador</button>
+              <select id="en-dec-area" class="filter-select" style="margin-left:8px"
+                      title="Opcional. Restringe o cargo escolhido a uma área — 'Diretor' vira 'Diretor de TI'.">
+                <option value="">Qualquer área</option>
+              </select>
+            </div>
+
+            <label class="pf-advanced-hint" for="en-cargo-entrada"
+                   style="display:block;margin-bottom:2px">
+              👤 Ou digite o cargo — vírgula ou Enter adiciona outro</label>
             <div id="en-cargo-chips" class="chips-box"></div>
             <input id="en-cargo-entrada" type="text" autocomplete="off"
-                   placeholder="Ex.: diretor, gerente comercial — vazio traz qualquer cargo" />
+                   placeholder="Ex.: diretor comercial, head de vendas, sócio-administrador…" />
             <input id="en-cargo" type="hidden" />
             <label class="as-field" style="margin-top:6px">
               <span>Quantos decisores por empresa</span>
@@ -1043,8 +1067,42 @@
             </label>
           </div>
         </div>
+        <!-- ═══ TELEFONE: uma coluna com todos, e o formato do destino ═══
+             As colunas individuais NÃO saem daqui: elas servem para ligar,
+             cada número ao lado de quem atende. A coluna unida serve para
+             importar, que é outra tarefa. -->
         <div class="en-step">
-          <span class="en-num" id="en-num-run">5</span>
+          <span class="en-num" id="en-num-tel">5</span>
+          <div class="en-fields-wrap">
+            <div class="en-fields-head">
+              <strong>Telefones</strong>
+              <span class="en-src-note">as colunas individuais continuam do mesmo jeito</span>
+            </div>
+            <label class="en-chk">
+              <input type="checkbox" id="en-unir-tel" />
+              Criar uma coluna <b>Telefones (todos)</b> com todos os números da
+              linha — empresa, decisores e sócios — separados por vírgula, sem repetir
+            </label>
+            <div class="filter-row" style="margin:6px 0 0;gap:14px;flex-wrap:wrap">
+              <label class="en-chk">
+                <input type="checkbox" id="en-tel-meetime" />
+                Modo <b>Meetime</b> <span class="pf-advanced-hint">— +55 e DDD colados,
+                como a Meetime guarda (<code>+5548999998888</code>)</span>
+              </label>
+              <label class="en-chk">
+                <input type="checkbox" id="en-tel-zenvia" />
+                Modo <b>Zenvia</b> <span class="pf-advanced-hint">— com +55
+                (<code>+5548999998888</code>)</span>
+              </label>
+            </div>
+            <p class="pf-advanced-hint" id="en-tel-nota" style="margin:6px 0 0">
+              Sem marcar nenhum, o telefone sai como veio da fonte —
+              <code>(48) 99999-8888</code>.
+            </p>
+          </div>
+        </div>
+        <div class="en-step">
+          <span class="en-num" id="en-num-run">6</span>
           <button id="en-run" class="btn-primary">⚡ Enriquecer lista</button>
           <button id="en-export" class="btn-secondary" hidden>⬇️ Exportar XLSX</button>
         </div>
