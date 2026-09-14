@@ -3376,6 +3376,10 @@ _ENRICH_CATALOG = [
         ("de_dec3_cargo", "Decisor 3 Cargo"),
         ("de_dec3_celular", "Decisor 3 Celular"),
         ("de_todos", "Todos os decisores (nome — cargo — celular)"),
+        # De onde veio: LinkedIn (quem se declara) ou folha (quem o cadastro
+        # registra). Sao fontes com significados diferentes para "cargo", e
+        # quem recebe a planilha precisa poder saber qual leu.
+        ("de_fonte", "Decisores — fonte"),
     ]},
     {"grupo": "Sócios – contato pessoal (Assertiva)", "fonte": "JBR (CPF) + Assertiva (consumo)", "campos": [
         ("so_socio1_nome", "Sócio 1 Nome"),
@@ -3508,7 +3512,9 @@ async def enrich_upload(file: UploadFile = File(...)):
 
 
 async def _enrich_cnpj(cnpj: str, want: set,
-                       cargos_dec: str = "", max_dec: int = 3) -> dict:
+                       cargos_dec: str = "", max_dec: int = 3,
+                       fonte_dec: str = "linkedin",
+                       nome_empresa: str = "") -> dict:
     """Enriquece um CNPJ com os campos pedidos. Só chama Assertiva/integralX se
     houver campos daquela fonte selecionados (controla consumo)."""
     out = {k: "" for k in want}
@@ -3686,22 +3692,98 @@ async def _enrich_cnpj(cnpj: str, want: set,
     # DECISOR NÃO É SÓCIO: sócio vem do QSA e é quem é DONO; decisor vem da
     # folha e é quem MANDA. Na Google Brasil a Assertiva deu 602 decisores e
     # nenhum estava no quadro societário.
-    if need_de and len(digits) == 14 and assertiva.enabled():
+    if need_de and len(digits) == 14:
         try:
-            r_dec = await assertiva.possiveis_decisores(digits)
-            lista = (((r_dec.get("data") or {}).get("resposta") or {})
-                     .get("possiveisDecisores") or []) if r_dec.get("status") == "ok" else []
-            escolhidos = _filtra_decisores(lista, cargos_dec, max(1, int(max_dec or 3)))
+            teto = max(1, int(max_dec or 3))
+            escolhidos: list[dict] = []
+            fonte_usada = ""
+
+            # ---- LINKEDIN PRIMEIRO -------------------------------------
+            #
+            # Correcao da Rebeca em 14/set/2026: este bloco so olhava a
+            # Assertiva, e ela enxerga a FOLHA. Quem manda numa empresa media
+            # quase sempre e contratado, e se declara no LinkedIn muito antes
+            # de aparecer em cadastro trabalhista -- medido na Google Brasil,
+            # 602 decisores da Assertiva e nenhum no quadro societario; na
+            # BLU, o contrario. E o mesmo funil da aba "Funcionarios no
+            # LinkedIn", com o mesmo filtro de cargo desta tela, para que um
+            # decisor achado la e aqui seja o mesmo decisor.
+            if fonte_dec in ("linkedin", "ambas"):
+                cargos_li = [c.strip() for c in (cargos_dec or "").split(",")
+                             if c.strip()]
+                r_li = await funil.decisores_do_linkedin(
+                    empresa=nome_empresa, cnpj=digits,
+                    # 25 perfis por empresa: acima disso o retorno cai e a
+                    # espera da planilha cresce junto.
+                    limite=25, teto_brl=4.0,
+                    # NAO corta quem esta sem telefone: a planilha quer saber
+                    # quem manda mesmo quando falta o contato -- o aviso de
+                    # "ficou sem telefone" existe justamente para isso.
+                    so_com_telefone=False,
+                    max_decisores=teto, max_socios=0,
+                    cargos_escolhidos=cargos_li)
+                for p_li in (r_li.get("pessoas") or []):
+                    escolhidos.append({
+                        "nome": p_li.get("nome") or "",
+                        "cargo": p_li.get("cargo") or "",
+                        "cpf": p_li.get("cpf") or "",
+                        # Os telefones ficam como DICIONÁRIO, do jeito que o
+                        # funil devolve ({ddd, number, telefone, porque}).
+                        # Achatá-los para string quebrava `_fmt_phone_digits`,
+                        # que lê `ddd` e `number` separados -- e o erro era
+                        # engolido pelo `except`, então a empresa simplesmente
+                        # saía sem decisor nenhum, como se não houvesse.
+                        "_tels": [t for t in (p_li.get("telefones") or [])
+                                  if isinstance(t, dict)],
+                        "_email": p_li.get("email") or "",
+                        "_fonte": "LinkedIn"})
+                if escolhidos:
+                    fonte_usada = "LinkedIn"
+
+            # ---- A FOLHA COMPLETA --------------------------------------
+            #
+            # Entra quando o LinkedIn nao encheu a cota: empresa pequena,
+            # empresa sem presenca la, ou cargo que ninguem escreveu no
+            # perfil. Completar e diferente de substituir -- o que veio do
+            # LinkedIn fica em cima, porque e o decisor mais atual.
+            if (fonte_dec in ("assertiva", "ambas")
+                    or (fonte_dec == "linkedin" and not escolhidos)):
+                if assertiva.enabled() and len(escolhidos) < teto:
+                    r_dec = await assertiva.possiveis_decisores(digits)
+                    lista = (((r_dec.get("data") or {}).get("resposta") or {})
+                             .get("possiveisDecisores") or []) if r_dec.get("status") == "ok" else []
+                    ja = {d.get("cpf") for d in escolhidos if d.get("cpf")}
+                    for d in _filtra_decisores(lista, cargos_dec, teto * 2):
+                        if len(escolhidos) >= teto:
+                            break
+                        cpf_d = re.sub(r"\D", "", str(d.get("cpf") or ""))
+                        if cpf_d and cpf_d in ja:
+                            continue   # a mesma pessoa pelas duas fontes
+                        escolhidos.append({
+                            "nome": (d.get("nome") or "").strip(),
+                            "cargo": (d.get("cargo") or "").strip(),
+                            "cpf": cpf_d, "_tels": None, "_email": "",
+                            "_fonte": "Folha (Assertiva)"})
+                    if escolhidos and not fonte_usada:
+                        fonte_usada = "Folha (Assertiva)"
+                    elif fonte_usada == "LinkedIn" and any(
+                            d["_fonte"] != "LinkedIn" for d in escolhidos):
+                        fonte_usada = "LinkedIn + folha"
+
+            escolhidos = escolhidos[:teto]
             resumo = []
             for n, d in enumerate(escolhidos, start=1):
                 cpf_d = re.sub(r"\D", "", str(d.get("cpf") or ""))
                 nome_d = (d.get("nome") or "").strip()
                 cargo_d = (d.get("cargo") or "").strip()
-                if cpf_d:
+                # _tels None = ainda nao perguntamos (veio da folha, que nao
+                # traz telefone). Lista vazia = perguntamos e nao tem.
+                if d.get("_tels") is None and cpf_d:
                     tels, emails = await _contato_for_cpf(
                         cpf_d, "celular", 2, "assertiva", cnpj=digits)
                 else:
-                    tels, emails = [], []
+                    tels = d.get("_tels") or []
+                    emails = [d["_email"]] if d.get("_email") else []
                 cel = _fmt_phone_digits(tels[0]) if tels else ""
                 if n <= 3:
                     out["de_dec%d_nome" % n] = nome_d
@@ -3714,6 +3796,8 @@ async def _enrich_cnpj(cnpj: str, want: set,
                     resumo.append("%s — %s%s" % (nome_d, cargo_d or "?",
                                                  (" — " + cel) if cel else ""))
             out["de_todos"] = " | ".join(resumo)
+            if "de_fonte" in want:
+                out["de_fonte"] = fonte_usada
             # Marcadores internos: a tela precisa distinguir "nenhum decisor
             # na base" de "achei decisores e nenhum tinha telefone". São
             # problemas diferentes -- um pede outro filtro de cargo, o outro
@@ -3723,7 +3807,15 @@ async def _enrich_cnpj(cnpj: str, want: set,
                 1 for k in ("de_dec1_celular", "de_dec2_celular", "de_dec3_celular")
                 if out.get(k))
         except Exception as exc:
-            out["_de_erro"] = str(exc)[:120]
+            # FALHA NAO PODE VIRAR SILENCIO. Ate hoje este `except` so
+            # guardava a mensagem num campo que ninguem lia: a empresa saia
+            # da planilha sem decisor e sem aparecer em nenhum aviso, igual a
+            # uma empresa que realmente nao tem decisor. Foi assim que um
+            # `_fmt_phone_digits` recebendo string em vez de dicionario
+            # apagou a Intelbras inteira sem deixar rastro.
+            out["_de_erro"] = str(exc)[:160]
+            out["_de_achados"] = 0
+            out["_de_com_tel"] = 0
 
     return out
 
@@ -3787,6 +3879,28 @@ async def enrich_run(payload: dict = Body(default={})):
     cargos_dec = str(payload.get("decisor_cargos") or "")
     max_dec = max(1, min(int(payload.get("max_decisores") or 3), 10))
 
+    # ONDE PROCURAR O DECISOR. Padrao LinkedIn: e la que esta quem manda numa
+    # empresa media, porque quem manda quase sempre e contratado e nao aparece
+    # nem no quadro societario nem, ainda, na folha.
+    fonte_dec = str(payload.get("decisor_fonte") or "linkedin").strip().lower()
+    if fonte_dec not in ("linkedin", "assertiva", "ambas"):
+        fonte_dec = "linkedin"
+
+    def _nome_da_linha(r: dict) -> str:
+        """Nome da empresa como a pessoa escreveu na planilha dela.
+
+        Vale ouro para o LinkedIn: a razao social quase nunca e o nome de la
+        (medido: "L3 SOLUCOES EM TECNOLOGIA LTDA" e "Even3"), e o nome que a
+        operacao digitou e o nome pelo qual a empresa e conhecida.
+        """
+        for col in store[sheet]["columns"]:
+            if col == cnpj_col:
+                continue
+            if re.search(r"empresa|razao|razao social|nome|cliente|fantasia",
+                         str(col), re.I) and str(r.get(col) or "").strip():
+                return str(r.get(col)).strip()[:120]
+        return ""
+
     # TELEFONE: uma coluna com todos, e o formato de quem vai receber.
     #
     # As colunas individuais ficam onde estao -- elas servem para LIGAR, cada
@@ -3800,7 +3914,9 @@ async def enrich_run(payload: dict = Body(default={})):
     async def _one(row):
         async with sem:
             enr = await _enrich_cnpj(row.get(cnpj_col, ""), want,
-                                     cargos_dec=cargos_dec, max_dec=max_dec)
+                                     cargos_dec=cargos_dec, max_dec=max_dec,
+                                     fonte_dec=fonte_dec,
+                                     nome_empresa=_nome_da_linha(row))
         merged = dict(row)
         merged.update(enr)
         return merged
@@ -3817,11 +3933,15 @@ async def enrich_run(payload: dict = Body(default={})):
     # pede a consulta profunda. Juntá-los num número só faria a pessoa tentar
     # a correção errada.
     sem_decisor, sem_telefone = [], []
+    erros_dec = []
     if any(k.startswith("de_") for k in want):
         for r in enriched:
             achados = r.pop("_de_achados", None)
             com_tel = r.pop("_de_com_tel", 0)
-            r.pop("_de_erro", None)
+            erro = r.pop("_de_erro", None)
+            if erro:
+                erros_dec.append({"cnpj": str(r.get(cnpj_col) or ""),
+                                  "erro": erro})
             if achados is None:
                 continue
             # O NOME QUE A PESSOA RECONHECE.
@@ -3831,16 +3951,8 @@ async def enrich_run(payload: dict = Body(default={})):
             # listava CNPJ puro ("07175725000321 ficou sem telefone"), que não
             # diz nada a quem está olhando a própria planilha. A planilha DELA
             # quase sempre tem uma coluna com o nome; é essa que serve aqui.
-            nome_emp = r.get("rfb_razao") or ""
-            if not nome_emp:
-                for col in store[sheet]["columns"]:
-                    if col == cnpj_col:
-                        continue
-                    if re.search(r"empresa|razao|razão|raz.o|nome|cliente|fantasia",
-                                 str(col), re.I) and str(r.get(col) or "").strip():
-                        nome_emp = str(r.get(col)).strip()
-                        break
-            nome_emp = nome_emp or (r.get(cnpj_col) or "")
+            nome_emp = (r.get("rfb_razao") or _nome_da_linha(r)
+                        or r.get(cnpj_col) or "")
             if not achados:
                 sem_decisor.append({"empresa": str(nome_emp)[:80],
                                     "cnpj": str(r.get(cnpj_col) or "")})
@@ -3862,6 +3974,9 @@ async def enrich_run(payload: dict = Body(default={})):
             "proximo": (inicio + len(enriched)) if len(enriched) == limite else None,
             "sem_decisor": sem_decisor,
             "sem_telefone_decisor": sem_telefone,
+            # Falha tecnica e diferente de "nao tem decisor": a primeira se
+            # resolve tentando de novo, a segunda nao.
+            "erros_decisor": erros_dec,
             "total_aba": len(todas)}
 
 

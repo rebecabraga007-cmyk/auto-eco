@@ -2951,6 +2951,7 @@ const enrichState = { upload_id: null, sheets: [], result: null };
       limite: parseInt(document.getElementById('en-limite').value) || 50,
       decisor_cargos: enrichCargos(),
       max_decisores: parseInt(document.getElementById('en-maxdec')?.value) || 3,
+      decisor_fonte: document.querySelector('input[name="en-dec-fonte"]:checked')?.value || 'linkedin',
       unir_telefones: !!document.getElementById('en-unir-tel')?.checked,
       formato_telefone: enrichFormatoTel(),
     };
@@ -2965,7 +2966,16 @@ const enrichState = { upload_id: null, sheets: [], result: null };
 
        50 por lote: com Assertiva dá ~37 s, folgado sob o teto; só com a
        Receita dá 2 s, e as idas e vindas a mais não custam nada. */
-    const LOTE = 50;
+    /* O LOTE ENCOLHE QUANDO O DECISOR VEM DO LINKEDIN.
+       Esse caminho roda um funil por empresa -- procura a empresa no LinkedIn,
+       lista quem se declara decisor, resolve o CPF e busca o telefone. Medido:
+       11,8 s numa empresa grande, contra ~0,7 s da folha. Com 50 por lote a
+       requisição bateria no corte da Cloudflare e morreria DEPOIS de ter
+       consultado (e pago) tudo. Dez por lote mantém cada ida bem abaixo do
+       teto; as idas a mais não custam nada. */
+    const decisorNoLinkedIn = fields.some(f => f.startsWith('de_'))
+      && body.decisor_fonte !== 'assertiva';
+    const LOTE = decisorNoLinkedIn ? 10 : 50;
     enrichState.cancelar = false;
     const acumulado = [];
     // Os avisos vêm por lote e precisam ser somados: reportar só o

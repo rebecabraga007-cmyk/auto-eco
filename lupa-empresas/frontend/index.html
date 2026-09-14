@@ -1048,6 +1048,27 @@
               <span class="en-src-note">vazio traz qualquer cargo</span>
             </div>
 
+            <!-- ONDE PROCURAR. As duas fontes enxergam gente diferente, e a
+                 palavra "cargo" quer dizer outra coisa em cada uma: no
+                 LinkedIn é o que a pessoa escreve de si; na folha é o que o
+                 cadastro registra. Dizer isso aqui evita a conversa "por que
+                 este cargo está diferente do outro sistema?". -->
+            <div class="filter-row" style="margin:0 0 8px;gap:14px;flex-wrap:wrap">
+              <span class="filter-label">Onde procurar:</span>
+              <label class="en-chk"><input type="radio" name="en-dec-fonte"
+                     value="linkedin" checked /> LinkedIn
+                <span class="pf-advanced-hint">— quem se declara gerente, head,
+                diretor; pega o contratado que não é sócio</span></label>
+              <label class="en-chk"><input type="radio" name="en-dec-fonte"
+                     value="ambas" /> LinkedIn + folha
+                <span class="pf-advanced-hint">— completa com a Assertiva quando
+                o LinkedIn não acha</span></label>
+              <label class="en-chk"><input type="radio" name="en-dec-fonte"
+                     value="assertiva" /> Só a folha
+                <span class="pf-advanced-hint">— cargo registrado (DIRETOR,
+                GERENTE); rápido, mas não vê empresa nova</span></label>
+            </div>
+
             <!-- OS MESMOS CONTROLES DA PROSPECÇÃO B2B, e de propósito.
                  Lá a pessoa clica no nível e/ou digita o cargo; aqui só dava
                  para digitar, e quem já tinha aprendido a tela de lá procurava
