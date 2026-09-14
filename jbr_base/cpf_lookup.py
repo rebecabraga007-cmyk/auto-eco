@@ -12,6 +12,7 @@ O banco (jbr_pf.db) e somente-leitura aqui e fica FORA do git.
 import os
 import re
 import sqlite3
+from contextlib import contextmanager
 import unicodedata
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jbr_pf.db")
@@ -22,12 +23,31 @@ def _norm(s: str) -> str:
     return " ".join(s.upper().split())
 
 
-def _conn() -> sqlite3.Connection:
+# A ARMADILHA QUE DERRUBOU O SERVICO EM 14/set/2026.
+#
+# `with sqlite3.connect(...) as con:` NAO FECHA A CONEXAO. Em Python o `with`
+# de uma conexao sqlite3 gerencia a TRANSACAO (commit/rollback) e deixa o
+# arquivo aberto. Os seis pontos de uso deste modulo escreviam exatamente
+# isso, e cada consulta vazava um descritor de arquivo.
+#
+# O servico rodou tres dias assim e chegou a 1023 descritores de 1024. Dali em
+# diante nada que precise abrir arquivo ou socket funciona: BrasilAPI falha,
+# Meetime devolve "Too many open files", a usuaria ve 502 -- e NAO HA UM UNICO
+# ERRO no log do servico, porque do ponto de vista dele cada requisicao
+# terminou normalmente. Foi preciso contar `/proc/<pid>/fd` para achar.
+#
+# Virou gerenciador de contexto de verdade: os usos continuam escritos igual
+# e agora fecham.
+@contextmanager
+def _conn():
     # Somente-leitura, nao trava a carga em andamento.
     uri = f"file:{DB_PATH}?mode=ro"
     con = sqlite3.connect(uri, uri=True, timeout=5)
     con.row_factory = sqlite3.Row
-    return con
+    try:
+        yield con
+    finally:
+        con.close()
 
 
 def available() -> bool:

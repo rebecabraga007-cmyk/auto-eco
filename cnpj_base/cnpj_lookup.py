@@ -12,6 +12,7 @@ Funções:
 import os
 import re
 import sqlite3
+from contextlib import contextmanager
 import time
 from urllib.request import pathname2url
 
@@ -86,7 +87,23 @@ PORTE = {"00": "NÃO INFORMADO", "01": "MICRO EMPRESA (ME)",
 _codes: dict[str, dict[str, str]] = {}
 
 
-def _conn() -> sqlite3.Connection:
+# A ARMADILHA QUE DERRUBOU O SERVICO EM 14/set/2026.
+#
+# `with sqlite3.connect(...) as con:` NAO FECHA A CONEXAO. Em Python o `with`
+# de uma conexao sqlite3 gerencia a TRANSACAO (commit/rollback) e deixa o
+# arquivo aberto. Os seis pontos de uso deste modulo (e cada um vazava DOIS: o cnpj.db e o cnpj_fts.db anexado) escreviam exatamente
+# isso, e cada consulta vazava um descritor de arquivo.
+#
+# O servico rodou tres dias assim e chegou a 1023 descritores de 1024. Dali em
+# diante nada que precise abrir arquivo ou socket funciona: BrasilAPI falha,
+# Meetime devolve "Too many open files", a usuaria ve 502 -- e NAO HA UM UNICO
+# ERRO no log do servico, porque do ponto de vista dele cada requisicao
+# terminou normalmente. Foi preciso contar `/proc/<pid>/fd` para achar.
+#
+# Virou gerenciador de contexto de verdade: os usos continuam escritos igual
+# e agora fecham.
+@contextmanager
+def _conn():
     # timeout curto: durante a ingestão (--full) o DB fica travado; falhar rápido
     # faz o app cair no fallback (Casa dos Dados/BrasilAPI) em vez de pendurar.
     con = sqlite3.connect(_ro_uri(DB_PATH), uri=True, timeout=3)
@@ -96,7 +113,10 @@ def _conn() -> sqlite3.Connection:
             con.execute("ATTACH DATABASE ? AS ftsx", (_ro_uri(FTS_PATH),))
         except Exception:
             pass
-    return con
+    try:
+        yield con
+    finally:
+        con.close()
 
 
 def available() -> bool:
