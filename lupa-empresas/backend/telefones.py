@@ -21,11 +21,11 @@ meetime  +5548999999999   MEDIDO na conta da BLU em 14/set/2026: 100 leads
                           coluna unida usa virgula e espaco. A documentacao da
                           API mostra o mesmo: {"phone": "+551149501024"}.
 
-zenvia   +5548999999999   Pedido da Rebeca: "vem com +55 nos numeros". Vale
-                          registrar que os exemplos da API de SMS da Zenvia
-                          mostram o numero SEM o "+" ("5511999999999"); os dois
-                          formatos convivem no mercado e o "+" e o E.164
-                          canonico. Trocar e mudar uma linha em FORMATOS.
+zenvia   5548999999999    DDI colado, SEM o "+". A Rebeca pediu primeiro com
+                          "+" e voltou atras no mesmo dia, depois de ver que
+                          os exemplos da API de SMS da Zenvia mostram
+                          "5511999999999". E a unica diferenca entre este
+                          formato e o da Meetime.
 
 bruto                     Como veio da fonte: "(48) 99999-9999". E o padrao,
                           porque e o que se le no telefone antes de discar.
@@ -97,10 +97,10 @@ def formatar(valor, modo: str = "") -> str:
     if not e:
         # Incompleto: sai como veio, e sem "+55" mentiroso na frente.
         return str(valor or "").strip()
-    if modo == "meetime":
-        return e
     if modo == "zenvia":
-        return e
+        # SEM o "+", por decisao da Rebeca em 14/set/2026 -- e e o que os
+        # exemplos da API de SMS deles mostram: "5511999999999".
+        return e.lstrip("+")
     return e
 
 

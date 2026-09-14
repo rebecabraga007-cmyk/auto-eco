@@ -148,7 +148,7 @@ AREAS: dict[str, dict] = {
         "rotulo": "Logística e Suprimentos",
         "radicais": [
             "logistic", "estoqu", "almoxarif", "expedic", "armazenag",
-            "motorist", "entregad", "transport", "frota", "suprimen",
+            "motorist", "entregad", "transport", "frota", "fleet", "suprimen",
             "compras", "comprador", "supply", "planejament de demanda",
             "conferente", "empilhadeir", "distribuic",
             "correios", "carteir", "servicos postai", "encomend",
@@ -942,6 +942,28 @@ def termos_cargo_para_busca(termos, teto: int = 4) -> list[str]:
             continue
         base = " ".join(_norm(t).split())
         expandido = [base]
+
+        # TERMO DE VARIAS PALAVRAS: manda TAMBEM a palavra que distingue.
+        #
+        # "gestor de frota" como frase inteira so acha quem escreveu exatamente
+        # isso -- perde "Gestor de Frotas", "Gestora da Frota", "Fleet
+        # Manager". A palavra que carrega o sentido e "frota"; o nivel
+        # ("gestor") a busca la nao precisa saber, porque o corte por nivel
+        # acontece aqui depois, de graca e com precisao.
+        #
+        # E deliberadamente a PALAVRA, nao a area inteira: mandar os radicais
+        # de logistica traria motorista e almoxarife, e se paga por registro
+        # entregue.
+        _LIGACAO = {"de", "da", "do", "das", "dos", "e", "em", "para", "of",
+                    "the", "a", "o", "no", "na"}
+        palavras = base.split()
+        if len(palavras) > 1:
+            for w in palavras:
+                if len(w) > 3 and w not in _LIGACAO and not _termo_nivel(w):
+                    # singular cobre o plural: a busca deles e por substring,
+                    # entao "frota" tambem acha "frotas".
+                    expandido.append(w[:-1] if w.endswith("s") and len(w) > 4 else w)
+
         n = _termo_nivel(t)
         if n and len(base.split()) == 1:
             # Só para termo de uma palavra: "gerente comercial" já é

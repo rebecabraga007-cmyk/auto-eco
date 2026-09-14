@@ -6393,7 +6393,8 @@ document.querySelectorAll('#en-cargos .pf-cargo').forEach(b => b.addEventListene
     const m = enrichFormatoTel();
     nota.innerHTML = m
       ? `No modo <b>${m === 'meetime' ? 'Meetime' : 'Zenvia'}</b> os telefones saem `
-        + 'como <code>+5548999998888</code>. Número que chegou sem DDD fica de '
+        + `como <code>${m === 'meetime' ? '+5548999998888' : '5548999998888'}</code>. `
+        + 'Número que chegou sem DDD fica de '
         + 'fora da coluna unida — o destino recusaria a linha inteira —, mas '
         + 'continua na coluna individual dele.'
       : 'Sem marcar nenhum, o telefone sai como veio da fonte — '
