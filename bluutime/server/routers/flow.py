@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import (Activity, Cadence, CadenceStep, CadenceUser, Client,
-                      CustomField, Lead, LeadActivity, LeadBase, LeadFieldValue,
-                      LostReason, Template, User, channel_of)
+                      CustomField, FitscoreRule, Lead, LeadActivity, LeadBase,
+                      LeadFieldValue, LostReason, Template, User, channel_of)
 from .. import agenda, perm, render, serial, webhooks
 
 router = APIRouter(prefix="/api/flow")
@@ -320,6 +320,52 @@ def _custom_values(db: Session, lead_id: int) -> dict:
     return dict(rows)
 
 
+def _fitscore(db: Session, custom: dict) -> int:
+    """Soma os pontos das regras de fitscore que baterem no lead.
+
+    LIKE é "contém" (case-insensitive); EQUALS é igual exato. `custom` já vem
+    indexado por identifier (mesmo formato de `_custom_values`)."""
+    total = 0
+    regras = (db.query(FitscoreRule, CustomField.identifier)
+              .join(CustomField, FitscoreRule.field_id == CustomField.id).all())
+    for regra, ident in regras:
+        valor = str(custom.get(ident, "") or "")
+        alvo = regra.target_value or ""
+        bateu = (alvo.lower() in valor.lower()) if regra.expression_type == "LIKE" else (valor == alvo)
+        if bateu:
+            total += regra.score
+    return total
+
+
+def _fitscore_bulk(db: Session, lead_ids: list[int]) -> dict[int, int]:
+    """Mesma conta que `_fitscore`, mas pra uma página inteira de leads de
+    uma vez — sem isso, a lista faria uma consulta de regras por linha."""
+    if not lead_ids:
+        return {}
+    regras = (db.query(FitscoreRule, CustomField.identifier)
+              .join(CustomField, FitscoreRule.field_id == CustomField.id).all())
+    if not regras:
+        return {}
+    valores = (db.query(LeadFieldValue.lead_id, CustomField.identifier, LeadFieldValue.value)
+              .join(CustomField, LeadFieldValue.field_id == CustomField.id)
+              .filter(LeadFieldValue.lead_id.in_(lead_ids)).all())
+    por_lead: dict[int, dict] = {}
+    for lead_id, ident, valor in valores:
+        por_lead.setdefault(lead_id, {})[ident] = valor
+    out = {}
+    for lid in lead_ids:
+        custom = por_lead.get(lid, {})
+        total = 0
+        for regra, ident in regras:
+            valor = str(custom.get(ident, "") or "")
+            alvo = regra.target_value or ""
+            bateu = (alvo.lower() in valor.lower()) if regra.expression_type == "LIKE" else (valor == alvo)
+            if bateu:
+                total += regra.score
+        out[lid] = total
+    return out
+
+
 @router.get("/leads")
 def list_leads(status: str | None = None, cadence_id: int | None = None,
                client_id: int | None = None, sdr_id: int | None = None,
@@ -346,7 +392,8 @@ def list_leads(status: str | None = None, cadence_id: int | None = None,
     total = query.count()
     rows = (query.order_by(Lead.id.desc())
             .offset((page - 1) * limit).limit(limit).all())
-    return {"data": [serial.lead(l) for l in rows],
+    scores = _fitscore_bulk(db, [l.id for l in rows])
+    return {"data": [serial.lead(l, fitscore=scores.get(l.id, 0)) for l in rows],
             "pagination": {"page": page, "perPage": limit, "totalRowCount": total,
                            "totalPageCount": max(1, -(-total // limit)),
                            "hasPrev": page > 1, "hasNext": page * limit < total}}
@@ -357,7 +404,8 @@ def get_lead(lid: int, db: Session = Depends(get_db)):
     l = db.get(Lead, lid)
     if not l:
         raise HTTPException(404, "Lead não encontrado.")
-    data = serial.lead(l, _custom_values(db, lid))
+    custom = _custom_values(db, lid)
+    data = serial.lead(l, custom, _fitscore(db, custom))
     now = datetime.utcnow()
     acts = (db.query(LeadActivity).filter_by(lead_id=lid)
             .order_by(LeadActivity.scheduled_at).all())

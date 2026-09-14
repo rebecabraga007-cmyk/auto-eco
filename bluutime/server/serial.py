@@ -57,7 +57,7 @@ def cadence_step(s):
             "templateName": s.template.name if s.template else ""}
 
 
-def lead(l, custom=None):
+def lead(l, custom=None, fitscore=None):
     return {
         "id": l.id, "name": l.name, "firstName": l.first_name, "email": l.email,
         "company": l.company, "position": l.position, "phone": l.phone, "site": l.site,
@@ -72,7 +72,7 @@ def lead(l, custom=None):
         "leadBase": {"id": l.lead_base.id, "name": l.lead_base.name} if l.lead_base else None,
         "lostReason": {"id": l.lost_reason.id, "name": l.lost_reason.name} if l.lost_reason else None,
         "wonAt": iso(l.won_at), "lostAt": iso(l.lost_at), "createdAt": iso(l.created_at),
-        "customFields": custom or {},
+        "customFields": custom or {}, "fitscore": fitscore or 0,
     }
 
 

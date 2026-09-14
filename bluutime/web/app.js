@@ -743,6 +743,7 @@ PAGES.leads = {
       `<input type="checkbox" class="lead-check" value="${l.id}">`,
       `<a data-open-lead="${l.id}"><strong>${h(l.name)}</strong></a><br>
        <span class="text-muted text-size-small">${h(l.position || "")}</span>`,
+      l.fitscore ? `<span class="pill green" title="Lead scoring">${l.fitscore}</span>` : `<span class="text-muted">—</span>`,
       `${h(l.company)}<br><span class="text-muted text-size-small">${h(l.cnpj || "")}</span>`,
       `${h(l.city || "")}${l.state ? `/${h(l.state)}` : ""}`,
       h(l.phone || "—"),
@@ -768,7 +769,7 @@ PAGES.leads = {
         <button class="btn btn-main btn-xs" id="newLead">Novo lead</button>
       </div>
       ${panel(`${res.pagination.totalRowCount} leads`,
-        table(["<input type='checkbox' id='checkAll'>", "Lead", "Empresa", "Cidade", "Telefone",
+        table(["<input type='checkbox' id='checkAll'>", "Lead", "Score", "Empresa", "Cidade", "Telefone",
                "Situação", "Cadência", "Cliente", "SDR", "Criado"], rows, { scroll: true }),
         { actions: pager(res.pagination) })}`;
 
@@ -3975,14 +3976,47 @@ PAGES.financeiro = {
   },
 };
 
+const DIAS_SEMANA = [[1, "Seg"], [2, "Ter"], [3, "Qua"], [4, "Qui"], [5, "Sex"], [6, "Sáb"], [7, "Dom"]];
+
 PAGES.ajustes = {
   area: "Prospecção", title: "Ajustes",
   async render() {
-    const [cfg, reasons, fields, holidays] = await Promise.all([
+    const [cfg, reasons, fields, holidays, fitscore] = await Promise.all([
       api("/api/flow/configuration"), api("/api/flow/lost-reasons"),
-      api("/api/flow/new-lead-fields"), api("/api/flow/configuration/holidays")]);
+      api("/api/flow/new-lead-fields"), api("/api/flow/configuration/holidays"),
+      api("/api/flow/fitscore")]);
+    const camposPersonalizados = fields.filter((f) => f.customField);
 
     view.innerHTML = `
+      ${panel("Configurações gerais", `
+        <div class="filter-row" style="grid-template-columns:1fr 2fr">
+          <div><label class="text-muted text-size-small">Meta diária padrão da empresa</label>
+            <input class="form-control" type="number" min="1" id="cfgDailyGoal" value="${cfg.defaultDailyGoal}"></div>
+          <div><label class="text-muted text-size-small">Dias úteis <span class="text-grey">— a fila não agenda fora deles</span></label>
+            <div class="chip-grid" id="cfgDias">
+              ${DIAS_SEMANA.map(([v, t]) => `<button type="button" class="chip${cfg.workingDays.includes(v) ? " active" : ""}" data-v="${v}">${t}</button>`).join("")}
+            </div></div>
+        </div>
+        <div class="toolbar" style="border:0;padding:8px 0;background:none;flex-wrap:wrap;gap:14px">
+          <label><input type="checkbox" id="cfgABS"${cfg.accountBasedSalesEnabled ? " checked" : ""}>
+            Vendas por conta <span class="text-muted text-size-small">— mesmo domínio de e-mail cai sempre com o mesmo vendedor</span></label>
+        </div>
+        <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
+          <label><input type="checkbox" id="cfgImport"${cfg.regularUserCanImportLeadList ? " checked" : ""}>
+            Vendedor comum pode importar lista de leads</label>
+        </div>
+        <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
+          <label><input type="checkbox" id="cfgFila"${cfg.smartQueueEnabled ? " checked" : ""}>
+            Fila inteligente <span class="text-muted text-size-small">— prioriza quem tem mais chance de responder</span></label>
+        </div>
+        <div class="field"><label class="text-muted text-size-small">Blacklist de domínios de e-mail
+          <span class="text-grey">— um por linha; lead desses domínios é perdido automaticamente</span></label>
+          <textarea class="form-control" id="cfgBlacklist" rows="3" placeholder="concorrente.com.br">${h(cfg.blacklist.join("\n"))}</textarea></div>
+        <div class="toolbar mt-10" style="border:0;padding:0;background:none">
+          <span class="spacer"></span>
+          <button class="btn btn-main btn-sm" id="cfgSalvar">Salvar configurações</button>
+        </div>`)}
+
       ${panel("Metas diárias", table(["Usuário", "Atividades por dia"],
         cfg.usersGoals.map((g) => {
           const u = state.users.find((x) => x.id === g.userId);
@@ -3995,17 +4029,66 @@ PAGES.ajustes = {
         { actions: `<button class="btn btn-main btn-xs" id="newReason">Adicionar</button>` })}
 
       ${panel("Campos do lead",
-        table(["Campo", "Identificador", "Tipo", "Obrigatório"],
+        table(["Campo", "Identificador", "Tipo", "Obrigatório", "Obrig. p/ ganhar", "Obrig. p/ perder"],
           fields.map((f) => ({ cells: [h(f.name), `<code>${h(f.identifier)}</code>`,
             f.customField ? `<span class="pill green">Personalizado</span>` : `<span class="pill grey">Nativo</span>`,
-            f.required ? "Sim" : "Não"] }))),
+            f.required ? "Sim" : "Não",
+            f.wonMandatory ? "Sim" : "—", f.lostMandatory ? "Sim" : "—"] }))),
         { actions: `<button class="btn btn-main btn-xs" id="newField">Novo campo</button>` })}
+
+      ${panel("Lead scoring (fitscore)", `
+        ${table(["Campo", "Condição", "Valor", "Pontos", ""], fitscore.map((r) => ({ cells: [
+          h(r.fieldName || "—"), r.expressionType === "LIKE" ? "Contém" : "Igual a",
+          h(r.targetValue), r.score,
+          `<button class="btn btn-default btn-xs" data-del-fit="${r.id}">Remover</button>`,
+        ] })), { empty: "Nenhuma regra ainda — todo lead pontua 0." })}
+        <div class="filter-row mt-10" style="grid-template-columns:2fr 1.3fr 1.5fr 0.8fr auto">
+          <div><label class="text-muted text-size-small">Campo</label>
+            <select class="form-control input-sm" id="fitCampo">
+              ${camposPersonalizados.map((f) => `<option value="${f.id}">${h(f.name)}</option>`).join("")}
+            </select></div>
+          <div><label class="text-muted text-size-small">Condição</label>
+            <select class="form-control input-sm" id="fitTipo">
+              <option value="EQUALS">Igual a</option><option value="LIKE">Contém</option>
+            </select></div>
+          <div><label class="text-muted text-size-small">Valor</label>
+            <input class="form-control input-sm" id="fitValor" placeholder="ex.: gold"></div>
+          <div><label class="text-muted text-size-small">Pontos</label>
+            <input class="form-control input-sm" type="number" id="fitPontos" value="1"></div>
+          <div style="align-self:end"><button class="btn btn-main btn-sm" id="fitAdd">Adicionar regra</button></div>
+        </div>`,
+        { subtitle: camposPersonalizados.length
+            ? "Some os pontos das regras que baterem — dá pra priorizar lead por características dele, não só por atraso."
+            : "Crie um campo personalizado abaixo antes de montar uma regra de pontuação." })}
 
       ${panel("Calendário de trabalho",
         table(["Feriado", "Data"], holidays.map((x) => ({ cells: [h(x.name || "—"), fmtDate(x.date)] }))),
-        { subtitle: "Dias úteis: segunda a sexta. A fila não agenda atividade em fim de semana.",
+        { subtitle: `Dias úteis: ${cfg.workingDays.map((v) => DIAS_SEMANA.find(([d]) => d === v)[1]).join(", ")}. `
+                    + "A fila não agenda atividade fora deles.",
           actions: `<button class="btn btn-main btn-xs" id="newHoliday">Adicionar feriado</button>` })}`;
 
+    document.getElementById("cfgDias").onclick = (e) => {
+      const b = e.target.closest(".chip"); if (!b) return;
+      b.classList.toggle("active");
+    };
+    document.getElementById("cfgSalvar").onclick = async (e) => {
+      const btn = e.currentTarget;
+      const dias = [...view.querySelectorAll("#cfgDias .chip.active")].map((b) => Number(b.dataset.v));
+      if (!dias.length) return toast("Marque ao menos um dia útil.", "err");
+      btn.disabled = true;
+      try {
+        await api("/api/flow/configuration", { method: "PATCH", body: {
+          defaultDailyGoal: Number(document.getElementById("cfgDailyGoal").value) || 170,
+          accountBasedSalesEnabled: document.getElementById("cfgABS").checked,
+          regularUserCanImportLeadList: document.getElementById("cfgImport").checked,
+          smartQueueEnabled: document.getElementById("cfgFila").checked,
+          workingDays: dias,
+          blacklist: document.getElementById("cfgBlacklist").value.split("\n").map((s) => s.trim()).filter(Boolean),
+        } });
+        toast("Configurações salvas.", "ok");
+        go("ajustes");
+      } catch (err) { toast(err.message, "err"); btn.disabled = false; }
+    };
     view.querySelectorAll("[data-del-reason]").forEach((b) => {
       b.onclick = async () => {
         await api(`/api/flow/lost-reasons/${b.dataset.delReason}`, { method: "DELETE" });
@@ -4026,7 +4109,11 @@ PAGES.ajustes = {
           <div class="field"><label>Tipo</label>
             <select class="form-control" id="cfType">
               <option value="STRING">Texto</option><option value="NUMBER">Número</option>
-              <option value="DATE">Data</option></select></div>`,
+              <option value="DATE">Data</option></select></div>
+          <div class="field">
+            <label><input type="checkbox" id="cfWon"> Obrigatório para marcar como ganho</label>
+            <label><input type="checkbox" id="cfLost"> Obrigatório para marcar como perdido</label>
+          </div>`,
         footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
                  <button class="btn btn-main btn-sm" data-save>Criar</button>`,
       });
@@ -4036,10 +4123,32 @@ PAGES.ajustes = {
           await api("/api/flow/new-lead-fields", { method: "POST", body: {
             name: m.root.querySelector("#cfName").value.trim(),
             identifier: m.root.querySelector("#cfIdent").value.trim(),
-            dataType: m.root.querySelector("#cfType").value } });
+            dataType: m.root.querySelector("#cfType").value,
+            wonMandatory: m.root.querySelector("#cfWon").checked,
+            lostMandatory: m.root.querySelector("#cfLost").checked } });
           m.close(); toast("Campo criado.", "ok"); go("ajustes");
         } catch (e) { toast(e.message, "err"); }
       };
+    };
+    view.querySelectorAll("[data-del-fit]").forEach((b) => {
+      b.onclick = async () => {
+        await api(`/api/flow/fitscore/${b.dataset.delFit}`, { method: "DELETE" });
+        toast("Regra removida."); go("ajustes");
+      };
+    });
+    const fitBtn = document.getElementById("fitAdd");
+    if (fitBtn) fitBtn.onclick = async () => {
+      const valor = document.getElementById("fitValor").value.trim();
+      if (!valor) return toast("Preencha o valor da regra.", "err");
+      try {
+        await api("/api/flow/fitscore", { method: "POST", body: {
+          fieldId: Number(document.getElementById("fitCampo").value),
+          expressionType: document.getElementById("fitTipo").value,
+          targetValue: valor,
+          score: Number(document.getElementById("fitPontos").value) || 1,
+        } });
+        toast("Regra adicionada.", "ok"); go("ajustes");
+      } catch (e) { toast(e.message, "err"); }
     };
     document.getElementById("newHoliday").onclick = () => {
       const m = modal({

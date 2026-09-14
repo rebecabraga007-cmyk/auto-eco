@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 
 from .. import perm
 from ..db import get_db
-from ..models import (Client, Company, CustomField, Goal, Holiday, Integration,
-                      LostReason, Team, User, Webhook)
+from ..models import (Client, Company, CustomField, FitscoreRule, Goal, Holiday,
+                      Integration, LostReason, Team, User, Webhook)
 from ..serial import client as ser_client
 from ..serial import iso, user_full
 
@@ -88,7 +88,8 @@ def create_user(payload: dict = Body(...), db: Session = Depends(get_db)):
         raise HTTPException(400, "Já existe usuário com esse e-mail.")
     u = User(name=payload["name"], email=email,
              roles=",".join(payload.get("roles") or ["SDR"]),
-             team_id=payload.get("teamId"), daily_goal=int(payload.get("dailyGoal") or 170))
+             team_id=payload.get("teamId"),
+             daily_goal=int(payload.get("dailyGoal") or _company(db).default_daily_goal))
     db.add(u)
     db.commit()
     return user_full(u)
@@ -180,12 +181,39 @@ def delete_client(cid: int, db: Session = Depends(get_db)):
 # ── Ajustes de prospecção ──
 @router.get("/flow/configuration")
 def flow_config(db: Session = Depends(get_db)):
+    c = _company(db)
     users = db.query(User).filter(User.active).all()
-    return {"defaultDailyGoal": 170, "accountBasedSalesEnabled": False,
-            "leadsVisible": True, "regularUserCanImportLeadList": False,
-            "smartQueueEnabled": True, "blacklist": [],
-            "workingDays": [1, 2, 3, 4, 5],
+    return {"defaultDailyGoal": c.default_daily_goal,
+            "accountBasedSalesEnabled": c.account_based_sales,
+            "leadsVisible": True, "regularUserCanImportLeadList": c.regular_user_can_import,
+            "smartQueueEnabled": c.smart_queue_enabled,
+            "blacklist": [d for d in c.blacklist_domains.splitlines() if d.strip()],
+            "workingDays": [int(x) for x in c.working_days.split(",") if x.strip()],
             "usersGoals": [{"userId": u.id, "dailyGoal": u.daily_goal} for u in users]}
+
+
+@router.patch("/flow/configuration")
+def update_flow_config(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Grava de verdade o que antes era só exibido — a tela de Ajustes
+    mostrava vendas por conta/blacklist/dias úteis sem nenhum jeito de mudar."""
+    perm.ator(db).exigir("gestor", "editar ajustes de prospecção")
+    c = _company(db)
+    if "defaultDailyGoal" in payload:
+        c.default_daily_goal = max(1, int(payload["defaultDailyGoal"]))
+    if "accountBasedSalesEnabled" in payload:
+        c.account_based_sales = bool(payload["accountBasedSalesEnabled"])
+    if "regularUserCanImportLeadList" in payload:
+        c.regular_user_can_import = bool(payload["regularUserCanImportLeadList"])
+    if "smartQueueEnabled" in payload:
+        c.smart_queue_enabled = bool(payload["smartQueueEnabled"])
+    if "workingDays" in payload:
+        days = sorted({int(d) for d in payload["workingDays"] if 1 <= int(d) <= 7})
+        c.working_days = ",".join(str(d) for d in days) or "1,2,3,4,5"
+    if "blacklist" in payload:
+        c.blacklist_domains = "\n".join(
+            str(d).strip().lower() for d in payload["blacklist"] if str(d).strip())
+    db.commit()
+    return flow_config(db)
 
 
 @router.get("/flow/lost-reasons")
@@ -223,7 +251,8 @@ def lead_fields(db: Session = Depends(get_db)):
     for f in db.query(CustomField).order_by(CustomField.index).all():
         out.append({"id": f.id, "name": f.name, "identifier": f.identifier,
                     "dataType": f.data_type, "index": f.index,
-                    "customField": True, "visible": f.visible, "required": False})
+                    "customField": True, "visible": f.visible, "required": False,
+                    "wonMandatory": f.won_mandatory, "lostMandatory": f.lost_mandatory})
     return out
 
 
@@ -237,10 +266,51 @@ def create_field(payload: dict = Body(...), db: Session = Depends(get_db)):
         raise HTTPException(400, "Identificador já existe.")
     idx = (db.query(func.max(CustomField.index)).scalar() or 0) + 1
     f = CustomField(name=payload["name"], identifier=ident,
-                    data_type=payload.get("dataType", "STRING"), index=idx)
+                    data_type=payload.get("dataType", "STRING"), index=idx,
+                    won_mandatory=bool(payload.get("wonMandatory")),
+                    lost_mandatory=bool(payload.get("lostMandatory")))
     db.add(f)
     db.commit()
     return {"id": f.id, "name": f.name, "identifier": f.identifier}
+
+
+# ── Lead scoring (fitscore) ──
+# Cada regra bate contra o valor de um campo personalizado do lead; os pontos
+# das regras que baterem se somam. Isso não existia — o admin não tinha como
+# priorizar lead nenhum por características do próprio lead, só por atraso.
+@router.get("/flow/fitscore")
+def fitscore_rules(db: Session = Depends(get_db)):
+    rows = db.query(FitscoreRule).order_by(FitscoreRule.id).all()
+    return [{"id": r.id, "fieldId": r.field_id, "fieldName": r.field.name if r.field else "",
+             "expressionType": r.expression_type, "targetValue": r.target_value, "score": r.score}
+            for r in rows]
+
+
+@router.post("/flow/fitscore")
+def create_fitscore_rule(payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "configurar lead scoring")
+    field = db.get(CustomField, int(payload.get("fieldId") or 0))
+    if not field:
+        raise HTTPException(400, "Campo inválido.")
+    target = str(payload.get("targetValue") or "").strip()
+    if not target:
+        raise HTTPException(400, "Valor alvo é obrigatório.")
+    r = FitscoreRule(field_id=field.id,
+                     expression_type="LIKE" if payload.get("expressionType") == "LIKE" else "EQUALS",
+                     target_value=target, score=int(payload.get("score") or 1))
+    db.add(r)
+    db.commit()
+    return {"id": r.id}
+
+
+@router.delete("/flow/fitscore/{rid}")
+def delete_fitscore_rule(rid: int, db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "configurar lead scoring")
+    r = db.get(FitscoreRule, rid)
+    if r:
+        db.delete(r)
+        db.commit()
+    return {"ok": True}
 
 
 @router.get("/flow/configuration/holidays")

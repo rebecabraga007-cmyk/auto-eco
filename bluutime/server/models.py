@@ -49,6 +49,16 @@ class Company(Base):
     status: Mapped[str] = mapped_column(String(30), default="CLIENT")
     monthly_value: Mapped[float] = mapped_column(Float, default=0.0)
 
+    # Ajustes de prospecção — a tela "Ajustes" mostrava esses campos vindos do
+    # /flow/configuration só de leitura (valor fixo no código); agora moram no
+    # banco e têm PATCH de verdade.
+    default_daily_goal: Mapped[int] = mapped_column(Integer, default=170)
+    account_based_sales: Mapped[bool] = mapped_column(Boolean, default=False)
+    regular_user_can_import: Mapped[bool] = mapped_column(Boolean, default=False)
+    smart_queue_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    working_days: Mapped[str] = mapped_column(String(20), default="1,2,3,4,5")  # 1=segunda .. 7=domingo
+    blacklist_domains: Mapped[str] = mapped_column(Text, default="")  # um domínio por linha
+
 
 class Client(Base):
     """A entidade que o Meetime não tem: o cliente para quem a BLU prospecta."""
@@ -191,6 +201,21 @@ class CustomField(Base):
     data_type: Mapped[str] = mapped_column(String(20), default="STRING")
     index: Mapped[int] = mapped_column(Integer, default=0)
     visible: Mapped[bool] = mapped_column(Boolean, default=True)
+    won_mandatory: Mapped[bool] = mapped_column(Boolean, default=False)
+    lost_mandatory: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class FitscoreRule(Base):
+    """Pontuação de fit do lead por regra de campo — o que o Meetime chama de
+    fitscore. Cada regra bate contra o VALOR de um campo (nativo ou
+    personalizado); os pontos das regras que baterem se somam."""
+    __tablename__ = "fitscore_rule"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    field_id: Mapped[int] = mapped_column(ForeignKey("custom_field.id", ondelete="CASCADE"))
+    expression_type: Mapped[str] = mapped_column(String(10), default="EQUALS")  # EQUALS | LIKE
+    target_value: Mapped[str] = mapped_column(String(200), default="")
+    score: Mapped[int] = mapped_column(Integer, default=1)
+    field: Mapped["CustomField"] = relationship()
 
 
 class Lead(Base):
