@@ -375,7 +375,7 @@ def list_leads(status: str | None = None, cadence_id: int | None = None,
                db: Session = Depends(get_db)):
     # SDR vê só a própria carteira; gestor e admin veem tudo. Antes disso,
     # qualquer conta listava os leads da empresa inteira.
-    query = perm.escopo_leads(db.query(Lead), perm.ator(db), Lead.sdr_id)
+    query = perm.escopo_leads(db, db.query(Lead), perm.ator(db), Lead.sdr_id)
     if status:
         query = query.filter(Lead.status.in_(status.split(",")))
     if cadence_id:
@@ -416,6 +416,7 @@ def get_lead(lid: int, db: Session = Depends(get_db)):
 
 @router.post("/leads")
 def create_lead(payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.exigir_ou_permissao(db, perm.ator(db), "leads_add_manual", "adicionar lead manualmente")
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "Nome do lead é obrigatório.")
@@ -628,6 +629,7 @@ async def preview_csv(file: UploadFile = File(...)):
 @router.post("/lead-bases/import")
 def import_base(payload: dict = Body(...), db: Session = Depends(get_db)):
     """Passo 2 do wizard: cria a base a partir do CSV com o mapa de colunas."""
+    perm.exigir_ou_permissao(db, perm.ator(db), "regular_user_can_import", "importar lista de leads")
     name = (payload.get("name") or "").strip()
     content = payload.get("content") or ""
     mapping = payload.get("mapping") or {}
@@ -689,7 +691,7 @@ def queue(sdr_id: int | None = None, client_id: int | None = None,
              .filter(LeadActivity.status == "PENDING",
                      Lead.status.in_(["EXECUTING", "WAITING", "ON_EXTRA_ACTIVITY"]),
                      LeadActivity.scheduled_at <= now + timedelta(days=1)))
-    query = perm.escopo_leads(query, perm.ator(db), LeadActivity.user_id)
+    query = perm.escopo_leads(db, query, perm.ator(db), LeadActivity.user_id)
     if sdr_id:
         query = query.filter(LeadActivity.user_id == sdr_id)
     if client_id:

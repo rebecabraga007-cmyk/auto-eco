@@ -4118,10 +4118,11 @@ const DIAS_SEMANA = [[1, "Seg"], [2, "Ter"], [3, "Qua"], [4, "Qui"], [5, "Sex"],
 PAGES.ajustes = {
   area: "Prospecção", title: "Ajustes",
   async render() {
-    const [cfg, reasons, fields, holidays, fitscore, feedbackCfg] = await Promise.all([
+    const [cfg, reasons, fields, holidays, fitscore, feedbackCfg, permCfg] = await Promise.all([
       api("/api/flow/configuration"), api("/api/flow/lost-reasons"),
       api("/api/flow/new-lead-fields"), api("/api/flow/configuration/holidays"),
-      api("/api/flow/fitscore"), api("/api/flow/deal-feedback/configuration")]);
+      api("/api/flow/fitscore"), api("/api/flow/deal-feedback/configuration"),
+      api("/api/flow/permissions/configuration")]);
     const camposPersonalizados = fields.filter((f) => f.customField);
 
     view.innerHTML = `
@@ -4159,6 +4160,28 @@ PAGES.ajustes = {
           const u = state.users.find((x) => x.id === g.userId);
           return { cells: [h(u ? u.name : g.userId), g.dailyGoal] };
         })), { subtitle: `Padrão da empresa: ${cfg.defaultDailyGoal} atividades/dia` })}
+
+      ${panel("Permissões", `
+        <div class="alert alert-info alert-styled-left">
+          Gestor e admin sempre têm acesso total. Estas chaves controlam o que um vendedor comum (SDR) pode fazer
+          além da própria carteira. "Importar lista de leads" já fica em Configurações gerais, acima.
+        </div>
+        <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
+          <label><input type="checkbox" id="permVisivel"${permCfg.leadsVisibleAll ? " checked" : ""}>
+            Ver e acessar leads de outros usuários</label>
+        </div>
+        <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
+          <label><input type="checkbox" id="permAdd"${permCfg.leadsAddManual ? " checked" : ""}>
+            Adicionar leads individualmente</label>
+        </div>
+        <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
+          <label><input type="checkbox" id="permStats"${permCfg.statisticsAccess ? " checked" : ""}>
+            Acessar a aba de Estatísticas</label>
+        </div>
+        <div class="toolbar mt-10" style="border:0;padding:0;background:none">
+          <span class="spacer"></span>
+          <button class="btn btn-main btn-sm" id="permSalvar">Salvar</button>
+        </div>`)}
 
       ${panel("Motivos de perda",
         table(["Motivo", ""], reasons.map((r) => ({ cells: [h(r.name),
@@ -4259,6 +4282,19 @@ PAGES.ajustes = {
           automationCadenceId: Number(document.getElementById("dfCadencia").value) || null,
         } });
         toast("Configurações salvas.", "ok");
+        go("ajustes");
+      } catch (err) { toast(err.message, "err"); btn.disabled = false; }
+    };
+    document.getElementById("permSalvar").onclick = async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        await api("/api/flow/permissions/configuration", { method: "PATCH", body: {
+          leadsVisibleAll: document.getElementById("permVisivel").checked,
+          leadsAddManual: document.getElementById("permAdd").checked,
+          statisticsAccess: document.getElementById("permStats").checked,
+        } });
+        toast("Permissões salvas.", "ok");
         go("ajustes");
       } catch (err) { toast(err.message, "err"); btn.disabled = false; }
     };

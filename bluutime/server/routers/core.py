@@ -59,8 +59,45 @@ def my_company(db: Session = Depends(get_db)):
 
 
 @router.get("/users/me/permissions")
-def my_permissions():
-    return PERMISSIONS
+def my_permissions(db: Session = Depends(get_db)):
+    """Gestor e admin têm tudo. SDR só o que a empresa liberou em
+    Ajustes > Permissões — antes essa lista era fixa pra todo mundo."""
+    if perm.ator(db).pelo_menos("gestor"):
+        return PERMISSIONS
+    c = _company(db)
+    out = ["CAPIBLU_ACCESS"]
+    if c.leads_visible_all:
+        out.append("LEADS_VIEW_ALL")
+    if c.leads_add_manual:
+        out.append("LEADS_ADD_MANUAL")
+    if c.regular_user_can_import:
+        out.append("LEADBASE_UPLOAD")
+    if c.statistics_access:
+        out.append("STATISTICS_ACCESS")
+    return out
+
+
+@router.get("/flow/permissions/configuration")
+def permissions_config(db: Session = Depends(get_db)):
+    c = _company(db)
+    return {"leadsVisibleAll": c.leads_visible_all, "leadsAddManual": c.leads_add_manual,
+            "leadbaseUpload": c.regular_user_can_import, "statisticsAccess": c.statistics_access}
+
+
+@router.patch("/flow/permissions/configuration")
+def update_permissions_config(payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "configurar permissões")
+    c = _company(db)
+    if "leadsVisibleAll" in payload:
+        c.leads_visible_all = bool(payload["leadsVisibleAll"])
+    if "leadsAddManual" in payload:
+        c.leads_add_manual = bool(payload["leadsAddManual"])
+    if "leadbaseUpload" in payload:
+        c.regular_user_can_import = bool(payload["leadbaseUpload"])
+    if "statisticsAccess" in payload:
+        c.statistics_access = bool(payload["statisticsAccess"])
+    db.commit()
+    return permissions_config(db)
 
 
 @router.get("/featureflag")

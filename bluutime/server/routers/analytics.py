@@ -167,6 +167,7 @@ def calculate_effort(ref: str, db: Session = Depends(get_db)):
 @router.get("/flow/statistics/summary")
 def statistics(since: str | None = None, until: str | None = None,
                client_id: int | None = None, db: Session = Depends(get_db)):
+    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
     end = datetime.fromisoformat(until) if until else datetime.utcnow()
     start = datetime.fromisoformat(since) if since else end - timedelta(days=30)
 
@@ -254,6 +255,7 @@ def list_reports():
 @router.get("/reports/{key}")
 def download_report(key: str, since: str | None = None, until: str | None = None,
                     db: Session = Depends(get_db)):
+    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "baixar relatório")
     end = datetime.fromisoformat(until) if until else datetime.utcnow()
     start = datetime.fromisoformat(since) if since else end - timedelta(days=30)
 

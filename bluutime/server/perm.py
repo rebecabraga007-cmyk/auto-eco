@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .deps import session_user
-from .models import User
+from .models import Company, User
 
 # Do mais fraco para o mais forte — a comparação é por índice.
 NIVEIS = ("sdr", "gestor", "admin")
@@ -67,14 +67,29 @@ def ator(db: Session) -> Ator:
     return Ator(sessao, user)
 
 
-def escopo_leads(query, a: Ator, coluna):
+def escopo_leads(db: Session, query, a: Ator, coluna):
     """Restringe a consulta ao que o ator pode ver.
 
-    SDR enxerga só os leads dos quais é dono. Gestor e admin veem tudo — é o
-    trabalho deles. Antes disso, qualquer conta via a carteira inteira.
+    SDR enxerga só os leads dos quais é dono — a menos que a empresa tenha
+    ligado "Ver leads de outros usuários" nas permissões (o que no Meetime é
+    LEADS_VIEW_ALL). Gestor e admin sempre veem tudo — é o trabalho deles.
     """
     if a.pelo_menos("gestor"):
+        return query
+    empresa = db.query(Company).first()
+    if empresa and empresa.leads_visible_all:
         return query
     # SDR sem registro operacional não é dono de nada: melhor lista vazia do
     # que a carteira inteira por falta de vínculo.
     return query.filter(coluna == (a.user_id or -1))
+
+
+def exigir_ou_permissao(db: Session, a: Ator, campo: str, acao: str) -> None:
+    """Gestor/admin sempre passam; SDR só se a empresa liberou essa permissão
+    especificamente (equivalente ao LEADS_ADD_MANUAL/STATISTICS_ACCESS/etc. do
+    Meetime, configurável em Ajustes > Permissões)."""
+    if a.pelo_menos("gestor"):
+        return
+    empresa = db.query(Company).first()
+    if not (empresa and getattr(empresa, campo, False)):
+        raise HTTPException(403, f"Sem permissão para {acao}.")

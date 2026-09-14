@@ -73,6 +73,13 @@ class Company(Base):
     default_call_type: Mapped[str] = mapped_column(String(10), default="VOIP")  # VOIP | PHONE
     caller_ids: Mapped[str] = mapped_column(Text, default="")  # um número por linha
 
+    # Permissões — o que um SDR (não gestor/admin) pode fazer além da própria
+    # carteira. `regular_user_can_import` já existia (Ajustes) e é a mesma
+    # coisa que o Meetime chama de LEADBASE_UPLOAD; fica só aqui.
+    leads_visible_all: Mapped[bool] = mapped_column(Boolean, default=False)
+    leads_add_manual: Mapped[bool] = mapped_column(Boolean, default=True)
+    statistics_access: Mapped[bool] = mapped_column(Boolean, default=True)
+
 
 class Client(Base):
     """A entidade que o Meetime não tem: o cliente para quem a BLU prospecta."""
