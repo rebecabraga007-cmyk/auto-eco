@@ -180,12 +180,35 @@ def _municipio_codes(nome: str) -> list[str]:
            [c for c, d in codes.items() if up in (d or "").upper()]
 
 
+def _sem_acento(s: str) -> str:
+    """"SAÚDE" e "SAUDE" precisam casar.
+
+    As descrições da Receita são acentuadas ("Serviços de saúde", "Comércio");
+    ninguém digita acento num campo de filtro. Sem isto, "saude" devolvia zero
+    código e o filtro de setor virava "1=0" — a busca respondia vazio, ou pior,
+    seguia sem o filtro."""
+    import unicodedata
+    n = unicodedata.normalize("NFD", s or "")
+    return "".join(c for c in n if unicodedata.category(c) != "Mn")
+
+
 def _codes_by_desc(tipo: str, termo: str, limit: int = 80) -> list[str]:
-    """Códigos cuja descrição contém o termo (para busca por nome de CNAE/natureza)."""
-    termo = (termo or "").strip().upper()
-    if not termo:
+    """Códigos cuja descrição contém o termo (para busca por nome de CNAE/natureza).
+
+    Aceita VÁRIOS termos separados por vírgula, e devolve a união: o campo
+    "Setor" da tela é o mesmo que alimenta a busca do LinkedIn, onde escolher
+    dois setores é normal. Mandar a string inteira ("saude, tecnologia") para
+    um `in` casaria nenhuma descrição."""
+    if not (termo or "").strip():
         return []
-    out = [c for c, d in _load_codes(tipo).items() if termo in (d or "").upper()]
+    partes = [_sem_acento(t.strip().upper()) for t in str(termo).split(",")
+              if t.strip()]
+    codes = _load_codes(tipo)
+    out: list[str] = []
+    for p in partes:
+        for c, d in codes.items():
+            if p in _sem_acento((d or "").upper()) and c not in out:
+                out.append(c)
     return out[:limit]
 
 

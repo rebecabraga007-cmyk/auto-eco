@@ -341,7 +341,10 @@ def resolver(nome: str = "", site: str = "", uf: str = "",
         nome = nome or registro.get("name") or registro.get("nome") or ""
         site = site or (registro.get("website_simplified")
                         or registro.get("website") or registro.get("site") or "")
-        uf = uf or uf_do_registro(registro)
+        # O estado do PERFIL manda: ele e evidencia sobre a empresa, e o `uf`
+        # recebido de fora e so a dica de quem pesquisou. So vale quando o
+        # perfil nao diz nada.
+        uf = uf_do_registro(registro) or uf
 
     dom = dominio(site)
     saida = {"cnpj": "", "confianca": "nenhuma", "chave": "", "motivo": "",
@@ -362,6 +365,22 @@ def resolver(nome: str = "", site: str = "", uf: str = "",
     cands = por_nome(nome, uf)
     saida["candidatos"] = saida["candidatos"] or len(cands)
     cnpj, motivo = _escolher(nome, cands, uf)
+
+    # ESTADO DIFERENTE DERRUBA O CASAMENTO POR NOME.
+    #
+    # A preferencia por UF dentro de `_escolher` e so preferencia: quando
+    # nenhum candidato esta no estado certo, ela desiste e aceita qualquer um.
+    # Para o dominio isso e aceitavel -- o dominio E a prova, e uma matriz em
+    # outro estado continua sendo a mesma empresa. Para o NOME nao e: visto em
+    # 14/set/2026, "Tequilaville" (SC no LinkedIn) casou com uma MEI chamada
+    # CLEIDINA ALVES LINHARES no Ceara, e a lista de uma busca por SC mostrou
+    # uma empresa do CE. Nome parecido em outro estado nao e a mesma empresa.
+    if cnpj and uf:
+        escolhido = next((c for c in cands if c.get("cnpj") == cnpj), None)
+        if escolhido and (escolhido.get("uf") or "").upper()[:2] not in ("", uf.upper()[:2]):
+            cnpj, motivo = "", ("nome casou em %s, mas a empresa e de %s"
+                                % (escolhido.get("uf"), uf.upper()[:2]))
+
     if cnpj:
         # Media, nao alta: nome parecido nao e prova. "Senior Sistemas" e
         # "Senior Engenheiros Associados" existem as duas, no mesmo pais.

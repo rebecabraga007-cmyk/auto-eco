@@ -54,6 +54,7 @@ import rodadas
 import cargos
 import chamados
 import funcoes
+import setores_li
 import identidade
 import funil
 
@@ -525,6 +526,7 @@ async def linkedin_buscar_fora(request: Request, payload: dict = Body(default={}
         nome=str(payload.get("nome") or ""),
         sobrenome=str(payload.get("sobrenome") or ""),
         cidade=str(payload.get("cidade") or ""),
+        ufs=payload.get("ufs") or payload.get("uf") or "",
         palavras=payload.get("palavras") or [],
         min_seguidores=int(payload.get("min_seguidores") or 0),
         so_com_foto=payload.get("so_com_foto") is True,
@@ -1708,9 +1710,44 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
     # esses, mandar a API seria pedir "todas as empresas do Brasil" e pagar
     # por uma amostra aleatória.
     _API_ENTENDE = ("texto", "nomes", "nome_empresa", "setores", "sites",
-                    "porte_min", "tipos", "fundada_apos", "uf", "ufs",
-                    "municipio", "cidade")
-    if any(filtros.get(k) for k in _API_ENTENDE):
+                    "porte_min", "tipos", "fundada_apos")
+
+    # O QUE SÓ O CADASTRO RESPONDE -- e por isso manda na busca.
+    #
+    # Medido em 14/set/2026: uma busca com `cnae=7112000` (Serviços de
+    # engenharia) em SC devolveu empresa de informática. O motivo é este
+    # bloco: `uf` estava na lista acima, então QUALQUER busca com estado
+    # escolhido punha a API no comando -- e a API não sabe ler CNAE. O filtro
+    # que a pessoa digitou era descartado no caminho e a tela mostrava uma
+    # lista bem-formatada de empresas erradas.
+    #
+    # Estado e município NÃO entram na lista de cima porque não dizem QUEM se
+    # procura: as duas fontes sabem filtrar por lugar, e sozinho ele não é
+    # motivo para uma fonte comandar em vez da outra.
+    _SO_CADASTRO = ("cnae", "setor", "situacao", "capital_min", "capital_max",
+                    "natureza", "porte", "somente_matriz", "mei_optante",
+                    "mei_excluir", "fundada_de", "fundada_ate", "com_telefone",
+                    "tipo_empresa", "anos_min", "anos_max")
+    so_cadastro = any(filtros.get(k) for k in _SO_CADASTRO)
+
+    # SETOR DIGITADO EM PORTUGUÊS. A tela tem um campo "Setor" com o exemplo
+    # "Software", e quem usa escreve em português. O dataset do LinkedIn
+    # guarda `industries` em inglês -- medido: "engenharia" devolve 0 de 0, e
+    # "Engineering" devolve 1.197 empresas só em SC. Sem a tradução o campo
+    # parecia quebrado e, pior, a busca caía no banco sem filtro nenhum.
+    setor_espelhado = False
+    if filtros.get("setores"):
+        # A Receita responde setor pela DESCRIÇÃO do CNAE, e a chave que ela
+        # lê chama `setor`, no singular. O texto original é o que serve lá --
+        # então cada lado recebe a língua que entende, do mesmo campo da tela.
+        if not filtros.get("setor"):
+            filtros["setor"] = str(filtros["setores"])
+            # Espelho nosso, não filtro que a pessoa digitou -- não pode
+            # aparecer depois na lista de "isto não foi aplicado".
+            setor_espelhado = True
+        filtros["setores"] = setores_li.traduzir(filtros["setores"])
+
+    if any(filtros.get(k) for k in _API_ENTENDE) and not so_cadastro:
         quer_linkedin = True
 
     # A BASE LOCAL PRIMEIRO. É o que faz a tela parecer a da Datastone: quando
@@ -1945,6 +1982,26 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
             if (co or {}).get("status") != "ok":
                 continue
             c = co.get("company") or co
+
+            # COMITE DE CAMPANHA NÃO É EMPRESA.
+            #
+            # Visto em 14/set/2026: a empresa "Agrozacca" do LinkedIn foi
+            # ligada ao CNPJ "ELEICAO 2024 NOELI ZACCA SCHMIDT VICE-PREFEITO".
+            # A ponte não errou o domínio -- o candidato registrou a campanha
+            # com o e-mail da própria fazenda, e o comitê era o único CNPJ
+            # naquele domínio. Errado é aceitar: comitê eleitoral tem natureza
+            # jurídica própria (409-0), existe por uma eleição e não compra
+            # nada. A linha continua na lista pelo lado LinkedIn; só o CNPJ
+            # cai, e com ele o nome errado na tela.
+            _razao = (c.get("razao_social") or "").upper()
+            _nat = str(c.get("natureza_juridica") or c.get("natureza") or "")
+            if _razao.startswith("ELEICAO ") or _nat.startswith("409"):
+                por_cnpj[k]["li"]["cnpj"] = ""
+                por_cnpj[k]["li"]["cnpj_confianca"] = "nenhuma"
+                por_cnpj[k]["li"]["cnpj_motivo"] = (
+                    "domínio leva a comitê eleitoral, não a empresa")
+                continue
+
             por_cnpj[k]["base"] = {
                 "cnpj": c.get("cnpj") or d,
                 "razao_social": c.get("razao_social") or "",
@@ -1986,8 +2043,13 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
             ordem.append(d)
             completou_do_banco += 1
 
+    # O TETO PEDIDO VALE PARA A LISTA TODA. As duas fontes entram uma depois
+    # da outra e cada uma respeitava o SEU teto: pedir 5 devolvia 25, porque
+    # o lado LinkedIn trazia a página dele por cima do que a Receita já tinha
+    # posto. Quem pede 5 está dimensionando a tela ou o crédito, e receber
+    # cinco vezes mais não é generosidade.
     linhas = [_linha_unificada(por_cnpj[k]["base"], por_cnpj[k]["li"])
-              for k in ordem]
+              for k in ordem[:limite]]
     sem_cnpj = sum(1 for l in linhas if not l["tem_cnpj"])
     nas_duas = sum(1 for l in linhas if len(l["fontes"]) == 2)
     if so_com_cnpj:
@@ -2013,6 +2075,16 @@ async def empresas_unificada(request: Request, payload: dict = Body(default={}))
         # achou 4, completamos com 21 da Receita" é diferente de "achamos 25
         # no LinkedIn", e a tela precisa poder dizer qual dos dois foi.
         "completou_do_banco": completou_do_banco,
+        # FILTRO QUE NÃO MORDEU, dito em voz alta.
+        #
+        # Quando a pessoa pede o LinkedIn explicitamente e ao mesmo tempo usa
+        # um filtro de cadastro, o lado LinkedIn não consegue honrá-lo: não
+        # existe CNAE nem situação cadastral num perfil de empresa. Antes esse
+        # filtro sumia no caminho e a lista parecia obedecê-lo. Agora a tela
+        # recebe o nome de cada um para poder avisar.
+        "filtros_ignorados": ([k for k in _SO_CADASTRO if filtros.get(k)
+                               and not (k == "setor" and setor_espelhado)]
+                              if (quer_linkedin and not receita_comanda) else []),
     }
 
 
@@ -2038,28 +2110,48 @@ async def prospeccao_pessoas(payload: dict = Body(default={})):
     offset = int(payload.get("offset") or 0)
     fonte = str(payload.get("fonte") or "").strip().lower()
 
-    # ---- camada 3: só quando pedida, porque cobra --------------------
+    # ---- camada 3: o LinkedIn, e ela vai SOZINHA ---------------------
+    #
+    # Antes so entrava com `fonte: "brightdata"`, e a tela oferecia um botao
+    # "Faltou gente? Buscar 25 no LinkedIn" depois de devolver vazio. Decisao
+    # da Rebeca, a mesma ja aplicada a busca de empresas: quem prospecta
+    # escolhe o PERFIL de quem quer falar, nao a fonte. Perguntar "quer buscar
+    # no LinkedIn?" era pedir para a pessoa decidir orcamento no meio de uma
+    # busca -- e a resposta era sempre sim, porque a alternativa era uma tela
+    # vazia.
+    async def _linkedin(lim: int) -> dict:
+        r = await brightdata_pessoas.buscar_por_filtro(
+            pais="BR",
+            empresas=filtros.get("nome_empresa") or "",
+            cargos_termos=filtros.get("cargo") or "",
+            nome=filtros.get("nome") or "",
+            sobrenome=filtros.get("sobrenome") or "",
+            cidade=(filtros.get("cidade")
+                    or filtros.get("localizacao_pessoa") or ""),
+            # O estado vinha da tela e morria aqui: nao existia parametro.
+            ufs=filtros.get("ufs") or filtros.get("uf") or "",
+            departamentos=filtros.get("departamento") or "",
+            # "Especialidades" casa no campo `about` do perfil, que é onde
+            # a pessoa descreve o que faz. Estava desabilitado com o aviso
+            # "requer dataset de perfis profissionais" -- o dataset existe
+            # desde que a busca por filtro foi ligada.
+            palavras=filtros.get("especialidades") or "",
+            so_com_email=bool(filtros.get("so_com_email")),
+            limite=min(lim, 100),
+            usuario=str(payload.get("usuario") or ""))
+        # SENIORIDADE nao existe como filtro deles (testado: `unsupported
+        # filters`), e um radical de cargo nao separa "Gerente" de "Estagiario
+        # de gerencia". A classificacao e nossa, entao o corte e aqui.
+        nivel_q = str(filtros.get("senioridade") or "").strip().lower()
+        if nivel_q and r.get("pessoas"):
+            r["pessoas"] = [x for x in r["pessoas"]
+                            if funcoes.nivel(x.get("cargo") or "")[0] == nivel_q]                            or r["pessoas"]
+        r["fonte"] = "brightdata"
+        return r
+
     if fonte == "brightdata":
         try:
-            r = await brightdata_pessoas.buscar_por_filtro(
-                pais="BR",
-                empresas=filtros.get("nome_empresa") or "",
-                cargos_termos=filtros.get("cargo") or "",
-                nome=filtros.get("nome") or "",
-                sobrenome=filtros.get("sobrenome") or "",
-                cidade=(filtros.get("cidade")
-                        or filtros.get("localizacao_pessoa") or ""),
-                departamentos=filtros.get("departamento") or "",
-                # "Especialidades" casa no campo `about` do perfil, que é onde
-                # a pessoa descreve o que faz. Estava desabilitado com o aviso
-                # "requer dataset de perfis profissionais" -- o dataset existe
-                # desde que a busca por filtro foi ligada.
-                palavras=filtros.get("especialidades") or "",
-                so_com_email=bool(filtros.get("so_com_email")),
-                limite=min(limite, 100),
-                usuario=str(payload.get("usuario") or ""))
-            r["fonte"] = "brightdata"
-            return r
+            return await _linkedin(limite)
         except Exception as exc:
             return {"status": "error", "fonte": "brightdata",
                     "message": str(exc)[:200], "pessoas": []}
@@ -2105,6 +2197,24 @@ async def prospeccao_pessoas(payload: dict = Body(default={})):
                 "pessoas": do_cache,
                 "message": "Do que já foi comprado — não gastou nada."}
 
+    # ---- o LinkedIn comanda quando o filtro so existe la -------------
+    #
+    # Departamento, senioridade, "so com e-mail", localizacao da pessoa,
+    # especialidades e URL de perfil nao existem no cadastro: a Receita
+    # conhece SOCIO, e socio tem qualificacao societaria, nao cargo. Mandar
+    # uma busca dessas para a camada 2 devolvia zero -- que foi o print da
+    # tela: "0 pessoas (socios)" com o filtro de departamento preenchido.
+    _SO_NO_LINKEDIN = ("departamento", "senioridade", "so_com_email",
+                       "so_com_telefone", "localizacao_pessoa",
+                       "especialidades", "linkedin_url")
+    if any(filtros.get(k) for k in _SO_NO_LINKEDIN) and brightdata_pessoas.enabled():
+        try:
+            r = await _linkedin(limite)
+            if r.get("pessoas"):
+                return r
+        except Exception:
+            pass   # cai na Receita: lista imperfeita e melhor que erro
+
     # ---- camada 2: sócios da Receita ---------------------------------
     if not _cnpj_local():
         return {"status": "unavailable", "fonte": "receita",
@@ -2138,16 +2248,32 @@ async def prospeccao_pessoas(payload: dict = Body(default={})):
         # aí dá para saber quem tem perfil. Ela aplica o corte. Listar aqui
         # seria avisar que um filtro foi ignorado quando ele não foi.
     }
+    # VAZIO NAO E RESPOSTA. Se o cadastro nao achou ninguem, o perfil que a
+    # pessoa procura pode existir no LinkedIn -- e chegar la e o trabalho da
+    # ferramenta, nao um botao que ela precisa descobrir.
+    if not (r.get("pessoas") or []) and brightdata_pessoas.enabled():
+        try:
+            alt = await _linkedin(limite)
+            if alt.get("pessoas"):
+                return alt
+        except Exception:
+            pass
+
     ignorados = [rotulo for chave, rotulo in _SO_LINKEDIN.items()
                  if filtros.get(chave)]
     if ignorados:
         r["filtros_ignorados"] = ignorados
         r["linkedin_necessario"] = True
+        # Chegar aqui com filtro de LinkedIn ligado significa que a busca no
+        # LinkedIn JA foi feita e voltou vazia -- a oferta de "buscar no
+        # LinkedIn" nao cabe mais, e o aviso passa a ser sobre o que estas
+        # linhas sao: socios, sem o filtro que so o perfil responde.
         r["aviso"] = (
-            "Não foi aplicado: %s. A Receita conhece SÓCIO, não pessoa — sócio "
-            "tem qualificação societária, não departamento nem senioridade, e o "
-            "cadastro não traz contato da pessoa. Esses filtros existem na busca "
-            "do LinkedIn." % ", ".join(ignorados))
+            "O LinkedIn não trouxe ninguém com esse perfil, então estas linhas "
+            "vêm do cadastro — e nele não dá para aplicar: %s. A Receita conhece "
+            "SÓCIO, não pessoa: sócio tem qualificação societária, não "
+            "departamento nem senioridade, e o cadastro traz o contato da "
+            "empresa, não o da pessoa." % ", ".join(ignorados))
     return r
 
 
@@ -3165,6 +3291,28 @@ _ENRICH_CATALOG = [
         ("as_empresa_email", "E-mail Empresa (Assertiva)"),
         ("as_empresa_whatsapp", "WhatsApp Empresa"),
     ]},
+    {"grupo": "Decisores – quem manda (Assertiva)", "fonte": "Assertiva (consumo)", "campos": [
+        # DECISOR NAO E SOCIO, e esta e a razao deste grupo existir.
+        #
+        # Socio vem do QSA: e quem e DONO. Decisor vem da folha: e quem MANDA.
+        # Medido antes, na Google Brasil, a Assertiva deu 602 decisores e
+        # NENHUM estava no quadro societario; na BLU foi o contrario, 2 socios
+        # e zero decisores. Uma planilha enriquecida so com socio perde a
+        # empresa inteira quando quem decide e contratado -- que e o caso de
+        # toda empresa media para cima.
+        ("de_dec1_nome", "Decisor 1 Nome"),
+        ("de_dec1_cargo", "Decisor 1 Cargo"),
+        ("de_dec1_cpf", "Decisor 1 CPF"),
+        ("de_dec1_celular", "Decisor 1 Celular"),
+        ("de_dec1_email", "Decisor 1 E-mail"),
+        ("de_dec2_nome", "Decisor 2 Nome"),
+        ("de_dec2_cargo", "Decisor 2 Cargo"),
+        ("de_dec2_celular", "Decisor 2 Celular"),
+        ("de_dec3_nome", "Decisor 3 Nome"),
+        ("de_dec3_cargo", "Decisor 3 Cargo"),
+        ("de_dec3_celular", "Decisor 3 Celular"),
+        ("de_todos", "Todos os decisores (nome — cargo — celular)"),
+    ]},
     {"grupo": "Sócios – contato pessoal (Assertiva)", "fonte": "JBR (CPF) + Assertiva (consumo)", "campos": [
         ("so_socio1_nome", "Sócio 1 Nome"),
         ("so_socio1_cpf", "Sócio 1 CPF"),
@@ -3295,7 +3443,8 @@ async def enrich_upload(file: UploadFile = File(...)):
     return {"status": "ok", "upload_id": up_id, "sheets": sheets, "aviso": aviso}
 
 
-async def _enrich_cnpj(cnpj: str, want: set) -> dict:
+async def _enrich_cnpj(cnpj: str, want: set,
+                       cargos_dec: str = "", max_dec: int = 3) -> dict:
     """Enriquece um CNPJ com os campos pedidos. Só chama Assertiva/integralX se
     houver campos daquela fonte selecionados (controla consumo)."""
     out = {k: "" for k in want}
@@ -3305,6 +3454,7 @@ async def _enrich_cnpj(cnpj: str, want: set) -> dict:
     need_as = any(k.startswith("as_") for k in want)
     need_so = any(k.startswith("so_") for k in want)
     need_vf = any(k.startswith("vf_") for k in want)
+    need_de = any(k.startswith("de_") for k in want)
     # Excel costuma comer o zero à esquerda do CNPJ (guarda como número) — completa 14.
     if 8 <= len(digits) < 14:
         digits = digits.zfill(14)
@@ -3458,6 +3608,59 @@ async def _enrich_cnpj(cnpj: str, want: set) -> dict:
             except Exception:
                 if "vf_status" in want:
                     out["vf_status"] = "erro"
+
+    # ---------------- DECISORES -----------------------------------------
+    #
+    # Só roda quando algum campo `de_` foi pedido: são consultas pagas por
+    # empresa, e cobrar de quem não pediu seria o pior tipo de surpresa.
+    #
+    # O caminho é o mesmo do "Montar lista" da aba B2B, de propósito: um
+    # decisor encontrado aqui e ali tem que ser o mesmo decisor. Duas telas
+    # que respondem coisas diferentes para a mesma empresa são duas telas em
+    # que não se pode confiar.
+    #
+    # DECISOR NÃO É SÓCIO: sócio vem do QSA e é quem é DONO; decisor vem da
+    # folha e é quem MANDA. Na Google Brasil a Assertiva deu 602 decisores e
+    # nenhum estava no quadro societário.
+    if need_de and len(digits) == 14 and assertiva.enabled():
+        try:
+            r_dec = await assertiva.possiveis_decisores(digits)
+            lista = (((r_dec.get("data") or {}).get("resposta") or {})
+                     .get("possiveisDecisores") or []) if r_dec.get("status") == "ok" else []
+            escolhidos = _filtra_decisores(lista, cargos_dec, max(1, int(max_dec or 3)))
+            resumo = []
+            for n, d in enumerate(escolhidos, start=1):
+                cpf_d = re.sub(r"\D", "", str(d.get("cpf") or ""))
+                nome_d = (d.get("nome") or "").strip()
+                cargo_d = (d.get("cargo") or "").strip()
+                if cpf_d:
+                    tels, emails = await _contato_for_cpf(
+                        cpf_d, "celular", 2, "assertiva", cnpj=digits)
+                else:
+                    tels, emails = [], []
+                cel = _fmt_phone_digits(tels[0]) if tels else ""
+                if n <= 3:
+                    out["de_dec%d_nome" % n] = nome_d
+                    out["de_dec%d_cargo" % n] = cargo_d
+                    out["de_dec%d_celular" % n] = cel
+                    if n == 1:
+                        out["de_dec1_cpf"] = cpf_d
+                        out["de_dec1_email"] = emails[0] if emails else ""
+                if nome_d:
+                    resumo.append("%s — %s%s" % (nome_d, cargo_d or "?",
+                                                 (" — " + cel) if cel else ""))
+            out["de_todos"] = " | ".join(resumo)
+            # Marcadores internos: a tela precisa distinguir "nenhum decisor
+            # na base" de "achei decisores e nenhum tinha telefone". São
+            # problemas diferentes -- um pede outro filtro de cargo, o outro
+            # pede a consulta profunda.
+            out["_de_achados"] = len(escolhidos)
+            out["_de_com_tel"] = sum(
+                1 for k in ("de_dec1_celular", "de_dec2_celular", "de_dec3_celular")
+                if out.get(k))
+        except Exception as exc:
+            out["_de_erro"] = str(exc)[:120]
+
     return out
 
 
@@ -3515,14 +3718,43 @@ async def enrich_run(payload: dict = Body(default={})):
     # Concorrência controlada (Assertiva/integralX têm limite diário).
     sem = asyncio.Semaphore(6)
 
+    # Cargos escolhidos na tela, no mesmo formato da aba B2B ("diretor,gerente"
+    # ou "1,2" ou "gerencia:vendas"). Vazio = todos.
+    cargos_dec = str(payload.get("decisor_cargos") or "")
+    max_dec = max(1, min(int(payload.get("max_decisores") or 3), 10))
+
     async def _one(row):
         async with sem:
-            enr = await _enrich_cnpj(row.get(cnpj_col, ""), want)
+            enr = await _enrich_cnpj(row.get(cnpj_col, ""), want,
+                                     cargos_dec=cargos_dec, max_dec=max_dec)
         merged = dict(row)
         merged.update(enr)
         return merged
 
     enriched = await asyncio.gather(*[_one(r) for r in rows])
+
+    # QUEM FICOU SEM TELEFONE DE DECISOR, e a distinção entre os dois motivos.
+    #
+    # "Nenhum decisor na base" e "achei decisores e nenhum tinha telefone" são
+    # problemas diferentes: o primeiro pede outro filtro de cargo, o segundo
+    # pede a consulta profunda. Juntá-los num número só faria a pessoa tentar
+    # a correção errada.
+    sem_decisor, sem_telefone = [], []
+    if any(k.startswith("de_") for k in want):
+        for r in enriched:
+            achados = r.pop("_de_achados", None)
+            com_tel = r.pop("_de_com_tel", 0)
+            r.pop("_de_erro", None)
+            if achados is None:
+                continue
+            nome_emp = (r.get("rfb_razao") or r.get(cnpj_col) or "")
+            if not achados:
+                sem_decisor.append({"empresa": str(nome_emp)[:80],
+                                    "cnpj": str(r.get(cnpj_col) or "")})
+            elif not com_tel:
+                sem_telefone.append({"empresa": str(nome_emp)[:80],
+                                     "cnpj": str(r.get(cnpj_col) or ""),
+                                     "decisores": achados})
     label_of = {k: lbl for g in _ENRICH_CATALOG for (k, lbl) in g["campos"]}
     added_cols = [{"key": f, "label": label_of.get(f, f)} for f in fields]
     return {"status": "ok", "sheet": sheet, "cnpj_col": cnpj_col,
@@ -3530,6 +3762,8 @@ async def enrich_run(payload: dict = Body(default={})):
             "rows": enriched, "enriquecidas": len(enriched),
             "offset": inicio,
             "proximo": (inicio + len(enriched)) if len(enriched) == limite else None,
+            "sem_decisor": sem_decisor,
+            "sem_telefone_decisor": sem_telefone,
             "total_aba": len(todas)}
 
 

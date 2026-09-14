@@ -1188,8 +1188,10 @@ async function prospBuscar() {
                             partes.join(' · ')].filter(Boolean).join(' · ')
                            .replace(/^\(|\)$/g, '');
     }
-    prospAvisaLinkedIn(res);
     renderProspList();
+    // DEPOIS de renderizar: a lista reescreve o container inteiro, e o aviso
+    // colocado antes era apagado por ela sem deixar rastro.
+    prospAvisaLinkedIn(res);
     const excluirMeetime = document.getElementById('pf-excluir-meetime');
     if (excluirMeetime && excluirMeetime.checked) prospDedupMeetime();
     const filtrosResumo = Object.entries(prospFiltros()).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join(', ') || 'sem filtro';
@@ -2332,6 +2334,29 @@ async function prospBuscarPessoas() {
     }
     let pessoas = res.pessoas || [];
     const totalStr = res.total_aprox ? `${(res.total || pessoas.length).toLocaleString('pt-BR')}+` : (res.total || pessoas.length).toLocaleString('pt-BR');
+
+    /* O BACKEND PODE TER IDO AO LINKEDIN SOZINHO — e aí as linhas têm outra
+       forma. Perfil tem cargo de verdade, cidade da PESSOA e link; não tem
+       CNPJ, porque o LinkedIn não sabe qual é. Renderizar perfil com o molde
+       de sócio mostrava três colunas vazias e um CNPJ em branco, o que faz
+       parecer que a busca veio quebrada. */
+    if (res.fonte === 'brightdata' && pessoas.length) {
+      cnt.textContent = pessoas.length + ' pessoa(s) no LinkedIn';
+      out.innerHTML = '<div class="prosp-table-scroll"><table class="prosp-table">'
+        + '<thead><tr><th>NOME</th><th>CARGO</th><th>EMPRESA</th>'
+        + '<th>LOCALIZAÇÃO</th><th>E-MAIL</th><th>LINKEDIN</th></tr></thead><tbody>'
+        + pessoas.map(p => '<tr><td>' + esc(p.nome || '') + '</td>'
+          + '<td>' + esc(p.cargo || '—') + '</td>'
+          + '<td>' + esc(p.empresa || '—') + '</td>'
+          + '<td>' + esc(p.cidade || '—') + '</td>'
+          + '<td>' + (p.email ? esc(p.email) : '—') + '</td>'
+          + '<td>' + (p.url ? '<a href="' + esc(p.url) + '" target="_blank" '
+              + 'rel="noopener">perfil</a>' : '—') + '</td></tr>').join('')
+        + '</tbody></table></div>';
+      avisaFiltrosPessoa(res);
+      ofereceLinkedIn();
+      return;
+    }
     if (!pessoas.length) {
       cnt.textContent = `${totalStr} pessoas (sócios)`;
       out.innerHTML = `<p class="msg">Nenhuma pessoa encontrada com esses filtros.</p>`;
@@ -2897,6 +2922,18 @@ const enrichState = { upload_id: null, sheets: [], result: null };
   }
   sheetSel.addEventListener('change', syncCols);
 
+  /* O painel de cargos só aparece quando algum campo de decisor está
+     marcado. Filtro de cargo sem decisor pedido é controle que não faz nada,
+     e controle que não faz nada ensina a pessoa a desconfiar dos outros. */
+  document.getElementById('en-catalog')?.addEventListener('change', () => {
+    const querDec = [...document.querySelectorAll('.en-field:checked')]
+      .some(c => c.value.startsWith('de_'));
+    const w = document.getElementById('en-dec-wrap');
+    if (w) w.hidden = !querDec;
+    const num = document.getElementById('en-num-run');
+    if (num) num.textContent = querDec ? '5' : '4';
+  });
+
   document.getElementById('en-run').addEventListener('click', async () => {
     const fields = [...document.querySelectorAll('.en-field:checked')].map(c => c.value);
     if (!fields.length) { out.innerHTML = `<p class="msg">Selecione ao menos um campo.</p>`; return; }
@@ -2904,6 +2941,8 @@ const enrichState = { upload_id: null, sheets: [], result: null };
       upload_id: enrichState.upload_id, sheet: sheetSel.value,
       cnpj_col: colSel.value, fields,
       limite: parseInt(document.getElementById('en-limite').value) || 50,
+      decisor_cargos: document.getElementById('en-cargo')?.value || '',
+      max_decisores: parseInt(document.getElementById('en-maxdec')?.value) || 3,
     };
     document.getElementById('en-run').disabled = true;
 
@@ -2919,6 +2958,9 @@ const enrichState = { upload_id: null, sheets: [], result: null };
     const LOTE = 50;
     enrichState.cancelar = false;
     const acumulado = [];
+    // Os avisos vêm por lote e precisam ser somados: reportar só o
+    // último lote esconderia a maior parte das empresas puladas.
+    const semDecisor = [], semTelefone = [];
     let base = null, offset = 0, alvo = body.limite;
     const t0 = Date.now();
 
@@ -2964,6 +3006,8 @@ const enrichState = { upload_id: null, sheets: [], result: null };
         }
         base = base || j;
         acumulado.push(...(j.rows || []));
+        semDecisor.push(...(j.sem_decisor || []));
+        semTelefone.push(...(j.sem_telefone_decisor || []));
         // A aba pode ter menos linhas que o pedido: o alvo é o menor dos dois.
         alvo = Math.min(alvo, j.total_aba || alvo);
         offset += (j.rows || []).length;
@@ -2974,7 +3018,10 @@ const enrichState = { upload_id: null, sheets: [], result: null };
       base.rows = acumulado;
       base.enriquecidas = acumulado.length;
       enrichState.result = base;
+      enrichState.semDecisor = semDecisor;
+      enrichState.semTelefone = semTelefone;
       renderEnrich(base);
+      enrichAvisaDecisores();
       if (enrichState.cancelar) {
         out.insertAdjacentHTML('afterbegin',
           `<p class="msg">Parado a pedido, com ${acumulado.length} linhas prontas.</p>`);
@@ -6130,26 +6177,19 @@ async function pessoasNoLinkedIn(quantos) {
   }
 }
 
-/* Chamado no fim da busca grátis: acrescenta a oferta sem mexer no que já
-   está na tela. */
+/* A CAIXA "FALTOU GENTE? BUSCAR 25 NO LINKEDIN" DEIXOU DE EXISTIR.
+
+   Ela aparecia depois de toda busca de pessoas, inclusive quando o resultado
+   era zero — e era zero justamente porque o filtro (departamento, senioridade)
+   só existe no perfil, não no cadastro. Oferecer um botão ali é transferir
+   para quem prospecta uma decisão que não é dela: qual base consultar. Agora
+   o backend vai direto ao LinkedIn quando o filtro só vive lá, e também
+   quando o cadastro devolve vazio.
+
+   A função continua existindo e só limpa a caixa antiga, para não quebrar as
+   três telas que ainda a chamam. */
 function ofereceLinkedIn() {
-  const out = document.getElementById('prosp-results');
-  if (!out || document.getElementById('pf-pessoas-li')) return;
-  const n = 25;
-  const box = document.createElement('div');
-  box.className = 'info-box';
-  box.style.marginTop = '10px';
-  box.innerHTML =
-    '<b>Faltou gente?</b> Estes vieram das bases grátis — cache do LinkedIn e '
-    + 'sócios da Receita. A Receita só conhece quem é <i>sócio</i>: gerente e '
-    + 'diretor contratados não aparecem nela.'
-    + '<div style="margin-top:6px">'
-    + '<button type="button" id="pf-pessoas-li" class="btn-secondary">'
-    + 'Buscar ' + n + ' no LinkedIn</button>'
-    + '</div>';
-  out.appendChild(box);
-  document.getElementById('pf-pessoas-li')
-    .addEventListener('click', () => pessoasNoLinkedIn(n));
+  document.getElementById('pf-pessoas-li')?.closest('.info-box')?.remove();
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -6172,9 +6212,38 @@ function ofereceLinkedIn() {
    prospecta escolhe o perfil da empresa; o orçamento é do admin, e ele tem o
    extrato na aba de administração. Perguntar a cada filtro transformava
    navegar em decidir gastar. */
-function prospAvisaLinkedIn() {
+function prospAvisaLinkedIn(res) {
   const velho = document.getElementById('pf-aviso-li');
   if (velho) velho.remove();
+
+  /* O QUE SOBROU DELA: dizer qual filtro NÃO mordeu.
+     Medido em 14/set/2026: uma busca com CNAE "Serviços de engenharia" em SC
+     devolvia empresa de informática, porque o lado LinkedIn comandava e um
+     perfil de empresa não tem CNAE. O filtro sumia no caminho e a lista
+     parecia obedecê-lo — é o defeito que mais engana, porque quem liga
+     confia na tela. Não há botão aqui: não é decisão de ninguém, é aviso. */
+  const ign = (res && res.filtros_ignorados) || [];
+  if (!ign.length) return;
+  const out = document.getElementById('prosp-results');
+  if (!out) return;
+  const NOMES = {
+    cnae: 'atividade (CNAE)', setor: 'setor pela Receita', situacao: 'situação cadastral',
+    capital_min: 'capital mínimo', capital_max: 'capital máximo', natureza: 'natureza jurídica',
+    porte: 'porte da Receita', somente_matriz: 'somente matriz', mei_optante: 'optante MEI',
+    mei_excluir: 'excluir MEI', fundada_de: 'fundada a partir de', fundada_ate: 'fundada até',
+    com_telefone: 'só com telefone', tipo_empresa: 'pública/privada',
+    anos_min: 'idade mínima', anos_max: 'idade máxima',
+  };
+  const box = document.createElement('div');
+  box.id = 'pf-aviso-li';
+  box.className = 'warn-box';
+  box.style.marginTop = '10px';
+  box.innerHTML = '<b>Estes filtros não valeram para esta lista:</b> '
+    + ign.map(k => esc(NOMES[k] || k)).join(', ')
+    + '. Eles são do cadastro da Receita, e esta busca foi conduzida pelo '
+    + 'LinkedIn — um perfil de empresa não tem CNAE nem situação cadastral. '
+    + 'Para que valham, tire o pedido de busca no LinkedIn.';
+  out.appendChild(box);
 }
 
 
@@ -6212,10 +6281,10 @@ function avisaFiltrosPessoa(res) {
    precisam saber que a tela mudou. Trocar a aparência sem trocar o contrato
    é o que evita quebrar o que já funciona.
    ══════════════════════════════════════════════════════════════════════ */
-(function fichasDeCargo() {
-  const oculto = document.getElementById('pf-cargo');
-  const entrada = document.getElementById('pf-cargo-entrada');
-  const caixa = document.getElementById('pf-cargo-chips');
+function ligaFichasDeCargo(idOculto, idEntrada, idCaixa) {
+  const oculto = document.getElementById(idOculto);
+  const entrada = document.getElementById(idEntrada);
+  const caixa = document.getElementById(idCaixa);
   if (!oculto || !entrada || !caixa) return;
 
   let cargos = [];
@@ -6266,7 +6335,13 @@ function avisaFiltrosPessoa(res) {
     const t = (e.clipboardData || window.clipboardData).getData('text');
     if (t && t.includes(',')) { e.preventDefault(); adiciona(t); }
   });
-})();
+}
+
+/* Duas telas, o mesmo seletor. Escrever de novo para a planilha faria as
+   duas divergirem no primeiro ajuste — e um cargo aceito numa e recusado na
+   outra é o tipo de diferença que ninguém entende quando encontra. */
+ligaFichasDeCargo('pf-cargo', 'pf-cargo-entrada', 'pf-cargo-chips');
+ligaFichasDeCargo('en-cargo', 'en-cargo-entrada', 'en-cargo-chips');
 
 /* ══════════════════════════════════════════════════════════════════════
    REPORTAR BUG / MELHORIA  +  CHAMADOS DO ADMIN
@@ -6796,4 +6871,111 @@ async function decMassaBuscar(fonte) {
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   QUEM FICOU SEM DECISOR — e a consulta profunda para completar
+
+   Dois motivos diferentes, e eles pedem correções opostas:
+
+     sem decisor NA BASE       a Assertiva não conhece ninguém dessa empresa,
+                               ou o filtro de cargo cortou todos → afrouxar o
+                               cargo, ou ir ao LinkedIn
+     decisor SEM TELEFONE      achamos quem manda e não temos como ligar →
+                               o cargo está certo, falta contato
+
+   Juntar os dois num número só faria a pessoa tentar o conserto errado. Por
+   isso são duas listas, com o botão de consulta profunda só onde ele resolve.
+
+   A CONSULTA PROFUNDA usa o funil completo da aba "Funcionários no LinkedIn"
+   — o de onze etapas, que desempata homônimo e paga por isso. Ela não roda
+   na planilha inteira de propósito: é cara por pessoa, e só vale para as
+   empresas que o caminho barato não resolveu.
+   ══════════════════════════════════════════════════════════════════════ */
+function enrichAvisaDecisores() {
+  const out = document.getElementById('en-results');
+  document.getElementById('en-aviso-dec')?.remove();
+  const semDec = enrichState.semDecisor || [];
+  const semTel = enrichState.semTelefone || [];
+  if (!semDec.length && !semTel.length) return;
+
+  const lista = (arr) => '<ul style="margin:4px 0 0 18px">'
+    + arr.slice(0, 10).map(e => `<li>${esc(e.empresa || e.cnpj)}</li>`).join('')
+    + (arr.length > 10 ? `<li>e mais ${arr.length - 10}…</li>` : '') + '</ul>';
+
+  const box = document.createElement('div');
+  box.id = 'en-aviso-dec';
+  box.className = 'info-box';
+  box.style.marginTop = '10px';
+  let html = '';
+  if (semTel.length) {
+    html += `<div><b>${semTel.length} empresa(s) com decisor encontrado e `
+      + `nenhum telefone.</b> O cargo está certo; falta o contato.`
+      + lista(semTel) + '</div>';
+  }
+  if (semDec.length) {
+    html += `<div style="margin-top:${semTel.length ? '10px' : '0'}">`
+      + `<b>${semDec.length} empresa(s) sem decisor na base.</b> A Assertiva não `
+      + `conhece ninguém dessa empresa, ou o filtro de cargo cortou todos — `
+      + `vale afrouxar o cargo antes de gastar mais.` + lista(semDec) + '</div>';
+  }
+  const alvo = [...semTel, ...semDec];
+  html += `<div style="margin-top:10px">
+      <button type="button" id="en-profunda" class="btn-secondary">
+        🔬 Consulta profunda nessas ${alvo.length}</button>
+      <span class="pf-advanced-hint" style="display:inline">— usa o funil
+      completo do LinkedIn, o mesmo da aba "Funcionários no LinkedIn": procura
+      quem se declara decisor lá, resolve o CPF e busca o telefone. É lento e
+      caro por pessoa, por isso roda só nestas.</span>
+    </div>
+    <div id="en-profunda-saida" style="margin-top:8px"></div>`;
+  box.innerHTML = html;
+  out.appendChild(box);
+
+  document.getElementById('en-profunda')?.addEventListener('click', async () => {
+    const btn = document.getElementById('en-profunda');
+    const saida = document.getElementById('en-profunda-saida');
+    btn.disabled = true;
+    const achados = [];
+    for (let i = 0; i < alvo.length; i++) {
+      const e = alvo[i];
+      saida.innerHTML = `<span class="spinner"></span> ${i + 1} de ${alvo.length}: `
+        + `${esc(e.empresa || e.cnpj)}…`;
+      try {
+        const d = await fetch(`${API}/api/funil/decisores-linkedin`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            empresa: e.empresa || '', cnpj: onlyDigits(e.cnpj || ''),
+            limite: 30, teto_brl: 6,
+            max_decisores: parseInt(document.getElementById('en-maxdec')?.value) || 3,
+            cargos: (document.getElementById('en-cargo')?.value || '')
+              .split(',').map(x => x.trim()).filter(Boolean),
+            // Aqui o telefone é o objetivo: a empresa entrou nesta lista
+            // justamente por não ter nenhum.
+            so_com_telefone: true,
+          }),
+        }).then(r => r.json());
+        (d.pessoas || []).forEach(p => achados.push({ ...p, _empresa: e.empresa }));
+      } catch (err) { /* uma empresa falhar não pode parar as outras */ }
+    }
+    if (!achados.length) {
+      saida.innerHTML = '<p class="msg">O LinkedIn também não trouxe telefone '
+        + 'para nenhuma dessas. Essas empresas não têm contato de decisor '
+        + 'acessível pelas fontes que temos.</p>';
+      btn.disabled = false;
+      return;
+    }
+    saida.innerHTML = '<table class="prosp-table"><thead><tr><th>EMPRESA</th>'
+      + '<th>NOME</th><th>CARGO</th><th>CPF</th><th>TELEFONES</th><th>E-MAIL</th>'
+      + '</tr></thead><tbody>'
+      + achados.map(p => `<tr><td>${esc(p._empresa || '')}</td>`
+        + `<td>${esc(p.nome || '')}</td><td>${esc(p.cargo || '—')}</td>`
+        + `<td>${esc(p.cpf || p.situacao || '—')}</td>`
+        + `<td>${(p.telefones || []).map(t => esc(t.numero || t.telefone || '')).filter(Boolean).join('<br>') || '—'}</td>`
+        + `<td>${esc(p.email || '—')}</td></tr>`).join('')
+      + '</tbody></table>'
+      + `<p class="pf-advanced-hint">${achados.length} contato(s) que o caminho `
+      + `barato não tinha encontrado.</p>`;
+    btn.disabled = false;
+  });
 }

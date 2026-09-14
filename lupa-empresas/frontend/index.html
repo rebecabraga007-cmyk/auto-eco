@@ -454,7 +454,7 @@
             <button type="button" class="pf-perfil-btn" data-perfil="pessoa" id="pf-perfil-pessoa">Decisores</button>
           </div>
           <p class="pf-perfil-note" id="pf-perfil-note-pessoa" hidden>
-            ℹ️ Baseado em <strong>sócios reais</strong> da Receita (cargo = qualificação societária). Campos marcados <span class="pf-soon">🔜</span> dependem de um dataset de perfis profissionais ainda não conectado.
+            ℹ️ Procura em <strong>duas bases ao mesmo tempo</strong>: os sócios da Receita (onde “cargo” é qualificação societária, só quem é dono) e os perfis do LinkedIn (onde está o gerente e o diretor contratados). Departamento, senioridade, localização da pessoa e especialidades só existem no perfil — ao usá-los, a busca vai direto ao LinkedIn.
           </p>
 
           <!-- ═══ Campos exclusivos do perfil PESSOA ═══ -->
@@ -1024,8 +1024,27 @@
             <div id="en-catalog"></div>
           </div>
         </div>
-        <div class="en-step">
+        <!-- Só aparece quando algum campo de decisor está marcado: filtro de
+             cargo sem decisor pedido é controle que não faz nada. -->
+        <div class="en-step" id="en-dec-wrap" hidden>
           <span class="en-num">4</span>
+          <div class="en-fields-wrap">
+            <div class="en-fields-head">
+              <strong>Quais decisores você quer</strong>
+              <span class="en-src-note">vírgula ou Enter adiciona outro cargo</span>
+            </div>
+            <div id="en-cargo-chips" class="chips-box"></div>
+            <input id="en-cargo-entrada" type="text" autocomplete="off"
+                   placeholder="Ex.: diretor, gerente comercial — vazio traz qualquer cargo" />
+            <input id="en-cargo" type="hidden" />
+            <label class="as-field" style="margin-top:6px">
+              <span>Quantos decisores por empresa</span>
+              <input id="en-maxdec" type="number" min="1" max="10" value="3" class="filter-num" />
+            </label>
+          </div>
+        </div>
+        <div class="en-step">
+          <span class="en-num" id="en-num-run">5</span>
           <button id="en-run" class="btn-primary">⚡ Enriquecer lista</button>
           <button id="en-export" class="btn-secondary" hidden>⬇️ Exportar XLSX</button>
         </div>

@@ -835,7 +835,8 @@ def _grupo_or(campo: str, termos: list[str], operador: str = "includes"):
 async def buscar_por_filtro(pais: str = "BR", empresas: Any = None,
                             empresa_ids: Any = None, cargos_termos: Any = None,
                             nome: str = "", sobrenome: str = "",
-                            cidade: str = "", palavras: Any = None,
+                            cidade: str = "", ufs: Any = None,
+                            palavras: Any = None,
                             min_seguidores: int = 0, so_com_foto: bool = False,
                             decisores: bool = False, limite: int = 50,
                             usuario: str = "", departamentos: Any = None,
@@ -902,6 +903,16 @@ async def buscar_por_filtro(pais: str = "BR", empresas: Any = None,
     if (cidade or "").strip():
         condicoes.append({"name": "city", "operator": "includes",
                           "value": cidade.strip()})
+
+    # ESTADO. O `city` do perfil e a linha inteira que o LinkedIn escreve --
+    # "Blumenau, Santa Catarina, Brazil" -- entao o estado cabe no mesmo campo,
+    # por extenso, e convive com a cidade (as duas condicoes casam na mesma
+    # string). Media da tela: pedir "SC" e receber Piaui, Ceara e Goias, porque
+    # o `uf` era coletado pela tela, mandado no JSON e nunca lido aqui.
+    nomes_uf = [x for x in (_nome_do_estado(u) for u in _l(ufs)) if x]
+    g = _grupo_or("city", nomes_uf)
+    if g:
+        condicoes.append(g)
     g = _grupo_or("about", _l(palavras))
     if g:
         condicoes.append(g)
@@ -1048,7 +1059,13 @@ def catalogo_empresas() -> dict[str, Any]:
     }
 
 
-def _empresa(rec: dict[str, Any]) -> dict[str, Any]:
+def _empresa(rec: dict[str, Any], uf_busca: str = "") -> dict[str, Any]:
+    """Registro da Bright Data -> linha nossa, ja com o CNPJ resolvido.
+
+    `uf_busca` e o estado que a PESSOA escolheu na tela, usado so quando o
+    perfil nao diz onde fica. Sem ele, "Tequilaville" (procurada em SC) casou
+    pelo nome com uma MEI do Ceara: sem estado nenhum para restringir, a busca
+    por nome varre o Brasil inteiro e o primeiro homonimo ganha."""
     d = {
         "nome": rec.get("name") or "",
         "url": rec.get("url") or "",
@@ -1067,7 +1084,7 @@ def _empresa(rec: dict[str, Any]) -> dict[str, Any]:
     # vazio de proposito. Ver empresa_cnpj.
     try:
         import empresa_cnpj
-        p = empresa_cnpj.resolver(registro=rec)
+        p = empresa_cnpj.resolver(registro=rec, uf=uf_busca)
         d["cnpj"] = p["cnpj"]
         d["cnpj_confianca"] = p["confianca"]
         d["cnpj_motivo"] = p["motivo"]
@@ -1211,7 +1228,12 @@ async def buscar_empresas_por_filtro(
         return {"status": "error", "empresas": [],
                 "message": "Resposta ilegivel."}
 
-    brutas = [_empresa(x) for x in (d.get("hits") or []) if isinstance(x, dict)]
+    # Um estado escolhido vira dica de desempate; dois ou mais nao, porque ai
+    # ela nao distingue nada.
+    _ufs = _l(ufs)
+    _uf_dica = _ufs[0].strip().upper()[:2] if len(_ufs) == 1 else ""
+    brutas = [_empresa(x, _uf_dica) for x in (d.get("hits") or [])
+              if isinstance(x, dict)]
     cobrados = len(brutas)
     custo = round(cobrados * linkedin_cache.USD_POR_REGISTRO, 4)
     empresas = [e for e in brutas if e.get("cnpj")] if so_com_cnpj else brutas
