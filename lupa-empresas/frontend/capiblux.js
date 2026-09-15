@@ -7019,9 +7019,11 @@ function enrichAvisaDecisores() {
   }
   if (semDec.length) {
     html += `<div style="margin-top:${semTel.length ? '10px' : '0'}">`
-      + `<b>${semDec.length} empresa(s) sem decisor na base.</b> A Assertiva não `
-      + `conhece ninguém dessa empresa, ou o filtro de cargo cortou todos — `
-      + `vale afrouxar o cargo antes de gastar mais.` + lista(semDec) + '</div>';
+      + `<b>${semDec.length} empresa(s) sem nenhum decisor.</b> Ninguém dessa `
+      + `empresa apareceu no LinkedIn nem na folha, ou o filtro de cargo cortou `
+      + `todos. Não há o que aprofundar aqui — o funil desempata pessoa, não `
+      + `inventa pessoa; o que resolve é afrouxar o cargo e rodar de novo.`
+      + lista(semDec) + '</div>';
   }
   /* SÓ ENTRA NA FILA QUEM TEM PERFIL PENDENTE.
      Empresa que voltou sem NINGUÉM não tem o que aprofundar: o funil completo
