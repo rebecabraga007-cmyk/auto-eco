@@ -6660,9 +6660,12 @@ async function chamadosCarregar() {
           ${c.descricao ? `<p style="margin:8px 0 0;white-space:pre-wrap">${esc(c.descricao)}</p>` : ''}
           ${ctx}
           ${imgs ? `<div class="chamado-anexos">${imgs}</div>` : ''}
+          ${c.resposta ? `<div class="info-box" style="margin-top:8px">
+             <b>Resposta:</b> ${esc(c.resposta)}</div>` : ''}
           <div class="filter-row" style="margin:10px 0 0">
             <button type="button" class="btn-secondary ch-acao" data-id="${esc(c.id)}" data-s="visto">Em análise</button>
-            <button type="button" class="btn-secondary ch-acao" data-id="${esc(c.id)}" data-s="resolvido">Resolvido</button>
+            <button type="button" class="btn-secondary ch-acao" data-id="${esc(c.id)}" data-s="resolvido"
+                    data-perguntar="1">Resolvido</button>
             <button type="button" class="btn-secondary ch-acao" data-id="${esc(c.id)}" data-s="aberto">Reabrir</button>
             ${ehAlerta ? `<span class="pf-advanced-hint" style="display:inline">
               — este fecha sozinho quando a medida voltar ao normal; marcar à
@@ -6672,10 +6675,22 @@ async function chamadosCarregar() {
     }).join('');
     alvo.querySelectorAll('.ch-acao').forEach(b =>
       b.addEventListener('click', async () => {
+        /* A RESPOSTA ERA UM CAMPO QUE NINGUÉM ESCREVIA E NINGUÉM LIA.
+           A API aceita `resposta` desde sempre, a tela nunca mandava, e o
+           card nunca mostrava — então quem resolvia um chamado não tinha
+           onde dizer o que fez, e quem voltasse ao chamado depois só via
+           "resolvido", sem saber como. Agora fechar pergunta (é opcional) e
+           o que foi escrito aparece no card. */
+        let resposta = '';
+        if (b.dataset.perguntar) {
+          const dito = prompt('O que foi feito? (opcional — aparece no chamado)', '');
+          if (dito === null) return;   // desistiu: não muda o status
+          resposta = dito.trim();
+        }
         b.disabled = true;
         await fetch(`${API}/api/chamados/${b.dataset.id}/status`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: b.dataset.s }),
+          body: JSON.stringify({ status: b.dataset.s, resposta }),
         });
         await chamadosCarregar();
         chamadosBadge();
