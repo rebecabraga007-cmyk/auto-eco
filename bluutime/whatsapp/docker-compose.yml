@@ -17,7 +17,7 @@ services:
     container_name: bluutime-wuzapi
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       # Token de administração — cria e remove usuários. Não é o que envia
       # mensagem: esse é o token do usuário, que vai em WUZAPI_TOKEN.

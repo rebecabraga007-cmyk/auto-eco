@@ -19,4 +19,7 @@ if ! grep -q "^WUZAPI_ADMIN_TOKEN=." "$ENV_FILE"; then
   exit 1
 fi
 
-docker compose --env-file "$ENV_FILE" -f "$AQUI/docker-compose.yml" "${@:-up -d}"
+if [ "$#" -eq 0 ]; then
+  set -- up -d
+fi
+docker compose --env-file "$ENV_FILE" -f "$AQUI/docker-compose.yml" "$@"
