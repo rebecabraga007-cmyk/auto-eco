@@ -7392,3 +7392,41 @@ async function mtBaixarNovos() {
     mtResumo();
   });
 })();
+
+/* ══════════════════════════════════════════════════════════════════════
+   MODAL ABERTO TRAVA A PÁGINA DE TRÁS
+
+   Sintoma relatado: "modal quebrado, não consigo subir". Com o modal de
+   usuários mais alto que a tela, a roda do mouse às vezes rolava a PÁGINA
+   atrás dele em vez do modal — e a página atrás é longa (o painel
+   administrativo), então o modal ia embora da vista e parecia cortado.
+
+   Um observador só, em vez de mexer em cada abre/fecha: existem sete modais
+   na tela e eles são abertos de lugares diferentes. Travar no ponto em que o
+   atributo `hidden` muda pega todos, inclusive os que vierem depois.
+   ══════════════════════════════════════════════════════════════════════ */
+(function travaFundoComModalAberto() {
+  const algumAberto = () => [...document.querySelectorAll('.modal-overlay')]
+    .some(m => !m.hidden);
+  const aplica = () => {
+    const trava = algumAberto();
+    document.body.style.overflow = trava ? 'hidden' : '';
+    // O padding compensa a barra de rolagem que desaparece: sem ele a página
+    // "salta" para o lado a cada abertura.
+    const barra = window.innerWidth - document.documentElement.clientWidth;
+    document.body.style.paddingRight = trava && barra > 0 ? barra + 'px' : '';
+  };
+  const obs = new MutationObserver(aplica);
+  document.querySelectorAll('.modal-overlay').forEach(m =>
+    obs.observe(m, { attributes: true, attributeFilter: ['hidden'] }));
+  // Modal criado depois do carregamento também entra no observador.
+  new MutationObserver(ms => {
+    ms.forEach(m => m.addedNodes.forEach(n => {
+      if (n.nodeType === 1 && n.classList?.contains('modal-overlay')) {
+        obs.observe(n, { attributes: true, attributeFilter: ['hidden'] });
+        aplica();
+      }
+    }));
+  }).observe(document.body, { childList: true, subtree: true });
+  aplica();
+})();

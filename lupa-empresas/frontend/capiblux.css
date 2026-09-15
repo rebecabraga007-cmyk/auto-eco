@@ -675,7 +675,10 @@ body {
   /* Modais no celular: largura toda e formularios empilhados. Seis campos lado a
      lado em 390px viravam colunas de 120px inutilizaveis. */
   .modal-overlay { padding: 12px; }
-  .modal-card, .modal-card.modal-lg { width: 100%; max-width: 100%; padding: 16px; }
+  .modal-card, .modal-card.modal-lg { width: 100%; max-width: 100%; padding: 16px;
+    /* O padding menor muda o teto: 12px de cada lado no overlay. */
+    max-height: calc(100vh - 24px); }
+  .modal-card > .modal-head { top: -16px; margin: -8px 0 0; }
   .user-create-row { flex-direction: column; align-items: stretch; }
   .user-create-row input,
   .user-create-row select,
@@ -765,8 +768,39 @@ body.locked { overflow: hidden; }
    "+ Criar" ficava ~750px acima do viewport — no celular E no desktop).
    flex-start + margin:auto no card centraliza quando cabe e nao corta quando nao
    cabe — e ai o overlay rola. */
-.modal-overlay { position: fixed; inset: 0; z-index: 900; background: rgba(26,29,33,.55); display: flex; align-items: flex-start; justify-content: center; padding: 20px; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
-.modal-card { background: #fff; border-radius: var(--radius-sm); padding: 22px; width: 420px; max-width: 94vw; margin: auto; display: flex; flex-direction: column; gap: 12px; box-shadow: var(--shadow-float); }
+.modal-overlay { position: fixed; inset: 0; z-index: 900; background: rgba(26,29,33,.55); display: flex; align-items: flex-start; justify-content: center; padding: 20px; overflow: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+/* O MODAL ALTO NAO PODIA SUBIR.
+   `align-items: flex-start` no overlay com `margin: auto` no cartao centraliza
+   o cartao -- e quando ele fica mais alto que a tela, a parte de cima sai para
+   FORA da area rolavel e nao tem como voltar: a rolagem so desce. Com 15
+   usuarios na lista, o formulario de criar usuario ficava inalcancavel.
+   Relatado pela Rebeca em 15/set/2026: "modal quebrado nao consigo subir".
+
+   A correcao e o cartao rolar por dentro, com teto de altura: assim o topo
+   dele e sempre o topo da tela, e nada some para cima. O `margin: auto` sai
+   junto -- era ele que empurrava o cartao para o meio. */
+.modal-card { background: #fff; border-radius: var(--radius-sm); padding: 22px; width: 420px; max-width: 94vw; margin: 0; display: flex; flex-direction: column; gap: 12px; box-shadow: var(--shadow-float); max-height: calc(100vh - 40px); overflow-y: auto; overscroll-behavior: contain; }
+/* O CARTAO E FLEX, E FLEX ENCOLHE FILHO -- foi isto que quebrou de verdade.
+   Com o teto de altura, a tabela de usuarios nao passou a rolar: ela foi
+   COMPRIMIDA. Medido com 15 usuarios num viewport de 460px: scrollHeight
+   igual ao clientHeight (420), ou seja, nada para rolar e as linhas do meio
+   simplesmente somem. Um modal que engole conteudo em silencio e pior que um
+   modal alto.
+
+   Entao: nada encolhe, exceto a area de tabela, que fica com o espaco que
+   sobrar e rola dentro de si. O formulario de criar usuario e os grupos ficam
+   sempre visiveis em cima -- que era justamente o que nao dava para alcancar. */
+.modal-card > * { flex: 0 0 auto; }
+/* `min-height: 0` NAO E DETALHE: sem ele, um filho flex nunca encolhe abaixo
+   do proprio conteudo, e o `overflow: auto` dele nao tem o que rolar -- a
+   tabela vazava 100px para FORA do cartao, invisivel. Medido: ultima linha em
+   540px num cartao que termina em 440. */
+.modal-card .prosp-table-scroll { flex: 1 1 auto; overflow: auto; min-height: 0; }
+
+/* O X e o titulo ficam colados no topo enquanto o resto rola: num modal
+   comprido, fechar nao pode exigir rolar de volta. O fundo branco existe
+   porque o conteudo passa por baixo. */
+.modal-card > .modal-head { position: sticky; top: -22px; background: #fff; padding: 10px 0 8px; margin: -10px 0 0; z-index: 2; }
 .modal-card.modal-lg { width: 760px; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; }
 .modal-head h3 { margin: 0; }
