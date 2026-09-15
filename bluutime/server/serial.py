@@ -12,7 +12,8 @@ def iso(dt: datetime | None) -> str | None:
 def user_min(u):
     if not u:
         return None
-    return {"id": u.id, "name": u.name, "email": u.email, "initials": u.initials}
+    return {"id": u.id, "name": u.name, "email": u.email, "initials": u.initials,
+            "avatarUrl": u.avatar_url or ""}
 
 
 def user_full(u):
@@ -20,7 +21,8 @@ def user_full(u):
         return None
     return {**user_min(u), "roles": u.role_list, "dailyGoal": u.daily_goal,
             "team": {"id": u.team.id, "name": u.team.name} if u.team else None,
-            "active": u.active, "online": u.online, "created": iso(u.created_at)}
+            "active": u.active, "online": u.online, "created": iso(u.created_at),
+            "emailSignature": u.email_signature or ""}
 
 
 def client(c):

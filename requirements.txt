@@ -8,3 +8,4 @@ xlrd==2.0.1
 python-calamine==0.2.3
 mistralai>=1.0.0
 playwright>=1.44.0
+dnspython>=2.6.0

@@ -57,10 +57,11 @@ class Email(Channel):
                 s.starttls(context=ssl.create_default_context())
             s.login(self.user, self.password)
 
-    def _send_sync(self, to: str, subject: str, body: str, reply_to: str) -> str:
+    def _send_sync(self, to: str, subject: str, body: str, reply_to: str,
+                   from_name: str = "", from_addr: str = "") -> str:
         msg = EmailMessage()
         msg["Subject"] = subject
-        msg["From"] = formataddr((self.from_name, self.from_addr))
+        msg["From"] = formataddr((from_name or self.from_name, from_addr or self.from_addr))
         msg["To"] = to
         if reply_to:
             msg["Reply-To"] = reply_to
@@ -92,7 +93,8 @@ class Email(Channel):
             return SendResult("BLOCKED", self.key, error="E-mail sem assunto.")
         try:
             mid = await anyio.to_thread.run_sync(
-                self._send_sync, to, subject, body, extra.get("reply_to", ""))
+                self._send_sync, to, subject, body, extra.get("reply_to", ""),
+                extra.get("from_name", ""), extra.get("from_addr", ""))
             return SendResult("SENT", self.key, provider_id=mid)
         except Exception as exc:
             return SendResult("FAILED", self.key, error=f"{type(exc).__name__}: {exc}"[:200])

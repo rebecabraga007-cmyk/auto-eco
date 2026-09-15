@@ -1,11 +1,13 @@
 """Conta, empresa, usuários, times, clientes e ajustes."""
+import os
 from datetime import date, datetime
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import perm
+from ..config import WEB
 from ..db import get_db
 from ..models import (Client, Company, CustomField, FitscoreRule, Goal, Holiday,
                       Integration, LostReason, Team, User, Webhook)
@@ -36,17 +38,66 @@ def _company(db: Session) -> Company:
     return c
 
 
+def _current_user(db: Session) -> User | None:
+    from ..deps import session_email
+    email = session_email()
+    return (db.query(User).filter(func.lower(User.email) == (email or "").lower()).first()
+            or db.query(User).filter(User.roles.contains("ADMINISTRATOR")).first())
+
+
 @router.get("/me")
 def me(db: Session = Depends(get_db)):
     """Usuário operacional da sessão. Casa o e-mail da sessão CapiBLU com o
     cadastro de SDR; se não houver, cai no administrador."""
-    from ..deps import session_email
-    email = session_email()
-    u = (db.query(User).filter(func.lower(User.email) == (email or "").lower()).first()
-         or db.query(User).filter(User.roles.contains("ADMINISTRATOR")).first())
+    u = _current_user(db)
     c = _company(db)
     return {**user_full(u), "companyId": c.id, "nivel": perm.ator(db).nivel,
             "modules": c.modules.split(","), "addOns": c.add_ons.split(",") if c.add_ons else []}
+
+
+@router.patch("/me")
+def update_me(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Meu Perfil — cada um só edita o próprio nome e assinatura de e-mail,
+    sem precisar de perm nenhuma (não é gerenciar OUTRO usuário)."""
+    u = _current_user(db)
+    if not u:
+        raise HTTPException(404, "Usuário operacional não encontrado para esta sessão.")
+    if "name" in payload:
+        name = (payload["name"] or "").strip()
+        if not name:
+            raise HTTPException(400, "Nome não pode ficar vazio.")
+        u.name = name
+    if "emailSignature" in payload:
+        u.email_signature = payload["emailSignature"] or ""
+    db.commit()
+    return user_full(u)
+
+
+@router.post("/me/avatar")
+async def upload_avatar(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    u = _current_user(db)
+    if not u:
+        raise HTTPException(404, "Usuário operacional não encontrado para esta sessão.")
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(400, "Envie uma imagem.")
+    content = await file.read()
+    if len(content) > 4 * 1024 * 1024:
+        raise HTTPException(400, "Imagem maior que 4MB.")
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+        img = Image.open(BytesIO(content)).convert("RGB")
+        img.thumbnail((200, 200))
+        out_dir = os.path.join(WEB, "uploads", "avatars")
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, f"{u.id}.jpg")
+        img.save(path, "JPEG", quality=85)
+    except Exception as exc:
+        raise HTTPException(400, f"Não consegui processar a imagem: {exc}")
+    u.avatar_url = f"/uploads/avatars/{u.id}.jpg?v={int(datetime.utcnow().timestamp())}"
+    db.commit()
+    return user_full(u)
 
 
 @router.get("/me/company")
@@ -98,6 +149,58 @@ def update_permissions_config(payload: dict = Body(...), db: Session = Depends(g
         c.statistics_access = bool(payload["statisticsAccess"])
     db.commit()
     return permissions_config(db)
+
+
+@router.get("/flow/email/configuration")
+def email_configuration(db: Session = Depends(get_db)):
+    c = _company(db)
+    return {"fromName": c.email_from_name, "fromAddress": c.email_from_address,
+            "domainVerified": c.email_domain_verified}
+
+
+@router.patch("/flow/email/configuration")
+def update_email_configuration(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Remetente de e-mail — antes só dava pra trocar editando SMTP_FROM no
+    .env do servidor. Trocar o endereço derruba a verificação de domínio:
+    é outro domínio, precisa provar de novo que tem SPF."""
+    perm.ator(db).exigir("gestor", "configurar remetente de e-mail")
+    c = _company(db)
+    if "fromName" in payload:
+        c.email_from_name = (payload["fromName"] or "").strip()
+    if "fromAddress" in payload:
+        novo = (payload["fromAddress"] or "").strip().lower()
+        if novo != c.email_from_address:
+            c.email_domain_verified = False
+        c.email_from_address = novo
+    db.commit()
+    return email_configuration(db)
+
+
+@router.post("/flow/email/configuration/verify")
+def verify_email_domain(db: Session = Depends(get_db)):
+    """Confere de verdade — consulta o TXT do domínio e procura um SPF
+    (v=spf1). Não é "liguei e acreditei": se não achar, continua False."""
+    perm.ator(db).exigir("gestor", "verificar domínio de e-mail")
+    c = _company(db)
+    endereco = c.email_from_address
+    if not endereco or "@" not in endereco:
+        raise HTTPException(400, "Configure um endereço de e-mail remetente antes de verificar.")
+    dominio = endereco.rsplit("@", 1)[-1]
+    try:
+        import dns.resolver
+        respostas = dns.resolver.resolve(dominio, "TXT", lifetime=10)
+        achou = any("v=spf1" in b"".join(r.strings).decode("utf-8", "ignore").lower()
+                   for r in respostas)
+    except Exception as exc:
+        c.email_domain_verified = False
+        db.commit()
+        return {"domainVerified": False, "domain": dominio,
+                "message": f"Não consegui verificar {dominio}: {type(exc).__name__}."}
+    c.email_domain_verified = achou
+    db.commit()
+    return {"domainVerified": achou, "domain": dominio,
+            "message": "Registro SPF encontrado." if achou
+                      else f"Nenhum registro SPF encontrado em {dominio}."}
 
 
 @router.get("/featureflag")

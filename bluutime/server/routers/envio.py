@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session
 
 from .. import agenda, auditoria, channels, perm, render, serial, webhooks
 from ..db import get_db
-from ..models import (AuditLog, CadenceStep, Conversation, Delivery, Lead,
-                      LeadActivity, Message, Template, User, channel_of)
+from ..models import (AuditLog, CadenceStep, Company, Conversation, Delivery,
+                      Lead, LeadActivity, Message, Template, User, channel_of)
 
 router = APIRouter(prefix="/api/envio")
 
@@ -145,10 +145,19 @@ async def enviar_atividade(aid: int, payload: dict = Body(default={}),
                                  f"{', '.join(faltando)}. Reenvie com forcar=true "
                                  "se quiser mandar assim mesmo.")
 
+    if canal == "EMAIL" and user and user.email_signature:
+        corpo = f"{corpo}\n\n{user.email_signature}"
+
     destino = lead.email if canal == "EMAIL" else lead.phone
     bloqueio = _pode_enviar(lead, canal, bool(payload.get("foraDaJanela")))
     if bloqueio:
         resultado = channels.SendResult("BLOCKED", canal, error=bloqueio)
+    elif canal == "EMAIL":
+        empresa = db.query(Company).first()
+        resultado = await channels.send(canal, to=destino, body=corpo, subject=assunto,
+                                        reply_to=(user.email if user else ""),
+                                        from_name=(empresa.email_from_name if empresa else ""),
+                                        from_addr=(empresa.email_from_address if empresa else ""))
     else:
         resultado = await channels.send(canal, to=destino, body=corpo, subject=assunto,
                                         reply_to=(user.email if user else ""))

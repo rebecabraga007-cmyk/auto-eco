@@ -80,6 +80,13 @@ class Company(Base):
     leads_add_manual: Mapped[bool] = mapped_column(Boolean, default=True)
     statistics_access: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    # Remetente de e-mail — antes só dava pra trocar editando SMTP_FROM no
+    # .env do servidor. `email_domain_verified` é checado de verdade (registro
+    # SPF por DNS), não é só um "liguei e acreditei".
+    email_from_name: Mapped[str] = mapped_column(String(120), default="")
+    email_from_address: Mapped[str] = mapped_column(String(160), default="")
+    email_domain_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+
 
 class Client(Base):
     """A entidade que o Meetime não tem: o cliente para quem a BLU prospecta."""
@@ -113,6 +120,10 @@ class User(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     online: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Perfil pessoal — a assinatura entra de verdade no fim do corpo quando o
+    # canal é e-mail (server/routers/envio.py); antes não existia nem o campo.
+    email_signature: Mapped[str] = mapped_column(Text, default="")
+    avatar_url: Mapped[str] = mapped_column(String(300), default="")
     team: Mapped["Team | None"] = relationship(back_populates="users")
 
     @property

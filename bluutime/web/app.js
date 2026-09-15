@@ -240,10 +240,18 @@ function aplicarPermissoesNav(nivel) {
   });
 }
 
+function renderNavAvatar() {
+  const el = document.getElementById("navAvatar");
+  if (!el) return;
+  el.innerHTML = state.me.avatarUrl
+    ? `<img src="${h(state.me.avatarUrl)}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`
+    : h(state.me.initials || "·");
+}
+
 async function boot() {
   state.me = await api("/api/me");
   document.getElementById("navUser").textContent = state.me.name;
-  document.getElementById("navAvatar").textContent = state.me.initials || "·";
+  renderNavAvatar();
   aplicarPermissoesNav(state.me.nivel || "sdr");
   document.body.classList.remove("app-loading");
   loginShell.classList.add("hidden");
@@ -3949,6 +3957,64 @@ PAGES["capiblu-consumo"] = {
   },
 };
 
+/* ── Meu perfil ──────────────────────────────────────────────────────── */
+PAGES["meu-perfil"] = {
+  area: "Empresa", title: "Meu perfil",
+  async render() {
+    const me = state.me;
+    view.innerHTML = `
+      ${panel("Meu perfil", `
+        <div class="text-center mb-20">
+          <div style="width:78px;height:78px;border-radius:50%;margin:0 auto;overflow:hidden;
+                      background:var(--body);display:flex;align-items:center;justify-content:center;
+                      font-size:28px;color:var(--text)">
+            ${me.avatarUrl ? `<img src="${h(me.avatarUrl)}" alt="" style="width:100%;height:100%;object-fit:cover">`
+                           : h(me.initials || "?")}
+          </div>
+          <div class="mt-10"><label class="btn btn-default btn-xs" style="cursor:pointer">
+            Trocar foto<input type="file" id="avatarInput" accept="image/*" hidden></label>
+            <span class="text-muted text-size-small ml-5">JPG/PNG, até 4MB</span></div>
+        </div>
+        <div class="field"><label>Nome</label>
+          <input class="form-control" id="perfNome" value="${h(me.name)}"></div>
+        <div class="field"><label>E-mail</label>
+          <input class="form-control" value="${h(me.email)}" disabled></div>
+        <div class="field"><label>Assinatura de e-mail
+          <span class="text-muted text-size-small">— entra no fim de todo e-mail enviado pela cadência</span></label>
+          <textarea class="form-control" id="perfAssinatura" rows="4">${h(me.emailSignature || "")}</textarea></div>
+        <div class="toolbar mt-10" style="border:0;padding:0;background:none">
+          <span class="spacer"></span>
+          <button class="btn btn-main btn-sm" id="perfSalvar">Atualizar dados</button>
+        </div>`)}`;
+
+    document.getElementById("avatarInput").onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        const atualizado = await apiUpload("/api/me/avatar", file);
+        state.me = { ...state.me, ...atualizado };
+        renderNavAvatar();
+        toast("Foto atualizada.", "ok");
+        go("meu-perfil");
+      } catch (err) { toast(err.message, "err"); }
+    };
+    document.getElementById("perfSalvar").onclick = async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        const atualizado = await api("/api/me", { method: "PATCH", body: {
+          name: document.getElementById("perfNome").value.trim(),
+          emailSignature: document.getElementById("perfAssinatura").value,
+        } });
+        state.me = { ...state.me, ...atualizado };
+        document.getElementById("navUser").textContent = state.me.name;
+        toast("Perfil atualizado.", "ok");
+        go("meu-perfil");
+      } catch (err) { toast(err.message, "err"); btn.disabled = false; }
+    };
+  },
+};
+
 /* ── Administração ───────────────────────────────────────────────────── */
 PAGES.usuarios = {
   area: "Empresa", title: "Usuários e times",
@@ -4118,11 +4184,11 @@ const DIAS_SEMANA = [[1, "Seg"], [2, "Ter"], [3, "Qua"], [4, "Qui"], [5, "Sex"],
 PAGES.ajustes = {
   area: "Prospecção", title: "Ajustes",
   async render() {
-    const [cfg, reasons, fields, holidays, fitscore, feedbackCfg, permCfg] = await Promise.all([
+    const [cfg, reasons, fields, holidays, fitscore, feedbackCfg, permCfg, emailCfg] = await Promise.all([
       api("/api/flow/configuration"), api("/api/flow/lost-reasons"),
       api("/api/flow/new-lead-fields"), api("/api/flow/configuration/holidays"),
       api("/api/flow/fitscore"), api("/api/flow/deal-feedback/configuration"),
-      api("/api/flow/permissions/configuration")]);
+      api("/api/flow/permissions/configuration"), api("/api/flow/email/configuration")]);
     const camposPersonalizados = fields.filter((f) => f.customField);
 
     view.innerHTML = `
@@ -4248,7 +4314,27 @@ PAGES.ajustes = {
         table(["Feriado", "Data"], holidays.map((x) => ({ cells: [h(x.name || "—"), fmtDate(x.date)] }))),
         { subtitle: `Dias úteis: ${cfg.workingDays.map((v) => DIAS_SEMANA.find(([d]) => d === v)[1]).join(", ")}. `
                     + "A fila não agenda atividade fora deles.",
-          actions: `<button class="btn btn-main btn-xs" id="newHoliday">Adicionar feriado</button>` })}`;
+          actions: `<button class="btn btn-main btn-xs" id="newHoliday">Adicionar feriado</button>` })}
+
+      ${panel("E-mail — remetente", `
+        <div class="alert alert-info alert-styled-left">
+          Nome e endereço que aparecem como remetente nos e-mails de cadência. Trocar o endereço exige
+          verificar o domínio de novo (checa o registro SPF por DNS).
+        </div>
+        <div class="filter-row" style="grid-template-columns:1fr 1fr">
+          <div><label class="text-muted text-size-small">Nome do remetente</label>
+            <input class="form-control" id="emlNome" value="${h(emailCfg.fromName)}" placeholder="BLU Sales Group"></div>
+          <div><label class="text-muted text-size-small">E-mail do remetente</label>
+            <input class="form-control" id="emlEndereco" value="${h(emailCfg.fromAddress)}" placeholder="contato@suaempresa.com.br"></div>
+        </div>
+        <div class="toolbar mt-10" style="border:0;padding:0;background:none;gap:10px">
+          <span id="emlBadge">${emailCfg.domainVerified
+              ? `<span class="pill green">Domínio verificado</span>`
+              : `<span class="pill amber">Domínio não verificado</span>`}</span>
+          <span class="spacer"></span>
+          <button class="btn btn-default btn-sm" id="emlVerificar">Verificar domínio</button>
+          <button class="btn btn-main btn-sm" id="emlSalvar">Salvar</button>
+        </div>`)}`;
 
     document.getElementById("cfgDias").onclick = (e) => {
       const b = e.target.closest(".chip"); if (!b) return;
@@ -4297,6 +4383,30 @@ PAGES.ajustes = {
         toast("Permissões salvas.", "ok");
         go("ajustes");
       } catch (err) { toast(err.message, "err"); btn.disabled = false; }
+    };
+    document.getElementById("emlSalvar").onclick = async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        await api("/api/flow/email/configuration", { method: "PATCH", body: {
+          fromName: document.getElementById("emlNome").value.trim(),
+          fromAddress: document.getElementById("emlEndereco").value.trim(),
+        } });
+        toast("Remetente salvo.", "ok");
+        go("ajustes");
+      } catch (err) { toast(err.message, "err"); btn.disabled = false; }
+    };
+    document.getElementById("emlVerificar").onclick = async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        const r = await api("/api/flow/email/configuration/verify", { method: "POST" });
+        document.getElementById("emlBadge").innerHTML = r.domainVerified
+          ? `<span class="pill green">Domínio verificado</span>`
+          : `<span class="pill amber">Domínio não verificado</span>`;
+        toast(r.message, r.domainVerified ? "ok" : "err");
+      } catch (err) { toast(err.message, "err"); }
+      btn.disabled = false;
     };
     view.querySelectorAll("[data-del-reason]").forEach((b) => {
       b.onclick = async () => {
