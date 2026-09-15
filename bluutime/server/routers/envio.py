@@ -189,6 +189,8 @@ async def enviar_atividade(aid: int, payload: dict = Body(default={}),
         lead.current_step += 1
         if lead.status == "WAITING":
             lead.status = "EXECUTING"
+        webhooks.enfileirar(db, "ACTIVITY.DONE", {**serial.lead_activity(act, resultado.at),
+                                                   "lead": serial.lead(lead)})
 
     if resultado.status == "SENT":
         webhooks.enfileirar(db, "MESSAGE.SENT", {

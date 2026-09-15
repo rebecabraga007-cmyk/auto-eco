@@ -722,9 +722,11 @@ function openExecuteModal(act) {
     go("execucao");
   };
   m.root.querySelector("[data-won]").onclick = async () => {
-    await api(`/api/flow/execution/leads/${act.lead.id}/outcome`,
-      { method: "POST", body: { outcome: "WON" } });
-    m.close(); toast("Lead marcado como ganho.", "ok"); go("execucao");
+    try {
+      await api(`/api/flow/execution/leads/${act.lead.id}/outcome`,
+        { method: "POST", body: { outcome: "WON" } });
+      m.close(); toast("Lead marcado como ganho.", "ok"); go("execucao");
+    } catch (e) { toast(e.message, "err"); }
   };
   m.root.querySelector("[data-lost]").onclick = () => { m.close(); openLostModal(act.lead.id, () => go("execucao")); };
 }
@@ -742,10 +744,12 @@ function openLostModal(leadId, after) {
   m.root.querySelector("[data-ok]").onclick = async () => {
     const reason = m.root.querySelector("#lostReason").value;
     if (!reason) return toast("Escolha o motivo da perda.", "err");
-    await api(`/api/flow/execution/leads/${leadId}/outcome`, { method: "POST", body: {
-      outcome: "LOST", lostReasonId: Number(reason),
-      annotations: m.root.querySelector("#lostNotes").value } });
-    m.close(); toast("Lead marcado como perdido."); after && after();
+    try {
+      await api(`/api/flow/execution/leads/${leadId}/outcome`, { method: "POST", body: {
+        outcome: "LOST", lostReasonId: Number(reason),
+        annotations: m.root.querySelector("#lostNotes").value } });
+      m.close(); toast("Lead marcado como perdido."); after && after();
+    } catch (e) { toast(e.message, "err"); }
   };
 }
 
@@ -920,8 +924,10 @@ async function openLeadModal(id) {
   m.root.querySelector("[data-close2]").onclick = m.close;
   m.root.querySelector("[data-edit]").onclick = () => { m.close(); openLeadForm(l); };
   m.root.querySelector("[data-won]").onclick = async () => {
-    await api(`/api/flow/execution/leads/${l.id}/outcome`, { method: "POST", body: { outcome: "WON" } });
-    m.close(); toast("Lead ganho.", "ok"); go(state.page);
+    try {
+      await api(`/api/flow/execution/leads/${l.id}/outcome`, { method: "POST", body: { outcome: "WON" } });
+      m.close(); toast("Lead ganho.", "ok"); go(state.page);
+    } catch (e) { toast(e.message, "err"); }
   };
   m.root.querySelector("[data-lost]").onclick = () => { m.close(); openLostModal(l.id, () => go(state.page)); };
   m.root.querySelector("[data-wa]").onclick = async () => {
@@ -4135,10 +4141,14 @@ PAGES.integracoes = {
         body: `<div class="field"><label>URL de destino *</label>
             <input class="form-control" id="whUrl" placeholder="https://..."></div>
           <div class="field"><label>Eventos</label>
-            <select class="form-control" id="whEvents" multiple size="3">
+            <select class="form-control" id="whEvents" multiple size="7">
               <option value="LEAD.WON" selected>LEAD.WON</option>
               <option value="LEAD.LOST">LEAD.LOST</option>
               <option value="LEAD.CREATED">LEAD.CREATED</option>
+              <option value="LEAD.REPLIED">LEAD.REPLIED</option>
+              <option value="ACTIVITY.DONE">ACTIVITY.DONE</option>
+              <option value="MESSAGE.SENT">MESSAGE.SENT</option>
+              <option value="BASE.IMPORTED">BASE.IMPORTED</option>
             </select></div>`,
         footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
                  <button class="btn btn-main btn-sm" data-save>Criar</button>`,

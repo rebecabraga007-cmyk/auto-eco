@@ -321,6 +321,17 @@ def _custom_values(db: Session, lead_id: int) -> dict:
     return dict(rows)
 
 
+def _campos_faltando(db: Session, lead_id: int, campo_obrigatorio: str) -> list[str]:
+    """Nomes dos campos personalizados marcados como obrigatórios (ganho ou
+    perda, conforme `campo_obrigatorio`) que este lead ainda não preencheu."""
+    campos = db.query(CustomField).filter(
+        getattr(CustomField, campo_obrigatorio).is_(True)).all()
+    if not campos:
+        return []
+    valores = _custom_values(db, lead_id)
+    return [c.name for c in campos if not (valores.get(c.identifier) or "").strip()]
+
+
 def _fitscore(db: Session, custom: dict) -> int:
     """Soma os pontos das regras de fitscore que baterem no lead.
 
@@ -424,6 +435,7 @@ def create_lead(payload: dict = Body(...), db: Session = Depends(get_db)):
     db.add(l)
     db.flush()
     _schedule_cadence(db, l)
+    _fire_webhooks(db, "LEAD.CREATED", serial.lead(l))
     db.commit()
     return serial.lead(l)
 
@@ -662,6 +674,8 @@ def import_base(payload: dict = Body(...), db: Session = Depends(get_db)):
     base.number_of_leads = imported
     base.discarded_leads = discarded
     base.status = "COMPLETED"
+    _fire_webhooks(db, "BASE.IMPORTED", {"leadBaseId": base.id, "name": base.name,
+                                         "imported": imported, "discarded": discarded})
     db.commit()
     return {"leadBase": serial.lead_base(base), "imported": imported, "discarded": discarded}
 
@@ -744,6 +758,9 @@ def execute_activity(aid: int, payload: dict = Body(default={}),
                   .update({"status": "PAUSED"}, synchronize_session=False))
         lead.status = "ON_EXTRA_ACTIVITY"
         _fire_webhooks(db, "LEAD.REPLIED", serial.lead(lead))
+    if a.status == "DONE":
+        _fire_webhooks(db, "ACTIVITY.DONE", {**serial.lead_activity(a, datetime.utcnow()),
+                                             "lead": serial.lead(lead)})
     db.commit()
     return {"ok": True, "pausedActivities": paused,
             "activity": serial.lead_activity(a, datetime.utcnow()),
@@ -791,11 +808,19 @@ def lead_outcome(lid: int, payload: dict = Body(...), db: Session = Depends(get_
     outcome = payload.get("outcome")
     now = datetime.utcnow()
     if outcome == "WON":
+        faltando = _campos_faltando(db, lid, "won_mandatory")
+        if faltando:
+            raise HTTPException(422, "Preencha os campos obrigatórios para marcar como "
+                                     f"ganho: {', '.join(faltando)}.")
         lead.status, lead.won_at = "WON", now
         company = db.query(Company).first()
         if company and company.deal_feedback_enabled:
             db.add(LeadFeedback(lead_id=lid, user_id=lead.sdr_id))
     elif outcome == "LOST":
+        faltando = _campos_faltando(db, lid, "lost_mandatory")
+        if faltando:
+            raise HTTPException(422, "Preencha os campos obrigatórios para marcar como "
+                                     f"perdido: {', '.join(faltando)}.")
         reason_id = payload.get("lostReasonId")
         if reason_id and not db.get(LostReason, reason_id):
             raise HTTPException(400, "Motivo de perda inválido.")
