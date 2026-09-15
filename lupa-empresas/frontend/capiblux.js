@@ -7577,3 +7577,44 @@ async function mtBaixarNovos() {
   }).observe(document.body, { childList: true, subtree: true });
   aplica();
 })();
+
+/* ══════════════════════════════════════════════════════════════════════
+   O ERRO DO PROXY CHEGA EM `detail`; AS TELAS LEEM `message`
+
+   Caso concreto, 15/set/2026: um SDR bateu no limite de 100 consultas do dia
+   e reportou que "a API da Assertiva caiu". A Assertiva estava no ar — o
+   proxy é que respondeu 429 com
+
+       {"detail": "Limite diário de 100 consultas atingido. Fale com um
+                   admin para aumentar."}
+
+   e as telas, que olham `message`, mostraram um "Falhou." seco. A mensagem
+   certa existia e morria no JSON: mesmo defeito do filtro morto, e o
+   resultado é alguém investigando a fornecedora errada.
+
+   Normalizar na porta de entrada, e não em vinte lugares: toda resposta de
+   `/api/` passa a carregar `message` mesmo quando o servidor mandou
+   `detail`. As telas continuam como estão.
+   ══════════════════════════════════════════════════════════════════════ */
+(function normalizaErroDaApi() {
+  const original = window.fetch;
+  window.fetch = async function (...args) {
+    const r = await original.apply(this, args);
+    const url = String((args[0] && args[0].url) || args[0] || '');
+    if (!url.includes('/api/')) return r;
+    const jsonOriginal = r.json.bind(r);
+    r.json = async () => {
+      const d = await jsonOriginal();
+      if (d && typeof d === 'object' && !Array.isArray(d)) {
+        if (d.detail && !d.message) d.message = String(d.detail);
+        // HTTP de erro sem `status` no corpo: as telas testam
+        // `j.status !== 'ok'`, o que já funcionava por acidente (undefined).
+        // Deixar explícito evita que o próximo `if (j.status === 'error')`
+        // nasça quebrado.
+        if (r.status >= 400 && !d.status) d.status = 'error';
+      }
+      return d;
+    };
+    return r;
+  };
+})();

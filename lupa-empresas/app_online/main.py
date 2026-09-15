@@ -125,7 +125,12 @@ _LOCAL_PREFIXES = ("/api/auth/", "/api/admin/", "/api/v1/")
 _CONSULTA_PREFIXES = (
     "/api/person", "/api/phone", "/api/assertiva", "/api/company",
     "/api/dossie", "/api/companies/search", "/api/prospeccao/pessoas",
-    "/api/enrich/upload", "/api/enrich/run", "/api/enrich/export",
+    # Do enriquecimento, so o RUN gasta. Subir a planilha e baixar o XLSX nao
+    # chamam fornecedor nenhum -- o upload so le o arquivo e o export so
+    # escreve o que ja esta na memoria da tela. Estavam contando, e contavam
+    # em dobro no fluxo normal: quem sobe, enriquece e baixa gastava tres
+    # "consultas" tendo pago por uma.
+    "/api/enrich/run",
     # O funil é o endpoint MAIS caro do app: um lote pode disparar dezenas de
     # consultas pagas num clique. Precisa ser nomeado inteiro, e não como
     # "/api/funil", porque `/api/funil/empresa` só lê a base da Receita local
