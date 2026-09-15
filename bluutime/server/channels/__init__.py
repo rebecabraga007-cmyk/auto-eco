@@ -12,6 +12,7 @@ from .base import STATUSES, Channel, SendResult
 from .email import Email
 from .whatsapp import WhatsApp
 from .wuzapi import Wuzapi
+from .zenvia import Zenvia
 
 _CHANNELS: dict[str, Channel] = {}
 
@@ -42,7 +43,7 @@ def get(channel: str) -> Channel | None:
             _CHANNELS[cache] = cls()
         return _CHANNELS[cache]
     if key not in _CHANNELS:
-        cls = {"EMAIL": Email}.get(key)
+        cls = {"EMAIL": Email, "SMS": Zenvia}.get(key)
         if not cls:
             return None
         _CHANNELS[key] = cls()
@@ -69,7 +70,7 @@ async def send(channel: str, *, to: str, body: str, subject: str = "",
 
 async def states() -> list[dict]:
     out = []
-    for key in ("WHATSAPP", "EMAIL"):
+    for key in ("WHATSAPP", "EMAIL", "SMS"):
         st = await get(key).state()
         st["sendingEnabled"] = envio_ligado()
         out.append(st)
