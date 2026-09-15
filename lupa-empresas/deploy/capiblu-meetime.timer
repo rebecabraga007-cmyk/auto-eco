@@ -1,0 +1,19 @@
+[Unit]
+Description=Atualiza a base da Meetime todo dia as 3h da manha (horario de Brasilia)
+
+[Timer]
+# 3h de Brasilia, escrito com o fuso no proprio agendamento em vez de "06:00
+# UTC": o servidor roda em UTC, e a conversao na cabeca de quem le seria uma
+# chance de erro a cada mudanca de regra de horario. O systemd 259 resolve o
+# fuso sozinho.
+OnCalendar=*-*-* 03:00:00 America/Sao_Paulo
+# A hora exata nao importa (ninguem esta olhando as 3h) e um pouco de folga
+# evita que este job e todos os outros do servidor acordem no mesmo segundo.
+AccuracySec=5min
+RandomizedDelaySec=10min
+# Se o servidor estava desligado na hora, roda quando voltar: a base velha e
+# o problema, nao o horario.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

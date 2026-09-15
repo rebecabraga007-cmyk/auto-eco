@@ -4366,6 +4366,41 @@ async def meetime_salvar_token(request: Request, payload: dict = Body(default={}
         email, request.headers.get("x-user-grupo") or "")}
 
 
+@app.post("/api/meetime/contas")
+async def meetime_contas(request: Request, payload: dict = Body(default={})):
+    """As contas Meetime DA PESSOA: cadastrar, nomear, escolher, tirar.
+
+    Uma rota com `acao` em vez de quatro rotas: o que muda entre elas e uma
+    palavra, e a tela chama as quatro do mesmo lugar.
+
+    Nao e admin: a conta e do proprio operador. O token entra aqui uma vez, na
+    hora de cadastrar, e NUNCA volta -- a listagem devolve nome e quatro
+    digitos finais, que bastam para reconhecer a conta e nao bastam para usar.
+    """
+    email = request.headers.get("x-user-email") or ""
+    grupo = request.headers.get("x-user-grupo") or ""
+    acao = str(payload.get("acao") or "listar").strip().lower()
+    tid = str(payload.get("id") or "")
+    nome = str(payload.get("nome") or "")
+
+    if acao == "listar":
+        r = {"status": "ok"}
+    elif acao == "add":
+        r = meetime.add_token(email, nome, str(payload.get("token") or ""),
+                              usar=payload.get("usar", True) is not False)
+    elif acao == "usar":
+        r = meetime.escolher_token(email, tid)
+    elif acao == "renomear":
+        r = meetime.renomear_token(email, tid, nome)
+    elif acao == "remover":
+        r = meetime.remover_token(email, tid)
+    else:
+        return {"status": "error", "message": "Ação desconhecida: %s" % acao}
+    if r.get("status") != "ok":
+        return r
+    return {"status": "ok", **meetime.status_usuario(email, grupo)}
+
+
 @app.post("/api/meetime/testar")
 async def meetime_testar(request: Request, payload: dict = Body(default={})):
     """Diz se o token serve — em uma requisição, sem rodar a dedup inteira.

@@ -83,15 +83,55 @@ def _chave_usuario(email: str) -> str:
     return (email or "").strip().lower()
 
 
-def set_token_usuario(email: str, token: str) -> dict:
-    """Grava (ou apaga, com token vazio) o token de UM usuario."""
-    chave = _chave_usuario(email)
-    if not chave:
-        return {"status": "error", "message": "Sem usuário identificado."}
+# ---------------------------------------------------------------------------
+# VARIOS TOKENS POR PESSOA, COM NOME E UM ESCOLHIDO
+#
+# Quem opera lida com mais de uma conta Meetime: a da BLU, a do cliente que
+# contratou o servico, a da franquia. Antes cabia UM token por pessoa, e
+# trocar de conta significava colar o token de novo -- na pratica, ninguem
+# trocava, e a dedup rodava contra a conta errada sem avisar.
+#
+# O formato guardado, por pessoa:
+#
+#   {"ativo": "<id>", "tokens": [{"id", "nome", "token", "criado"}]}
+#
+# O `id` e o inicio do SHA-256 do proprio token -- o mesmo hash que
+# `meetime_base.id_da_conta` usa (la com prefixo "t:" e 16 caracteres, aqui
+# com 12). Isso da duas coisas de graca: id estavel entre sessoes sem guardar
+# contador nenhum, e cadastrar o mesmo token duas vezes nao cria duplicata --
+# atualiza o nome.
+#
+# O formato antigo ({"token": "..."}) continua sendo lido: ele vira o primeiro
+# item da lista, com o nome "Principal". Migracao na leitura, nao por script:
+# a config e um arquivo JSON e um script de migracao que roda uma vez sempre
+# acha um ambiente onde nao rodou.
+# ---------------------------------------------------------------------------
+
+def _id_token(token: str) -> str:
+    return hashlib.sha256((token or "").strip().encode()).hexdigest()[:12]
+
+
+def _registro(email: str) -> dict:
+    """O registro da pessoa, ja no formato novo."""
+    reg = _tokens_usuarios().get(_chave_usuario(email)) or {}
+    if isinstance(reg, dict) and reg.get("tokens"):
+        return {"ativo": reg.get("ativo") or "",
+                "tokens": [t for t in reg["tokens"] if t.get("token")]}
+    # formato antigo: um token so
+    antigo = str((reg or {}).get("token") or "").strip()
+    if antigo:
+        tid = _id_token(antigo)
+        return {"ativo": tid,
+                "tokens": [{"id": tid, "nome": "Principal", "token": antigo,
+                            "criado": 0}]}
+    return {"ativo": "", "tokens": []}
+
+
+def _salvar_registro(email: str, reg: dict) -> None:
     usuarios = _tokens_usuarios()
-    token = (token or "").strip()
-    if token:
-        usuarios[chave] = {"token": token}
+    chave = _chave_usuario(email)
+    if reg.get("tokens"):
+        usuarios[chave] = reg
     else:
         usuarios.pop(chave, None)
     config_store.set_many({"meetime_usuarios": usuarios})
@@ -99,25 +139,157 @@ def set_token_usuario(email: str, token: str) -> dict:
     # indice da conta anterior, senao a dedup seguiria comparando contra a
     # base errada -- e silenciosamente, que e o pior jeito de errar aqui.
     _cache.clear()
-    return {"status": "ok", "configurado": bool(token)}
+
+
+def listar_tokens(email: str) -> list:
+    """As contas cadastradas, SEM o segredo.
+
+    Volta nome, os quatro ultimos digitos e qual esta em uso. Quatro digitos
+    bastam para reconhecer a conta e nao bastam para usar o token.
+    """
+    reg = _registro(email)
+    return [{"id": t["id"], "nome": t.get("nome") or "sem nome",
+             "final": str(t["token"])[-4:], "criado": t.get("criado") or 0,
+             "ativo": t["id"] == reg["ativo"]}
+            for t in reg["tokens"]]
+
+
+def add_token(email: str, nome: str, token: str, usar: bool = True) -> dict:
+    """Cadastra uma conta. Token repetido so troca o nome."""
+    chave = _chave_usuario(email)
+    token = (token or "").strip()
+    if not chave:
+        return {"status": "error", "message": "Sem usuário identificado."}
+    if not token:
+        return {"status": "error", "message": "Cole o token da Meetime."}
+    reg = _registro(email)
+    tid = _id_token(token)
+    nome = (nome or "").strip()[:60] or "Conta %d" % (len(reg["tokens"]) + 1)
+    for t in reg["tokens"]:
+        if t["id"] == tid:
+            t["nome"] = nome
+            break
+    else:
+        reg["tokens"].append({"id": tid, "nome": nome, "token": token,
+                              "criado": int(time.time())})
+    if usar or not reg["ativo"]:
+        reg["ativo"] = tid
+    _salvar_registro(email, reg)
+    return {"status": "ok", "id": tid, "tokens": listar_tokens(email)}
+
+
+def escolher_token(email: str, tid: str) -> dict:
+    """Qual conta usar agora. A troca vale para tudo: dedup, aba de leads."""
+    reg = _registro(email)
+    if not any(t["id"] == tid for t in reg["tokens"]):
+        return {"status": "error", "message": "Essa conta não está cadastrada."}
+    reg["ativo"] = tid
+    _salvar_registro(email, reg)
+    return {"status": "ok", "tokens": listar_tokens(email)}
+
+
+def renomear_token(email: str, tid: str, nome: str) -> dict:
+    reg = _registro(email)
+    for t in reg["tokens"]:
+        if t["id"] == tid:
+            t["nome"] = (nome or "").strip()[:60] or t.get("nome") or "sem nome"
+            _salvar_registro(email, reg)
+            return {"status": "ok", "tokens": listar_tokens(email)}
+    return {"status": "error", "message": "Essa conta não está cadastrada."}
+
+
+def remover_token(email: str, tid: str) -> dict:
+    """Tira uma conta. O indice de leads dela NAO e apagado junto.
+
+    De proposito: a pessoa pode estar so limpando a lista de tokens, e refazer
+    o espelho de 12 mil leads custa minutos. Se ela cadastrar o mesmo token de
+    novo, o id e o mesmo e o espelho volta inteiro.
+    """
+    reg = _registro(email)
+    antes = len(reg["tokens"])
+    reg["tokens"] = [t for t in reg["tokens"] if t["id"] != tid]
+    if len(reg["tokens"]) == antes:
+        return {"status": "error", "message": "Essa conta não está cadastrada."}
+    if reg["ativo"] == tid:
+        reg["ativo"] = reg["tokens"][0]["id"] if reg["tokens"] else ""
+    _salvar_registro(email, reg)
+    return {"status": "ok", "tokens": listar_tokens(email)}
+
+
+def set_token_usuario(email: str, token: str) -> dict:
+    """Compatibilidade: grava um token (ou apaga tudo, com token vazio).
+
+    Continua existindo porque a tela antiga e a API publica chamam por aqui.
+    Token vazio apaga TODAS as contas da pessoa -- era o que o campo unico
+    fazia, e mudar esse significado em silencio seria pior.
+    """
+    if not (token or "").strip():
+        _salvar_registro(email, {"ativo": "", "tokens": []})
+        return {"status": "ok", "configurado": False}
+    r = add_token(email, "", token, usar=True)
+    return ({"status": "ok", "configurado": True} if r.get("status") == "ok"
+            else r)
 
 
 def token_do_usuario(email: str) -> str:
-    return str((_tokens_usuarios().get(_chave_usuario(email)) or {})
-               .get("token") or "").strip()
+    """O token da conta ESCOLHIDA. Vazio quando a pessoa nao tem nenhuma."""
+    reg = _registro(email)
+    if not reg["tokens"]:
+        return ""
+    ativo = reg["ativo"]
+    for t in reg["tokens"]:
+        if t["id"] == ativo:
+            return str(t["token"]).strip()
+    # Ativo apontando para conta removida: usa a primeira em vez de devolver
+    # vazio -- a pessoa TEM conta cadastrada, e dizer "nenhuma" seria mentira.
+    return str(reg["tokens"][0]["token"]).strip()
 
 
 def status_usuario(email: str, grupo_id: str = "") -> dict:
     """O que a tela precisa saber, sem o segredo."""
     meu = token_do_usuario(email)
+    contas = listar_tokens(email)
+    ativa = next((c for c in contas if c["ativo"]), None)
     return {
         "tem_proprio": bool(meu),
         # Quatro digitos bastam para reconhecer qual conta esta ativa e nao
         # bastam para usar o token.
         "final": meu[-4:] if len(meu) > 4 else "",
+        "nome_ativo": (ativa or {}).get("nome") or "",
+        "contas": contas,
         "tem_grupo": bool(_token(grupo_id)),
         "em_uso": "proprio" if meu else ("grupo" if _token(grupo_id) else "nenhum"),
     }
+
+
+def todas_as_contas() -> list:
+    """Toda conta Meetime conhecida pelo servidor, para o job da madrugada.
+
+    Junta as tres origens: as contas de cada pessoa, os tokens de grupo e o
+    token global do .env. Deduplicada pelo id (o hash do token), porque a
+    mesma conta cadastrada por duas pessoas e uma conta so -- sincronizar
+    duas vezes gastaria o dobro do tempo para o mesmo resultado.
+    """
+    vistos: dict[str, dict] = {}
+
+    def junta(token: str, rotulo: str):
+        token = (token or "").strip()
+        if not token:
+            return
+        tid = _id_token(token)
+        if tid not in vistos:
+            vistos[tid] = {"id": tid, "token": token, "rotulos": []}
+        if rotulo not in vistos[tid]["rotulos"]:
+            vistos[tid]["rotulos"].append(rotulo)
+
+    for chave in list(_tokens_usuarios().keys()):
+        reg = _registro(chave)
+        for t in reg["tokens"]:
+            junta(t.get("token"), "%s / %s" % (chave, t.get("nome") or "sem nome"))
+    for gid, dados in (_grupos_tokens() or {}).items():
+        junta((dados or {}).get("token"), "grupo %s" % gid)
+    junta(_cfg("meetime_token", "MEETIME_TOKEN", ""), "token global")
+    return list(vistos.values())
 
 
 def _token(grupo_id: str = "", usuario: str = "") -> str:

@@ -7166,6 +7166,58 @@ function mtCorpo(extra) {
   return JSON.stringify({ ...(extra || {}), ...(t ? { token: t } : {}) });
 }
 
+/* AS CONTAS: cadastrar, nomear, escolher, tirar.
+   Uma rota com `acao`, porque é a mesma pergunta com um verbo diferente. */
+async function mtContas(acao, extra) {
+  const d = await fetch(`${API}/api/meetime/contas`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ acao, ...(extra || {}) }),
+  }).then(r => r.json());
+  mtPintaContas(d);
+  return d;
+}
+
+function mtPintaContas(d) {
+  const box = document.getElementById('mt-contas');
+  if (!box) return;
+  const contas = (d && d.contas) || [];
+  if (!contas.length) {
+    box.innerHTML = '<span class="pf-advanced-hint">Nenhuma conta cadastrada'
+      + (d && d.tem_grupo ? ' — por enquanto vale a conta do seu grupo.' : '.')
+      + ' Cadastre uma abaixo.</span>';
+    return;
+  }
+  /* A conta ativa é um botão marcado, não um radio: a lista é curta e o clique
+     precisa ser o mesmo gesto de "usar esta". O × só aparece na que não está
+     em uso — tirar a conta ativa no meio de uma busca trocaria a base debaixo
+     de quem está olhando. */
+  box.innerHTML = contas.map(c => `
+    <span class="chip-ex" style="${c.ativo ? 'background:var(--blue-700);color:#fff' : ''}">
+      <button type="button" class="mt-usar" data-id="${esc(c.id)}"
+              title="Usar esta conta" style="all:unset;cursor:pointer">
+        ${c.ativo ? '● ' : '○ '}${esc(c.nome)} <small>••${esc(c.final)}</small></button>
+      <button type="button" class="mt-renomear" data-id="${esc(c.id)}"
+              data-nome="${esc(c.nome)}" title="Renomear">✎</button>
+      ${c.ativo ? '' : `<button type="button" class="mt-remover" data-id="${esc(c.id)}"
+              data-nome="${esc(c.nome)}" title="Tirar esta conta">✕</button>`}
+    </span>`).join(' ');
+
+  box.querySelectorAll('.mt-usar').forEach(b => b.addEventListener('click', async () => {
+    await mtContas('usar', { id: b.dataset.id });
+    mtResumo();
+    document.getElementById('mt-results').innerHTML = '';
+  }));
+  box.querySelectorAll('.mt-renomear').forEach(b => b.addEventListener('click', async () => {
+    const nome = prompt('Nome desta conta:', b.dataset.nome);
+    if (nome && nome.trim()) await mtContas('renomear', { id: b.dataset.id, nome: nome.trim() });
+  }));
+  box.querySelectorAll('.mt-remover').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm(`Tirar a conta "${b.dataset.nome}"? Os leads já lidos dela ficam `
+      + 'guardados — se você cadastrar o mesmo token de novo, eles voltam.')) return;
+    await mtContas('remover', { id: b.dataset.id });
+  }));
+}
+
 async function mtResumo() {
   const alvo = document.getElementById('mt-resumo');
   if (!alvo) return;
@@ -7206,6 +7258,7 @@ async function mtResumo() {
         <div class="filter-row" style="margin:8px 0 0;flex-wrap:wrap">${chips}</div>
       </div>`;
 
+    mtPintaContas(d);
     const sel = document.getElementById('mt-status');
     if (sel) {
       sel.innerHTML = '<option value="">Todos os status</option>'
@@ -7364,6 +7417,32 @@ async function mtBaixarNovos() {
     if (e.key === 'Enter') mtListar();
   });
   document.getElementById('mt-status')?.addEventListener('change', mtListar);
+
+  document.getElementById('mt-add')?.addEventListener('click', async () => {
+    const nome = document.getElementById('mt-nome');
+    const tok = document.getElementById('mt-novo-token');
+    const nota = document.getElementById('mt-add-nota');
+    if (!tok.value.trim()) { nota.textContent = 'Cole o token da Meetime.'; return; }
+    nota.innerHTML = '<span class="spinner"></span> conferindo…';
+    const d = await mtContas('add', { nome: nome.value.trim(), token: tok.value.trim() });
+    if (d.status !== 'ok') { nota.textContent = d.message || 'Não deu certo.'; return; }
+    /* CONFERE DEPOIS DE SALVAR, e diz o que a conta enxerga. Um token com uma
+       letra errada salvo em silêncio só aparece como problema às 3h da manhã,
+       no job — e aí ninguém está olhando. */
+    try {
+      const t = await fetch(`${API}/api/meetime/testar`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: tok.value.trim() }),
+      }).then(r => r.json());
+      nota.textContent = t.status === 'ok'
+        ? `Conta cadastrada e funcionando: ${(t.total_na_conta ?? t.total ?? '?')} lead(s) nela.`
+        : `Cadastrada, MAS o token não respondeu: ${t.message || 'erro'}. Confira e cadastre de novo.`;
+    } catch (err) {
+      nota.textContent = 'Cadastrada. Não consegui testar agora.';
+    }
+    nome.value = ''; tok.value = '';
+    mtResumo();
+  });
 
   document.getElementById('mt-file')?.addEventListener('change', async e => {
     const f = e.target.files[0];

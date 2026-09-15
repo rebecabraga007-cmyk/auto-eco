@@ -1,0 +1,16 @@
+[Unit]
+Description=CapiBLU - atualiza os leads de todas as contas Meetime
+# Roda FORA do processo do app: a sincronizacao de uma conta nova leva minutos
+# e escreve em SQLite. Dentro do app, competiria com as requisicoes pelo mesmo
+# event loop e um travamento aqui derrubaria a API junto.
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/capiblu/lupa-empresas/backend
+ExecStart=/opt/capiblu/venv/bin/python meetime_cron.py
+# Uma conta pode falhar (token revogado) sem que isso seja falha do job: o
+# script ja abre alerta na bolinha dos chamados e devolve 1. Nao queremos o
+# systemd marcando "failed" e parando de tentar amanha.
+SuccessExitStatus=0 1
+TimeoutStartSec=3600

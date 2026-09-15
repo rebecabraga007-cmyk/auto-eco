@@ -1171,18 +1171,41 @@
         <span class="en-num">1</span>
         <div class="en-fields-wrap">
           <div class="en-fields-head">
-            <strong>Sua conta</strong>
-            <span class="en-src-note" id="mt-conta-nota">usa o token que você configurou em ⚙️ Configurações</span>
+            <strong>Suas contas da Meetime</strong>
+            <span class="en-src-note" id="mt-conta-nota">a marcada é a que vale para a dedup e para esta aba</span>
           </div>
+          <!-- UMA PESSOA, VÁRIAS CONTAS. Quem opera lida com a conta da BLU, a
+               do cliente e a da franquia. Antes cabia um token só, e trocar
+               significava colar outro por cima — na prática ninguém trocava, e a
+               dedup rodava contra a conta errada em silêncio. O token entra aqui
+               uma vez; a lista mostra nome e os quatro últimos dígitos, que
+               bastam para reconhecer a conta e não bastam para usá-la. -->
+          <div id="mt-contas" class="filter-row" style="margin:0 0 8px;flex-wrap:wrap"></div>
+
+          <details id="mt-add-wrap" style="margin:0 0 8px">
+            <summary class="pf-advanced-hint" style="cursor:pointer">+ cadastrar outra conta</summary>
+            <div class="filter-row" style="margin:6px 0 0;flex-wrap:wrap">
+              <input id="mt-nome" type="text" placeholder="Nome (ex.: BLU, Zenvia franquia)"
+                     class="filter-select" style="width:220px" />
+              <input id="mt-novo-token" type="password" autocomplete="off"
+                     placeholder="Token da Meetime" class="filter-select" style="width:300px" />
+              <button type="button" id="mt-add" class="btn-secondary">Cadastrar</button>
+            </div>
+            <p class="pf-advanced-hint" id="mt-add-nota" style="margin:6px 0 0"></p>
+          </details>
+
           <div class="filter-row" style="margin:0">
             <button type="button" id="mt-sync" class="btn-primary">🔄 Atualizar da Meetime</button>
             <span class="pf-advanced-hint" id="mt-sync-nota" style="display:inline"></span>
           </div>
+          <p class="pf-advanced-hint" style="margin:6px 0 0">
+            Todas as contas cadastradas são atualizadas sozinhas às 3h da manhã.
+            Este botão serve para não esperar até amanhã.</p>
           <!-- O token avulso existe para conferir contra OUTRA conta sem
                trocar a configuração. Ele não é gravado em lugar nenhum: a
                identidade guardada é o SHA-256 dele. -->
           <details style="margin-top:8px">
-            <summary class="pf-advanced-hint" style="cursor:pointer">usar outro token só desta vez</summary>
+            <summary class="pf-advanced-hint" style="cursor:pointer">usar um token só desta vez, sem cadastrar</summary>
             <input id="mt-token" type="password" autocomplete="off" placeholder="Token da Meetime (não fica salvo)"
                    style="margin-top:6px;width:360px;max-width:100%" />
           </details>
