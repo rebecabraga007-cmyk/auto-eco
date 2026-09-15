@@ -814,20 +814,34 @@
   <div id="meetime-fundo" class="modal-fundo" hidden>
     <div class="modal-caixa" style="max-width:520px" role="dialog" aria-labelledby="meetime-titulo">
       <div class="modal-topo">
-        <h3 id="meetime-titulo">Minha conta Meetime</h3>
+        <h3 id="meetime-titulo">Minhas contas Meetime</h3>
         <button type="button" class="modal-x" id="meetime-fechar" aria-label="Fechar">×</button>
       </div>
       <div class="modal-corpo">
         <div id="meetime-atual" class="info-box" style="margin-bottom:10px">—</div>
 
+        <!-- VÁRIAS CONTAS, COM NOME. Este modal era de UM token: salvar outro
+             apagava o anterior. Quem opera lida com a conta da BLU, a do
+             cliente e a da franquia, e trocar exigia colar o token de novo —
+             na prática ninguém trocava e a dedup rodava contra a conta errada.
+             A marcada com ● é a que vale; ✘ renomeia, ✕ tira. -->
         <div class="pf-field">
-          <label for="meetime-token-campo">Token da sua conta Meetime</label>
-          <input id="meetime-token-campo" type="password" autocomplete="off"
-                 placeholder="cole o token aqui" />
+          <label>Contas cadastradas <span class="pf-advanced-hint" style="display:inline">— clique para escolher qual usar</span></label>
+          <div id="meetime-contas" class="filter-row" style="margin:4px 0 0;flex-wrap:wrap"></div>
+        </div>
+
+        <div class="pf-field" style="margin-top:10px">
+          <label for="meetime-nome-campo">Cadastrar outra conta</label>
+          <div class="filter-row" style="margin:4px 0 0;flex-wrap:wrap">
+            <input id="meetime-nome-campo" type="text" placeholder="Nome (ex.: BLU, Zenvia franquia)"
+                   style="width:190px" />
+            <input id="meetime-token-campo" type="password" autocomplete="off"
+                   placeholder="cole o token aqui" style="width:230px" />
+          </div>
           <div class="pf-advanced-hint">
-            Fica guardado no servidor e <b>nunca volta para a tela</b> — só os
-            quatro últimos dígitos, para você reconhecer qual conta está ativa.
-            Deixe vazio e salve para voltar a usar o token do seu grupo.
+            O token fica guardado no servidor e <b>nunca volta para a tela</b> —
+            só os quatro últimos dígitos, para você reconhecer a conta. Todas as
+            contas cadastradas são atualizadas sozinhas às 3h da manhã.
           </div>
         </div>
 
@@ -837,8 +851,8 @@
         </div>
       </div>
       <div class="modal-pe">
-        <button type="button" class="btn-secondary" id="meetime-apagar">Usar o do grupo</button>
-        <button type="button" class="btn-primary" id="meetime-salvar">Salvar</button>
+        <button type="button" class="btn-secondary" id="meetime-apagar">Tirar todas e usar a do grupo</button>
+        <button type="button" class="btn-primary" id="meetime-salvar">Cadastrar conta</button>
       </div>
     </div>
   </div>

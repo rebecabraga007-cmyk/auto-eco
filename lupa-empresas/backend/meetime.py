@@ -216,14 +216,25 @@ def remover_token(email: str, tid: str) -> dict:
     return {"status": "ok", "tokens": listar_tokens(email)}
 
 
-def set_token_usuario(email: str, token: str) -> dict:
-    """Compatibilidade: grava um token (ou apaga tudo, com token vazio).
+def set_token_usuario(email: str, token: str, apagar_tudo: bool = False) -> dict:
+    """Compatibilidade: cadastra um token. So apaga se pedirem explicitamente.
 
     Continua existindo porque a tela antiga e a API publica chamam por aqui.
-    Token vazio apaga TODAS as contas da pessoa -- era o que o campo unico
-    fazia, e mudar esse significado em silencio seria pior.
+
+    TOKEN VAZIO NAO APAGA MAIS NADA POR SI SO. Quando havia um token por
+    pessoa, "salvar vazio" era o jeito de voltar para o token do grupo -- um
+    gesto pequeno, com efeito pequeno. Com varias contas na lista, o mesmo
+    POST vazio apagaria TODAS elas, e qualquer chamada antiga (tela velha em
+    cache, cliente da API, um teste) faria isso em silencio. Perder a lista
+    de contas custa o reindexamento de milhares de leads.
+
+    Agora o gesto destrutivo precisa dizer o proprio nome: `apagar_tudo`.
     """
     if not (token or "").strip():
+        if not apagar_tudo:
+            return {"status": "error",
+                    "message": "Cole o token da conta. Para tirar todas as "
+                               "contas, use a opção de apagar."}
         _salvar_registro(email, {"ativo": "", "tokens": []})
         return {"status": "ok", "configurado": False}
     r = add_token(email, "", token, usar=True)

@@ -6769,8 +6769,10 @@ async function mtCarregaStatus() {
   caixa.textContent = 'Consultando…';
   try {
     const j = await fetch(`${API}/api/meetime/meu-token`).then(r => r.json());
+    mtPintaContas(j);
     if (j.em_uso === 'proprio') {
-      caixa.innerHTML = `Usando <b>o seu token</b> (final ${esc(j.final || '••••')}).`;
+      caixa.innerHTML = `Usando <b>${esc(j.nome_ativo || 'o seu token')}</b>`
+        + ` (final ${esc(j.final || '••••')}).`;
     } else if (j.em_uso === 'grupo') {
       caixa.innerHTML = 'Usando o <b>token do seu grupo</b>. Salve um token aqui '
         + 'para filtrar contra outra conta.';
@@ -6786,6 +6788,8 @@ async function mtCarregaStatus() {
 function mtAbrir() {
   if (!mtFundo) return;
   document.getElementById('meetime-token-campo').value = '';
+  const nome = document.getElementById('meetime-nome-campo');
+  if (nome) nome.value = '';
   document.getElementById('meetime-resultado').textContent = '';
   mtFundo.hidden = false;
   mtCarregaStatus();
@@ -6825,25 +6829,65 @@ document.getElementById('meetime-testar-conta')?.addEventListener('click', async
   }
 });
 
-async function mtSalvar(token) {
+/* CADASTRAR ACRESCENTA, não substitui. Antes este botão gravava um token
+   único: salvar o segundo apagava o primeiro em silêncio. Agora cada token
+   entra com um nome e a pessoa escolhe qual usar clicando na lista. */
+async function mtCadastrar() {
   const saida = document.getElementById('meetime-resultado');
-  saida.textContent = 'salvando…';
+  const campoTok = document.getElementById('meetime-token-campo');
+  const campoNome = document.getElementById('meetime-nome-campo');
+  const token = (campoTok?.value || '').trim();
+  if (!token) { saida.textContent = 'Cole o token da Meetime.'; return; }
+  saida.textContent = 'cadastrando…';
+  try {
+    const j = await fetch(`${API}/api/meetime/contas`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ acao: 'add', nome: (campoNome?.value || '').trim(), token }),
+    }).then(r => r.json());
+    if (j.status !== 'ok') { saida.textContent = j.message || 'não deu certo'; return; }
+    mtPintaContas(j);
+    /* CONFERE DEPOIS DE CADASTRAR e diz o que a conta enxerga: um token com
+       uma letra errada, salvo em silêncio, só apareceria como problema na
+       próxima dedup -- e o resultado disso é ligar para quem já é cliente. */
+    let extra = '';
+    try {
+      const t = await fetch(`${API}/api/meetime/testar`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      }).then(r => r.json());
+      extra = t.status === 'ok'
+        ? ` · ${(t.leads_na_conta || 0).toLocaleString('pt-BR')} leads nesta conta`
+        : ` · <span style="color:#dc2626">mas o token não respondeu: ${esc(t.message || 'erro')}</span>`;
+    } catch (e) { /* cadastrada; só não deu para testar agora */ }
+    campoTok.value = ''; if (campoNome) campoNome.value = '';
+    saida.innerHTML = '<span style="color:#16a34a">✓ cadastrada</span>' + extra;
+    mtCarregaStatus();
+    mtResumo?.();
+  } catch (e) {
+    saida.textContent = 'servidor não respondeu';
+  }
+}
+
+async function mtApagarTodas() {
+  const saida = document.getElementById('meetime-resultado');
+  if (!confirm('Tirar TODAS as suas contas e voltar a usar a do seu grupo?')) return;
+  saida.textContent = 'tirando…';
   try {
     const j = await fetch(`${API}/api/meetime/meu-token`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify({ token: '', apagar_tudo: true }),
     }).then(r => r.json());
     if (j.status !== 'ok') { saida.textContent = j.message || 'não deu certo'; return; }
-    document.getElementById('meetime-token-campo').value = '';
-    saida.innerHTML = '<span style="color:#16a34a">✓ salvo</span>';
+    mtPintaContas(j);
+    saida.innerHTML = '<span style="color:#16a34a">✓ agora vale a conta do grupo</span>';
     mtCarregaStatus();
   } catch (e) {
     saida.textContent = 'servidor não respondeu';
   }
 }
-document.getElementById('meetime-salvar')?.addEventListener('click', () =>
-  mtSalvar(document.getElementById('meetime-token-campo').value.trim()));
-document.getElementById('meetime-apagar')?.addEventListener('click', () => mtSalvar(''));
+
+document.getElementById('meetime-salvar')?.addEventListener('click', mtCadastrar);
+document.getElementById('meetime-apagar')?.addEventListener('click', mtApagarTodas);
 
 /* Conferir a empresa pelo link do LinkedIn, na aba de prospecção.
 
@@ -7192,14 +7236,23 @@ async function mtContas(acao, extra) {
   return d;
 }
 
+/* A MESMA LISTA EM DOIS LUGARES: a aba de leads e o modal "Minha conta
+   Meetime" (o do menu do usuário, que é por onde a pessoa realmente chega
+   para salvar token). Uma função que pinta nos dois em vez de duas
+   implementações -- duas divergiriam no primeiro ajuste, e aí a mesma conta
+   apareceria ativa num lugar e não no outro. */
 function mtPintaContas(d) {
-  const box = document.getElementById('mt-contas');
+  ['mt-contas', 'meetime-contas'].forEach(id => mtPintaContasEm(d, id));
+}
+
+function mtPintaContasEm(d, idCaixa) {
+  const box = document.getElementById(idCaixa);
   if (!box) return;
   const contas = (d && d.contas) || [];
   if (!contas.length) {
     box.innerHTML = '<span class="pf-advanced-hint">Nenhuma conta cadastrada'
       + (d && d.tem_grupo ? ' — por enquanto vale a conta do seu grupo.' : '.')
-      + ' Cadastre uma abaixo.</span>';
+      + '</span>';
     return;
   }
   /* A conta ativa é um botão marcado, não um radio: a lista é curta e o clique

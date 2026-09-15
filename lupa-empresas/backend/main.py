@@ -4359,7 +4359,11 @@ async def meetime_salvar_token(request: Request, payload: dict = Body(default={}
     Token vazio apaga — é como a pessoa volta a usar o token do grupo.
     """
     email = request.headers.get("x-user-email") or ""
-    r = meetime.set_token_usuario(email, str(payload.get("token") or ""))
+    r = meetime.set_token_usuario(
+        email, str(payload.get("token") or ""),
+        # Apagar a lista inteira e um pedido explicito, nunca o efeito
+        # colateral de um campo em branco.
+        apagar_tudo=payload.get("apagar_tudo") is True)
     if r.get("status") != "ok":
         return r
     return {**r, **meetime.status_usuario(
