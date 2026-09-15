@@ -257,7 +257,13 @@
         _gruposCache.map(g => `<option value="${esc(g.id)}">${esc(g.nome)}</option>`)).join('');
       tb.innerHTML = (j.users || []).map(u => `
         <tr data-id="${u.id}">
-          <td>${esc(u.nome || '')}</td>
+          <!-- NOME EDITAVEL. Ele so podia ser definido na criacao, e quem
+               e criado sem nome (importado, ou cadastrado as pressas) ficava
+               com a celula em branco para sempre -- quatro linhas vazias no
+               topo da lista parecem quatro linhas quebradas. -->
+          <td><input type="text" class="user-nome-input" style="width:130px"
+                     data-cur="${esc(u.nome || '')}" placeholder="(sem nome)"
+                     title="Clique para dar um nome a este usuário"></td>
           <td class="mono">${esc(u.email)}</td>
           <td>${u.role === 'admin' ? '<b>admin</b>' : 'user'}</td>
           <td><select class="user-grupo-sel" data-cur="${esc(u.grupo_id || '')}">${gruposOpts}</select></td>
@@ -276,6 +282,7 @@
         </tr>`).join('');
       tb.querySelectorAll('.user-grupo-sel').forEach(sel => { sel.value = sel.dataset.cur; });
       tb.querySelectorAll('.user-limite-input').forEach(inp => { inp.value = inp.dataset.cur; });
+      tb.querySelectorAll('.user-nome-input').forEach(inp => { inp.value = inp.dataset.cur; });
     } catch (e) { tb.innerHTML = '<tr><td colspan="7">Erro ao carregar.</td></tr>'; }
   }
 
@@ -347,6 +354,18 @@
       await fetch(`/api/admin/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ grupo_id: sel.value }) });
     });
     document.querySelector('#users-table tbody').addEventListener('blur', async e => {
+      const nomeInp = e.target.closest('.user-nome-input');
+      if (nomeInp) {
+        const idn = nomeInp.closest('tr').dataset.id;
+        const nv = nomeInp.value.trim();
+        if (nv === (nomeInp.dataset.cur || '')) return;
+        const rn = await fetch(`/api/admin/users/${idn}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nome: nv }) });
+        if (!rn.ok) { alert((await rn.json()).detail || 'Falha ao salvar o nome.'); loadUsers(); return; }
+        nomeInp.dataset.cur = nv;
+        return;
+      }
       const inp = e.target.closest('.user-limite-input'); if (!inp) return;
       const id = inp.closest('tr').dataset.id;
       const v = inp.value.trim();

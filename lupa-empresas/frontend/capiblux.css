@@ -1019,3 +1019,30 @@ body.sem-dossie .btn-dossie { display: none !important; }
   background: #fee2e2; color: #991b1b; border: 1px solid #fecaca;
 }
 .chamado-card.resolvido .chamado-medida { background: var(--gray-100, #f3f4f6); color: var(--gray-600, #4b5563); border-color: var(--gray-200, #e5e7eb); }
+
+/* ══ AVISO DE COTA ══════════════════════════════════════════════════════
+   Fica no rodapé, fixo, e some sozinho quando não é mais notícia. No canto
+   inferior porque o topo já tem a barra do usuário e as abas: um aviso que
+   cobre controle vira obstáculo, e este precisa durar. */
+.cota-aviso {
+  position: fixed; right: 18px; bottom: 18px; z-index: 950;
+  max-width: 380px; padding: 12px 40px 12px 14px;
+  border-radius: var(--radius-sm); box-shadow: var(--shadow-float);
+  font-size: .86rem; line-height: 1.45;
+  background: #fff7ed; color: #7c2d12; border: 1px solid #fdba74;
+}
+.cota-aviso.travado { background: #fef2f2; color: #7f1d1d; border-color: #fca5a5; }
+.cota-aviso b { display: block; margin-bottom: 2px; }
+.cota-aviso .cota-x {
+  position: absolute; top: 6px; right: 8px; background: none; border: none;
+  font-size: 1rem; cursor: pointer; color: inherit; opacity: .6;
+}
+.cota-aviso .cota-x:hover { opacity: 1; }
+/* A barrinha dá a proporção sem exigir leitura: cheia = acabou. */
+.cota-barra { height: 4px; border-radius: 2px; background: #fed7aa; margin-top: 8px; }
+.cota-barra > i { display: block; height: 100%; border-radius: 2px; background: #ea580c; }
+.cota-aviso.travado .cota-barra { background: #fecaca; }
+.cota-aviso.travado .cota-barra > i { background: #dc2626; }
+/* No menu do usuário, o número do dia sem alarde nenhum. */
+.cota-linha { padding: 8px 14px; font-size: .78rem; color: var(--gray-500);
+  border-top: 1px solid var(--gray-100); }

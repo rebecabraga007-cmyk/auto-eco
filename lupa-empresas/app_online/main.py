@@ -168,6 +168,13 @@ async def proxy(path: str, request: Request):
     headers["Accept-Encoding"] = "identity"  # evita resposta comprimida pela Cloudflare
     if PROXY_SECRET:
         headers["X-Proxy-Secret"] = PROXY_SECRET
+    # A COTA VIAJA NA RESPOSTA, EM CABECALHO.
+    #
+    # Assim a tela sabe quanto sobrou sem fazer nenhuma chamada a mais: todo
+    # resultado que ela ja pede traz o numero junto. O caso que motivou:
+    # alguem bateu no teto e reportou que "a Assertiva caiu" -- ninguem tinha
+    # como ver que estava em 100 de 100 antes de travar.
+    cota_agora = cota_limite = None
     user = getattr(request.state, "user", None)
     if user:
         headers["X-User-Email"] = user.get("email", "")
@@ -177,10 +184,15 @@ async def proxy(path: str, request: Request):
             limite = _auth.limite_efetivo(user)
             consumo = _auth.consumo_hoje(user["id"])
             if consumo >= limite:
+                # O 429 TAMBEM leva os cabecalhos: e justamente nele que a
+                # tela precisa saber o numero para explicar o bloqueio.
                 return JSONResponse(
                     {"detail": f"Limite diário de {limite} consultas atingido. Fale com um admin para aumentar."},
-                    status_code=429)
-            _auth.registrar_consumo(user["id"])
+                    status_code=429,
+                    headers={"X-Cota-Usada": str(consumo),
+                             "X-Cota-Limite": str(limite)})
+            cota_agora = _auth.registrar_consumo(user["id"])
+            cota_limite = limite
     body = await request.body()
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
@@ -191,6 +203,9 @@ async def proxy(path: str, request: Request):
             {"detail": f"Serviço de dados indisponível (túnel/PC offline?): {str(exc)[:120]}"},
             status_code=502)
     resp_headers = {k: v for k, v in r.headers.items() if k.lower() not in _SKIP_RESP_HEADERS}
+    if cota_agora is not None and cota_limite is not None:
+        resp_headers["X-Cota-Usada"] = str(cota_agora)
+        resp_headers["X-Cota-Limite"] = str(cota_limite)
     return Response(content=r.content, status_code=r.status_code,
                     headers=resp_headers, media_type=r.headers.get("content-type"))
 

@@ -7602,6 +7602,9 @@ async function mtBaixarNovos() {
     const r = await original.apply(this, args);
     const url = String((args[0] && args[0].url) || args[0] || '');
     if (!url.includes('/api/')) return r;
+    // A cota do dia vem em cabecalho nesta MESMA resposta -- ler aqui
+    // significa que a tela fica sabendo sem nenhuma chamada a mais.
+    try { cotaLe(r); } catch (e) { /* aviso de cota nao pode quebrar busca */ }
     const jsonOriginal = r.json.bind(r);
     r.json = async () => {
       const d = await jsonOriginal();
@@ -7618,3 +7621,80 @@ async function mtBaixarNovos() {
     return r;
   };
 })();
+
+/* ══════════════════════════════════════════════════════════════════════
+   A COTA DO DIA, NA TELA DE QUEM GASTA
+
+   Caso que motivou: um SDR bateu nas 100 consultas do dia e reportou que "a
+   Assertiva caiu". Ele não tinha como saber — o número só existia no painel
+   do admin, e a tela dele não dizia nada até travar.
+
+   O número chega de graça: o proxy manda `X-Cota-Usada` e `X-Cota-Limite` em
+   toda resposta de rota que consome. Nenhuma chamada a mais.
+
+   Três momentos, porque são três situações diferentes:
+
+     até 79%   nada na tela (o rodapé do menu mostra, para quem quiser ver)
+     80%+      aviso laranja: dá tempo de priorizar o que falta fazer hoje
+     100%      aviso vermelho, e ele NÃO fecha sozinho: aqui a pessoa está
+               travada e precisa saber o que fazer (pedir aumento, ou esperar
+               a virada do dia)
+   ══════════════════════════════════════════════════════════════════════ */
+const cotaEstado = { usada: null, limite: null, avisou80: false, fechado80: false };
+
+function cotaLe(resposta) {
+  const u = resposta.headers.get('X-Cota-Usada');
+  const l = resposta.headers.get('X-Cota-Limite');
+  if (u === null || l === null) return;
+  cotaEstado.usada = parseInt(u, 10);
+  cotaEstado.limite = parseInt(l, 10);
+  cotaPinta();
+}
+
+function cotaPinta() {
+  const { usada, limite } = cotaEstado;
+  if (usada === null || !limite) return;
+  const fatia = usada / limite;
+  const restam = Math.max(0, limite - usada);
+
+  const linha = document.getElementById('cota-menu');
+  if (linha) {
+    linha.textContent = `${usada} de ${limite} consultas hoje`;
+    linha.hidden = false;
+  }
+
+  document.getElementById('cota-aviso')?.remove();
+  if (fatia < 0.8) return;
+  if (fatia < 1 && cotaEstado.fechado80) return;   // já leu e fechou
+
+  const travou = restam === 0;
+  const el = document.createElement('div');
+  el.id = 'cota-aviso';
+  el.className = 'cota-aviso' + (travou ? ' travado' : '');
+  el.innerHTML = travou
+    ? `<b>Sua cota de hoje acabou</b>
+       Você usou as ${limite} consultas do dia. As buscas que gastam
+       (Assertiva, telefone, dossiê, enriquecimento) vão recusar até a virada
+       do dia — as buscas na base local continuam funcionando.
+       <br>Precisa hoje? Peça a um admin para aumentar o seu limite.
+       <div class="cota-barra"><i style="width:100%"></i></div>`
+    : `<b>Faltam ${restam} consultas hoje</b>
+       Você já usou ${usada} das ${limite} do dia. Vale deixar para o fim o
+       que for menos urgente — ao chegar em ${limite}, as consultas que gastam
+       param até amanhã.
+       <div class="cota-barra"><i style="width:${Math.round(fatia * 100)}%"></i></div>`;
+
+  const x = document.createElement('button');
+  x.className = 'cota-x';
+  x.type = 'button';
+  x.title = 'Fechar';
+  x.textContent = '✕';
+  x.addEventListener('click', () => {
+    el.remove();
+    // Fechar o aviso de 80% vale para o resto da sessão; o de 100% volta na
+    // próxima consulta recusada, porque ali a pessoa está travada de verdade.
+    if (!travou) cotaEstado.fechado80 = true;
+  });
+  el.appendChild(x);
+  document.body.appendChild(el);
+}
