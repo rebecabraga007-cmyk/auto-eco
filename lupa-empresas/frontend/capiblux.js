@@ -7137,3 +7137,258 @@ function enrichAvisaDecisores() {
     btn.disabled = false;
   });
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   LEADS NA MEETIME
+
+   A aba responde três perguntas que são diferentes entre si:
+
+     quantos estão lá e em que pé   → espelho local + status da prospecção
+     o que entrou desde ontem       → sincronização incremental
+     desta planilha, quem já está lá→ conferência local, instantânea
+
+   O espelho existe porque a API não responde "o que mudou desde tal data":
+   medido, `created_after`, `status` e `page` devolvem HTTP 400; só `limit` e
+   `start` passam, em ordem crescente fixa. O que é novo está no fim da lista,
+   e é por isso que a sincronização retoma por OFFSET.
+
+   O status NÃO está no lead: está na prospecção (WON, WAITING, PAUSED…), uma
+   por lead por cadência. O lead aponta a atual em `current_prospection_id`.
+   ══════════════════════════════════════════════════════════════════════ */
+const mtState = { upload_id: null, sheet: null, cnpj_col: null, linhas: [], colunas: [] };
+
+function mtTokenAvulso() {
+  return (document.getElementById('mt-token')?.value || '').trim();
+}
+
+function mtCorpo(extra) {
+  const t = mtTokenAvulso();
+  return JSON.stringify({ ...(extra || {}), ...(t ? { token: t } : {}) });
+}
+
+async function mtResumo() {
+  const alvo = document.getElementById('mt-resumo');
+  if (!alvo) return;
+  try {
+    const d = await fetch(`${API}/api/meetime/resumo`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: mtCorpo({}),
+    }).then(r => r.json());
+
+    if (!d.tem_token) {
+      alvo.innerHTML = '<div class="warn-box">Nenhum token da Meetime '
+        + 'configurado para você. Coloque o seu em ⚙️ Configurações, ou use o '
+        + 'campo "usar outro token só desta vez" aqui em cima.</div>';
+      return;
+    }
+    const r = d.resumo || {};
+    const e = d.estado || {};
+    const falta = ['leads', 'prospections']
+      .map(k => (e[k] ? Math.max(0, (e[k].total || 0) - (e[k].offset || 0)) : 0))
+      .reduce((a, b) => a + b, 0);
+
+    /* A data da última leitura importa mais que o total: o total não diz se
+       ele está velho. "Atualizado há 3 dias" é o que faz alguém clicar. */
+    const quando = e.leads && e.leads.quando
+      ? new Date(e.leads.quando * 1000).toLocaleString('pt-BR')
+      : 'nunca';
+
+    const chips = (r.por_status || []).map(s =>
+      `<button type="button" class="pf-cargo mt-chip" data-status="${esc(s.status || '__sem__')}">`
+      + `${esc(s.rotulo)} <b>${s.quantos.toLocaleString('pt-BR')}</b></button>`).join(' ');
+
+    alvo.innerHTML = `
+      <div class="info-box">
+        <b>${(r.total || 0).toLocaleString('pt-BR')} lead(s)</b> na sua base da Meetime
+        ${r.recentes ? ` · ${r.recentes} entraram nos últimos 7 dias` : ''}
+        · última leitura: ${esc(quando)}
+        ${falta ? `<br>⚠️ Faltam <b>${falta.toLocaleString('pt-BR')}</b> registro(s) para o espelho ficar completo — clique em "Atualizar da Meetime".` : ''}
+        <div class="filter-row" style="margin:8px 0 0;flex-wrap:wrap">${chips}</div>
+      </div>`;
+
+    const sel = document.getElementById('mt-status');
+    if (sel) {
+      sel.innerHTML = '<option value="">Todos os status</option>'
+        + (r.por_status || []).map(s =>
+            `<option value="${esc(s.status || '__sem__')}">${esc(s.rotulo)} (${s.quantos})</option>`).join('');
+    }
+    alvo.querySelectorAll('.mt-chip').forEach(b => b.addEventListener('click', () => {
+      if (sel) sel.value = b.dataset.status;
+      mtListar();
+    }));
+  } catch (err) {
+    alvo.innerHTML = '<p class="msg error">Não consegui falar com o servidor.</p>';
+  }
+}
+
+async function mtSincronizar() {
+  const btn = document.getElementById('mt-sync');
+  const nota = document.getElementById('mt-sync-nota');
+  btn.disabled = true;
+  let voltas = 0, leads = 0, prosp = 0;
+  const t0 = Date.now();
+  try {
+    /* EM VOLTAS, e não numa chamada só. O primeiro espelho de uma conta de
+       12 mil leads são ~126 páginas de leads mais ~190 de prospecções; numa
+       requisição só isso morreria no corte de 100s da Cloudflare depois de
+       já ter lido metade. Cada volta grava o que trouxe, então parar no meio
+       não perde nada — a próxima retoma do offset. */
+    for (;;) {
+      const d = await fetch(`${API}/api/meetime/sync`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: mtCorpo({ paginas: 20 }),
+      }).then(r => r.json());
+      if (d.status === 'error') { nota.textContent = d.message || 'Falhou.'; break; }
+      voltas += 1;
+      leads += (d.trouxe || {}).leads || 0;
+      prosp += (d.trouxe || {}).prospeccoes || 0;
+      nota.innerHTML = `<span class="spinner"></span> ${leads.toLocaleString('pt-BR')} lead(s) e `
+        + `${prosp.toLocaleString('pt-BR')} prospecção(ões) lidas — ${Math.round((Date.now() - t0) / 1000)}s`;
+      if (!d.pendente) {
+        nota.textContent = leads || prosp
+          ? `Pronto: ${leads.toLocaleString('pt-BR')} lead(s) e ${prosp.toLocaleString('pt-BR')} prospecção(ões) novos em ${Math.round((Date.now() - t0) / 1000)}s.`
+          : 'Já estava em dia — nada novo desde a última vez.';
+        break;
+      }
+      if (voltas > 400) { nota.textContent = 'Parei por segurança depois de 400 voltas.'; break; }
+    }
+  } finally {
+    btn.disabled = false;
+    mtResumo();
+  }
+}
+
+async function mtListar() {
+  const out = document.getElementById('mt-results');
+  out.innerHTML = spinner();
+  try {
+    const d = await fetch(`${API}/api/meetime/leads`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: mtCorpo({
+        status: document.getElementById('mt-status')?.value || '',
+        q: document.getElementById('mt-q')?.value || '',
+        limite: 200,
+      }),
+    }).then(r => r.json());
+    if (d.status !== 'ok') {
+      out.innerHTML = `<p class="msg error">${esc(d.message || 'Falhou.')}</p>`;
+      return;
+    }
+    const ls = d.leads || [];
+    if (!ls.length) {
+      out.innerHTML = '<p class="msg">Nenhum lead com esse filtro. Se a base '
+        + 'ainda não foi sincronizada, clique em "Atualizar da Meetime".</p>';
+      return;
+    }
+    out.innerHTML = `<p class="pf-advanced-hint">${ls.length} de ${(d.total || 0).toLocaleString('pt-BR')}</p>`
+      + '<div class="prosp-table-scroll"><table class="prosp-table"><thead><tr>'
+      + '<th>EMPRESA</th><th>CNPJ</th><th>CONTATO</th><th>STATUS</th>'
+      + '<th>CADÊNCIA</th><th>DONO</th><th>ENTROU</th></tr></thead><tbody>'
+      + ls.map(l => `<tr>
+          <td>${esc(l.empresa || '—')}</td>
+          <td class="mono">${esc(fmtCnpj(l.cnpj) || '—')}</td>
+          <td>${esc(l.contato || l.email || '—')}</td>
+          <td>${esc(l.rotulo || '—')}${l.motivo ? `<br><span class="pf-advanced-hint">${esc(l.motivo)}</span>` : ''}</td>
+          <td>${esc(l.cadencia || '—')}</td>
+          <td>${esc(l.owner || '—')}</td>
+          <td>${esc((l.criado || '').slice(0, 10))}</td>
+        </tr>`).join('')
+      + '</tbody></table></div>';
+  } catch (e) {
+    out.innerHTML = '<p class="msg error">Erro ao listar.</p>';
+  }
+}
+
+async function mtConferirPlanilha() {
+  const out = document.getElementById('mt-results');
+  out.innerHTML = spinner();
+  try {
+    const d = await fetch(`${API}/api/meetime/filtrar`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: mtCorpo({ upload_id: mtState.upload_id, sheet: mtState.sheet }),
+    }).then(r => r.json());
+    if (d.status !== 'ok') {
+      out.innerHTML = `<p class="msg error">${esc(d.message || 'Falhou.')}</p>`;
+      return;
+    }
+    mtState.linhas = d.linhas || [];
+    mtState.cnpj_col = d.cnpj_col;
+    document.getElementById('mt-baixar-novos').hidden = !(d.novos > 0);
+
+    /* OS TRÊS NÚMEROS SEPARADOS. "Repetidos" e "sem CNPJ" não são a mesma
+       coisa: o primeiro é decisão comercial (reprospectar ou não), o segundo
+       é dado faltando na planilha — e a linha sem CNPJ não foi conferida
+       contra nada, então chamá-la de "nova" seria mentira. */
+    out.innerHTML = `
+      <div class="info-box">
+        <b>${d.total} linha(s) conferidas</b> pela coluna <code>${esc(d.cnpj_col)}</code>:
+        <b>${d.repetidos}</b> já estão na Meetime, <b>${d.novos}</b> não estão
+        ${d.sem_cnpj ? ` · ${d.sem_cnpj} sem CNPJ válido (essas não deu para conferir)` : ''}.
+      </div>`
+      + '<div class="prosp-table-scroll"><table class="prosp-table"><thead><tr><th>NA MEETIME?</th>'
+      + (mtState.colunas.map(c => `<th>${esc(c)}</th>`).join(''))
+      + '</tr></thead><tbody>'
+      + mtState.linhas.slice(0, 300).map(l => `<tr>
+          <td>${l._no_meetime ? '🔁 já está' : '🆕 nova'}</td>`
+          + mtState.colunas.map(c => `<td>${esc(String(l[c] ?? ''))}</td>`).join('')
+        + '</tr>').join('')
+      + '</tbody></table></div>'
+      + (mtState.linhas.length > 300 ? '<p class="pf-advanced-hint">mostrando as 300 primeiras</p>' : '');
+  } catch (e) {
+    out.innerHTML = '<p class="msg error">Erro ao conferir.</p>';
+  }
+}
+
+async function mtBaixarNovos() {
+  const novos = mtState.linhas.filter(l => !l._no_meetime);
+  if (!novos.length) return;
+  const colunas = mtState.colunas.map(c => ({ key: c, label: c }));
+  const r = await fetch(`${API}/api/enrich/export`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ columns: colunas, rows: novos }),
+  });
+  const blob = await r.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'sem-os-que-ja-estao-na-meetime.xlsx';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+(function ligaMeetime() {
+  const btnSync = document.getElementById('mt-sync');
+  if (!btnSync) return;
+  btnSync.addEventListener('click', mtSincronizar);
+  document.getElementById('mt-buscar')?.addEventListener('click', mtListar);
+  document.getElementById('mt-q')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') mtListar();
+  });
+  document.getElementById('mt-status')?.addEventListener('change', mtListar);
+
+  document.getElementById('mt-file')?.addEventListener('change', async e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const nome = document.getElementById('mt-file-nome');
+    nome.textContent = f.name + ' — enviando…';
+    const fd = new FormData(); fd.append('file', f);
+    try {
+      const j = await fetch(`${API}/api/enrich/upload`, { method: 'POST', body: fd })
+        .then(r => r.json());
+      if (j.status !== 'ok') { nome.textContent = j.message || 'Falha no upload.'; return; }
+      const aba = (j.sheets || [])[0] || {};
+      mtState.upload_id = j.upload_id;
+      mtState.sheet = aba.name;
+      mtState.colunas = aba.columns || [];
+      nome.textContent = `${f.name} — ${aba.linhas} linha(s)`;
+      document.getElementById('mt-filtrar').hidden = false;
+    } catch (err) { nome.textContent = 'Erro: ' + err.message; }
+  });
+  document.getElementById('mt-filtrar')?.addEventListener('click', mtConferirPlanilha);
+  document.getElementById('mt-baixar-novos')?.addEventListener('click', mtBaixarNovos);
+
+  // O resumo carrega quando a aba aparece, e não no load da página: ele bate
+  // no servidor, e quem nunca abre esta aba não deve pagar por isso.
+  document.querySelector('[data-tab="meetime"]')?.addEventListener('click', () => {
+    mtResumo();
+  });
+})();

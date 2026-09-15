@@ -46,6 +46,7 @@
     <div class="nav-group-label">Completar o que já tenho</div>
     <button class="nav-btn" data-tab="enrich">Minha planilha<span class="nav-btn-sub">subir e receber preenchida</span></button>
     <button class="nav-btn" data-tab="modelos">Meus modelos<span class="nav-btn-sub">colunas do jeito que você usa</span></button>
+    <button class="nav-btn" data-tab="meetime">Leads na Meetime<span class="nav-btn-sub">quem já está no CRM e em que pé</span></button>
 
     <div class="nav-group-label" id="nav-admin-label" hidden>Administração</div>
     <button class="nav-btn" data-tab="admin" id="nav-admin" hidden>Painel administrativo<span class="nav-btn-sub">navegação e custo de todos</span></button>
@@ -1144,6 +1145,89 @@
       </div>
     </div>
     <div id="en-results" class="results-area"></div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       LEADS NA MEETIME
+
+       Tres perguntas, e elas sao diferentes:
+         1. quantos leads existem la, e em que pe estao      (espelho + status)
+         2. o que entrou desde a ultima vez que olhei        (sincronizar)
+         3. desta planilha aqui, quem ja esta la             (filtrar)
+
+       A base e um espelho local, incremental por offset -- a API nao responde
+       "o que mudou desde ontem" (medido: created_after, status e page voltam
+       HTTP 400; so limit e start passam).
+       ═══════════════════════════════════════════════════════════════ -->
+  <section id="tab-meetime" class="tab-section">
+    <div class="module-header">
+      <div class="module-overline">Completar o que já tenho</div>
+      <h2 class="module-title">Leads que já estão na Meetime</h2>
+      <p class="module-sub">Uma cópia local da sua base da Meetime, atualizada só com o que entrou desde a última vez. Serve para ver em que pé estão os leads e para tirar de uma planilha quem já está lá dentro.</p>
+    </div>
+
+    <div class="search-panel">
+      <div class="en-step">
+        <span class="en-num">1</span>
+        <div class="en-fields-wrap">
+          <div class="en-fields-head">
+            <strong>Sua conta</strong>
+            <span class="en-src-note" id="mt-conta-nota">usa o token que você configurou em ⚙️ Configurações</span>
+          </div>
+          <div class="filter-row" style="margin:0">
+            <button type="button" id="mt-sync" class="btn-primary">🔄 Atualizar da Meetime</button>
+            <span class="pf-advanced-hint" id="mt-sync-nota" style="display:inline"></span>
+          </div>
+          <!-- O token avulso existe para conferir contra OUTRA conta sem
+               trocar a configuração. Ele não é gravado em lugar nenhum: a
+               identidade guardada é o SHA-256 dele. -->
+          <details style="margin-top:8px">
+            <summary class="pf-advanced-hint" style="cursor:pointer">usar outro token só desta vez</summary>
+            <input id="mt-token" type="password" autocomplete="off" placeholder="Token da Meetime (não fica salvo)"
+                   style="margin-top:6px;width:360px;max-width:100%" />
+          </details>
+        </div>
+      </div>
+
+      <div id="mt-resumo" class="results-area" style="margin-top:4px"></div>
+
+      <div class="en-step">
+        <span class="en-num">2</span>
+        <div class="en-fields-wrap">
+          <div class="en-fields-head">
+            <strong>Ver os leads</strong>
+            <span class="en-src-note">status vem da prospecção atual de cada lead</span>
+          </div>
+          <div class="filter-row" style="margin:0;gap:8px;flex-wrap:wrap">
+            <select id="mt-status" class="filter-select"><option value="">Todos os status</option></select>
+            <input id="mt-q" type="text" placeholder="empresa, CNPJ, e-mail ou contato…"
+                   class="filter-select" style="width:280px" />
+            <button type="button" id="mt-buscar" class="btn-secondary">Ver</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="en-step">
+        <span class="en-num">3</span>
+        <div class="en-fields-wrap">
+          <div class="en-fields-head">
+            <strong>Tirar de uma planilha quem já está lá</strong>
+            <span class="en-src-note">nada é apagado — as linhas repetidas ficam marcadas</span>
+          </div>
+          <label class="en-upload">
+            <input id="mt-file" type="file" accept=".xlsx,.xlsm,.xls,.csv,.tsv,.txt" hidden />
+            <span class="btn-secondary">📁 Escolher planilha para conferir</span>
+          </label>
+          <span class="pf-advanced-hint" id="mt-file-nome" style="display:inline"></span>
+          <div class="filter-row" style="margin:6px 0 0">
+            <button type="button" id="mt-filtrar" class="btn-secondary" hidden>🔍 Conferir contra a Meetime</button>
+            <button type="button" id="mt-baixar-novos" class="btn-secondary" hidden>⬇️ Baixar só os novos</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="mt-results" class="results-area"></div>
   </section>
 
   <section id="tab-modelos" class="tab-section">

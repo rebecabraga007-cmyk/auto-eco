@@ -254,8 +254,8 @@
           <td>${u.role === 'admin' ? '<span class="pf-advanced-hint">—</span>' :
               `<input type="number" min="0" class="filter-num user-limite-input" style="width:64px"
                 data-cur="${u.limite_diario_custom != null ? u.limite_diario_custom : ''}"
-                title="Limite diário de consultas (vazio = padrão de ${esc(String(u.limite_diario))})"
-                placeholder="${esc(String(u.limite_diario))}">`}</td>
+                title="Limite diário de consultas (vazio = padrão de ${esc(String(u.limite_diario ?? 100))})"
+                placeholder="${esc(String(u.limite_diario ?? 100))}">`}</td>
           <td class="user-actions">
             <button data-act="toggle">${u.ativo ? 'Desativar' : 'Ativar'}</button>
             <button data-act="role">${u.role === 'admin' ? '→ user' : '→ admin'}</button>

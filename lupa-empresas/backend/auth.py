@@ -112,7 +112,25 @@ def _row_to_user(r: sqlite3.Row) -> dict:
             "role": r["role"], "ativo": bool(r["ativo"]),
             "criado_em": r["criado_em"], "ultimo_login": r["ultimo_login"],
             "grupo_id": r["grupo_id"] if "grupo_id" in cols else None,
-            "limite_diario": r["limite_diario"] if "limite_diario" in cols else None}
+            # DOIS CAMPOS, E ELES QUEREM DIZER COISAS DIFERENTES.
+            #
+            # `limite_diario_custom` e o que ESTE usuario tem gravado (None
+            # quando nunca foi mexido); `limite_diario` e o que vale na
+            # pratica, ja com o padrao aplicado. A tela usa os dois: o
+            # primeiro preenche a caixa, o segundo vira o placeholder que diz
+            # "vazio = 100".
+            #
+            # Ate 15/set/2026 esta funcao devolvia so o bruto, e a tela --
+            # escrita para os dois -- imprimia `String(null)`. O resultado
+            # era uma caixa com a palavra "null" escrita em cada linha da
+            # lista de usuarios. `consumo_por_usuario` ja fazia certo desde
+            # sempre; as duas leituras da MESMA tabela tinham contratos
+            # diferentes.
+            "limite_diario_custom": (r["limite_diario"]
+                                     if "limite_diario" in cols else None),
+            "limite_diario": ((r["limite_diario"]
+                               if "limite_diario" in cols else None)
+                              or LIMITE_DIARIO_DEFAULT)}
 
 
 def init() -> None:

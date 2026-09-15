@@ -56,6 +56,7 @@ import chamados
 import funcoes
 import setores_li
 import telefones as tel_fmt
+import meetime_leads
 import identidade
 import funil
 
@@ -4001,6 +4002,107 @@ async def enrich_run(payload: dict = Body(default={})):
             # resolve tentando de novo, a segunda nao.
             "erros_decisor": erros_dec,
             "total_aba": len(todas)}
+
+
+# ---------------------------------------------------------------------
+# ABA MEETIME — os leads que ja estao no CRM, e em que pe eles estao
+# ---------------------------------------------------------------------
+# A Meetime nao responde "o que mudou desde ontem": `/v2/leads` aceita so
+# `limit` e `start`, em ordem crescente fixa (medido; `created_after`,
+# `status` e `page` devolvem 400). Entao o espelho local e incremental por
+# OFFSET, e e ele que sustenta as tres coisas que a tela faz: dizer quantos
+# leads existem, em que status estao, e quais linhas de uma planilha ja estao
+# la dentro.
+
+def _mt_token(request: Request, payload: dict) -> tuple:
+    """Token a usar e a identidade da conta, sem guardar a credencial.
+
+    Ordem igual a do resto do sistema: o token que o operador digitou agora,
+    depois o dele salvo, depois o do grupo. O avulso nunca e gravado -- so a
+    conta (SHA-256) aparece no disco.
+    """
+    avulso = str(payload.get("token") or "").strip()
+    usuario = request.headers.get("x-user-email") or ""
+    grupo = str(payload.get("grupo_id") or "")
+    tok = avulso or meetime._token(grupo, usuario)
+    conta = meetime_leads.id_da_conta(tok, grupo)
+    return tok, conta
+
+
+@app.post("/api/meetime/sync")
+async def meetime_sync(request: Request, payload: dict = Body(default={})):
+    """Puxa o que entrou na Meetime desde a ultima vez. Em pedacos.
+
+    Devolve `pendente` enquanto faltar pagina -- a tela chama de novo. O
+    primeiro espelho de uma conta de 12 mil leads sao ~126 paginas de leads
+    mais ~190 de prospeccoes; numa requisicao so isso morreria no corte da
+    Cloudflare depois de ja ter lido metade.
+    """
+    tok, conta = _mt_token(request, payload)
+    if not tok:
+        return {"status": "error",
+                "message": "Nenhum token da Meetime configurado para voce."}
+    try:
+        paginas = max(1, min(int(payload.get("paginas") or 25), 60))
+        r = await meetime_leads.sincronizar(tok, conta, paginas=paginas)
+        r["conta"] = conta
+        return r
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:200]}
+
+
+@app.post("/api/meetime/resumo")
+async def meetime_resumo(request: Request, payload: dict = Body(default={})):
+    """Quantos leads, em que status, e quando foi a ultima leitura."""
+    tok, conta = _mt_token(request, payload)
+    return {"status": "ok", "conta": conta, "tem_token": bool(tok),
+            "resumo": meetime_leads.resumo(conta),
+            "estado": meetime_leads.estado(conta)}
+
+
+@app.post("/api/meetime/leads")
+async def meetime_listar(request: Request, payload: dict = Body(default={})):
+    """A tabela da tela: lead + status da prospeccao atual."""
+    _, conta = _mt_token(request, payload)
+    return meetime_leads.listar(
+        conta,
+        status=str(payload.get("status") or ""),
+        texto=str(payload.get("q") or ""),
+        limite=max(1, min(int(payload.get("limite") or 50), 500)),
+        offset=max(0, int(payload.get("offset") or 0)))
+
+
+@app.post("/api/meetime/filtrar")
+async def meetime_filtrar(request: Request, payload: dict = Body(default={})):
+    """Marca, numa planilha ja enviada, quem JA esta na Meetime.
+
+    Reaproveita o upload da aba de enriquecimento de proposito: e o mesmo
+    arquivo, o mesmo detector de coluna de CNPJ e o mesmo armazenamento
+    temporario. Uma segunda implementacao divergiria na primeira correcao.
+
+    Nao apaga nada: devolve as linhas com um marcador. Quem decide o que fazer
+    com o repetido e quem montou a lista -- as vezes o certo e reprospectar.
+    """
+    _, conta = _mt_token(request, payload)
+    store = _upload_ler(payload.get("upload_id"))
+    if not store:
+        return {"status": "error",
+                "message": "Planilha expirada — envie de novo."}
+    sheet = payload.get("sheet") or next(iter(store))
+    if sheet not in store:
+        return {"status": "error", "message": "Aba não encontrada."}
+    col = payload.get("cnpj_col") or _guess_cnpj_col(store[sheet]["columns"])
+    linhas = store[sheet]["rows"]
+    cnpjs = [_digitos(r.get(col, "")) for r in linhas]
+    achados = meetime_leads.conferir(conta, [c for c in cnpjs if len(c) == 14])["ja_tem"]
+    saida = []
+    for r, c in zip(linhas, cnpjs):
+        saida.append({**r, "_no_meetime": bool(c and c in achados)})
+    repetidos = sum(1 for x in saida if x["_no_meetime"])
+    return {"status": "ok", "cnpj_col": col, "linhas": saida,
+            "total": len(saida), "repetidos": repetidos,
+            "novos": len(saida) - repetidos,
+            "sem_cnpj": sum(1 for c in cnpjs if len(c) != 14)}
 
 
 @app.post("/api/enrich/export")
