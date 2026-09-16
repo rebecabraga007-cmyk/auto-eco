@@ -2984,22 +2984,22 @@ const enrichState = { upload_id: null, sheets: [], result: null };
     let base = null, offset = 0, alvo = body.limite;
     const t0 = Date.now();
 
-    const pinta = (feitas, total) => {
-      const seg = Math.round((Date.now() - t0) / 1000);
-      const falta = feitas > 0
-        ? Math.round((seg / feitas) * (total - feitas)) : null;
-      out.innerHTML = `<div class="prosp-progress">
-        <span class="spinner"></span>
-        Enriquecendo <b>${feitas}</b> de ${total} linhas… ${seg}s
-        ${falta != null && falta > 3 ? ` · faltam ~${falta}s` : ''}
-        <button type="button" id="en-parar" class="btn-secondary"
-                style="margin-left:10px;font-size:12px;padding:2px 8px">Parar</button>
-      </div>`;
+    /* A BARRA NO LUGAR DO SPINNER. Enriquecer 100 linhas leva ~5 minutos, e
+       um spinner girando é indistinguível de travado -- foi exatamente o
+       relato: "ficou uns 5 min e aí travou". O número que anda e a linha do
+       que está sendo feito agora são o que separa uma coisa da outra. */
+    const pinta = (feitas, total, agora) => {
+      progresso(out, {
+        feitas, total, t0, agora: agora || '',
+        rotulo: 'linhas',
+        extra: `<button type="button" id="en-parar" class="btn-secondary"
+                  style="font-size:12px;padding:1px 8px">Parar</button>`,
+      });
       document.getElementById('en-parar')?.addEventListener('click', () => {
         enrichState.cancelar = true;
       });
     };
-    pinta(0, alvo);
+    pinta(0, alvo, 'preparando o primeiro lote…');
 
     try {
       while (offset < alvo && !enrichState.cancelar) {
@@ -3031,7 +3031,13 @@ const enrichState = { upload_id: null, sheets: [], result: null };
         // A aba pode ter menos linhas que o pedido: o alvo é o menor dos dois.
         alvo = Math.min(alvo, j.total_aba || alvo);
         offset += (j.rows || []).length;
-        pinta(acumulado.length, alvo);
+        /* O nome da última empresa do lote: é o que prova que está andando de
+           verdade, e não só que o número subiu. */
+        const ultima = (j.rows || [])[(j.rows || []).length - 1] || {};
+        const quem = ultima.rfb_razao || ultima.empresa || ultima.Empresa
+                   || ultima[Object.keys(ultima)[0]] || '';
+        pinta(acumulado.length, alvo,
+              quem ? `acabou de processar ${String(quem).slice(0, 60)}` : '');
         if (j.proximo == null) break;     // acabou a aba
       }
       if (!base) { out.innerHTML = `<p class="msg">Nenhuma linha para enriquecer.</p>`; return; }
@@ -7363,8 +7369,19 @@ async function mtSincronizar() {
       voltas += 1;
       leads += (d.trouxe || {}).leads || 0;
       prosp += (d.trouxe || {}).prospeccoes || 0;
-      nota.innerHTML = `<span class="spinner"></span> ${leads.toLocaleString('pt-BR')} lead(s) e `
-        + `${prosp.toLocaleString('pt-BR')} prospecção(ões) lidas — ${Math.round((Date.now() - t0) / 1000)}s`;
+      /* INDEFINIDO de propósito: só depois da primeira página é que se sabe
+         quantos leads a conta tem, e antes disso qualquer porcentagem seria
+         inventada. A barra vira vaivém e os contadores sobem. */
+      const e = d.estado || {};
+      const lidos = (e.leads?.offset || 0) + (e.prospections?.offset || 0);
+      const totais = (e.leads?.total || 0) + (e.prospections?.total || 0);
+      nota.textContent = '';
+      progresso('mt-resumo', {
+        feitas: lidos, total: totais, t0, rotulo: 'registros',
+        indefinido: !totais,
+        agora: `${leads.toLocaleString('pt-BR')} lead(s) e `
+             + `${prosp.toLocaleString('pt-BR')} prospecção(ões) novos nesta rodada`,
+      });
       if (!d.pendente) {
         nota.textContent = leads || prosp
           ? `Pronto: ${leads.toLocaleString('pt-BR')} lead(s) e ${prosp.toLocaleString('pt-BR')} prospecção(ões) novos em ${Math.round((Date.now() - t0) / 1000)}s.`
@@ -7830,10 +7847,14 @@ async function tpRodar() {
       Object.keys(soma).forEach(k => { soma[k] += (d.contagem || {})[k] || 0; });
       consultados += d.consultados || 0;
       offset = d.proximo;
-      prog.innerHTML = `<span class="spinner"></span> ${tpState.linhas.length} de `
-        + `${d.total_aba} linha(s) · ${consultados} número(s) · `
-        + `${Math.round((Date.now() - t0) / 1000)}s`;
-      tpPinta(soma);
+      prog.textContent = '';
+      progresso('tp-results', {
+        feitas: tpState.linhas.length, total: d.total_aba, t0,
+        rotulo: 'linhas',
+        agora: `${consultados} número(s) consultado(s) · `
+             + `${soma.confirmados} confirmado(s) até aqui`,
+      });
+      tpPinta(soma, true);
       if (offset === null || offset === undefined || tpState.cancelar) break;
     }
   } finally {
@@ -7844,8 +7865,11 @@ async function tpRodar() {
   }
 }
 
-function tpPinta(soma) {
+function tpPinta(soma, comBarra) {
   const out = document.getElementById('tp-results');
+  // Durante a execução a barra fica no topo e a tabela vai crescendo embaixo;
+  // no fim, só a tabela.
+  const barra = comBarra ? (out.querySelector('.prg')?.outerHTML || '') : '';
   const verif = (tpState.colunas || []).filter(c => c.includes('— de quem é'));
   const mostrar = tpState.colunas.filter(c =>
     verif.includes(c) || verif.some(v => v.replace(' — de quem é', '') === c)
@@ -7855,7 +7879,7 @@ function tpPinta(soma) {
      diferentes: confirmado entra na lista de discagem; outro dono pede troca
      de contato; compartilhado é call center e não vale ligar achando que fala
      com a pessoa; sem vínculo é número frio. */
-  out.innerHTML = `
+  out.innerHTML = barra + `
     <div class="info-box">
       <b>${soma.confirmados}</b> confirmado(s) — o telefone é da pessoa da linha ·
       <b>${soma.outro_dono}</b> de outro dono ·
@@ -7916,3 +7940,115 @@ async function tpExportar() {
   });
   document.getElementById('tp-export')?.addEventListener('click', tpExportar);
 })();
+
+/* ══════════════════════════════════════════════════════════════════════
+   A BARRA DE PROGRESSO, UMA SÓ PARA OS TRÊS PROCESSOS LONGOS
+
+   Enriquecer 100 linhas leva ~5 min; conferir 300 telefones, mais; o primeiro
+   espelho da Meetime, uns 2. Com um spinner girando, os três são
+   indistinguíveis de "travou" — foi literalmente o que aconteceu: "ficou uns
+   5 min e aí travou".
+
+   O que a barra responde, e um spinner não:
+     quanto falta        a porcentagem e a contagem
+     está andando?       a linha "agora" muda a cada lote
+     dá tempo de café?   a estimativa, calculada pelo ritmo REAL medido
+                         até aqui, não por um número chutado
+
+   Uma função para os três lugares: três implementações divergiriam, e a
+   segunda a divergir seria a que ninguém olha.
+   ══════════════════════════════════════════════════════════════════════ */
+function progresso(alvo, dados) {
+  const el = typeof alvo === 'string' ? document.getElementById(alvo) : alvo;
+  if (!el) return;
+  const { feitas = 0, total = 0, agora = '', t0 = null, rotulo = 'itens',
+          indefinido = false, extra = '' } = dados || {};
+
+  const pct = total > 0 ? Math.min(100, Math.round(100 * feitas / total)) : 0;
+  const faltam = Math.max(0, total - feitas);
+
+  /* ESTIMATIVA PELO RITMO MEDIDO, não por um custo fixo por linha. Uma linha
+     custa 0,7s pela folha e 3s pelo LinkedIn; e mesmo dentro de um caminho,
+     empresa grande demora cinco vezes mais. O único número honesto é o que
+     ESTA execução vem mostrando. */
+  let eta = '';
+  if (t0 && feitas > 0 && faltam > 0) {
+    const porItem = (Date.now() - t0) / feitas;
+    const s = Math.round((faltam * porItem) / 1000);
+    eta = s < 60 ? `~ ${s}s`
+        : `~ ${Math.floor(s / 60)}m${s % 60 ? ` ${s % 60}s` : ''}`;
+  } else if (faltam === 0 && total > 0) {
+    eta = 'concluído';
+  } else {
+    eta = 'calculando…';
+  }
+
+  const jaTem = el.querySelector('.prg');
+  if (!jaTem) {
+    el.innerHTML = `
+      <div class="prg">
+        <div class="prg-topo">
+          <div class="prg-pct"></div>
+          <div class="prg-conta"></div>
+        </div>
+        <div class="prg-barra"><div class="prg-fill"></div></div>
+        <div class="prg-stats">
+          <div class="prg-stat"><div class="prg-stat-rot">Prontas</div>
+            <div class="prg-stat-val" data-k="feitas"></div>
+            <div class="prg-stat-sub" data-k="de"></div></div>
+          <div class="prg-stat"><div class="prg-stat-rot">Faltam</div>
+            <div class="prg-stat-val" data-k="faltam"></div>
+            <div class="prg-stat-sub" data-k="rot"></div></div>
+          <div class="prg-stat"><div class="prg-stat-rot">Estimativa</div>
+            <div class="prg-stat-val" data-k="eta"></div>
+            <div class="prg-stat-sub">para terminar</div></div>
+        </div>
+        <div class="prg-agora" hidden>
+          <div class="prg-agora-rot">Fazendo agora
+            <span class="prg-vivo"><i></i><i></i><i></i></span></div>
+          <div class="prg-agora-linha"></div>
+        </div>
+      </div>`;
+  }
+  const q = (s) => el.querySelector(s);
+  q('.prg-pct').textContent = indefinido ? '' : pct + '%';
+  q('.prg-conta').textContent = indefinido
+    ? `${feitas.toLocaleString('pt-BR')} ${rotulo} até agora`
+    : `${feitas.toLocaleString('pt-BR')} de ${total.toLocaleString('pt-BR')} ${rotulo}`;
+  const fill = q('.prg-fill');
+  fill.classList.toggle('indefinido', !!indefinido);
+  if (!indefinido) fill.style.width = pct + '%';
+  q('[data-k="feitas"]').textContent = feitas.toLocaleString('pt-BR');
+  q('[data-k="de"]').textContent = indefinido ? rotulo : `de ${total.toLocaleString('pt-BR')}`;
+  q('[data-k="faltam"]').textContent = indefinido ? '—' : faltam.toLocaleString('pt-BR');
+  q('[data-k="rot"]').textContent = rotulo;
+  q('[data-k="eta"]').textContent = indefinido ? '—' : eta;
+
+  const box = q('.prg-agora');
+  const linha = q('.prg-agora-linha');
+  if (agora) {
+    box.hidden = false;
+    if (linha.textContent !== agora) {
+      // Re-disparar a animação de entrada: sem isso, o texto troca e nada
+      // se move -- e é o movimento que diz que a coisa está viva.
+      linha.textContent = agora;
+      linha.style.animation = 'none';
+      void linha.offsetWidth;
+      linha.style.animation = '';
+    }
+  } else {
+    box.hidden = true;
+  }
+  if (extra) q('.prg-conta').innerHTML += ` <span class="pf-advanced-hint">· ${extra}</span>`;
+}
+
+function progressoFim(alvo, texto) {
+  const el = typeof alvo === 'string' ? document.getElementById(alvo) : alvo;
+  if (!el) return;
+  const box = el.querySelector('.prg-agora');
+  if (box) box.hidden = true;
+  const conta = el.querySelector('.prg-conta');
+  if (conta && texto) conta.textContent = texto;
+  const fill = el.querySelector('.prg-fill');
+  if (fill) fill.classList.remove('indefinido');
+}
