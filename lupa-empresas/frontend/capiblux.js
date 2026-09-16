@@ -7607,7 +7607,31 @@ async function mtBaixarNovos() {
     try { cotaLe(r); } catch (e) { /* aviso de cota nao pode quebrar busca */ }
     const jsonOriginal = r.json.bind(r);
     r.json = async () => {
-      const d = await jsonOriginal();
+      let d;
+      try {
+        d = await jsonOriginal();
+      } catch (err) {
+        /* HTML NO LUGAR DE JSON.
+           Foi o que o Luiz viu: `Unexpected token '<', "<!DOCTYPE "...`. Esse
+           `<` é o começo de uma página de erro -- quase sempre da Cloudflare,
+           que corta a requisição por volta de 100s e devolve HTML. A tela
+           mostrava a mensagem do parser, que não diz nada a quem está
+           trabalhando e ainda parece defeito nosso de programação.
+
+           Aqui vira uma resposta normal de erro, com o texto certo, e o laço
+           de lotes trata como qualquer outra falha: guarda o que já veio e
+           avisa onde parou. */
+        const tempo = r.status === 524 || r.status === 504 || r.status === 0;
+        return {
+          status: 'error',
+          message: (r.status >= 500 || tempo)
+            ? 'O servidor demorou demais para responder este lote e a conexão '
+              + 'foi cortada no meio. O que já ficou pronto está guardado — '
+              + 'rode de novo para continuar de onde parou.'
+            : `Resposta inesperada do servidor (HTTP ${r.status}).`,
+          _html: true,
+        };
+      }
       if (d && typeof d === 'object' && !Array.isArray(d)) {
         if (d.detail && !d.message) d.message = String(d.detail);
         // HTTP de erro sem `status` no corpo: as telas testam

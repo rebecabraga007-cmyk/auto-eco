@@ -22,6 +22,7 @@ import asyncio
 import io
 import re
 import sys
+import time
 import uuid
 
 from fastapi import Body, FastAPI, File, Form, Request, UploadFile
@@ -3942,7 +3943,30 @@ async def enrich_run(payload: dict = Body(default={})):
         merged.update(enr)
         return merged
 
-    enriched = await asyncio.gather(*[_one(r) for r in rows])
+    # ─── O LOTE PARA NO RELÓGIO ───────────────────────────────────────
+    #
+    # Relatado em 16/set/2026: "ficou uns 5 min e aí travou fazendo 100 leads",
+    # com a tela mostrando `Unexpected token '<'`. Esse `<` é o começo de um
+    # `<!DOCTYPE html>`: a Cloudflare corta a requisição por volta de 100s e
+    # devolve uma PÁGINA DE ERRO, que o `r.json()` da tela não sabe ler.
+    #
+    # O lote era medido em LINHAS (10, quando o decisor vem do LinkedIn), e
+    # linha não tem duração fixa: a média é 2,4s, mas uma empresa grande com
+    # muitos perfis passa de 20s sozinha. Dez delas seguidas estouram o corte
+    # -- e o trabalho já pago no meio do caminho ia junto.
+    #
+    # Medir em TEMPO resolve para qualquer custo de linha: processa em ondas
+    # do tamanho da concorrência e para quando o relógio manda, devolvendo o
+    # que ficou pronto e dizendo em `proximo` onde retomar.
+    PRAZO_S = 55
+    inicio_lote = time.time()
+    enriched = []
+    onda = 6                       # o mesmo do semáforo: 6 em voo por vez
+    for i in range(0, len(rows), onda):
+        if enriched and (time.time() - inicio_lote) > PRAZO_S:
+            break
+        enriched += list(await asyncio.gather(
+            *[_one(r) for r in rows[i:i + onda]]))
     if unir_tel or modo_tel:
         enriched = [tel_fmt.aplicar(r, unir_col=unir_tel, modo=modo_tel)
                     for r in enriched]
@@ -3996,9 +4020,17 @@ async def enrich_run(payload: dict = Body(default={})):
             "base_cols": store[sheet]["columns"], "added_cols": added_cols,
             "rows": enriched, "enriquecidas": len(enriched),
             "offset": inicio,
-            "proximo": (inicio + len(enriched)) if len(enriched) == limite else None,
+            # PRÓXIMO = ONDE PARAMOS, e não "acabou se veio menos que o
+            # pedido". Com o corte por tempo, um lote pode devolver 6 de 10 --
+            # e a regra antiga leria isso como fim da planilha, deixando as
+            # linhas restantes sem enriquecer e sem ninguém avisado.
+            "proximo": ((inicio + len(enriched))
+                        if (inicio + len(enriched)) < len(todas) else None),
             "sem_decisor": sem_decisor,
             "sem_telefone_decisor": sem_telefone,
+            # Quanto o lote conseguiu de fato -- a tela usa para saber se
+            # precisa encolher o proximo pedido.
+            "segundos": round(time.time() - inicio_lote, 1),
             # Falha tecnica e diferente de "nao tem decisor": a primeira se
             # resolve tentando de novo, a segunda nao.
             "erros_decisor": erros_dec,
@@ -4199,8 +4231,15 @@ async def telefone_planilha(payload: dict = Body(default={})):
     contagem = {"confirmados": 0, "outro_dono": 0, "compartilhados": 0,
                 "sem_vinculo": 0, "sem_numero": 0, "erro": 0}
     consultados = 0
+    # MESMO RELÓGIO DO ENRIQUECIMENTO. Uma linha com quatro telefones custa
+    # quatro consultas de ~1s; vinte linhas dessas passam de 80s e a
+    # Cloudflare corta, devolvendo HTML no lugar do JSON.
+    PRAZO_S = 55
+    inicio_lote = time.time()
 
     for linha in linhas:
+        if saida and (time.time() - inicio_lote) > PRAZO_S:
+            break
         nova = dict(linha)
         for par in pares:
             coluna = par["coluna"]
@@ -4253,7 +4292,9 @@ async def telefone_planilha(payload: dict = Body(default={})):
         saida.append(nova)
 
     total_linhas = len(aba["rows"])
-    proximo = inicio + len(linhas)
+    # Onde paramos DE VERDADE: com o corte por tempo, `linhas` pode ter sido
+    # maior que o processado.
+    proximo = inicio + len(saida)
     return {"status": "ok", "rows": saida,
             "colunas": _ordem_com_verificacao(aba["columns"], pares),
             "proximo": proximo if proximo < total_linhas else None,
