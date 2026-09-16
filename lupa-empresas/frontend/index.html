@@ -1321,7 +1321,47 @@
         <span class="source-pill" style="background:var(--amber-soft);color:var(--amber)">WorkAPI · telefone reverso</span>
       </div>
     </div>
+
+    <!-- ══ A PLANILHA INTEIRA ═════════════════════════════════════
+         Um número por vez responde "de quem é". Uma planilha responde outra
+         coisa: "quais destes telefones são mesmo das pessoas que estão na
+         linha" -- e essa é a pergunta de quem vai ligar. -->
+    <div class="search-panel" style="margin-top:14px">
+      <div class="en-step">
+        <span class="en-num">1</span>
+        <div class="en-fields-wrap">
+          <div class="en-fields-head">
+            <strong>Ou confira uma planilha inteira</strong>
+            <span class="en-src-note">acha sozinho as colunas de telefone e de nome</span>
+          </div>
+          <label class="en-upload">
+            <input id="tp-file" type="file" accept=".xlsx,.xlsm,.xls,.csv,.tsv,.txt" hidden />
+            <span class="btn-secondary">📁 Escolher planilha</span>
+          </label>
+          <span class="pf-advanced-hint" id="tp-nome" style="display:inline"></span>
+        </div>
+      </div>
+
+      <div class="en-step" id="tp-mapa-wrap" hidden>
+        <span class="en-num">2</span>
+        <div class="en-fields-wrap">
+          <div class="en-fields-head">
+            <strong>Confira o que entendi</strong>
+            <span class="en-src-note">dá para trocar antes de gastar consulta</span>
+          </div>
+          <div id="tp-mapa"></div>
+          <div class="filter-row" style="margin:10px 0 0">
+            <button type="button" id="tp-run" class="btn-primary">✅ Conferir os telefones</button>
+            <button type="button" id="tp-cancelar" class="btn-secondary" hidden>Parar</button>
+            <button type="button" id="tp-export" class="btn-secondary" hidden>⬇️ Baixar planilha conferida</button>
+            <span class="pf-advanced-hint" id="tp-progresso" style="display:inline"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="tel-results" class="results-area"></div>
+    <div id="tp-results" class="results-area"></div>
   </section>
 
   <section id="tab-dossie" class="tab-section">

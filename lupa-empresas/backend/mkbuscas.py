@@ -526,6 +526,16 @@ async def consulta_telefone(phone: str) -> dict[str, Any]:
         if isinstance(body, dict):
             reason = body.get("reason") or body.get("statusMsg") or ""
         if inner_status in (401, 403):
+            # O MODULO EMBRULHA ERRO DE PARAMETRO NUM 403. Medido em
+            # 16/set/2026: mandar o numero com DDI devolve inner 403 com
+            # "Parametro phone deve conter 10 ou 11 digitos" -- e o texto
+            # daqui mandava conferir a chave e a assinatura, que estavam
+            # perfeitas. Mandar alguem renovar contrato por causa de um
+            # formato de numero e o pior tipo de mensagem de erro.
+            if re.search(r"par[âa]metro|d[íi]gito|inv[áa]lid", reason or "",
+                         re.IGNORECASE):
+                return {"status": "error",
+                        "message": f"integralX recusou o número: {reason}"}
             return {"status": "no_access",
                     "message": f"integralX (intelgrax-tel) rejeitou a chave: {reason or 'sem acesso/token inválido'}. "
                                "Verifique MK_TEL_KEY (vencida/sem acesso ao módulo)."}

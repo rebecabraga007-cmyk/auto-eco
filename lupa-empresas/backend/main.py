@@ -57,6 +57,7 @@ import funcoes
 import setores_li
 import telefones as tel_fmt
 import meetime_leads
+import colunas as col_map
 import identidade
 import funil
 
@@ -4103,6 +4104,195 @@ async def meetime_filtrar(request: Request, payload: dict = Body(default={})):
             "total": len(saida), "repetidos": repetidos,
             "novos": len(saida) - repetidos,
             "sem_cnpj": sum(1 for c in cnpjs if len(c) != 14)}
+
+
+# ---------------------------------------------------------------------
+# PLANILHA DE TELEFONES — de quem é cada número
+# ---------------------------------------------------------------------
+# A aba "De quem é este telefone" respondia UM número por vez. Quem chega com
+# uma planilha de 300 linhas e três colunas de telefone não tem como usar isso.
+#
+# O caminho é o mesmo do BLU LITE (`processors.processDonoDoZap`), com duas
+# diferenças que valem dizer:
+#
+#   o casamento de nome é ESTRITO. Lá basta o primeiro nome aparecer na lista
+#   ("MARIA" casa com qualquer MARIA); aqui todo token precisa bater, senão o
+#   relatório marca como confirmado um monte de homônimo;
+#
+#   a coluna nova nasce ENCOSTADA na coluna de telefone que ela verifica. Com
+#   três colunas de telefone, jogar as três respostas no fim da planilha
+#   obriga quem lê a contar colunas para saber qual é qual.
+
+@app.post("/api/telefone/mapear")
+async def telefone_mapear(payload: dict = Body(default={})):
+    """Diz o que o sistema ENTENDEU da planilha, antes de gastar consulta.
+
+    Separado do processamento de propósito: o operador confere o mapeamento --
+    e corrige, se preciso -- antes de disparar uma chamada paga por número.
+    """
+    store = _upload_ler(payload.get("upload_id"))
+    if not store:
+        return {"status": "error", "message": "Planilha expirada — envie de novo."}
+    sheet = payload.get("sheet") or next(iter(store))
+    if sheet not in store:
+        return {"status": "error", "message": "Aba não encontrada."}
+    aba = store[sheet]
+    mapa = col_map.mapear(aba["columns"], aba["rows"])
+
+    # Quantos números existem de verdade -- é isso que vai virar consulta paga,
+    # e o operador tem que ver o número ANTES de começar.
+    total_numeros = 0
+    for linha in aba["rows"]:
+        for t in mapa["telefones"]:
+            total_numeros += len(col_map.telefones_da_celula(linha.get(t["coluna"])))
+    return {"status": "ok", "sheet": sheet, "linhas": len(aba["rows"]),
+            "numeros": total_numeros, **mapa}
+
+
+@app.post("/api/telefone/planilha")
+async def telefone_planilha(payload: dict = Body(default={})):
+    """Confere, numa fatia de linhas, de quem é cada telefone.
+
+    Em fatias porque cada número é uma consulta paga de ~1s: a planilha de 300
+    linhas com 3 telefones são 900 chamadas, e uma requisição só morreria no
+    corte da Cloudflare depois de ter gasto tudo.
+    """
+    store = _upload_ler(payload.get("upload_id"))
+    if not store:
+        return {"status": "error", "message": "Planilha expirada — envie de novo."}
+    sheet = payload.get("sheet") or next(iter(store))
+    if sheet not in store:
+        return {"status": "error", "message": "Aba não encontrada."}
+    aba = store[sheet]
+    inicio = max(0, int(payload.get("offset") or 0))
+    limite = max(1, min(int(payload.get("limite") or 20), 100))
+    linhas = aba["rows"][inicio:inicio + limite]
+
+    # O operador pode ter corrigido o mapeamento na tela; o dele manda.
+    pares = payload.get("pares")
+    if not pares:
+        pares = col_map.mapear(aba["columns"], aba["rows"])["telefones"]
+    pares = [p for p in pares if p.get("coluna")]
+    if not pares:
+        return {"status": "error",
+                "message": "Nenhuma coluna de telefone encontrada nesta planilha."}
+
+    # Uma consulta por NÚMERO, não por linha: o mesmo número repetido na
+    # planilha (matriz e filial com o mesmo telefone) é pago uma vez só.
+    cache: dict[str, dict] = {}
+    sem_acesso = ""
+
+    async def consultar(tel: str) -> dict:
+        nonlocal sem_acesso
+        if tel in cache:
+            return cache[tel]
+        try:
+            r = await mkbuscas.consulta_telefone(tel)
+        except Exception as exc:
+            r = {"status": "error", "message": str(exc)[:120]}
+        if r.get("status") == "no_access" and not sem_acesso:
+            sem_acesso = r.get("message") or "Sem acesso ao módulo de telefone."
+        cache[tel] = r
+        return r
+
+    saida = []
+    contagem = {"confirmados": 0, "outro_dono": 0, "compartilhados": 0,
+                "sem_vinculo": 0, "sem_numero": 0, "erro": 0}
+    consultados = 0
+
+    for linha in linhas:
+        nova = dict(linha)
+        for par in pares:
+            coluna = par["coluna"]
+            nome_col = par.get("nome") or ""
+            nome_linha = str(linha.get(nome_col) or "").strip() if nome_col else ""
+            numeros = col_map.telefones_da_celula(linha.get(coluna))
+            if not numeros:
+                nova[_col_verif(coluna)] = ""
+                contagem["sem_numero"] += 1
+                continue
+
+            respostas = []
+            for tel in numeros:
+                r = await consultar(tel)
+                consultados += 1
+                if r.get("status") == "no_access":
+                    respostas.append("sem acesso ao módulo")
+                    contagem["erro"] += 1
+                    continue
+                if r.get("status") != "ok":
+                    respostas.append("falha na consulta")
+                    contagem["erro"] += 1
+                    continue
+                registros = r.get("registros") or []
+                total = int(r.get("total") or len(registros))
+                nomes = [str(x.get("nome") or "").strip() for x in registros]
+                nomes = [x for x in nomes if x]
+                bonito = _fmt_tel_br(tel)
+
+                if not nomes:
+                    respostas.append("%s: sem vínculo" % bonito)
+                    contagem["sem_vinculo"] += 1
+                # NÚMERO COMPARTILHADO NÃO CONFIRMA NADA. Acima de 50 vínculos
+                # é call center, número reciclado ou telefone de condomínio --
+                # bater um nome ali é coincidência, e marcar como confirmado
+                # mandaria o SDR ligar achando que fala com a pessoa.
+                elif total >= 50:
+                    respostas.append("%s: compartilhado (%d vínculos)" % (bonito, total))
+                    contagem["compartilhados"] += 1
+                elif nome_linha and any(col_map.nome_casa(nome_linha, x) for x in nomes):
+                    respostas.append("%s: É DE %s" % (bonito, nome_linha.upper()))
+                    contagem["confirmados"] += 1
+                else:
+                    donos = ", ".join(nomes[:2])
+                    respostas.append("%s: outro dono — %s%s"
+                                     % (bonito, donos,
+                                        (" (+%d)" % (total - 2)) if total > 2 else ""))
+                    contagem["outro_dono"] += 1
+            nova[_col_verif(coluna)] = " | ".join(respostas)
+        saida.append(nova)
+
+    total_linhas = len(aba["rows"])
+    proximo = inicio + len(linhas)
+    return {"status": "ok", "rows": saida,
+            "colunas": _ordem_com_verificacao(aba["columns"], pares),
+            "proximo": proximo if proximo < total_linhas else None,
+            "total_aba": total_linhas, "consultados": consultados,
+            "numeros_distintos": len(cache), "contagem": contagem,
+            "aviso": sem_acesso}
+
+
+def _col_verif(coluna: str) -> str:
+    """O nome da coluna nova. Curto, e colado no nome da que ela verifica."""
+    return "%s — de quem é" % coluna
+
+
+def _ordem_com_verificacao(colunas: list, pares: list) -> list:
+    """As colunas do arquivo com cada verificação ENCOSTADA na sua origem.
+
+    Jogar as respostas no fim faria quem lê contar colunas para saber qual
+    verificação é de qual telefone -- e planilha com três telefones é o caso
+    comum, não a exceção.
+    """
+    alvo = {p["coluna"] for p in pares}
+    saida = []
+    for c in colunas:
+        saida.append(c)
+        if c in alvo:
+            saida.append(_col_verif(c))
+    return saida
+
+
+def _fmt_tel_br(tel: str) -> str:
+    """5547999812345 -> (47) 99981-2345. O relatório é lido por gente."""
+    d = re.sub(r"\D", "", tel or "")
+    if d.startswith("55") and len(d) >= 12:
+        d = d[2:]
+    if len(d) == 11:
+        return "(%s) %s-%s" % (d[:2], d[2:7], d[7:])
+    if len(d) == 10:
+        return "(%s) %s-%s" % (d[:2], d[2:6], d[6:])
+    return tel
 
 
 @app.post("/api/enrich/export")

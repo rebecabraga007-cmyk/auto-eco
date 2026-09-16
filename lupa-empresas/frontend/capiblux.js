@@ -7698,3 +7698,197 @@ function cotaPinta() {
   el.appendChild(x);
   document.body.appendChild(el);
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   PLANILHA DE TELEFONES — de quem é cada número
+
+   Um número por vez responde "de quem é". A planilha responde a pergunta de
+   quem vai ligar: "quais destes telefones são mesmo das pessoas que estão na
+   linha".
+
+   Três passos, e o do meio existe por causa do dinheiro: cada número é uma
+   consulta paga, então o mapeamento das colunas aparece ANTES, para o
+   operador corrigir o que o detector errou em vez de descobrir depois de
+   gastar 900 consultas.
+   ══════════════════════════════════════════════════════════════════════ */
+const tpState = { upload_id: null, sheet: null, mapa: null, linhas: [],
+                  colunas: [], cancelar: false };
+
+async function tpMapear() {
+  const alvo = document.getElementById('tp-mapa');
+  alvo.innerHTML = spinner();
+  const d = await fetch(`${API}/api/telefone/mapear`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ upload_id: tpState.upload_id, sheet: tpState.sheet }),
+  }).then(r => r.json());
+  if (d.status !== 'ok') {
+    alvo.innerHTML = `<p class="msg error">${esc(d.message || 'Falhou.')}</p>`;
+    return;
+  }
+  tpState.mapa = d;
+  document.getElementById('tp-mapa-wrap').hidden = false;
+
+  if (!(d.telefones || []).length) {
+    alvo.innerHTML = '<div class="warn-box">Não achei nenhuma coluna de '
+      + 'telefone nesta planilha. Se ela tem telefone com um título fora do '
+      + 'comum, me diga qual coluna é — dá para acrescentar ao detector.</div>';
+    document.getElementById('tp-run').disabled = true;
+    return;
+  }
+  document.getElementById('tp-run').disabled = false;
+
+  /* Cada telefone com um SELETOR do nome ao lado. O detector acerta a maioria
+     (número no título, ou a única coluna de nome), mas planilha é território
+     de exceção: quem está olhando resolve em um clique o que um dicionário
+     não resolveria nunca. */
+  const opcoesNome = ['<option value="">— sem dono na linha —</option>']
+    .concat((d.nomes || []).map(n => `<option value="${esc(n.coluna)}">${esc(n.coluna)}</option>`))
+    .join('');
+
+  alvo.innerHTML = `
+    <div class="info-box">
+      <b>${d.linhas} linha(s)</b> · <b>${d.numeros}</b> número(s) para conferir
+      ${d.numeros > 400 ? ' — é bastante, e cada um é uma consulta' : ''}
+    </div>
+    <div class="prosp-table-scroll" style="margin-top:8px"><table class="prosp-table">
+      <thead><tr><th>COLUNA DE TELEFONE</th><th>ACHEI POR</th>
+      <th>DE QUEM É O TELEFONE NESSA LINHA</th></tr></thead><tbody>
+      ${d.telefones.map((t, i) => `<tr>
+        <td><b>${esc(t.coluna)}</b></td>
+        <td><span class="pf-advanced-hint">${esc(t.certeza)}${t.de ? ` · ${t.amostra}/${t.de} células` : ''}</span></td>
+        <td><select class="filter-select tp-par" data-i="${i}">${opcoesNome}</select>
+            <span class="pf-advanced-hint">${esc(t.par_por || '')}</span></td>
+      </tr>`).join('')}
+    </tbody></table></div>`;
+
+  alvo.querySelectorAll('.tp-par').forEach(sel => {
+    sel.value = d.telefones[parseInt(sel.dataset.i, 10)].nome || '';
+    sel.addEventListener('change', () => {
+      d.telefones[parseInt(sel.dataset.i, 10)].nome = sel.value;
+    });
+  });
+}
+
+async function tpRodar() {
+  const btn = document.getElementById('tp-run');
+  const parar = document.getElementById('tp-cancelar');
+  const prog = document.getElementById('tp-progresso');
+  const out = document.getElementById('tp-results');
+  btn.disabled = true; parar.hidden = false; tpState.cancelar = false;
+  tpState.linhas = [];
+  const soma = { confirmados: 0, outro_dono: 0, compartilhados: 0,
+                 sem_vinculo: 0, sem_numero: 0, erro: 0 };
+  let offset = 0, consultados = 0;
+  const t0 = Date.now();
+
+  try {
+    for (;;) {
+      /* LOTE PEQUENO: cada número é ~1s de consulta paga. Vinte linhas com
+         três telefones já são 60 chamadas — perto de um minuto, que é o teto
+         seguro sob a Cloudflare. E cada lote volta gravado: parar no meio não
+         perde o que já foi conferido (nem o que já foi pago). */
+      const d = await fetch(`${API}/api/telefone/planilha`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          upload_id: tpState.upload_id, sheet: tpState.sheet,
+          pares: tpState.mapa.telefones, offset, limite: 20,
+        }),
+      }).then(r => r.json());
+      if (d.status !== 'ok') {
+        out.innerHTML = `<p class="msg error">${esc(d.message || 'Falhou.')}</p>`;
+        break;
+      }
+      if (d.aviso) {
+        out.innerHTML = `<div class="warn-box">${esc(d.aviso)}</div>`;
+      }
+      tpState.linhas.push(...(d.rows || []));
+      tpState.colunas = d.colunas || tpState.colunas;
+      Object.keys(soma).forEach(k => { soma[k] += (d.contagem || {})[k] || 0; });
+      consultados += d.consultados || 0;
+      offset = d.proximo;
+      prog.innerHTML = `<span class="spinner"></span> ${tpState.linhas.length} de `
+        + `${d.total_aba} linha(s) · ${consultados} número(s) · `
+        + `${Math.round((Date.now() - t0) / 1000)}s`;
+      tpPinta(soma);
+      if (offset === null || offset === undefined || tpState.cancelar) break;
+    }
+  } finally {
+    btn.disabled = false; parar.hidden = true;
+    prog.textContent = `${tpState.linhas.length} linha(s) conferidas · `
+      + `${consultados} consulta(s)` + (tpState.cancelar ? ' (parado)' : '');
+    document.getElementById('tp-export').hidden = !tpState.linhas.length;
+  }
+}
+
+function tpPinta(soma) {
+  const out = document.getElementById('tp-results');
+  const verif = (tpState.colunas || []).filter(c => c.includes('— de quem é'));
+  const mostrar = tpState.colunas.filter(c =>
+    verif.includes(c) || verif.some(v => v.replace(' — de quem é', '') === c)
+    || (tpState.mapa.nomes || []).some(n => n.coluna === c));
+
+  /* Os cinco números separados, e não um "X de Y conferidos". São decisões
+     diferentes: confirmado entra na lista de discagem; outro dono pede troca
+     de contato; compartilhado é call center e não vale ligar achando que fala
+     com a pessoa; sem vínculo é número frio. */
+  out.innerHTML = `
+    <div class="info-box">
+      <b>${soma.confirmados}</b> confirmado(s) — o telefone é da pessoa da linha ·
+      <b>${soma.outro_dono}</b> de outro dono ·
+      <b>${soma.compartilhados}</b> compartilhado(s) ·
+      <b>${soma.sem_vinculo}</b> sem vínculo
+      ${soma.erro ? ` · <b>${soma.erro}</b> com falha` : ''}
+    </div>
+    <div class="prosp-table-scroll" style="margin-top:8px"><table class="prosp-table">
+      <thead><tr>${mostrar.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+      <tbody>${tpState.linhas.slice(0, 200).map(l => `<tr>${mostrar.map(c => {
+        const v = String(l[c] ?? '');
+        const cor = v.includes('É DE ') ? 'color:#16a34a;font-weight:600'
+          : (v.includes('outro dono') ? 'color:#b45309'
+          : (v.includes('compartilhado') ? 'color:#7c3aed' : ''));
+        return `<td style="${cor}">${esc(v)}</td>`;
+      }).join('')}</tr>`).join('')}</tbody>
+    </table></div>
+    ${tpState.linhas.length > 200 ? '<p class="pf-advanced-hint">mostrando as 200 primeiras — o arquivo baixado tem todas</p>' : ''}`;
+}
+
+async function tpExportar() {
+  const colunas = tpState.colunas.map(c => ({ key: c, label: c }));
+  const r = await fetch(`${API}/api/enrich/export`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ columns: colunas, rows: tpState.linhas }),
+  });
+  const blob = await r.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'telefones-conferidos.xlsx';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+(function ligaTelefonePlanilha() {
+  const file = document.getElementById('tp-file');
+  if (!file) return;
+  file.addEventListener('change', async e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const nome = document.getElementById('tp-nome');
+    nome.textContent = f.name + ' — enviando…';
+    const fd = new FormData(); fd.append('file', f);
+    try {
+      const j = await fetch(`${API}/api/enrich/upload`, { method: 'POST', body: fd })
+        .then(r => r.json());
+      if (j.status !== 'ok') { nome.textContent = j.message || 'Falha no upload.'; return; }
+      const aba = (j.sheets || [])[0] || {};
+      tpState.upload_id = j.upload_id;
+      tpState.sheet = aba.name;
+      nome.textContent = `${f.name} — ${aba.linhas} linha(s)`;
+      await tpMapear();
+    } catch (err) { nome.textContent = 'Erro: ' + err.message; }
+  });
+  document.getElementById('tp-run')?.addEventListener('click', tpRodar);
+  document.getElementById('tp-cancelar')?.addEventListener('click', () => {
+    tpState.cancelar = true;
+  });
+  document.getElementById('tp-export')?.addEventListener('click', tpExportar);
+})();
