@@ -28,10 +28,17 @@ SO_CONFERIR=0
 
 sr() { ssh -i "$CHAVE" -o BatchMode=yes "$HOST" "$@"; }
 
-BACKEND="backend/main.py backend/mkbuscas.py backend/correio.py
-         backend/enrich_jobs.py backend/enriquecimentos.py backend/enrich_layout.py"
-ONLINE="app_online/main.py"
-FRONT="frontend/index.html frontend/capiblux.js frontend/capiblux.css frontend/authx.js"
+# A LISTA NAO E MAIS ESCRITA A MAO. Ela era, e falhou do jeito previsivel:
+# criei `memoria_empresa.py`, esqueci de acrescentar aqui, e o deploy subiu um
+# `main.py` que importava um modulo inexistente no servidor. O servico morreu
+# no import e o rollback devolveu a versao boa -- funcionou, mas o defeito nao
+# era o codigo, era a lista.
+#
+# Lista que alguem precisa lembrar de atualizar e lista que vai ficar
+# desatualizada. `git ls-files` sabe quais arquivos sao do projeto.
+BACKEND=$(git ls-files 'backend/*.py' | tr '\n' ' ')
+ONLINE=$(git ls-files 'app_online/*.py' | tr '\n' ' ')
+FRONT=$(git ls-files 'frontend/*.html' 'frontend/*.js' 'frontend/*.css' | tr '\n' ' ')
 DOCS="deploy/EMAIL.md deploy/cloudflare_email_dns.py deploy/conferir_email_dns.py deploy/subir.sh"
 
 echo "== arquivos que vao subir =="
@@ -75,11 +82,24 @@ echo "copiado."
 # segundos e evita derrubar o sistema por uma virgula.
 echo
 echo "== sintaxe no servidor =="
-sr "cd $REMOTO && for f in backend/main.py backend/correio.py backend/enrich_jobs.py \
-      backend/enriquecimentos.py backend/enrich_layout.py backend/mkbuscas.py app_online/main.py; do
+# Compila TUDO que subiu, nao uma lista escolhida: o modulo esquecido some
+# justamente da lista que alguem manteve a mao.
+sr "cd $REMOTO && for f in $BACKEND $ONLINE; do
       /opt/capiblu/venv/bin/python -m py_compile \$f || { echo \"QUEBRADO: \$f\"; exit 1; }
     done; echo 'todos compilam'" || {
   echo "Sintaxe quebrada. NAO reiniciei nada -- o sistema continua no ar com a versao velha."
+  exit 1
+}
+
+# COMPILAR NAO PEGA MODULO AUSENTE -- foi exatamente o que passou: todos os
+# arquivos compilavam, e o `import memoria_empresa` so estourou quando o
+# processo subiu. Importar o app aqui, com o sistema ainda no ar, pega isso
+# antes de derrubar nada.
+echo
+echo "== o app IMPORTA? (compilar nao pega modulo faltando) =="
+sr "cd $REMOTO/backend && /opt/capiblu/venv/bin/python -c \
+    'import main; print(\"importou -- %d rotas\" % len(main.app.routes))'" || {
+  echo "O app nao importa. NAO reiniciei -- o sistema segue no ar com a versao velha."
   exit 1
 }
 
