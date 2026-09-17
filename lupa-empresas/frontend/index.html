@@ -1230,9 +1230,16 @@
               <label class="as-field"><span>Nome desta lista</span>
                 <input id="en-nome" type="text" class="filter-select"
                        style="width:260px" placeholder="Ex.: Construtoras SC — set/26" /></label>
+              <!-- SEM CAMPO DE ENDEREÇO, de propósito. A planilha leva CPF e
+                   telefone de gente real; um campo livre transformaria
+                   "mandar a lista pronta" em "exportar a base para fora da
+                   empresa com um clique", sem rastro de para onde foi. Vai
+                   para o e-mail de cadastro e pronto. -->
               <label class="as-field" id="en-email-wrap"><span>Mandar por e-mail quando terminar</span>
-                <input id="en-email" type="email" class="filter-select"
-                       style="width:260px" placeholder="opcional — deixe vazio para não enviar" /></label>
+                <span class="en-chk" style="padding-top:6px">
+                  <input type="checkbox" id="en-email" />
+                  Sim — para <b id="en-email-quem">o meu e-mail de cadastro</b>
+                </span></label>
             </div>
           </div>
         </div>

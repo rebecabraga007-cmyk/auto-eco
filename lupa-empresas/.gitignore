@@ -10,3 +10,13 @@ deploy/config.yml
 deploy/*.pem
 cloudflared.exe
 .cloudflared/
+
+# Bases e arquivos que o proprio app cria em tempo de execucao. Eles nascem
+# no diretorio do backend quando CAPIBLU_DATA_DIR nao esta definido -- o que
+# acontece em teste local. Commitar um deles levaria dado de cliente
+# (planilha enriquecida tem CPF e telefone) para dentro do repositorio.
+backend/enriquecimentos.db
+backend/enrich_jobs.db
+backend/enriquecimentos_arquivos/
+backend/enrich_jobs_parciais/
+backend/uploads_planilha/

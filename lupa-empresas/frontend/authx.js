@@ -87,6 +87,11 @@
     document.getElementById('login-overlay').hidden = true;
     document.body.classList.remove('locked');
     document.getElementById('user-name').textContent = currentUser.nome || currentUser.email;
+    /* O e-mail de cadastro, escrito por extenso onde ele importa. A planilha
+       enriquecida so vai para ele -- e "vai para o seu e-mail" sem dizer QUAL
+       faz a pessoa ficar esperando numa caixa que nao e a que recebeu. */
+    const quem = document.getElementById('en-email-quem');
+    if (quem && currentUser.email) quem.textContent = currentUser.email;
     const isAdmin = currentUser.role === 'admin';
     document.getElementById('menu-users').hidden = !isAdmin;
     const mc = document.getElementById('menu-config'); if (mc) mc.hidden = !isAdmin;

@@ -3091,156 +3091,159 @@ const enrichState = { upload_id: null, sheets: [], result: null };
       decisor_fonte: document.querySelector('input[name="en-dec-fonte"]:checked')?.value || 'linkedin',
       unir_telefones: !!document.getElementById('en-unir-tel')?.checked,
       formato_telefone: enrichFormatoTel(),
+      /* NOME e E-MAIL viajam com o pedido porque quem termina o trabalho é o
+         servidor, e ele termina possivelmente com a aba já fechada. Se estes
+         dois ficassem na tela, o arquivo sairia sem nome e o e-mail não sairia
+         -- exatamente no caso em que mais fazem falta. */
+      nome: (document.getElementById('en-nome')?.value || '').trim(),
+      email: !!document.getElementById('en-email')?.checked,
+      origem: document.getElementById('en-file-name')?.textContent || '',
+      parametros: q,
     };
     document.getElementById('en-run').disabled = true;
 
-    /* EM LOTES, e isto conserta um defeito grave.
-       Era uma requisição só, e a tela oferece até 2.000 linhas. Medido: 7
-       linhas com Assertiva levam 5,1 s, ou seja ~0,73 s por linha. A
-       Cloudflare corta em ~100 s — então acima de ~135 linhas a requisição
-       MORRIA, e morria depois de já ter consultado (e pago) tudo que tinha
-       processado. Lento, cobrado e perdido.
+    /* O TRABALHO É DO SERVIDOR AGORA. A tela só acompanha.
+       Antes, ela mesma processava em lotes de 10 a 50 linhas, emendando
+       requisições curtas para não bater no corte de ~100 s da Cloudflare.
+       Funcionava, mas o trabalho só existia enquanto a aba existisse: fechou
+       no meio, perdeu as linhas daquele lote -- e linha perdida aqui é
+       consulta PAGA perdida.
 
-       50 por lote: com Assertiva dá ~37 s, folgado sob o teto; só com a
-       Receita dá 2 s, e as idas e vindas a mais não custam nada. */
-    /* O LOTE ENCOLHE QUANDO O DECISOR VEM DO LINKEDIN.
-       Esse caminho roda um funil por empresa -- procura a empresa no LinkedIn,
-       lista quem se declara decisor, resolve o CPF e busca o telefone. Medido:
-       11,8 s numa empresa grande, contra ~0,7 s da folha. Com 50 por lote a
-       requisição bateria no corte da Cloudflare e morreria DEPOIS de ter
-       consultado (e pago) tudo. Dez por lote mantém cada ida bem abaixo do
-       teto; as idas a mais não custam nada. */
-    const decisorNoLinkedIn = fields.some(f => f.startsWith('de_'))
-      && body.decisor_fonte !== 'assertiva';
-    const LOTE = decisorNoLinkedIn ? 10 : 50;
-    enrichState.cancelar = false;
-    const acumulado = [];
-    // Os avisos vêm por lote e precisam ser somados: reportar só o
-    // último lote esconderia a maior parte das empresas puladas.
-    const semDecisor = [], semTelefone = [];
-    let base = null, offset = 0, alvo = body.limite;
+       Agora o POST cria o job e volta na hora com um id. Pode fechar a aba,
+       desligar o computador, voltar amanhã. */
+    try {
+      const j = await fetch(`${API}/api/enrich/job`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(r => r.json());
+      if (j.status !== 'ok') {
+        out.innerHTML = `<p class="msg error">${esc(j.message || 'Falhou.')}</p>`;
+        document.getElementById('en-run').disabled = false;
+        return;
+      }
+      await enrichAcompanhar(j.job, j.total, j.nome);
+    } catch (e) {
+      out.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
+      document.getElementById('en-run').disabled = false;
+    }
+  });
+
+  /* ─── ACOMPANHAR O TRABALHO DO SERVIDOR ────────────────────────────
+     A barra não conta mais lotes: pergunta ao servidor em que pé está. A
+     diferença aparece quando a pessoa fecha a aba -- antes isso matava o
+     trabalho, agora só para de olhar. */
+  let enPoll = null;
+
+  async function enrichAcompanhar(jid, total, nome) {
+    clearInterval(enPoll);
+    document.getElementById('en-run').disabled = true;
     const t0 = Date.now();
+    let ultimo = 0;
 
-    /* A BARRA NO LUGAR DO SPINNER. Enriquecer 100 linhas leva ~5 minutos, e
-       um spinner girando é indistinguível de travado -- foi exatamente o
-       relato: "ficou uns 5 min e aí travou". O número que anda e a linha do
-       que está sendo feito agora são o que separa uma coisa da outra. */
-    const pinta = (feitas, total, agora) => {
+    const desenha = (feitas, tot, estado) => {
       progresso(out, {
-        feitas, total, t0, agora: agora || '',
+        feitas, total: tot, t0,
+        agora: estado === 'fila'
+          ? 'na fila — outro enriquecimento está rodando'
+          : (nome ? `"${nome}" — dá para fechar a aba` : ''),
         rotulo: 'linhas',
         extra: `<button type="button" id="en-parar" class="btn-secondary"
                   style="font-size:12px;padding:1px 8px">Parar</button>`,
       });
-      document.getElementById('en-parar')?.addEventListener('click', () => {
-        enrichState.cancelar = true;
+      document.getElementById('en-parar')?.addEventListener('click', async () => {
+        /* PARAR NÃO JOGA FORA. O servidor termina a onda em voo (aquelas
+           linhas já foram consultadas e pagas) e fecha o arquivo com o que
+           tem. Cancelar e perder seriam a mesma tecla, e não são. */
+        document.getElementById('en-parar').disabled = true;
+        await fetch(`${API}/api/enrich/job/${jid}/parar`, { method: 'POST' });
       });
     };
-    pinta(0, alvo, 'preparando o primeiro lote…');
+    desenha(0, total, 'fila');
 
-    try {
-      while (offset < alvo && !enrichState.cancelar) {
-        const pedaco = { ...body, offset, limite: Math.min(LOTE, alvo - offset) };
-        const j = await fetch(`${API}/api/enrich/run`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(pedaco),
-        }).then(r => r.json());
-        if (j.status !== 'ok') {
-          /* Falhou no meio: mostra o que JÁ foi enriquecido em vez de jogar
-             fora. Essas linhas já foram consultadas e pagas — descartá-las
-             por causa do erro seria cobrar duas vezes pelo mesmo. */
-          if (acumulado.length && base) {
-            base.rows = acumulado; base.enriquecidas = acumulado.length;
-            enrichState.result = base;
-            renderEnrich(base);
-            out.insertAdjacentHTML('afterbegin',
-              `<p class="msg error">Parou em ${acumulado.length} linhas: ${esc(j.message || 'falha')}. `
-              + `O que já foi enriquecido está abaixo e pode ser exportado.</p>`);
-          } else {
-            out.innerHTML = `<p class="msg error">${esc(j.message || 'Falhou.')}</p>`;
-          }
-          return;
+    return new Promise(resolve => {
+      enPoll = setInterval(async () => {
+        let st;
+        try {
+          st = await fetch(`${API}/api/enrich/job/${jid}`).then(r => r.json());
+        } catch (e) { return; }        // rede oscilou: tenta de novo daqui a pouco
+        if (st.status !== 'ok') return;
+        if (st.feitas !== ultimo || st.estado === 'fila') {
+          ultimo = st.feitas;
+          desenha(st.feitas, st.total || total, st.estado);
         }
-        base = base || j;
-        acumulado.push(...(j.rows || []));
-        semDecisor.push(...(j.sem_decisor || []));
-        semTelefone.push(...(j.sem_telefone_decisor || []));
-        // A aba pode ter menos linhas que o pedido: o alvo é o menor dos dois.
-        alvo = Math.min(alvo, j.total_aba || alvo);
-        offset += (j.rows || []).length;
-        /* O nome da última empresa do lote: é o que prova que está andando de
-           verdade, e não só que o número subiu. */
-        const ultima = (j.rows || [])[(j.rows || []).length - 1] || {};
-        const quem = ultima.rfb_razao || ultima.empresa || ultima.Empresa
-                   || ultima[Object.keys(ultima)[0]] || '';
-        pinta(acumulado.length, alvo,
-              quem ? `acabou de processar ${String(quem).slice(0, 60)}` : '');
-        if (j.proximo == null) break;     // acabou a aba
+        if (st.estado === 'fila' || st.estado === 'processando') return;
+        clearInterval(enPoll);
+        await enrichMostrarResultado(jid, st);
+        document.getElementById('en-run').disabled = false;
+        resolve();
+      }, 2000);
+    });
+  }
+
+  async function enrichMostrarResultado(jid, st) {
+    progressoFim();
+    let r;
+    try {
+      r = await fetch(`${API}/api/enrich/job/${jid}/resultado`).then(x => x.json());
+    } catch (e) {
+      out.innerHTML = `<p class="msg error">O trabalho terminou, mas não consegui `
+        + `carregar a prévia (${esc(e.message)}). O arquivo está em `
+        + `<b>Enriquecimentos salvos</b>.</p>`;
+      enrichSalvosCarregar();
+      return;
+    }
+    if (!(r.rows || []).length) {
+      out.innerHTML = `<p class="msg">Nenhuma linha foi enriquecida.`
+        + (st.erro ? ` ${esc(st.erro)}` : '') + `</p>`;
+      return;
+    }
+    enrichState.result = r;
+    /* Os avisos vêm do servidor junto com as linhas. Sem isto, a lista de
+       "empresas sem decisor" ficaria vazia para sempre -- e vazia tem o mesmo
+       desenho de "deu tudo certo", que é a pior mentira que uma tela pode
+       contar. */
+    enrichState.semDecisor = r.sem_decisor || [];
+    enrichState.semTelefone = r.sem_telefone_decisor || [];
+    renderEnrich(r);
+    enrichAvisaDecisores();
+
+    const avisos = [];
+    if (st.estado === 'cancelado') {
+      avisos.push(`Parado a pedido, com ${r.rows.length} linhas prontas — `
+        + `elas já estavam consultadas, então foram guardadas do mesmo jeito.`);
+    }
+    if (st.erro) avisos.push(`Parou com erro: ${esc(st.erro)}`);
+    avisos.push('💾 Guardada em <b>Enriquecimentos salvos</b>.');
+    if (document.getElementById('en-email')?.checked) {
+      avisos.push('O arquivo também foi mandado para o seu e-mail de cadastro.');
+    }
+    out.insertAdjacentHTML('afterbegin',
+      `<p class="msg${st.erro ? ' error' : ''}">${avisos.join(' ')}</p>`);
+    enrichSalvosCarregar();
+  }
+
+  /* QUEM VOLTA TEM QUE REENCONTRAR O TRABALHO. Sem isto, fechar a aba e
+     abrir de novo mostraria a tela limpa, a pessoa concluiria que morreu e
+     mandaria rodar outra vez -- pagando tudo duas vezes. */
+  async function enrichReencontrar() {
+    try {
+      const d = await fetch(`${API}/api/enrich/jobs`).then(r => r.json());
+      const v = (d.jobs || [])[0];
+      if (v) {
+        document.getElementById('en-config').hidden = false;
+        enrichAcompanhar(v.id, v.total, v.nome);
       }
-      if (!base) { out.innerHTML = `<p class="msg">Nenhuma linha para enriquecer.</p>`; return; }
-      base.rows = acumulado;
-      base.enriquecidas = acumulado.length;
-      enrichState.result = base;
-      enrichState.semDecisor = semDecisor;
-      enrichState.semTelefone = semTelefone;
-      renderEnrich(base);
-      enrichAvisaDecisores();
-      if (enrichState.cancelar) {
-        out.insertAdjacentHTML('afterbegin',
-          `<p class="msg">Parado a pedido, com ${acumulado.length} linhas prontas.</p>`);
-      }
-      /* GUARDA SEMPRE, inclusive quando foi parado no meio: as linhas que
-         chegaram até aqui já foram consultadas e pagas, e o motivo de terem
-         parado não muda isso. Salvar só o lote "completo" jogaria fora
-         exatamente o trabalho que mais custou a quem cancelou. */
-      await enrichSalvar(base, q);
-    } catch (e) { out.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`; }
-    finally { document.getElementById('en-run').disabled = false; }
-  });
+    } catch (e) { /* sem job em andamento é o caso normal */ }
+  }
+  enrichReencontrar();
 
   /* ─── GUARDAR E ENTREGAR ───────────────────────────────────────────
      O resultado deixa de morar só na memória da aba. Isso não é comodidade:
      até aqui, fechar o navegador antes de clicar em "Exportar XLSX" apagava
      trabalho JÁ PAGO, consulta por consulta. */
-  async function enrichSalvar(base, q) {
-    if (!base || !(base.rows || []).length) return;
-    const columns = [...base.base_cols.map(c => ({ key: c, label: c })), ...base.added_cols];
-    const email = (document.getElementById('en-email')?.value || '').trim();
-    const nome = (document.getElementById('en-nome')?.value || '').trim();
-    let d;
-    try {
-      d = await fetch(`${API}/api/enrich/salvar`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          columns, rows: base.rows, nome, email,
-          origem: document.getElementById('en-file-name')?.textContent || '',
-          parametros: q || {},
-        }),
-      }).then(r => r.json());
-    } catch (e) {
-      /* FALHA AO GUARDAR NÃO PODE SER SILÊNCIO. A pessoa continua com o
-         resultado na tela e pode exportar à mão -- mas só se souber que o
-         automático não funcionou. */
-      out.insertAdjacentHTML('afterbegin',
-        `<p class="msg error">Não consegui guardar esta lista (${esc(e.message)}). `
-        + `Ela está aqui na tela — exporte antes de fechar a aba.</p>`);
-      return;
-    }
-    if (d.status !== 'ok') {
-      out.insertAdjacentHTML('afterbegin',
-        `<p class="msg error">Não consegui guardar esta lista: ${esc(d.message || 'erro')}. `
-        + `Exporte antes de fechar a aba.</p>`);
-      return;
-    }
-    let msg = '💾 Guardada em <b>Enriquecimentos salvos</b> — dá para fechar a aba.';
-    if (email) {
-      msg += (d.email && d.email.status === 'ok')
-        ? ` Enviada para ${esc(email)}.`
-        : ` <span style="color:var(--amber)">O e-mail não saiu: ${esc((d.email || {}).message || 'sem envio configurado')}.</span>`;
-    }
-    out.insertAdjacentHTML('afterbegin', `<p class="msg">${msg}</p>`);
-    enrichSalvosCarregar();
-  }
+  /* `enrichSalvar` saiu daqui. Quem grava agora é o servidor, no fim do
+     job -- e isso é o ponto: gravar pela tela só funcionava se a tela
+     estivesse aberta na hora exata em que o trabalho acabasse. */
 
   function enBytes(n) {
     if (!n) return '—';

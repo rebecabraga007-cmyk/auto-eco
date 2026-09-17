@@ -56,6 +56,7 @@ import cargos
 import chamados
 import funcoes
 import correio
+import enrich_jobs
 import enrich_layout
 import enriquecimentos
 import setores_li
@@ -3958,17 +3959,25 @@ async def enrich_linha(payload: dict = Body(default={})):
     return {"status": "ok", "cnpj": cnpj, "dados": dados, "ignorados": ignorados}
 
 
-@app.post("/api/enrich/run")
-async def enrich_run(payload: dict = Body(default={})):
-    """Enriquece as linhas de uma aba. Body: {upload_id, sheet, cnpj_col, fields:[], limite}."""
-    up_id = payload.get("upload_id")
-    store = _upload_ler(up_id)
+def _enrich_preparo(payload: dict):
+    """Le o pedido da tela UMA vez, para os dois caminhos que o executam.
+
+    Quem executa e a rota antiga (`/api/enrich/run`, que a API publica ainda
+    usa) e o trabalhador do job. Se cada um lesse o pedido do seu jeito, a
+    primeira diferenca entre eles seria invisivel: a mesma planilha sairia
+    diferente dependendo de por onde passou, e ninguem compara as duas.
+
+    Devolve (erro, cfg). `erro` preenchido = pedido invalido, com a frase
+    pronta para a tela.
+    """
+    store = _upload_ler(payload.get("upload_id"))
     if not store:
-        return {"status": "error", "message": "Upload expirado — reenvie a planilha."}
+        return "Upload expirado — reenvie a planilha.", None
     sheet = payload.get("sheet") or next(iter(store))
     if sheet not in store:
-        return {"status": "error", "message": "Aba não encontrada."}
+        return "Aba não encontrada.", None
     cnpj_col = payload.get("cnpj_col") or _guess_cnpj_col(store[sheet]["columns"])
+
     # DUAS FAMILIAS DE CAMPO. As do catalogo continuam sendo conferidas
     # contra a lista de sempre; as que nascem da quantidade escolhida
     # ("3 decisores x 2 telefones" -> de_dec3_tel2) nao cabem em lista fixa e
@@ -3979,44 +3988,8 @@ async def enrich_run(payload: dict = Body(default={})):
     fields = [f for f in (payload.get("fields") or [])
               if f in _ENRICH_KEYS or enrich_layout.chave_valida(f)]
     if not fields:
-        return {"status": "error", "message": "Selecione ao menos um campo para enriquecer."}
-    limite = int(payload.get("limite") or 100)
-    # FATIA, e nao "as N primeiras". A tela processa em lotes e manda `offset`
-    # a cada rodada.
-    #
-    # POR QUE ISSO PRECISOU EXISTIR: a chamada era uma so, bloqueante, e a
-    # tela oferecia ate 2.000 linhas. Medido: 7 linhas com Assertiva levam
-    # 5,1s, ou seja ~0,73s por linha. A Cloudflare corta em ~100 segundos.
-    # Passando de ~135 linhas a requisicao MORRE -- e morre depois de ja ter
-    # consultado (e pago) tudo que processou ate ali. Lento, cobrado e
-    # perdido, que e a pior combinacao possivel.
-    inicio = max(0, int(payload.get("offset") or 0))
-    todas = store[sheet]["rows"]
-    rows = todas[inicio:inicio + limite]
-    want = set(fields)
+        return "Selecione ao menos um campo para enriquecer.", None
 
-    # Concorrência controlada (Assertiva/integralX têm limite diário).
-    sem = asyncio.Semaphore(6)
-
-    # Cargos escolhidos na tela, no mesmo formato da aba B2B ("diretor,gerente"
-    # ou "1,2" ou "gerencia:vendas"). Vazio = todos.
-    cargos_dec = str(payload.get("decisor_cargos") or "")
-    max_dec = max(1, min(int(payload.get("max_decisores") or 3), 10))
-
-    # ONDE PROCURAR O DECISOR. Padrao LinkedIn: e la que esta quem manda numa
-    # empresa media, porque quem manda quase sempre e contratado e nao aparece
-    # nem no quadro societario nem, ainda, na folha.
-    fonte_dec = str(payload.get("decisor_fonte") or "linkedin").strip().lower()
-    if fonte_dec not in ("linkedin", "assertiva", "ambas"):
-        fonte_dec = "linkedin"
-
-    # ─── AS QUANTIDADES ───────────────────────────────────────────────
-    #
-    # Copiado da Datastone (analisada em 17/set/2026): a tela deles nao pede
-    # "marque os campos", pede QUANTOS -- 0 a 5 de telefone, e-mail, socio.
-    # O ganho nao e estetico: o numero e a mesma alavanca da PLANILHA e do
-    # CUSTO. Quem diz "3 decisores, 2 telefones cada" ja disse o cabecalho
-    # que quer e ja disse o tamanho da conta, na mesma frase.
     def _q(chave, padrao):
         try:
             return max(0, min(int(payload.get(chave) or padrao),
@@ -4024,9 +3997,14 @@ async def enrich_run(payload: dict = Body(default={})):
         except (TypeError, ValueError):
             return padrao
 
-    qtd_tel = _q("qtd_telefones", 1)
-    qtd_email = _q("qtd_emails", 0)
-    qtd_socios = _q("qtd_socios", 0)
+    fonte_dec = str(payload.get("decisor_fonte") or "linkedin").strip().lower()
+    if fonte_dec not in ("linkedin", "assertiva", "ambas"):
+        fonte_dec = "linkedin"
+    modo_tel = str(payload.get("formato_telefone") or "").strip().lower()
+    if modo_tel not in ("", "bruto", "meetime", "zenvia"):
+        modo_tel = ""
+
+    colunas = store[sheet]["columns"]
 
     def _nome_da_linha(r: dict) -> str:
         """Nome da empresa como a pessoa escreveu na planilha dela.
@@ -4035,7 +4013,7 @@ async def enrich_run(payload: dict = Body(default={})):
         (medido: "L3 SOLUCOES EM TECNOLOGIA LTDA" e "Even3"), e o nome que a
         operacao digitou e o nome pelo qual a empresa e conhecida.
         """
-        for col in store[sheet]["columns"]:
+        for col in colunas:
             if col == cnpj_col:
                 continue
             if re.search(r"empresa|razao|razao social|nome|cliente|fantasia",
@@ -4043,27 +4021,134 @@ async def enrich_run(payload: dict = Body(default={})):
                 return str(r.get(col)).strip()[:120]
         return ""
 
-    # TELEFONE: uma coluna com todos, e o formato de quem vai receber.
-    #
-    # As colunas individuais ficam onde estao -- elas servem para LIGAR, cada
-    # numero ao lado de quem atende. A coluna unida serve para IMPORTAR, que e
-    # outra tarefa: a Meetime quer os telefones do lead numa celula so.
-    unir_tel = bool(payload.get("unir_telefones"))
-    modo_tel = str(payload.get("formato_telefone") or "").strip().lower()
-    if modo_tel not in ("", "bruto", "meetime", "zenvia"):
-        modo_tel = ""
+    return None, {
+        "store": store, "sheet": sheet, "cnpj_col": cnpj_col,
+        "fields": fields, "want": set(fields), "todas": store[sheet]["rows"],
+        "base_cols": colunas, "nome_da_linha": _nome_da_linha,
+        "cargos_dec": str(payload.get("decisor_cargos") or ""),
+        "max_dec": max(1, min(int(payload.get("max_decisores") or 3), 10)),
+        "fonte_dec": fonte_dec,
+        "qtd_tel": _q("qtd_telefones", 1),
+        "qtd_email": _q("qtd_emails", 0),
+        "qtd_socios": _q("qtd_socios", 0),
+        # TELEFONE: uma coluna com todos, e o formato de quem vai receber.
+        # As colunas individuais ficam onde estao -- elas servem para LIGAR,
+        # cada numero ao lado de quem atende. A coluna unida serve para
+        # IMPORTAR: a Meetime quer os telefones do lead numa celula so.
+        "unir_tel": bool(payload.get("unir_telefones")),
+        "modo_tel": modo_tel,
+    }
+
+
+async def _enrich_uma_linha(row: dict, cfg: dict) -> dict:
+    """Uma linha da planilha, enriquecida. O nucleo compartilhado."""
+    enr = await _enrich_cnpj(row.get(cfg["cnpj_col"], ""), cfg["want"],
+                             cargos_dec=cfg["cargos_dec"],
+                             max_dec=cfg["max_dec"],
+                             fonte_dec=cfg["fonte_dec"],
+                             nome_empresa=cfg["nome_da_linha"](row),
+                             qtd_tel=cfg["qtd_tel"],
+                             qtd_email=cfg["qtd_email"],
+                             qtd_socios=cfg["qtd_socios"])
+    merged = dict(row)
+    merged.update(enr)
+    return merged
+
+
+def _avisos_decisores(rows: list, cfg: dict) -> tuple:
+    """Separa "nenhum decisor na base" de "achei e nenhum tem telefone".
+
+    São problemas diferentes: o primeiro pede outro filtro de cargo, o
+    segundo pede a consulta profunda. Juntá-los num número só faria a pessoa
+    tentar a correção errada.
+
+    Virou função quando o job passou a existir. Antes só a rota antiga fazia
+    isso, e o caminho novo teria entregue a planilha SEM os avisos -- as
+    empresas que ficaram sem decisor sumiriam caladas, que é justamente o
+    contrário do que estes avisos existem para evitar.
+
+    Os marcadores (`_de_*`) saem das linhas aqui: são conversa interna e não
+    têm por que aparecer na tela nem no arquivo.
+    """
+    sem_decisor, sem_telefone, erros = [], [], []
+    if not any(k.startswith("de_") for k in cfg["want"]):
+        return sem_decisor, sem_telefone, erros
+    cnpj_col = cfg["cnpj_col"]
+    for r in rows:
+        achados = r.pop("_de_achados", None)
+        com_tel = r.pop("_de_com_tel", 0)
+        erro = r.pop("_de_erro", None)
+        pend = r.pop("_de_pendentes", None)
+        if erro:
+            erros.append({"cnpj": str(r.get(cnpj_col) or ""), "erro": erro})
+        if achados is None:
+            continue
+        # O NOME QUE A PESSOA RECONHECE. `rfb_razao` só existe quando ela
+        # pediu a razão social entre os campos -- e para enriquecer decisor
+        # ninguém pede. O aviso então listava CNPJ puro ("07175725000321
+        # ficou sem telefone"), que não diz nada a quem está olhando a
+        # própria planilha.
+        nome_emp = (r.get("rfb_razao") or cfg["nome_da_linha"](r)
+                    or r.get(cnpj_col) or "")
+        if not achados:
+            sem_decisor.append({"empresa": str(nome_emp)[:80],
+                                "cnpj": str(r.get(cnpj_col) or "")})
+        elif not com_tel:
+            sem_telefone.append({"empresa": str(nome_emp)[:80],
+                                 "cnpj": str(r.get(cnpj_col) or ""),
+                                 "decisores": achados,
+                                 # Os perfis que o funil curto nao fechou,
+                                 # prontos para a consulta profunda.
+                                 "perfis": pend or []})
+    return sem_decisor, sem_telefone, erros
+
+
+def _enrich_colunas_saida(cfg: dict) -> list:
+    """O cabecalho do arquivo: as colunas originais mais as novas."""
+    label_of = {k: lbl for g in _ENRICH_CATALOG for (k, lbl) in g["campos"]}
+    label_of.update({k: lbl for k, lbl in enrich_layout.colunas(
+        enrich_layout.TETO, enrich_layout.TETO, enrich_layout.TETO,
+        enrich_layout.TETO, com_cpf=True, com_whatsapp=True)})
+    cols = [{"key": c, "label": c} for c in cfg["base_cols"]]
+    cols += [{"key": f, "label": label_of.get(f, f)} for f in cfg["fields"]]
+    if cfg["unir_tel"]:
+        # No fim, e nao no meio: a coluna unida e um RESUMO das outras, e
+        # resumo que vem antes do detalhe faz a pessoa ler duas vezes.
+        cols.append({"key": tel_fmt.COLUNA_UNIDA, "label": tel_fmt.ROTULO_UNIDA})
+    return cols
+
+
+@app.post("/api/enrich/run")
+async def enrich_run(payload: dict = Body(default={})):
+    """Enriquece UM LOTE de linhas, em uma requisição. Body: {upload_id,
+    sheet, cnpj_col, fields:[], limite, offset}.
+
+    QUEM AINDA USA ISTO: a API pública (`/api/v1`) e quem quiser chamar de
+    fora. A tela não usa mais -- ela cria um job (`/api/enrich/job`), que roda
+    no servidor e não depende de a aba ficar aberta. Esta rota continua porque
+    quebrar integração de terceiro sem aviso é pior que manter dois caminhos,
+    e os dois lêem o pedido pela mesma função, então não podem divergir.
+    """
+    erro, cfg_run = _enrich_preparo(payload)
+    if erro:
+        return {"status": "error", "message": erro}
+    store, sheet = cfg_run["store"], cfg_run["sheet"]
+    cnpj_col, fields, want = cfg_run["cnpj_col"], cfg_run["fields"], cfg_run["want"]
+    unir_tel, modo_tel = cfg_run["unir_tel"], cfg_run["modo_tel"]
+
+    limite = int(payload.get("limite") or 100)
+    # FATIA, e nao "as N primeiras": a tela antiga processava em lotes e
+    # mandava `offset` a cada rodada.
+    inicio = max(0, int(payload.get("offset") or 0))
+    todas = cfg_run["todas"]
+    rows = todas[inicio:inicio + limite]
+
+    # Concorrência controlada (Assertiva/integralX têm limite diário).
+    sem = asyncio.Semaphore(6)
 
     async def _one(row):
         async with sem:
-            enr = await _enrich_cnpj(row.get(cnpj_col, ""), want,
-                                     cargos_dec=cargos_dec, max_dec=max_dec,
-                                     fonte_dec=fonte_dec,
-                                     nome_empresa=_nome_da_linha(row),
-                                     qtd_tel=qtd_tel, qtd_email=qtd_email,
-                                     qtd_socios=qtd_socios)
-        merged = dict(row)
-        merged.update(enr)
-        return merged
+            return await _enrich_uma_linha(row, cfg_run)
 
     # ─── O LOTE PARA NO RELÓGIO ───────────────────────────────────────
     #
@@ -4099,38 +4184,7 @@ async def enrich_run(payload: dict = Body(default={})):
     # problemas diferentes: o primeiro pede outro filtro de cargo, o segundo
     # pede a consulta profunda. Juntá-los num número só faria a pessoa tentar
     # a correção errada.
-    sem_decisor, sem_telefone = [], []
-    erros_dec = []
-    if any(k.startswith("de_") for k in want):
-        for r in enriched:
-            achados = r.pop("_de_achados", None)
-            com_tel = r.pop("_de_com_tel", 0)
-            erro = r.pop("_de_erro", None)
-            pend = r.pop("_de_pendentes", None)
-            if erro:
-                erros_dec.append({"cnpj": str(r.get(cnpj_col) or ""),
-                                  "erro": erro})
-            if achados is None:
-                continue
-            # O NOME QUE A PESSOA RECONHECE.
-            #
-            # `rfb_razao` só existe quando ela pediu a razão social entre os
-            # campos -- e para enriquecer decisor ninguém pede. O aviso então
-            # listava CNPJ puro ("07175725000321 ficou sem telefone"), que não
-            # diz nada a quem está olhando a própria planilha. A planilha DELA
-            # quase sempre tem uma coluna com o nome; é essa que serve aqui.
-            nome_emp = (r.get("rfb_razao") or _nome_da_linha(r)
-                        or r.get(cnpj_col) or "")
-            if not achados:
-                sem_decisor.append({"empresa": str(nome_emp)[:80],
-                                    "cnpj": str(r.get(cnpj_col) or "")})
-            elif not com_tel:
-                sem_telefone.append({"empresa": str(nome_emp)[:80],
-                                     "cnpj": str(r.get(cnpj_col) or ""),
-                                     "decisores": achados,
-                                     # Os perfis que o funil curto nao fechou,
-                                     # prontos para a consulta profunda.
-                                     "perfis": pend or []})
+    sem_decisor, sem_telefone, erros_dec = _avisos_decisores(enriched, cfg_run)
     label_of = {k: lbl for g in _ENRICH_CATALOG for (k, lbl) in g["campos"]}
     # As colunas por quantidade tambem tem nome bonito -- e tem que ser o
     # MESMO nome que a tela mostrou no exemplo, senao o cabecalho do arquivo
@@ -4530,40 +4584,11 @@ def _quem(request: Request) -> str:
     return (request.headers.get("x-user-email") or "").strip().lower()
 
 
-@app.post("/api/enrich/salvar")
-async def enrich_salvar(request: Request, payload: dict = Body(default={})):
-    """Guarda o resultado do lote como arquivo, e opcionalmente manda por e-mail."""
-    usuario = _quem(request)
-    if not usuario:
-        return {"status": "error", "message": "Sem usuário na sessão."}
-    columns = payload.get("columns") or []
-    rows = payload.get("rows") or []
-    if not rows:
-        return {"status": "error", "message": "Nada para salvar."}
-    nome = (str(payload.get("nome") or "").strip()
-            or time.strftime("Enriquecimento %d/%m %H:%M"))
-    dados = _enrich_xlsx(columns, rows)
-    # "Enriquecida" = a linha voltou com ALGUMA coluna nova preenchida. Contar
-    # linha processada daria sempre 100% e nao diria nada.
-    chaves_novas = [c.get("key") for c in columns
-                    if str(c.get("key") or "").split("_")[0]
-                    in ("rfb", "as", "de", "so", "vf")]
-    enriquecidas = sum(1 for r in rows if any(r.get(k) for k in chaves_novas))
-    com_dec = sum(1 for r in rows
-                  if any(r.get(k) for k in r
-                         if str(k).startswith("de_dec") and r.get(k)))
-    r = enriquecimentos.salvar(
-        usuario=usuario, nome=nome, origem=str(payload.get("origem") or ""),
-        colunas=columns, conteudo=dados, linhas=len(rows),
-        enriquecidas=enriquecidas, com_decisor=com_dec,
-        parametros=payload.get("parametros") or {})
-
-    para = str(payload.get("email") or "").strip()
-    if para:
-        env = _enrich_email(r["id"], nome, para, dados, len(rows), enriquecidas)
-        r["email"] = env
-    r["email_disponivel"] = correio.configurado()
-    return r
+# `/api/enrich/salvar` saiu daqui. Ele existia para a TELA mandar o resultado
+# depois de processar no navegador; agora quem processa e grava e o job, no
+# fim do trabalho. Manter os dois deixaria duas escritas na mesma lista, com
+# regras que divergem na primeira mudanca -- e a divergencia so apareceria no
+# arquivo de alguem.
 
 
 def _enrich_email(eid: str, nome: str, para: str, dados: bytes,
@@ -4582,6 +4607,239 @@ def _enrich_email(eid: str, nome: str, para: str, dados: bytes,
     enriquecimentos.marcar_email(
         eid, para, "" if env.get("status") == "ok" else env.get("message", ""))
     return env
+
+
+# ---------------------------------------------------------------------
+# O ENRIQUECIMENTO RODA NO SERVIDOR
+# ---------------------------------------------------------------------
+# A Cloudflare corta requisicao em ~100s. Ate aqui eu contornava mantendo
+# cada requisicao curta e emendando lotes pelo navegador -- funcionava, mas o
+# trabalho so existia enquanto a aba existisse, e linha perdida aqui e
+# consulta PAGA perdida.
+#
+# Com job nao ha o que contornar: o POST responde na hora com um id e o
+# processamento roda num Task sem requisicao nenhuma pendurada nele.
+
+# UM DE CADA VEZ. Tres pessoas enriquecendo juntas batiam na Assertiva em
+# paralelo sem nada segurando. A fila troca "todo mundo lento e a fornecedora
+# reclamando" por "um rapido e os outros com hora prevista".
+_JOB_FILA = asyncio.Semaphore(1)
+# Dentro do job, as linhas ainda vao em onda: o gargalo e a espera de rede,
+# nao a CPU. Seis e o mesmo numero que o lote da tela usava.
+_JOB_ONDA = 6
+
+
+async def _rodar_job(jid: str) -> None:
+    """Processa um job do comeco (ou de onde parou) ate o fim.
+
+    Nunca levanta: e um Task solto, e excecao aqui morreria no vazio deixando
+    o job em 'processando' para sempre -- uma barra que nunca anda e ninguem
+    sabe dizer se ainda esta viva.
+    """
+    try:
+        async with _JOB_FILA:
+            d = enrich_jobs.pegar(jid)
+            if not d or d["status"] not in ("fila", "processando"):
+                return
+            erro, cfg = _enrich_preparo(d["pedido"])
+            if erro:
+                enrich_jobs.marcar(jid, status="erro", erro=erro,
+                                   terminado_em=int(time.time()))
+                return
+
+            inicio = max(0, int(d["pedido"].get("offset") or 0))
+            limite = int(d["pedido"].get("limite") or 0) or len(cfg["todas"])
+            alvo = cfg["todas"][inicio:inicio + limite]
+
+            # RETOMAR DE ONDE PAROU. O que ja esta no disco ja foi consultado
+            # e pago; refazer seria cobrar a mesma linha duas vezes.
+            feitas = enrich_jobs.ja_feitas(jid)
+            enrich_jobs.marcar(jid, status="processando", feitas=feitas,
+                               total=len(alvo))
+
+            while feitas < len(alvo):
+                if enrich_jobs.quer_parar(jid):
+                    enrich_jobs.marcar(jid, status="cancelado",
+                                       terminado_em=int(time.time()))
+                    break
+                fatia = alvo[feitas:feitas + _JOB_ONDA]
+                try:
+                    prontas = await asyncio.gather(
+                        *[_enrich_uma_linha(r, cfg) for r in fatia])
+                except Exception as exc:
+                    # A onda inteira falhou (rede caiu, fornecedora fora). O
+                    # que ja esta no disco continua valendo: o job para com
+                    # erro, mas o arquivo parcial vira resultado mesmo assim.
+                    enrich_jobs.marcar(jid, erro="%s: %s"
+                                       % (type(exc).__name__, str(exc)[:160]))
+                    break
+                if cfg["unir_tel"] or cfg["modo_tel"]:
+                    prontas = [tel_fmt.aplicar(r, unir_col=cfg["unir_tel"],
+                                               modo=cfg["modo_tel"])
+                               for r in prontas]
+                # Grava ANTES de contar: contar primeiro e morrer no meio da
+                # escrita diria "80 prontas" com 70 no arquivo, e as 10 no vao
+                # seriam consultas pagas que ninguem sabe que existiram.
+                enrich_jobs.anexar(jid, prontas)
+                feitas += len(fatia)
+                enrich_jobs.marcar(jid, feitas=feitas)
+
+            await _fechar_job(jid, cfg)
+    except Exception as exc:
+        enrich_jobs.marcar(jid, status="erro", terminado_em=int(time.time()),
+                           erro="%s: %s" % (type(exc).__name__, str(exc)[:200]))
+
+
+async def _fechar_job(jid: str, cfg: dict) -> None:
+    """Monta o XLSX, guarda na lista e manda o e-mail.
+
+    Fecha mesmo quando o job foi cancelado ou deu erro no meio: as linhas que
+    chegaram ate ali custaram igual, e jogar fora o parcial seria cobrar de
+    novo por elas.
+    """
+    d = enrich_jobs.pegar(jid)
+    if not d:
+        return
+    linhas = enrich_jobs.ler(jid)
+    if not linhas:
+        enrich_jobs.marcar(jid, status=(d["status"] if d["status"] in
+                                        ("cancelado", "erro") else "concluido"),
+                           terminado_em=int(time.time()))
+        return
+
+    colunas = _enrich_colunas_saida(cfg)
+    dados = _enrich_xlsx(colunas, linhas)
+    chaves_novas = [c["key"] for c in colunas
+                    if str(c["key"]).split("_")[0] in ("rfb", "as", "de", "so", "vf")]
+    enriquecidas = sum(1 for r in linhas if any(r.get(k) for k in chaves_novas))
+    com_dec = sum(1 for r in linhas
+                  if any(v for k, v in r.items() if str(k).startswith("de_dec")))
+
+    salvo = enriquecimentos.salvar(
+        usuario=d["usuario"], nome=d["nome"],
+        origem=str(d["pedido"].get("origem") or ""), colunas=colunas,
+        conteudo=dados, linhas=len(linhas), enriquecidas=enriquecidas,
+        com_decisor=com_dec, parametros=d["pedido"].get("parametros") or {})
+
+    final = "cancelado" if d["status"] == "cancelado" else (
+        "erro" if d["erro"] else "concluido")
+    enrich_jobs.marcar(jid, status=final, com_decisor=com_dec,
+                       colunas=json.dumps(colunas, ensure_ascii=False),
+                       enriquecimento_id=salvo["id"],
+                       terminado_em=int(time.time()))
+
+    if d["quer_email"] and correio.configurado():
+        _enrich_email(salvo["id"], d["nome"], d["usuario"], dados,
+                      len(linhas), enriquecidas)
+    # Ate este ponto o parcial ERA o trabalho; agora que o XLSX existe, ele
+    # vira so a previa que a tela desenha.
+    enrich_jobs.encolher_parcial(jid)
+
+
+@app.on_event("startup")
+async def _retomar_jobs():
+    """Pega o que o processo anterior deixou pelo caminho.
+
+    Sem isso, um deploy no meio de um job de 2.000 linhas deixaria o trabalho
+    em 'processando' para sempre: barra parada, ninguem sabendo se morreu, e
+    a pessoa mandando rodar de novo -- pagando tudo duas vezes.
+    """
+    for jid in enrich_jobs.pendentes():
+        print("[enrich] retomando job %s" % jid, flush=True)
+        asyncio.create_task(_rodar_job(jid))
+
+
+@app.post("/api/enrich/job")
+async def enrich_job_criar(request: Request, payload: dict = Body(default={})):
+    """Cria o trabalho e responde NA HORA. O processamento fica para o Task."""
+    usuario = _quem(request)
+    if not usuario:
+        return {"status": "error", "message": "Sem usuário na sessão."}
+    erro, cfg = _enrich_preparo(payload)
+    if erro:
+        return {"status": "error", "message": erro}
+    inicio = max(0, int(payload.get("offset") or 0))
+    limite = int(payload.get("limite") or 0) or len(cfg["todas"])
+    total = len(cfg["todas"][inicio:inicio + limite])
+    if not total:
+        return {"status": "error", "message": "Nenhuma linha para enriquecer."}
+    nome = (str(payload.get("nome") or "").strip()
+            or time.strftime("Enriquecimento %d/%m %H:%M"))
+    jid = enrich_jobs.criar(usuario, nome, payload, total,
+                            quer_email=bool(payload.get("email")))
+    asyncio.create_task(_rodar_job(jid))
+    return {"status": "ok", "job": jid, "total": total, "nome": nome,
+            "email_disponivel": correio.configurado()}
+
+
+@app.get("/api/enrich/job/{jid}")
+async def enrich_job_ver(jid: str, request: Request):
+    d = enrich_jobs.pegar(jid, _quem(request), admin=_is_admin(request))
+    if not d:
+        return JSONResponse({"status": "error", "message": "Job não encontrado."},
+                            status_code=404)
+    # `feitas` vem do banco, mas quem manda e o DISCO: o banco pode estar um
+    # passo atras se o processo morreu entre gravar e marcar.
+    feitas = max(int(d["feitas"] or 0), enrich_jobs.ja_feitas(jid))
+    return {"status": "ok", "job": jid, "estado": d["status"],
+            "nome": d["nome"], "total": d["total"], "feitas": feitas,
+            "erro": d["erro"] or "", "cancelando": d["cancelar"],
+            "enriquecimento_id": d["enriquecimento_id"],
+            "criado_em": d["criado_em"], "terminado_em": d["terminado_em"]}
+
+
+@app.get("/api/enrich/job/{jid}/resultado")
+async def enrich_job_resultado(jid: str, request: Request, limite: int = 300):
+    """As linhas prontas, para a tela mostrar a prévia.
+
+    Limitado de propósito: a planilha inteira ja esta no XLSX, e mandar 2.000
+    linhas com 40 colunas para a tela desenhar so deixa o navegador lento sem
+    mostrar nada que o arquivo nao mostre melhor.
+    """
+    d = enrich_jobs.pegar(jid, _quem(request), admin=_is_admin(request))
+    if not d:
+        return JSONResponse({"status": "error", "message": "Job não encontrado."},
+                            status_code=404)
+    erro, cfg = _enrich_preparo(d["pedido"])
+    colunas = d["colunas"] or (_enrich_colunas_saida(cfg) if cfg else [])
+    base = set(cfg["base_cols"]) if cfg else set()
+    rows = enrich_jobs.ler(jid, limite=max(1, min(int(limite), 1000)))
+    # Os avisos saem das MESMAS linhas, pela mesma função da rota antiga. Sem
+    # isto o job entregaria a planilha sem dizer quais empresas ficaram sem
+    # decisor -- caladas, que é o contrário do que o aviso existe para fazer.
+    sem_dec, sem_tel, erros = (_avisos_decisores(rows, cfg) if cfg
+                               else ([], [], []))
+    return {"status": "ok", "estado": d["status"],
+            "base_cols": [c["key"] for c in colunas if c["key"] in base],
+            "added_cols": [c for c in colunas if c["key"] not in base],
+            "rows": rows,
+            "total_aba": d["total"], "enriquecidas": d["feitas"],
+            "sem_decisor": sem_dec, "sem_telefone_decisor": sem_tel,
+            "erros_decisor": erros,
+            "enriquecimento_id": d["enriquecimento_id"]}
+
+
+@app.post("/api/enrich/job/{jid}/parar")
+async def enrich_job_parar(jid: str, request: Request):
+    """Pede a parada. O trabalhador lê isso no começo da próxima onda.
+
+    Não mata no meio de uma onda de propósito: as seis linhas em voo já foram
+    consultadas e pagas, e abortar agora jogaria fora exatamente elas.
+    """
+    ok = enrich_jobs.pedir_cancelamento(jid, _quem(request), _is_admin(request))
+    return {"status": "ok" if ok else "error",
+            "message": "" if ok else "Este trabalho já terminou."}
+
+
+@app.get("/api/enrich/jobs")
+async def enrich_jobs_meus(request: Request):
+    """O que está rodando para esta pessoa AGORA.
+
+    A tela chama isso ao abrir: quem fechou a aba e voltou precisa
+    reencontrar o trabalho andando, senão conclui que morreu e manda rodar de
+    novo -- pagando tudo duas vezes.
+    """
+    return {"status": "ok", "jobs": enrich_jobs.em_andamento(_quem(request))}
 
 
 @app.post("/api/admin/email/testar")
@@ -4657,7 +4915,10 @@ async def enrich_salvo_email(eid: str, request: Request,
         return {"status": "error", "message": "Enriquecimento não encontrado."}
     if not correio.configurado():
         return {"status": "error", "message": correio.por_que_nao()}
-    para = str(payload.get("email") or "").strip() or _quem(request)
+    # Sempre para quem esta pedindo -- inclusive o admin. Ver a lista de
+    # outra pessoa e uma coisa; mandar os CPFs dela para um endereco
+    # escolhido na hora e outra.
+    para = _quem(request)
     with open(d["caminho"], "rb") as f:
         dados = f.read()
     return _enrich_email(eid, d["nome"], para, dados, d["linhas"] or 0,

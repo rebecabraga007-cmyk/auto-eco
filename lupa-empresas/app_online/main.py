@@ -125,12 +125,20 @@ _LOCAL_PREFIXES = ("/api/auth/", "/api/admin/", "/api/v1/")
 _CONSULTA_PREFIXES = (
     "/api/person", "/api/phone", "/api/assertiva", "/api/company",
     "/api/dossie", "/api/companies/search", "/api/prospeccao/pessoas",
-    # Do enriquecimento, so o RUN gasta. Subir a planilha e baixar o XLSX nao
-    # chamam fornecedor nenhum -- o upload so le o arquivo e o export so
-    # escreve o que ja esta na memoria da tela. Estavam contando, e contavam
-    # em dobro no fluxo normal: quem sobe, enriquece e baixa gastava tres
-    # "consultas" tendo pago por uma.
-    "/api/enrich/run",
+    # ENRIQUECIMENTO NAO ENTRA NA COTA -- decisao da Rebeca em 17/set/2026.
+    #
+    # A cota diaria existe para conter consulta avulsa: a pessoa digitando CPF
+    # atras de CPF na tela, sem nada que a faca parar. Planilha e outra coisa.
+    # Ela ja nasce com tamanho decidido antes de rodar, ja aparece com o custo
+    # em consultas na tela antes de começar, e o gasto total fica no livro do
+    # admin de qualquer jeito. Contar as duas com a mesma regua fazia quem
+    # trabalha com lista bater no teto no meio do trabalho -- e a contagem
+    # ainda dependia do TAMANHO DO LOTE, que e detalhe tecnico: 100 linhas em
+    # lotes de 10 contavam 10, as mesmas 100 num job so contariam 1.
+    #
+    # Fica registrado o que isso custa: enriquecer e o caminho mais caro do
+    # sistema, e agora ele nao tem freio automatico. O freio passa a ser o
+    # relatorio de uso do painel admin, que e onde o valor em reais aparece.
     # O funil é o endpoint MAIS caro do app: um lote pode disparar dezenas de
     # consultas pagas num clique. Precisa ser nomeado inteiro, e não como
     # "/api/funil", porque `/api/funil/empresa` só lê a base da Receita local

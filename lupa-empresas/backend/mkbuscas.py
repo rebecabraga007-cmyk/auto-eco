@@ -25,7 +25,20 @@ import httpx
 
 # Defaults ja apontam para a WorkAPI (gateway por tras da Mk Buscas).
 BASE_URL = os.environ.get("MK_BASE_URL", "https://api.workapi.dev/v1/gateway").strip().rstrip("/")
-CPF_PATH = os.environ.get("MK_CPF_PATH", "/work-cpf?cpf={cpf}").strip()
+# O MODULO DE CPF CHAMA-SE `integrax-cpf`. Sem "l", e sem "v2".
+#
+# Medido em 17/set/2026, com a chave de producao: `/integrax-cpf` responde 200
+# com a ficha inteira; `/work-cpf` e `/intelgrax-cpfv2` respondem 403
+# "Forbidden". Ou seja, o default que estava aqui (`/work-cpf`) NAO funciona --
+# o que segurava tudo era a linha `MK_CPF_PATH` no .env. Num servidor onde
+# aquela linha faltasse, toda consulta de CPF morreria com 403, e o 403 parece
+# "chave sem acesso": quem fosse investigar trocaria a chave, que e a unica
+# coisa que nao estava errada.
+#
+# Repare que os tres modulos nao seguem o mesmo padrao de nome -- `integrax`
+# no CPF, `intelgrax` no telefone e no nome. Nao e erro de digitacao minha:
+# foi conferido chamando os dois nos dois enderecos.
+CPF_PATH = os.environ.get("MK_CPF_PATH", "/integrax-cpf?cpf={cpf}").strip()
 AUTH_HEADER = os.environ.get("MK_AUTH_HEADER", "x-api-key").strip()
 # Aceita MK_AUTH_VALUE ou WORKAPI_KEY (mesma chave que seus scripts ja usam).
 AUTH_VALUE = (os.environ.get("MK_AUTH_VALUE") or os.environ.get("WORKAPI_KEY") or "").strip()
@@ -44,7 +57,12 @@ MAX_POR_NOME = int(os.environ.get("MK_MAX_POR_NOME", "100"))
 
 # Módulo de TELEFONE REVERSO (intelgrax-tel): phone -> CPFs/CNPJs atrelados.
 # Tem chave PRÓPRIA (MK_TEL_KEY) porque o acesso é por módulo: a chave do CPF
-# (intelgrax-cpfv2) não abre o tel, e vice-versa. Cai na WORKAPI_KEY se não houver.
+# (`integrax-cpf`) não abre o tel, e vice-versa. Cai na WORKAPI_KEY se não houver.
+#
+# São TRÊS chaves diferentes no .env, com cotas diárias separadas — medido em
+# 17/set/2026: CPF 15.000/dia, telefone 5.000/dia, nome 2.000/dia. Por isso
+# "acabou a cota" nunca é uma frase sobre o sistema inteiro: acaba a de um
+# módulo e os outros seguem funcionando.
 TEL_PATH = os.environ.get("MK_TEL_PATH", "/intelgrax-tel").strip()
 TEL_AUTH_VALUE = (os.environ.get("MK_TEL_KEY") or AUTH_VALUE or "").strip()
 
