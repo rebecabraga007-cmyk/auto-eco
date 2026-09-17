@@ -38,6 +38,24 @@ ainda, mas é o bastante para não herdar essa configuração no domínio novo.
 
 ## Passo 2 — Cloudflare (DNS da zona capiblu.net)
 
+**Estado da zona em 17/set/2026** (lido pela API, não pela tela): zona
+`capiblu.net` ativa, plano Free, **5 registros e nenhum de e-mail** — `A` na
+raiz e no `www` apontando para 216.24.57.1, e três `CNAME` (`app`, `bluu`,
+`data`) para o túnel. Todos **proxied (nuvem laranja)**. Folha em branco para
+e-mail, o que é bom.
+
+Dá para criar os registros pelo script `cloudflare_email_dns.py` desta pasta,
+que é a forma recomendada: ele força `proxied=false`, não deixa nascer um
+segundo SPF no mesmo nome, e confere o que ficou gravado. Sem `--aplicar` ele
+só mostra o que faria.
+
+```bash
+CF_TOKEN=... python cloudflare_email_dns.py registros-da-resend.json --dmarc --aplicar
+```
+
+Ou à mão, na tela:
+
+
 Os três registros da tela da Resend, com dois cuidados que a tela deles não
 avisa:
 
