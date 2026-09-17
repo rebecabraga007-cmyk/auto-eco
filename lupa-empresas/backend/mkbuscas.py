@@ -260,9 +260,22 @@ def refine_phones(phones: list[dict[str, Any]], modo: str = "celular",
     #  4) relação "Direto" (número do próprio titular, não de terceiro)
     #  5) WhatsApp presente (sinal de linha ativa)
     #  6) priority e classification do provedor (1 = melhor)
+    #
+    # E ANTES DE TODOS: "NAO PERTURBE" VAI PARA O FIM.
+    #
+    # Isto estava faltando aqui, e o funil (`funil._ordem_telefone`) sempre
+    # teve. Consequencia concreta: um numero no cadastro de nao perturbe,
+    # chegando pelo caminho da Assertiva/folha, podia sair como
+    # "Decisor 1 Telefone 1" -- o PRIMEIRO que o SDR liga. Os dois caminhos
+    # respondiam coisas diferentes para a mesma pessoa, e o que respondia
+    # pior era o que alimenta a planilha.
+    #
+    # Nao e ruido de ordenacao: e risco juridico. Por isso entra como
+    # critterio zero, acima de recencia, de WhatsApp e de tudo o mais.
     def _sort_key(c):
         meses = c.get("meses_sem_contato")
         recencia = meses if isinstance(meses, int) else 999   # sem informação vai pro fim
+        nao_perturbe = 1 if c.get("nao_perturbe") else 0
         quente = 0 if (c.get("hotphone") or c.get("plus")) else 1
         direto = 0 if str(c.get("relacao") or "").lower().startswith("direto") else 1
         wa = 0 if c.get("whatsapp") else 1
@@ -274,7 +287,7 @@ def refine_phones(phones: list[dict[str, Any]], modo: str = "celular",
             clf = int(c.get("classification")) if c.get("classification") is not None else 98
         except (TypeError, ValueError):
             clf = 98
-        return (c["rank"], recencia, quente, direto, wa, prio, clf)
+        return (nao_perturbe, c["rank"], recencia, quente, direto, wa, prio, clf)
 
     # dedupe por dígitos, mantendo o de melhor ordenação
     seen, dedup = set(), []
