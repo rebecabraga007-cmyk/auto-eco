@@ -132,10 +132,14 @@ def main():
             d = _chama("POST", "/zones/%s/dns_records" % zid, corpo)
             acao = "criado"
         if not d.get("success"):
-            print("✗ %s %s — %s" % (p["type"], alvo, d.get("errors")))
+            print("[FALHOU] %s %s -- %s" % (p["type"], alvo, d.get("errors")))
             continue
         r = d["result"]
-        print("✓ %s %s %-30s proxy=%s  %s"
+        # SO ASCII NA SAIDA. O console do Windows usa cp1252 e um "check"
+        # bonito derruba o script com UnicodeEncodeError DEPOIS de ja ter
+        # gravado o registro -- o pior momento possivel, porque parece que
+        # falhou quando na verdade funcionou.
+        print("[OK] %s %s %-30s proxy=%s  %s"
               % (acao, r["type"], r["name"], r.get("proxied"),
                  str(r["content"])[:50]))
 

@@ -36,52 +36,38 @@ ainda, mas é o bastante para não herdar essa configuração no domínio novo.
 4. **API Keys → Create** → permissão `Sending access`. Essa chave é a senha
    de SMTP.
 
-## Passo 2 — Cloudflare (DNS da zona capiblu.net)
+## Passo 2 — Cloudflare — **FEITO em 17/set/2026**
 
-**Estado da zona em 17/set/2026** (lido pela API, não pela tela): zona
-`capiblu.net` ativa, plano Free, **5 registros e nenhum de e-mail** — `A` na
-raiz e no `www` apontando para 216.24.57.1, e três `CNAME` (`app`, `bluu`,
-`data`) para o túnel. Todos **proxied (nuvem laranja)**. Folha em branco para
-e-mail, o que é bom.
+Domínio cadastrado na Resend (`sa-east-1`) e os registros criados na zona pela
+API. Estado conferido depois de gravar:
 
-Dá para criar os registros pelo script `cloudflare_email_dns.py` desta pasta,
-que é a forma recomendada: ele força `proxied=false`, não deixa nascer um
-segundo SPF no mesmo nome, e confere o que ficou gravado. Sem `--aplicar` ele
-só mostra o que faria.
+| Tipo | Nome | Proxy | Conteúdo |
+|---|---|---|---|
+| TXT | `resend._domainkey` | cinza | `p=MIGfMA0GCSq…` (DKIM) |
+| MX | `send` | cinza | `feedback-smtp.sa-east-1.amazonses.com` (10) |
+| TXT | `send` | cinza | `v=spf1 include:amazonses.com ~all` |
+| CNAME | `rsend` | cinza | `send.forge.rmta.net` |
+| TXT | `_dmarc` | cinza | `v=DMARC1; p=none` |
+
+Os cinco em **DNS only**. O `CNAME rsend` é o que justifica o cuidado: CNAME é
+o único tipo desta lista que a Cloudflare consegue proxiar, e proxiado ele
+quebraria sem dar erro. Os cinco registros antigos (`app`, `bluu`, `data`,
+raiz, `www`) continuam laranja e intocados.
+
+**Resend: `verified`** — DKIM e SPF confirmados por ela.
+
+**SMTP: login aceito** em `smtp.resend.com:587` com usuário `resend` e a API
+key como senha (testado com handshake, sem enviar mensagem).
+
+Para refazer isso noutro domínio, ou depois de trocar a chave:
 
 ```bash
 CF_TOKEN=... python cloudflare_email_dns.py registros-da-resend.json --dmarc --aplicar
 ```
 
-Ou à mão, na tela:
-
-
-Os três registros da tela da Resend, com dois cuidados que a tela deles não
-avisa:
-
-- **Tudo em "DNS only" (nuvem CINZA).** Registro de e-mail proxied pela
-  Cloudflare para de funcionar sem dar erro claro.
-- A Resend usa o subdomínio **`send.capiblu.net`**, não a raiz. Por isso ela
-  convive com o Email Routing: o MX da entrada fica na raiz, o MX de retorno
-  (bounce) fica no `send.`.
-
-| Tipo | Nome | Valor |
-|---|---|---|
-| MX | `send` | `feedback-smtp.sa-east-1.amazonses.com` (prioridade 10) |
-| TXT | `send` | `v=spf1 include:amazonses.com ~all` |
-| TXT | `resend._domainkey` | `p=MIGfMA0GCSqGSIb3…` *(copiar da Resend)* |
-
-Confira o valor exato de cada um na tela da Resend antes de colar: a região
-muda o MX, e o DKIM é único.
-
-Mais um, que a Resend não pede mas vale colocar:
-
-| Tipo | Nome | Valor |
-|---|---|---|
-| TXT | `_dmarc` | `v=DMARC1; p=none; rua=mailto:dmarc@capiblu.net` |
-
-`p=none` só observa, não rejeita nada — é o jeito certo de começar. Depois de
-algumas semanas sem falha nos relatórios, sobe para `p=quarantine`.
+Sem `--aplicar` ele só mostra o que faria. Rodar duas vezes é seguro: ele
+atualiza em vez de duplicar — e isso salvou a primeira execução, que gravou o
+DKIM e morreu no `print` antes de seguir.
 
 ## Passo 3 — Receber as respostas (opcional, grátis)
 
