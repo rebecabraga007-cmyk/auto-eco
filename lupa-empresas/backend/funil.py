@@ -745,9 +745,45 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
     cid, uf = loc["cidade"], (loc["uf"] or emp.uf)
     etapas: list[str] = []
 
+    # ── JA SABEMOS QUEM E ESTA PESSOA? ────────────────────────────────
+    #
+    # Antes de tudo, inclusive antes das etapas gratuitas: se este perfil ja
+    # foi resolvido alguma vez, a resposta esta no disco e o funil inteiro
+    # pode ser pulado. Resolver custa de R$ 0,31 a R$ 2,38 por pessoa, e a
+    # mesma pessoa aparece em varias planilhas -- um diretor da Movida vai
+    # estar em toda lista de frota que a operacao montar.
+    #
+    # Vale tambem para a NEGATIVA, com validade de 30 dias: tentar de novo
+    # quem o funil ja nao fechou custa o mesmo e da o mesmo resultado.
+    _lembrado = None
+    try:
+        _lembrado = linkedin_cache.recordar_cpf(
+            url=(perfil.get("url") or ""), nome_norm=linkedin_cache.norm(nome),
+            empresa_norm=linkedin_cache.norm(emp.nome))
+    except Exception:
+        _lembrado = None
+
     def saida(situacao, cpf="", confianca=0, **extra):
         if nome != nome_exibido:
             etapas.insert(0, "slug:%s" % nome)
+        # GRAVA O QUE CUSTOU PARA DESCOBRIR -- inclusive o "nao achei".
+        #
+        # Esta e a unica porta de saida da funcao, e e de proposito: qualquer
+        # caminho que resolva (ou desista) passa por aqui, entao nao existe
+        # resultado que escape sem ser guardado. Se houvesse dois `return`,
+        # o segundo seria esquecido no primeiro ajuste.
+        if situacao != "veio_do_cache":
+            try:
+                linkedin_cache.lembrar_cpf(
+                    url=(perfil.get("url") or ""),
+                    nome_norm=linkedin_cache.norm(nome), empresa_norm=linkedin_cache.norm(emp.nome),
+                    cpf=cpf, confianca=confianca, situacao=situacao,
+                    forte=bool(extra.get("forte")), custo_brl=gasto.brl)
+            except Exception as exc:
+                # Cache que falha nao pode derrubar a resolucao: o trabalho
+                # ja foi feito e pago. Mas tambem nao some calado.
+                print("[funil] nao guardei o CPF de %s: %s: %s"
+                      % (nome, type(exc).__name__, str(exc)[:120]), flush=True)
         return {"nome": nome_exibido, "nome_completo": nome,
                 # O e-mail vai SEMPRE, identificado ou nao. Antes so aparecia
                 # quando a Assertiva reconhecia o dono -- e a Assertiva conhece
@@ -760,6 +796,27 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
                 "cidade": cid, "uf": uf, "cpf": cpf, "situacao": situacao,
                 "confianca": confianca, "etapas": etapas,
                 "ms": int((time.time() - t0) * 1000), **extra}
+
+    # ── ETAPA 00: O DISCO ─────────────────────────────────────────────
+    #
+    # Antes de qualquer etapa, paga ou grátis. Se este perfil já foi resolvido
+    # alguma vez, a resposta custou até R$ 2,38 e está guardada -- refazer o
+    # funil daria o mesmo resultado pelo mesmo preço.
+    #
+    # `situacao="veio_do_cache"` não é enfeite: é o que impede a saída de
+    # regravar o que acabou de ler, e é o que faz a tela poder dizer que
+    # aquela linha não custou nada.
+    if _lembrado:
+        etapas.append("00 cache:%s" % (_lembrado["situacao"] or "?"))
+        if _lembrado["cpf"]:
+            return saida("veio_do_cache", _lembrado["cpf"],
+                         _lembrado["confianca"], forte=_lembrado["forte"],
+                         porque="já resolvido antes (%s) — sem custo nesta rodada"
+                                % (_lembrado["situacao"] or "identificado"))
+        # Negativa ainda válida: o funil já tentou e não fechou.
+        return saida("veio_do_cache", "", 0,
+                     porque="o funil já tentou este perfil e não fechou o CPF "
+                            "— tentar de novo custaria o mesmo pelo mesmo nada")
 
     if len([t for t in I._norm(nome).split() if len(t) > 1]) < 2:
         return saida("nome_incompleto")

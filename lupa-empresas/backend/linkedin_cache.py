@@ -95,6 +95,33 @@ CREATE TABLE IF NOT EXISTS gastos_bd (
   economia_usd REAL
 );
 CREATE INDEX IF NOT EXISTS idx_lc_gastos ON gastos_bd(quando);
+
+-- PERFIL DO LINKEDIN -> CPF. A resposta mais CARA do sistema, guardada.
+--
+-- Resolver "qual dos 195 Vinicius Ferreira e este" custa de R$ 0,31 a
+-- R$ 2,38 por pessoa -- e ate agora a resposta era descartada. A planilha
+-- seguinte que tivesse a mesma pessoa pagava de novo.
+--
+-- O projeto inteiro acredita em PAGAR NA INGESTAO, NAO NA CONSULTA: e por
+-- isso que a Receita e a JBR estao no disco e a busca de empresa e gratis.
+-- Faltava aplicar o mesmo principio no passo mais caro de todos.
+--
+-- Guarda o NAO RESOLVIDO tambem, e isso importa: tentar de novo uma pessoa
+-- que o funil ja nao fechou custa o mesmo e da o mesmo resultado. Mas com
+-- validade -- dado novo aparece, e uma negativa eterna viraria uma porta
+-- fechada para sempre.
+CREATE TABLE IF NOT EXISTS perfil_cpf (
+  url          TEXT PRIMARY KEY,   -- o perfil; e o unico identificador unico
+  nome_norm    TEXT,               -- para achar sem a URL
+  empresa_norm TEXT,
+  cpf          TEXT,               -- vazio = tentamos e nao fechou
+  confianca    INTEGER,
+  situacao     TEXT,               -- resolvido_por_email, resolvido_gratis...
+  forte        INTEGER DEFAULT 0,
+  custo_brl    REAL DEFAULT 0,     -- quanto custou descobrir, para medir o ganho
+  quando       INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_lc_pcpf_nome ON perfil_cpf(nome_norm, empresa_norm);
 """
 
 # US$ 2,50 por 1.000 registros — medido na fatura, não estimado: a chamada
@@ -108,12 +135,94 @@ def _con():
     return con
 
 
+# Quanto tempo uma NEGATIVA vale. Positiva nao expira: CPF de uma pessoa nao
+# muda. Negativa expira porque a base muda -- a JBR recebe carga, a pessoa
+# aparece num cadastro novo, e insistir daqui a um mes pode fechar o que hoje
+# nao fecha. Trinta dias e o intervalo entre as cargas que recebemos.
+DIAS_NEGATIVA = 30
+
+
+def lembrar_cpf(url: str, nome_norm: str, empresa_norm: str, cpf: str,
+                confianca: int = 0, situacao: str = "", forte: bool = False,
+                custo_brl: float = 0.0) -> None:
+    """Guarda o que o funil descobriu -- inclusive o "nao achei"."""
+    if not (url or nome_norm):
+        return
+    init()
+    con = _con()
+    try:
+        con.execute(
+            "INSERT INTO perfil_cpf (url, nome_norm, empresa_norm, cpf,"
+            " confianca, situacao, forte, custo_brl, quando)"
+            " VALUES (?,?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(url) DO UPDATE SET"
+            "   nome_norm=excluded.nome_norm, empresa_norm=excluded.empresa_norm,"
+            "   cpf=excluded.cpf, confianca=excluded.confianca,"
+            "   situacao=excluded.situacao, forte=excluded.forte,"
+            "   custo_brl=excluded.custo_brl, quando=excluded.quando",
+            (url or ("nome:%s|%s" % (nome_norm, empresa_norm)), nome_norm or "",
+             empresa_norm or "", cpf or "", int(confianca or 0), situacao or "",
+             1 if forte else 0, float(custo_brl or 0), int(time.time())))
+        con.commit()
+    finally:
+        con.close()
+
+
+def recordar_cpf(url: str = "", nome_norm: str = "",
+                 empresa_norm: str = "") -> dict | None:
+    """Ja sabemos o CPF deste perfil? None = nunca perguntamos (ou venceu).
+
+    Procura pela URL primeiro, que e exata. Cai para nome+empresa porque o
+    mesmo perfil chega com URL diferente dependendo da origem (busca da Bright
+    Data, snapshot, link colado a mao).
+    """
+    init()
+    con = _con()
+    try:
+        r = None
+        if url:
+            r = con.execute("SELECT * FROM perfil_cpf WHERE url = ?",
+                            (url,)).fetchone()
+        if r is None and nome_norm:
+            r = con.execute(
+                "SELECT * FROM perfil_cpf WHERE nome_norm = ?"
+                " AND (empresa_norm = ? OR ? = '')"
+                " ORDER BY (cpf <> '') DESC, quando DESC LIMIT 1",
+                (nome_norm, empresa_norm or "", empresa_norm or "")).fetchone()
+    finally:
+        con.close()
+    if r is None:
+        return None
+    # A NEGATIVA VENCE. Positiva nao: CPF nao muda.
+    if not r["cpf"] and (time.time() - (r["quando"] or 0)) > DIAS_NEGATIVA * 86400:
+        return None
+    return {"cpf": r["cpf"], "confianca": r["confianca"],
+            "situacao": r["situacao"], "forte": bool(r["forte"]),
+            "custo_brl": r["custo_brl"], "quando": r["quando"]}
+
+
+def economia_cpf() -> dict:
+    """Quanto o cache de CPF ja poupou. Sem numero, ele e so fe."""
+    init()
+    con = _con()
+    try:
+        r = con.execute(
+            "SELECT count(*) n, sum(cpf <> '') fechados, round(sum(custo_brl),2) gasto"
+            " FROM perfil_cpf").fetchone()
+    finally:
+        con.close()
+    return {"pessoas": r["n"] or 0, "com_cpf": r["fechados"] or 0,
+            "custo_ja_pago": r["gasto"] or 0.0}
+
+
 def init() -> None:
     """Cria/migra o banco. A ORDEM importa: índice de coluna nova só depois do
     ALTER TABLE, senão o script inteiro falha em banco que já existia."""
     os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
     con = _con()
     con.executescript(_DDL)                     # 1. tabelas e índices antigos
+    # `perfil_cpf` nasce aqui em banco novo E em banco antigo: CREATE TABLE IF
+    # NOT EXISTS cria tabela que falta, so nao mexe em tabela que existe.
 
     # 2. colunas novas — CREATE TABLE IF NOT EXISTS não altera tabela existente
     tem = {r[1] for r in con.execute("PRAGMA table_info(perfis)")}

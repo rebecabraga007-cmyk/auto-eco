@@ -20,3 +20,4 @@ backend/enrich_jobs.db
 backend/enriquecimentos_arquivos/
 backend/enrich_jobs_parciais/
 backend/uploads_planilha/
+backend/memoria_empresa.db

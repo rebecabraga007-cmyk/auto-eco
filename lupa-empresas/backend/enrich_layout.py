@@ -43,10 +43,22 @@ ROTULOS = {
     "tel": "%s %d Telefone %d",
     "email": "%s %d E-mail %d",
     "whatsapp": "%s %d WhatsApp",
+    # OS SINAIS DO TELEFONE, que a Assertiva manda e nos jogavamos fora.
+    #
+    # `nao_perturbe` e o mais importante e nao e conveniencia: e o cadastro de
+    # quem pediu para nao ser incomodado. O SDR recebia o numero sem saber, e
+    # a responsabilidade era da casa.
+    #
+    # `sinal` e a frase curta que explica por que AQUELE numero e o primeiro
+    # -- "do titular, WhatsApp, contato nos ultimos dias". Sem ela a ordem
+    # parece arbitraria e a pessoa liga na que preferir.
+    "naoperturbe": "%s %d NÃO PERTURBE",
+    "sinal": "%s %d Telefone — sinais",
 }
 
 _RE_CHAVE = re.compile(
-    r"^(de_dec|so_socio)(\d+)_(nome|cargo|cpf|whatsapp|tel\d+|email\d+)$")
+    r"^(de_dec|so_socio)(\d+)_"
+    r"(nome|cargo|cpf|whatsapp|naoperturbe|sinal|tel\d+|email\d+)$")
 
 
 def chave_valida(chave: str) -> bool:
@@ -61,7 +73,8 @@ def chave_valida(chave: str) -> bool:
 
 def colunas(quantos_dec: int = 0, tel_por_pessoa: int = 1,
             email_por_pessoa: int = 0, quantos_socios: int = 0,
-            com_cpf: bool = True, com_whatsapp: bool = False) -> list:
+            com_cpf: bool = True, com_whatsapp: bool = False,
+            com_sinais: bool = True) -> list:
     """As colunas do layout, em ordem, como [(chave, rotulo)].
 
     Decisor vem antes de socio de proposito: decisor e quem MANDA na empresa
@@ -85,12 +98,20 @@ def colunas(quantos_dec: int = 0, tel_por_pessoa: int = 1,
             if com_whatsapp:
                 saida.append(("%s%d_whatsapp" % (prefixo, n),
                               ROTULOS["whatsapp"] % (rotulo, n)))
+            if com_sinais:
+                # Depois do telefone, nunca antes: o sinal explica o numero,
+                # e explicacao que vem antes do dado faz reler.
+                saida.append(("%s%d_naoperturbe" % (prefixo, n),
+                              ROTULOS["naoperturbe"] % (rotulo, n)))
+                saida.append(("%s%d_sinal" % (prefixo, n),
+                              ROTULOS["sinal"] % (rotulo, n)))
     return saida
 
 
 def exemplo(quantos_dec: int = 0, tel_por_pessoa: int = 1,
             email_por_pessoa: int = 0, quantos_socios: int = 0,
-            com_cpf: bool = True, com_whatsapp: bool = False) -> dict:
+            com_cpf: bool = True, com_whatsapp: bool = False,
+            com_sinais: bool = True) -> dict:
     """Uma linha de MENTIRA, para a tela mostrar antes de gastar.
 
     A Datastone faz isso ("Exemplo de envio" / "Exemplo de retorno") e e o
@@ -99,7 +120,7 @@ def exemplo(quantos_dec: int = 0, tel_por_pessoa: int = 1,
     99999 -- para ninguem confundir preview com resultado.
     """
     cols = colunas(quantos_dec, tel_por_pessoa, email_por_pessoa,
-                   quantos_socios, com_cpf, com_whatsapp)
+                   quantos_socios, com_cpf, com_whatsapp, com_sinais)
     fake = {
         "nome": ["CARLOS MOTTA DOS SANTOS", "ANA BEATRIZ LIMA",
                  "PEDRO HENRIQUE COSTA", "MARIA APARECIDA REIS", "JOÃO VITOR SÁ"],
@@ -126,6 +147,12 @@ def exemplo(quantos_dec: int = 0, tel_por_pessoa: int = 1,
         elif campo.startswith("email"):
             i = int(campo[5:] or 1)
             linha[chave] = "contato%d.p%d@empresa.com.br" % (i, n + 1)
+        elif campo == "naoperturbe":
+            linha[chave] = "" if n else "SIM"     # so um, para mostrar a cara
+        elif campo == "sinal":
+            linha[chave] = ["do titular · WhatsApp · contato nos últimos dias",
+                            "do titular · sem contato há 8 meses",
+                            "de terceiro · WhatsApp"][n % 3]
         else:
             linha[chave] = "sim"
     return {"colunas": [{"key": k, "label": r} for k, r in cols], "linha": linha}

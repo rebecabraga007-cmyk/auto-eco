@@ -59,6 +59,7 @@ import correio
 import enrich_jobs
 import enrich_layout
 import enriquecimentos
+import memoria_empresa
 import setores_li
 import telefones as tel_fmt
 import meetime_leads
@@ -3492,6 +3493,37 @@ async def enrich_catalog():
     ], "assertiva_ok": assertiva.enabled(), "integralx_ok": bool(mkbuscas.TEL_AUTH_VALUE)}
 
 
+@app.post("/api/enrich/ja-sabemos")
+async def enrich_ja_sabemos(payload: dict = Body(default={})):
+    """Destas linhas, quantas já se sabe que não devolvem ninguém?
+
+    É o "filtrar antes de cobrar" que faltava. A Datastone faz isso com as
+    bandeiras `tem_telefone`/`tem_email` na busca dela; a nossa versão não
+    adivinha o que a fonte tem — ela LEMBRA o que a fonte já respondeu.
+
+    O caso que motivou: 29 das 101 empresas da lista SP CAPITAL nunca
+    devolveram ninguém, e foram reconsultadas em cinco passadas, sempre com o
+    mesmo resultado e sempre pagando o mínimo.
+    """
+    up = _upload_ler(payload.get("upload_id"))
+    base = str(payload.get("base") or "")
+    if base:
+        _reg, linhas = enriquecimentos.ler_linhas(base, "", admin=True)
+        col = _guess_cnpj_col(list(linhas[0].keys())) if linhas else ""
+        cnpjs = [l.get(col) for l in linhas]
+    elif up:
+        aba = payload.get("sheet") or next(iter(up))
+        if aba not in up:
+            return {"status": "error", "message": "Aba não encontrada."}
+        col = payload.get("cnpj_col") or _guess_cnpj_col(up[aba]["columns"])
+        cnpjs = [r.get(col) for r in up[aba]["rows"]]
+    else:
+        return {"status": "error", "message": "Sem planilha."}
+    r = memoria_empresa.resumo_planilha(cnpjs)
+    r["status"] = "ok"
+    return r
+
+
 @app.post("/api/enrich/layout")
 async def enrich_layout_preview(payload: dict = Body(default={})):
     """Que colunas essas quantidades geram, e como fica uma linha.
@@ -3562,6 +3594,34 @@ async def enrich_upload(file: UploadFile = File(...)):
     _UPLOADS[up_id] = store
     _upload_guardar(up_id, store)
     return {"status": "ok", "upload_id": up_id, "sheets": sheets, "aviso": aviso}
+
+
+def _sinais_do_telefone(t: dict) -> str:
+    """Por que ESTE numero e o primeiro. Numa frase que o SDR le em 2 segundos.
+
+    O funil ja tinha isto (`funil._rotulo_telefone`), mas so para a tela de
+    uma pessoa. A planilha -- que e por onde 100% do trabalho passa -- saia
+    sem nada, e a ordem dos telefones parecia arbitraria. Ordem sem
+    explicacao vira ordem ignorada: a pessoa liga na que ela preferir.
+    """
+    if not isinstance(t, dict):
+        return ""
+    p = []
+    if t.get("nao_perturbe"):
+        p.append("NÃO PERTURBE")
+    rel = str(t.get("relacao") or "")
+    if rel:
+        p.append("do titular" if rel.upper().startswith("DIRET") else rel.lower())
+    if t.get("whatsapp"):
+        p.append("WhatsApp")
+    m = t.get("meses_sem_contato")
+    if m == 0:
+        p.append("contato nos últimos dias")
+    elif isinstance(m, int) and m > 0:
+        p.append("sem contato há %d %s" % (m, "mês" if m == 1 else "meses"))
+    if t.get("hotphone") or t.get("plus"):
+        p.append("linha ativa")
+    return " · ".join(p)
 
 
 async def _enrich_cnpj(cnpj: str, want: set,
@@ -3662,6 +3722,12 @@ async def _enrich_cnpj(cnpj: str, want: set,
             nome = s.get("nome_socio") or ""
             cpf = s.get("cpf_completo") or ""
             cel, cel2, wa, email = "", "", "", ""
+            # O MELHOR telefone do socio, com os sinais dele. Declarado aqui,
+            # junto dos outros: dentro do `try` ele nao existiria quando a
+            # consulta falhasse, e o codigo abaixo teria que adivinhar se a
+            # variavel existe -- foi o que eu fiz na primeira versao, com um
+            # `dir()`, que e giria de depuracao e nao codigo.
+            melhor_so = None
             if cpf and assertiva.enabled():
                 try:
                     c = await assertiva.contato_cpf(cpf)
@@ -3672,6 +3738,9 @@ async def _enrich_cnpj(cnpj: str, want: set,
                         cel2 = celus[1] if len(celus) > 1 else ""
                         wa = "SIM" if any(t.get("whatsapp") for t in tels) else ""
                         email = (c.get("emails") or [""])[0]
+                        # `refine_phones` ja devolve ordenado -- o primeiro e
+                        # o de maior chance de alguem atender.
+                        melhor_so = tels[0] if tels else None
                 except Exception:
                     pass
             # guarda o 1º sócio com celular como alvo da verificação
@@ -3700,6 +3769,13 @@ async def _enrich_cnpj(cnpj: str, want: set,
                 k = "so_socio%d_email%d" % (idx, e)
                 if k in want:
                     out[k] = email if e == 1 else ""
+            # Mesmos sinais para o socio: quem liga nao distingue de quem e o
+            # numero, so quer saber se pode ligar e se alguem atende.
+            if ("so_socio%d_naoperturbe" % idx) in want:
+                out["so_socio%d_naoperturbe" % idx] = (
+                    "SIM" if (melhor_so or {}).get("nao_perturbe") else "")
+            if ("so_socio%d_sinal" % idx) in want:
+                out["so_socio%d_sinal" % idx] = _sinais_do_telefone(melhor_so)
             if nome and cel:
                 resumo.append(f"{nome}: {cel}")
         if "so_todos_tel" in want:
@@ -3904,6 +3980,22 @@ async def _enrich_cnpj(cnpj: str, want: set,
                     out["de_dec%d_whatsapp" % n] = "SIM" if any(
                         t.get("whatsapp") for t in (tels or [])
                         if isinstance(t, dict)) else ""
+                # ── OS SINAIS DO MELHOR TELEFONE ────────────────────────
+                #
+                # A Assertiva manda, em cada numero, se ele esta no cadastro
+                # de NAO PERTURBE, se e do titular ou de terceiro, se tem
+                # WhatsApp e quando houve o ultimo contato. O sistema usava
+                # isso para ORDENAR e jogava fora na hora de escrever -- o
+                # SDR recebia o numero sem saber nada disso.
+                #
+                # O nao-perturbe nao e detalhe: e o cadastro de quem pediu
+                # para nao ser incomodado, e a planilha nao dizia.
+                melhor = next((t for t in (tels or []) if isinstance(t, dict)), None)
+                if ("de_dec%d_naoperturbe" % n) in want:
+                    out["de_dec%d_naoperturbe" % n] = (
+                        "SIM" if (melhor or {}).get("nao_perturbe") else "")
+                if ("de_dec%d_sinal" % n) in want:
+                    out["de_dec%d_sinal" % n] = _sinais_do_telefone(melhor)
                 if nome_d:
                     resumo.append("%s — %s%s" % (nome_d, cargo_d or "?",
                                                  (" — " + cel) if cel else ""))
@@ -3928,6 +4020,24 @@ async def _enrich_cnpj(cnpj: str, want: set,
                 if m_ and v_:
                     _com_tel.add(m_.group(1))
             out["_de_com_tel"] = len(_com_tel)
+            # MEMORIA DO RESULTADO -- DEPOIS do contador, nao antes.
+            #
+            # Na primeira versao eu anotei junto de `_de_achados`, que vem
+            # umas linhas acima, e ali `_de_com_tel` ainda nao existia: a
+            # memoria gravava zero telefone em TODA empresa. Memoria que
+            # mente e pior que memoria nenhuma -- ela faria a tela avisar
+            # "nenhuma destas tem telefone" sobre uma lista cheia deles.
+            #
+            # Nao guarda o dado; guarda que esta empresa foi consultada e o
+            # que rendeu. E o que permite avisar, na proxima planilha, que
+            # aquelas 29 linhas nao valem a consulta.
+            try:
+                memoria_empresa.anotar(
+                    digits, decisores=len(escolhidos),
+                    com_tel=out["_de_com_tel"],
+                    fonte=fonte_dec, cargos=cargos_dec)
+            except Exception:
+                pass          # memoria e conveniencia; nao atrapalha o lote
             if pendentes:
                 out["_de_pendentes"] = pendentes[:10]
         except Exception as exc:
