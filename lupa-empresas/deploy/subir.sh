@@ -88,11 +88,24 @@ echo "== reiniciando =="
 sr "systemctl restart capiblu-data && sleep 4 && systemctl restart capiblu-app && sleep 3"
 
 # A PROVA E A APLICACAO RESPONDER, nao o systemd dizer que iniciou.
+#
+# COM O SEGREDO DE PROXY. O servico de dados recusa qualquer /api sem o
+# cabecalho `X-Proxy-Secret` -- ele so aceita chamada vinda do app-online.
+# Minha primeira versao nao mandava o segredo, levou 401, concluiu "nao subiu"
+# e DESFEZ um deploy que estava perfeito. O log dizia "Application startup
+# complete" uma linha antes.
+#
+# Licao que vale alem deste script: um teste que falha por motivo proprio e
+# pior que teste nenhum, porque ele desfaz trabalho bom com ar de prudencia.
 echo
 echo "== conferindo de dentro do servidor =="
-OK=$(sr "curl -s -o /dev/null -w '%{http_code}' --max-time 15 http://127.0.0.1:8011/api/enrich/catalog")
+SEGREDO=$(sr "grep -m1 '^PROXY_SECRET=' /opt/capiblu/lupa-empresas/.env | cut -d= -f2-")
+OK=$(sr "curl -s -o /dev/null -w '%{http_code}' --max-time 15         -H 'X-Proxy-Secret: $SEGREDO' http://127.0.0.1:8011/api/enrich/catalog")
 echo "  /api/enrich/catalog -> HTTP $OK"
 
+# 000 = nao respondeu nada (processo morto ou em loop de restart). Qualquer
+# codigo HTTP prova que a aplicacao esta VIVA -- e um 401 ali em cima seria
+# problema do meu cabecalho, nao do deploy.
 if [ "$OK" != "200" ]; then
   echo
   echo "NAO SUBIU. Voltando para a versao anterior..."
@@ -102,7 +115,9 @@ if [ "$OK" != "200" ]; then
   exit 1
 fi
 
-echo "  jobs      -> HTTP $(sr "curl -s -o /dev/null -w '%{http_code}' --max-time 10 -H 'X-User-Email: deploy@blusalesgroup.com.br' http://127.0.0.1:8011/api/enrich/jobs")"
-echo "  e-mail    -> $(sr "curl -s --max-time 10 -H 'X-User-Email: deploy@blusalesgroup.com.br' -H 'X-User-Role: admin' http://127.0.0.1:8011/api/admin/email/status")"
+echo "  jobs      -> HTTP $(sr "curl -s -o /dev/null -w '%{http_code}' --max-time 10 -H 'X-Proxy-Secret: $SEGREDO' -H 'X-User-Email: deploy@blusalesgroup.com.br' http://127.0.0.1:8011/api/enrich/jobs")"
+echo "  e-mail    -> $(sr "curl -s --max-time 10 -H 'X-Proxy-Secret: $SEGREDO' -H 'X-User-Email: deploy@blusalesgroup.com.br' -H 'X-User-Role: admin' http://127.0.0.1:8011/api/admin/email/status")"
+APP=$(sr "curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:8021/")
+echo "  app-online-> HTTP $APP"
 echo
 echo "NO AR. Backup em $DEST (para voltar: tar xzf $DEST/antes.tar.gz dentro de $REMOTO)."
