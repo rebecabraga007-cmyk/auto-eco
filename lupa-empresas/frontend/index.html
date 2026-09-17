@@ -1563,6 +1563,30 @@
       <thead><tr><th>Nome</th><th>E-mail</th><th>Role</th><th>Grupo</th><th>Status</th><th>Limite/dia</th><th>Ações</th></tr></thead>
       <tbody></tbody>
     </table></div>
+
+    <!-- CONTAS MEETIME DE OUTRA PESSOA.
+         Quem recebe o token da Meetime é quem administra, não o SDR. Pedir
+         para cada um cadastrar o seu significa mandar a credencial por
+         WhatsApp e esperar que quinze pessoas façam. Aqui o admin cola o
+         token na conta da pessoa e ela abre a ferramenta com a dedup já
+         funcionando. O token não volta para a tela: só nome e quatro
+         dígitos. -->
+    <div id="umt-wrap" class="en-fields-wrap" hidden
+         style="margin-top:12px;border-top:1px solid var(--gray-100);padding-top:12px">
+      <div class="en-fields-head">
+        <strong>Contas Meetime de <span id="umt-quem"></span></strong>
+        <button type="button" class="modal-x" id="umt-fechar" title="Fechar">×</button>
+      </div>
+      <div id="umt-contas" class="filter-row" style="margin:4px 0 8px;flex-wrap:wrap"></div>
+      <div class="filter-row" style="margin:0;flex-wrap:wrap">
+        <input id="umt-nome" type="text" placeholder="Nome (ex.: BLU, Movida)"
+               class="filter-select" style="width:190px" />
+        <input id="umt-token" type="password" autocomplete="off"
+               placeholder="Token da Meetime" class="filter-select" style="width:260px" />
+        <button type="button" id="umt-add" class="btn-secondary">Cadastrar para ele</button>
+      </div>
+      <p class="pf-advanced-hint" id="umt-nota" style="margin:6px 0 0"></p>
+    </div>
   </div>
 </div>
 

@@ -4608,12 +4608,29 @@ async def meetime_contas(request: Request, payload: dict = Body(default={})):
     Uma rota com `acao` em vez de quatro rotas: o que muda entre elas e uma
     palavra, e a tela chama as quatro do mesmo lugar.
 
-    Nao e admin: a conta e do proprio operador. O token entra aqui uma vez, na
-    hora de cadastrar, e NUNCA volta -- a listagem devolve nome e quatro
+    Nao exige admin: a conta e do proprio operador. O token entra aqui uma vez,
+    na hora de cadastrar, e NUNCA volta -- a listagem devolve nome e quatro
     digitos finais, que bastam para reconhecer a conta e nao bastam para usar.
+
+    O ADMIN PODE MEXER NA CONTA DE OUTRA PESSOA, com `usuario`. Existe porque
+    quem recebe o token da Meetime e quem administra, nao o SDR: pedir para
+    cada um cadastrar o seu significa mandar a credencial por WhatsApp e
+    esperar que quinze pessoas facam. Com isto, o admin cola o token na conta
+    da pessoa e ela abre a ferramenta com a dedup ja funcionando.
+
+    Quem NAO e admin e manda `usuario` recebe erro, e nao a propria conta em
+    silencio: agir sobre um alvo diferente do pedido e a forma mais limpa de
+    causar um estrago que ninguem entende depois.
     """
     email = request.headers.get("x-user-email") or ""
     grupo = request.headers.get("x-user-grupo") or ""
+    alvo = str(payload.get("usuario") or "").strip().lower()
+    if alvo and alvo != email.strip().lower():
+        if not _is_admin(request):
+            return {"status": "error",
+                    "message": "Só um admin pode mexer na conta Meetime de outra pessoa."}
+        email = alvo
+        grupo = ""   # o grupo do admin nao diz nada sobre o grupo do alvo
     acao = str(payload.get("acao") or "listar").strip().lower()
     tid = str(payload.get("id") or "")
     nome = str(payload.get("nome") or "")

@@ -43,6 +43,7 @@
     wireLogin();
     wireMenu();
     wireUsersModal();
+    wireUmt();
     wirePassModal();
     wireConfigModal();
     // A sessão vem do cookie — basta perguntar quem sou eu (sem depender de token local).
@@ -265,6 +266,7 @@
           <td class="user-actions">
             <button data-act="toggle">${u.ativo ? 'Desativar' : 'Ativar'}</button>
             <button data-act="role">${u.role === 'admin' ? '→ user' : '→ admin'}</button>
+            <button data-act="meetime" title="Cadastrar o token da Meetime na conta desta pessoa">🔗 Meetime</button>
             <button data-act="pass">Reset senha</button>
             <button data-act="del" class="danger">Excluir</button>
           </td>
@@ -324,6 +326,9 @@
       } else if (act === 'role') {
         const role = btn.textContent.includes('admin') ? 'admin' : 'user';
         await fetch(`/api/admin/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role }) });
+      } else if (act === 'meetime') {
+        umtAbrir(tr.children[1].textContent.trim());
+        return;
       } else if (act === 'pass') {
         const senha = prompt('Nova senha (mín. 8 caracteres):');
         if (!senha) return;
@@ -364,6 +369,84 @@
       if (!r.ok) { alert((await r.json()).detail || 'Falha ao salvar limite.'); loadUsers(); return; }
       inp.dataset.cur = v === '' ? '' : String(limite_diario);
     }, true);
+  }
+
+  /* ── CONTAS MEETIME DE UM USUARIO (visao do admin) ─────────────────
+     A mesma rota que a pessoa usa para si (`/api/meetime/contas`), com
+     `usuario` apontando para ela. O backend so aceita isso de admin -- e
+     recusa em voz alta quem nao for, em vez de agir na propria conta em
+     silencio. */
+  let umtAlvo = '';
+
+  async function umtChamar(acao, extra) {
+    const r = await fetch('/api/meetime/contas', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ acao, usuario: umtAlvo, ...(extra || {}) }),
+    }).then(x => x.json());
+    umtPinta(r);
+    return r;
+  }
+
+  function umtPinta(d) {
+    const box = document.getElementById('umt-contas');
+    const contas = (d && d.contas) || [];
+    if (!contas.length) {
+      box.innerHTML = '<span class="pf-advanced-hint">Esta pessoa não tem '
+        + 'conta própria' + (d && d.tem_grupo ? ' — hoje ela usa a conta do grupo dela.' : '.')
+        + '</span>';
+      return;
+    }
+    box.innerHTML = contas.map(c => `
+      <span class="chip-ex" style="${c.ativo ? 'background:var(--blue-700);color:#fff' : ''}">
+        <button type="button" class="umt-usar" data-id="${esc(c.id)}"
+                title="Deixar esta como a que vale" style="all:unset;cursor:pointer">
+          ${c.ativo ? '● ' : '○ '}${esc(c.nome)} <small>••${esc(c.final)}</small></button>
+        ${c.ativo ? '' : `<button type="button" class="umt-remover" data-id="${esc(c.id)}"
+                title="Tirar">✕</button>`}
+      </span>`).join(' ');
+    box.querySelectorAll('.umt-usar').forEach(b => b.addEventListener('click',
+      () => umtChamar('usar', { id: b.dataset.id })));
+    box.querySelectorAll('.umt-remover').forEach(b => b.addEventListener('click', () => {
+      if (confirm('Tirar esta conta da pessoa?')) umtChamar('remover', { id: b.dataset.id });
+    }));
+  }
+
+  async function umtAbrir(email) {
+    umtAlvo = email;
+    document.getElementById('umt-quem').textContent = email;
+    document.getElementById('umt-nota').textContent = '';
+    document.getElementById('umt-token').value = '';
+    document.getElementById('umt-nome').value = '';
+    document.getElementById('umt-wrap').hidden = false;
+    document.getElementById('umt-wrap').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await umtChamar('listar');
+  }
+
+  function wireUmt() {
+    document.getElementById('umt-fechar')?.addEventListener('click',
+      () => { document.getElementById('umt-wrap').hidden = true; });
+    document.getElementById('umt-add')?.addEventListener('click', async () => {
+      const nota = document.getElementById('umt-nota');
+      const tok = document.getElementById('umt-token');
+      const nome = document.getElementById('umt-nome');
+      if (!tok.value.trim()) { nota.textContent = 'Cole o token da Meetime.'; return; }
+      nota.textContent = 'cadastrando…';
+      const d = await umtChamar('add', { nome: nome.value.trim(), token: tok.value.trim() });
+      if (d.status !== 'ok') { nota.textContent = d.message || 'Não deu certo.'; return; }
+      /* TESTA O TOKEN NA HORA. Cadastrar na conta de outra pessoa e errar uma
+         letra é pior que errar na própria: quem descobre é ela, dias depois,
+         com a dedup silenciosamente desligada. */
+      try {
+        const t = await fetch('/api/meetime/testar', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: tok.value.trim() }),
+        }).then(x => x.json());
+        nota.textContent = t.status === 'ok'
+          ? `Cadastrada para ${umtAlvo} · ${(t.leads_na_conta || 0).toLocaleString('pt-BR')} leads nesta conta.`
+          : `Cadastrada, MAS o token não respondeu: ${t.message || 'erro'}.`;
+      } catch (e) { nota.textContent = 'Cadastrada. Não consegui testar agora.'; }
+      tok.value = ''; nome.value = '';
+    });
   }
 
   function wirePassModal() {
