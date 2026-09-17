@@ -48,7 +48,7 @@ class Email(Channel):
             out["state"] = "CONNECTED"
         except Exception as exc:
             out["state"] = "UNREACHABLE"
-            out["reason"] = f"{type(exc).__name__}: {exc}"[:160]
+            out["reason"] = type(exc).__name__
         return out
 
     def _login_test(self) -> None:
@@ -97,4 +97,4 @@ class Email(Channel):
                 extra.get("from_name", ""), extra.get("from_addr", ""))
             return SendResult("SENT", self.key, provider_id=mid)
         except Exception as exc:
-            return SendResult("FAILED", self.key, error=f"{type(exc).__name__}: {exc}"[:200])
+            return SendResult("FAILED", self.key, error=type(exc).__name__)

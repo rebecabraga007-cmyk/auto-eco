@@ -79,7 +79,7 @@ class Wuzapi(Channel):
             out["raw"] = data
         except Exception as exc:
             out["state"] = "UNREACHABLE"
-            out["reason"] = f"{type(exc).__name__}: {exc}"[:160]
+            out["reason"] = type(exc).__name__
         return out
 
     async def connect(self) -> dict:
@@ -94,7 +94,7 @@ class Wuzapi(Channel):
             return {"ok": r.status_code < 400, "status": r.status_code,
                     "body": (r.json() if r.content else {})}
         except Exception as exc:
-            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:160]}
+            return {"ok": False, "error": type(exc).__name__}
 
     async def qrcode(self) -> dict:
         """QR em base64 para parear. Vazio quando a sessão já está logada."""
@@ -108,7 +108,7 @@ class Wuzapi(Channel):
             return {"ok": bool(data.get("QRCode")), "qrcode": data.get("QRCode", ""),
                     "status": r.status_code}
         except Exception as exc:
-            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:160]}
+            return {"ok": False, "error": type(exc).__name__}
 
     async def check_number(self, phone: str) -> bool | None:
         ok, _ = self.configured()
@@ -143,4 +143,4 @@ class Wuzapi(Channel):
                               provider_id=str((data.get("data") or {}).get("Id", "")),
                               detail=data)
         except Exception as exc:
-            return SendResult("FAILED", "wuzapi", error=f"{type(exc).__name__}: {exc}"[:200])
+            return SendResult("FAILED", "wuzapi", error=type(exc).__name__)

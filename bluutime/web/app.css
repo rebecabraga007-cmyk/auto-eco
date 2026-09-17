@@ -1280,8 +1280,11 @@ body.app-loading .page-container { opacity: .35; }
   border-radius: 2px;
 }
 .token b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.token span { cursor: pointer; opacity: .8; }
-.token span:hover { opacity: 1; }
+.token span, .token button {
+  cursor: pointer; opacity: .8; border: none; background: none; padding: 0;
+  font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit;
+}
+.token span:hover, .token button:hover { opacity: 1; }
 .token-field select { display: none; }
 
 /* Resumo do que está filtrando — sem isso, 18 controles e nenhuma memória. */

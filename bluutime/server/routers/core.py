@@ -7,6 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import perm
+from .. import webhooks as webhooks_engine
 from ..config import WEB
 from ..db import get_db
 from ..deps import session_email
@@ -107,8 +108,10 @@ async def upload_avatar(file: UploadFile = File(...), db: Session = Depends(get_
         os.makedirs(out_dir, exist_ok=True)
         path = os.path.join(out_dir, f"{u.id}.jpg")
         img.save(path, "JPEG", quality=85)
-    except Exception as exc:
-        raise HTTPException(400, f"Não consegui processar a imagem: {exc}")
+    except Exception:
+        # Mensagem genérica de propósito — o detalhe da exceção do Pillow
+        # pode revelar formato/versão da biblioteca no servidor.
+        raise HTTPException(400, "Não consegui processar essa imagem. Tente outro arquivo.")
     u.avatar_url = f"/uploads/avatars/{u.id}.jpg?v={int(datetime.utcnow().timestamp())}"
     db.commit()
     return user_full(u)
@@ -228,8 +231,19 @@ def featureflags():
 
 @router.get("/users")
 def list_users(db: Session = Depends(get_db)):
+    # Fica aberto pra qualquer nível de propósito — dropdown de "transferir
+    # lead"/"responsáveis da cadência" precisa disso pro SDR também, não só
+    # pro gestor. O que não faz sentido é peer ver a meta diária individual
+    # de peer; isso sai da resposta pra quem não é gestor+ (menos a própria).
+    ator = perm.ator(db)
     users = db.query(User).order_by(User.id).all()
-    return {"data": [user_full(u) for u in users],
+    data = []
+    for u in users:
+        row = user_full(u)
+        if not ator.pelo_menos("gestor") and u.id != ator.user_id:
+            row.pop("dailyGoal", None)
+        data.append(row)
+    return {"data": data,
             "pagination": {"page": 1, "perPage": 100, "totalRowCount": len(users),
                            "totalPageCount": 1, "hasPrev": False, "hasNext": False}}
 
@@ -553,8 +567,9 @@ def create_webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
     # resto de Integrações (que qualquer nível acessa).
     perm.ator(db).exigir("admin", "cadastrar webhook")
     url = (payload.get("targetUrl") or "").strip()
-    if not url.startswith("http"):
-        raise HTTPException(400, "URL inválida.")
+    erro = webhooks_engine.url_publica_valida(url)
+    if erro:
+        raise HTTPException(400, erro)
     w = Webhook(events=",".join(payload.get("events") or ["LEAD.WON"]), target_url=url,
                 secret=payload.get("secret", ""))
     db.add(w)

@@ -83,7 +83,7 @@ function modal({ title, body, footer, wide }) {
   const root = document.getElementById("modalRoot");
   root.innerHTML = `<div class="modal-backdrop-x">
       <div class="modal-card${wide ? " wide" : ""}">
-        <div class="modal-head"><h3>${h(title)}</h3><button class="close-x" data-close>×</button></div>
+        <div class="modal-head"><h3>${h(title)}</h3><button class="close-x" data-close title="Fechar" aria-label="Fechar">×</button></div>
         <div class="modal-body">${body}</div>
         ${footer ? `<div class="modal-foot">${footer}</div>` : ""}
       </div></div>`;
@@ -447,7 +447,7 @@ PAGES.painel = {
       <div class="mt-sheet">
         <div class="sheet-title">Painel de controle diário</div>
         <div class="sheet-subtitle">Monitore as atividades da equipe e mantenha o controle do desempenho do dia.</div>
-        <div class="table-responsive"><table class="table table-striped table-hover">
+        ${rows.length ? `<div class="table-responsive"><table class="table table-striped table-hover">
           <thead>
             <tr>
               <th colspan="2" style="border-bottom:2px solid #00c850">TIME</th>
@@ -462,7 +462,7 @@ PAGES.painel = {
             </tr>
           </thead>
           <tbody>${rows.map((r) => `<tr>${r.cells.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody>
-        </table></div>
+        </table></div>` : emptyState("Nenhum usuário com atividade neste filtro.")}
       </div></div>`;
 
     document.getElementById("fClient").onchange = (e) => {
@@ -816,8 +816,8 @@ PAGES.leads = {
 
 const pager = (p) => p.totalPageCount > 1
   ? `<span class="text-muted text-size-small mr-10">Página ${p.page} de ${p.totalPageCount}</span>
-     <button class="btn btn-default btn-xs" data-goto-page="${p.page - 1}" ${p.page <= 1 ? "disabled" : ""}>‹</button>
-     <button class="btn btn-default btn-xs" data-goto-page="${p.page + 1}" ${p.page >= p.totalPageCount ? "disabled" : ""}>›</button>`
+     <button class="btn btn-default btn-xs" data-goto-page="${p.page - 1}" ${p.page <= 1 ? "disabled" : ""} title="Página anterior" aria-label="Página anterior">‹</button>
+     <button class="btn btn-default btn-xs" data-goto-page="${p.page + 1}" ${p.page >= p.totalPageCount ? "disabled" : ""} title="Próxima página" aria-label="Próxima página">›</button>`
   : "";
 
 function bindLeadFilters(f) {
@@ -1009,7 +1009,7 @@ function openLeadForm(lead) {
              <button class="btn btn-main btn-sm" data-save>Salvar</button>`,
   });
   m.root.querySelector("[data-cancel]").onclick = m.close;
-  m.root.querySelector("[data-save]").onclick = async () => {
+  m.root.querySelector("[data-save]").onclick = async (e) => {
     const g = (id) => m.root.querySelector(id).value.trim();
     const body = {
       name: g("#fName"), position: g("#fPosition"), company: g("#fCompany"),
@@ -1020,11 +1020,13 @@ function openLeadForm(lead) {
       cadenceId: Number(g("#fCadence")) || null,
     };
     if (!body.name) return toast("O nome é obrigatório.", "err");
+    const btn = e.currentTarget;
+    btn.disabled = true;
     try {
       if (l.id) await api(`/api/flow/leads/${l.id}`, { method: "PATCH", body });
       else await api("/api/flow/leads", { method: "POST", body });
       m.close(); toast("Lead salvo.", "ok"); go("leads");
-    } catch (e) { toast(e.message, "err"); }
+    } catch (err) { toast(err.message, "err"); btn.disabled = false; }
   };
 }
 
@@ -1233,7 +1235,7 @@ function openCadenceForm(cad) {
     try { await api(`/api/flow/cadences/${c.id}`, { method: "DELETE" }); toast("Cadência excluída."); go("cadencias"); }
     catch (e) { toast(e.message, "err"); }
   });
-  m.root.querySelector("[data-save]").onclick = async () => {
+  m.root.querySelector("[data-save]").onclick = async (e) => {
     const body = {
       name: m.root.querySelector("#cName").value.trim(),
       description: m.root.querySelector("#cDesc").value.trim(),
@@ -1244,11 +1246,13 @@ function openCadenceForm(cad) {
       userIds: [...m.root.querySelector("#cUsers").selectedOptions].map((o) => Number(o.value)),
     };
     if (!body.name) return toast("O nome é obrigatório.", "err");
+    const btn = e.currentTarget;
+    btn.disabled = true;
     try {
       if (c.id) await api(`/api/flow/cadences/${c.id}`, { method: "PATCH", body });
       else await api("/api/flow/cadences", { method: "POST", body });
       m.close(); toast("Cadência salva.", "ok"); go("cadencias");
-    } catch (e) { toast(e.message, "err"); }
+    } catch (err) { toast(err.message, "err"); btn.disabled = false; }
   };
 }
 
@@ -1327,7 +1331,7 @@ function openActivityForm(act) {
              <button class="btn btn-main btn-sm" data-save>Salvar</button>`,
   });
   m.root.querySelector("[data-cancel]").onclick = m.close;
-  m.root.querySelector("[data-save]").onclick = async () => {
+  m.root.querySelector("[data-save]").onclick = async (e) => {
     const body = {
       name: m.root.querySelector("#aName").value.trim(),
       type: m.root.querySelector("#aTypeSel").value,
@@ -1337,11 +1341,13 @@ function openActivityForm(act) {
                        html: m.root.querySelector("#aHtml").value },
     };
     if (!body.name) return toast("O nome é obrigatório.", "err");
+    const btn = e.currentTarget;
+    btn.disabled = true;
     try {
       if (a.id) await api(`/api/flow/activities/${a.id}`, { method: "PATCH", body });
       else await api("/api/flow/activities", { method: "POST", body });
       m.close(); toast("Atividade salva.", "ok"); go("atividades");
-    } catch (e) { toast(e.message, "err"); }
+    } catch (err) { toast(err.message, "err"); btn.disabled = false; }
   };
 }
 
@@ -1538,16 +1544,18 @@ function openClientForm(client) {
   if (del) del.onclick = () => confirmDialog("Excluir cliente", `Excluir "${c.name}"?`, async () => {
     await api(`/api/clients/${c.id}`, { method: "DELETE" }); toast("Cliente excluído."); go("clientes");
   });
-  m.root.querySelector("[data-save]").onclick = async () => {
+  m.root.querySelector("[data-save]").onclick = async (e) => {
     const body = { name: m.root.querySelector("#clName").value.trim(),
                    color: m.root.querySelector("#clColor").value,
                    active: m.root.querySelector("#clActive").value === "true" };
     if (!body.name) return toast("O nome é obrigatório.", "err");
+    const btn = e.currentTarget;
+    btn.disabled = true;
     try {
       if (c.id) await api(`/api/clients/${c.id}`, { method: "PATCH", body });
       else await api("/api/clients", { method: "POST", body });
       m.close(); toast("Cliente salvo.", "ok"); go("clientes");
-    } catch (e) { toast(e.message, "err"); }
+    } catch (err) { toast(err.message, "err"); btn.disabled = false; }
   };
 }
 
@@ -2016,7 +2024,7 @@ const tokenField = (id, itens, selecionados, placeholder) => `
   <div class="token-field" data-token="${id}">
     ${selecionados.map((v) => {
       const item = itens.find((i) => String(i.codigo) === String(v));
-      return `<span class="token"><b>${h(item ? `${item.codigo} ${item.descricao}` : v)}</b><span data-rm="${h(v)}">×</span></span>`;
+      return `<span class="token"><b>${h(item ? `${item.codigo} ${item.descricao}` : v)}</b><button type="button" data-rm="${h(v)}" title="Remover" aria-label="Remover">×</button></span>`;
     }).join("")}
     <input type="text" list="dl-${id}" placeholder="${h(placeholder)}">
     <select id="${id}" multiple>
@@ -2074,7 +2082,7 @@ document.addEventListener("change", (e) => {
   if (!achado) return toast("Escolha um item da lista.", "err");
   sel.insertAdjacentHTML("beforeend", `<option value="${h(codigo)}" selected></option>`);
   e.target.insertAdjacentHTML("beforebegin",
-    `<span class="token"><b>${h(achado.textContent)}</b><span data-rm="${h(codigo)}">×</span></span>`);
+    `<span class="token"><b>${h(achado.textContent)}</b><button type="button" data-rm="${h(codigo)}" title="Remover" aria-label="Remover">×</button></span>`);
   e.target.value = "";
   sel.dispatchEvent(new Event("change", { bubbles: true }));
   atualizarResumoB2B();
@@ -2407,8 +2415,8 @@ function renderB2B(res) {
              "CNAE", "Porte", "Situação", "Capital social", "Telefone", "E-mail"],
             rows, { scroll: true }),
       { actions: `<span class="text-muted text-size-small mr-10">Página ${page}</span>
-          <button class="btn btn-default btn-xs" id="pgPrev"${(res.offset || 0) <= 0 ? " disabled" : ""}>‹</button>
-          <button class="btn btn-default btn-xs" id="pgNext"${hasMore ? "" : " disabled"}>›</button>` })}`;
+          <button class="btn btn-default btn-xs" id="pgPrev"${(res.offset || 0) <= 0 ? " disabled" : ""} title="Página anterior" aria-label="Página anterior">‹</button>
+          <button class="btn btn-default btn-xs" id="pgNext"${hasMore ? "" : " disabled"} title="Próxima página" aria-label="Próxima página">›</button>` })}`;
 
   const all = document.getElementById("empAll");
   if (all) all.onchange = (e) =>
@@ -4107,7 +4115,7 @@ function openUserForm(user) {
              <button class="btn btn-main btn-sm" data-save>Salvar</button>`,
   });
   m.root.querySelector("[data-cancel]").onclick = m.close;
-  m.root.querySelector("[data-save]").onclick = async () => {
+  m.root.querySelector("[data-save]").onclick = async (e) => {
     const body = {
       name: m.root.querySelector("#uName").value.trim(),
       roles: [...m.root.querySelector("#uRoles").selectedOptions].map((o) => o.value),
@@ -4115,15 +4123,17 @@ function openUserForm(user) {
       active: m.root.querySelector("#uActive").value === "true",
     };
     if (!body.name) return toast("O nome é obrigatório.", "err");
+    if (!u.id) {
+      body.email = m.root.querySelector("#uEmail").value.trim();
+      if (!body.email) return toast("O e-mail é obrigatório.", "err");
+    }
+    const btn = e.currentTarget;
+    btn.disabled = true;
     try {
       if (u.id) await api(`/api/users/${u.id}`, { method: "PATCH", body });
-      else {
-        body.email = m.root.querySelector("#uEmail").value.trim();
-        if (!body.email) return toast("O e-mail é obrigatório.", "err");
-        await api("/api/users", { method: "POST", body });
-      }
+      else await api("/api/users", { method: "POST", body });
       m.close(); toast("Usuário salvo.", "ok"); go("usuarios");
-    } catch (e) { toast(e.message, "err"); }
+    } catch (err) { toast(err.message, "err"); btn.disabled = false; }
   };
 }
 
@@ -4490,10 +4500,13 @@ PAGES.ajustes = {
       });
       m.root.querySelector("[data-cancel]").onclick = m.close;
       m.root.querySelector("[data-save]").onclick = async () => {
+        const nome = m.root.querySelector("#cfName").value.trim();
+        const ident = m.root.querySelector("#cfIdent").value.trim();
+        if (!nome || !ident) return toast("Nome e identificador são obrigatórios.", "err");
         try {
           await api("/api/flow/new-lead-fields", { method: "POST", body: {
-            name: m.root.querySelector("#cfName").value.trim(),
-            identifier: m.root.querySelector("#cfIdent").value.trim(),
+            name: nome,
+            identifier: ident,
             dataType: m.root.querySelector("#cfType").value,
             wonMandatory: m.root.querySelector("#cfWon").checked,
             lostMandatory: m.root.querySelector("#cfLost").checked } });
@@ -4533,10 +4546,13 @@ PAGES.ajustes = {
       });
       m.root.querySelector("[data-cancel]").onclick = m.close;
       m.root.querySelector("[data-save]").onclick = async () => {
+        const data = m.root.querySelector("#hDate").value;
+        const nome = m.root.querySelector("#hName").value.trim();
+        if (!data || !nome) return toast("Data e descrição são obrigatórias.", "err");
         try {
           await api("/api/flow/configuration/holidays", { method: "POST", body: {
-            date: m.root.querySelector("#hDate").value,
-            name: m.root.querySelector("#hName").value.trim() } });
+            date: data,
+            name: nome } });
           m.close(); toast("Feriado adicionado.", "ok"); go("ajustes");
         } catch (e) { toast(e.message, "err"); }
       };

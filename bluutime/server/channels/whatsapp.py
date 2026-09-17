@@ -78,7 +78,7 @@ class WhatsApp(Channel):
             out["raw"] = raw
         except Exception as exc:                       # provedor fora do ar
             out["state"] = "UNREACHABLE"
-            out["reason"] = f"{type(exc).__name__}: {exc}"[:160]
+            out["reason"] = type(exc).__name__
         return out
 
     async def check_number(self, phone: str) -> bool | None:
@@ -116,4 +116,4 @@ class WhatsApp(Channel):
             key = data.get("key") or {}
             return SendResult("SENT", self.key, provider_id=key.get("id", ""), detail=data)
         except Exception as exc:
-            return SendResult("FAILED", self.key, error=f"{type(exc).__name__}: {exc}"[:200])
+            return SendResult("FAILED", self.key, error=type(exc).__name__)

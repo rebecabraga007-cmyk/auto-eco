@@ -61,4 +61,4 @@ class Zenvia(Channel):
                                   error=str(data.get("message") or data)[:200], detail=data)
             return SendResult("SENT", "zenvia", provider_id=str(data.get("id", "")), detail=data)
         except Exception as exc:
-            return SendResult("FAILED", "zenvia", error=f"{type(exc).__name__}: {exc}"[:200])
+            return SendResult("FAILED", "zenvia", error=type(exc).__name__)

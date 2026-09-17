@@ -13,8 +13,11 @@ Aqui a entrega é **enfileirada**, assinada e repetida:
 """
 import hashlib
 import hmac
+import ipaddress
 import json
+import socket
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 
 import httpx
 
@@ -28,6 +31,35 @@ TIMEOUT = 10.0
 
 EVENTOS = ["LEAD.CREATED", "LEAD.WON", "LEAD.LOST", "LEAD.REPLIED",
            "ACTIVITY.DONE", "MESSAGE.SENT", "BASE.IMPORTED"]
+
+
+def url_publica_valida(url: str) -> str:
+    """Recusa (com o motivo) uma URL de webhook que aponte pra rede interna.
+
+    Só conferir o prefixo http(s) deixava cadastrar `http://127.0.0.1/...`
+    ou `http://10.0.0.5/...` — o servidor vira uma sonda de rede contra o
+    que ele mesmo alcança (SSRF), a serviço de quem cadastrou o webhook.
+    Devolve string vazia quando está tudo bem.
+    """
+    try:
+        partes = urlparse(url)
+    except ValueError:
+        return "URL inválida."
+    if partes.scheme not in ("http", "https"):
+        return "A URL precisa começar com http:// ou https://."
+    host = partes.hostname
+    if not host:
+        return "URL sem host."
+    try:
+        enderecos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return f"Não consegui resolver o host \"{host}\"."
+    for familia, _, _, _, sockaddr in enderecos:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return "A URL aponta para uma rede interna — não é permitido."
+    return ""
 
 
 def assinar(secret: str, corpo: bytes) -> str:

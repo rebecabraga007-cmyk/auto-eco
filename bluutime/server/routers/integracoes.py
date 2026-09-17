@@ -58,8 +58,9 @@ def criar(payload: dict = Body(...), db: Session = Depends(get_db)):
     # mesmo recurso precisam concordar, senão o mais frouxo vira a porta.
     perm.ator(db).exigir("admin", "cadastrar webhook")
     url = (payload.get("targetUrl") or "").strip()
-    if not url.startswith(("http://", "https://")):
-        raise HTTPException(400, "A URL precisa começar com http:// ou https://.")
+    erro = webhooks.url_publica_valida(url)
+    if erro:
+        raise HTTPException(400, erro)
     eventos_pedidos = payload.get("events") or []
     desconhecidos = [e for e in eventos_pedidos if e not in webhooks.EVENTOS]
     if desconhecidos:
@@ -85,6 +86,9 @@ def atualizar(wid: int, payload: dict = Body(...), db: Session = Depends(get_db)
     if not w:
         raise HTTPException(404, "Webhook não encontrado.")
     if "targetUrl" in payload:
+        erro = webhooks.url_publica_valida(payload["targetUrl"])
+        if erro:
+            raise HTTPException(400, erro)
         w.target_url = payload["targetUrl"]
     if "enabled" in payload:
         w.enabled = bool(payload["enabled"])
