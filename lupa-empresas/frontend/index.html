@@ -1098,8 +1098,23 @@
             </div>
           </div>
         </div>
+        <!-- ═══ OPÇÕES AVANÇADAS ════════════════════════════════════
+             O que está aqui dentro tem padrão bom e quase nunca precisa ser
+             tocado: os campos já vêm marcados, a fonte do decisor já é "as
+             duas" e o telefone já sai no formato de leitura.
+
+             Recolher não é esconder. São ~40 caixas que, abertas, empurram o
+             botão de Enriquecer para fora da tela — e o passo que importa
+             (quantas pessoas e quantos contatos) fica competindo por atenção
+             com decisões que ninguém precisa tomar. Quem precisa, abre. -->
+        <details class="en-avancado">
+          <summary>
+            <span class="en-av-titulo">⚙️ Opções avançadas</span>
+            <span class="en-av-resumo" id="en-av-resumo"></span>
+          </summary>
+
         <div class="en-step en-step-fields">
-          <span class="en-num" id="en-num-campos">4</span>
+          <span class="en-num en-num-oculto" id="en-num-campos">4</span>
           <div class="en-fields-wrap">
             <div class="en-fields-head">
               <strong>Campos a adicionar após o enriquecimento</strong>
@@ -1111,7 +1126,7 @@
         <!-- Só aparece quando algum campo de decisor está marcado: filtro de
              cargo sem decisor pedido é controle que não faz nada. -->
         <div class="en-step" id="en-dec-wrap" hidden>
-          <span class="en-num" id="en-num-dec">5</span>
+          <span class="en-num en-num-oculto" id="en-num-dec">5</span>
           <div class="en-fields-wrap">
             <div class="en-fields-head">
               <strong>Quais decisores você quer</strong>
@@ -1186,7 +1201,7 @@
              cada número ao lado de quem atende. A coluna unida serve para
              importar, que é outra tarefa. -->
         <div class="en-step">
-          <span class="en-num" id="en-num-tel">5</span>
+          <span class="en-num en-num-oculto" id="en-num-tel">5</span>
           <div class="en-fields-wrap">
             <div class="en-fields-head">
               <strong>Telefones</strong>
@@ -1215,6 +1230,8 @@
             </p>
           </div>
         </div>
+        </details>
+
         <!-- ═══ COMO ENTREGAR ═════════════════════════════════════════
              O NOME existe para a lista fazer sentido daqui a uma semana:
              "Enriquecimento 17/09 14:22" não distingue a lista da Movida da
@@ -1225,7 +1242,7 @@
              minutos; hoje quem fecha a aba antes de exportar perde trabalho
              já pago, consulta por consulta. -->
         <div class="en-step">
-          <span class="en-num" id="en-num-entrega">6</span>
+          <span class="en-num" id="en-num-entrega">4</span>
           <div class="en-fields-wrap">
             <div class="en-fields-head">
               <strong>Como entregar</strong>
@@ -1249,7 +1266,7 @@
           </div>
         </div>
         <div class="en-step">
-          <span class="en-num" id="en-num-run">7</span>
+          <span class="en-num" id="en-num-run">5</span>
           <button id="en-run" class="btn-primary">⚡ Enriquecer lista</button>
           <button id="en-export" class="btn-secondary" hidden>⬇️ Exportar XLSX</button>
         </div>

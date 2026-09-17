@@ -1214,3 +1214,24 @@ body.sem-dossie .btn-dossie { display: none !important; }
    separa falar com a recepcao de falar com quem decide. */
 .en-group-sobre { margin: 2px 0 8px; font-size: .78rem; line-height: 1.45;
                   color: var(--gray-500); max-width: 78ch; }
+
+/* ═══ OPÇÕES AVANÇADAS (aba Enriquecimento) ════════════════════════════
+   Parece um passo, mas nao e numerado: o que esta dentro tem padrao bom e
+   quase nunca precisa ser tocado. Abertas, as ~40 caixas empurravam o botao
+   de Enriquecer para fora da tela. */
+.en-avancado { border-top: 1px solid var(--gray-100); padding: 4px 0 0; }
+.en-avancado > summary { cursor: pointer; list-style: none; padding: 14px 0;
+                         display: flex; align-items: baseline; gap: 12px;
+                         flex-wrap: wrap; }
+.en-avancado > summary::-webkit-details-marker { display: none; }
+.en-avancado > summary::before { content: "▸"; color: var(--gray-500);
+                                 font-size: .9rem; transition: transform .15s; }
+.en-avancado[open] > summary::before { content: "▾"; }
+.en-av-titulo { font-weight: 600; font-size: .92rem; }
+/* O resumo na tampa: sem ele, o bloco recolhido vira caixa-preta e a pessoa
+   abre "por via das duvidas" toda vez -- e ai recolher nao economizou nada. */
+.en-av-resumo { font-size: .78rem; color: var(--gray-500); }
+.en-avancado > summary:hover .en-av-titulo { color: var(--blue-700, #1d4ed8); }
+/* O numero do passo continua no HTML (o JS ainda o encontra), mas nao se
+   mostra: ajuste opcional numerado faz procurar um passo que nao existe. */
+.en-num-oculto { visibility: hidden; }

@@ -2943,16 +2943,34 @@ const enrichState = { upload_id: null, sheets: [], result: null };
 
   /* A NUMERAÇÃO DOS PASSOS anda junto com os painéis que aparecem. Passo
      fixo com painel escondido faz a pessoa procurar um "4" que não existe. */
+  /* A NUMERAÇÃO é dos passos que aparecem. O que foi para dentro de
+     "Opções avançadas" não é passo: é ajuste opcional, e numerar ajuste
+     opcional faz a pessoa procurar um "5" que ela nunca vai precisar. */
   function enNumera() {
-    const querDec = document.getElementById('en-dec-wrap')
-      && !document.getElementById('en-dec-wrap').hidden;
     const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
-    set('en-num-campos', '4');
-    set('en-num-dec', '5');
-    set('en-num-tel', querDec ? '6' : '5');
-    set('en-num-entrega', querDec ? '7' : '6');
-    set('en-num-run', querDec ? '8' : '7');
+    set('en-num-entrega', '4');
+    set('en-num-run', '5');
+    enAvResumo();
   }
+
+  /* O RESUMO NA TAMPA. Bloco recolhido sem resumo vira caixa-preta: a pessoa
+     abre "por via das dúvidas" toda vez, e aí recolher não economizou nada.
+     Dizendo o que está valendo, ela só abre quando quer mudar. */
+  function enAvResumo() {
+    const alvo = document.getElementById('en-av-resumo');
+    if (!alvo) return;
+    const n = document.querySelectorAll('.en-field:checked').length;
+    const fonte = document.querySelector('input[name="en-dec-fonte"]:checked')?.value;
+    const nomeFonte = { linkedin: 'LinkedIn', ambas: 'LinkedIn + folha',
+                        assertiva: 'só a folha' }[fonte] || '';
+    const fmt = (typeof enrichFormatoTel === 'function' ? enrichFormatoTel() : '');
+    const partes = [`${n} campos`, nomeFonte];
+    if (document.getElementById('en-unir-tel')?.checked) partes.push('telefones unidos');
+    if (fmt) partes.push(`formato ${fmt}`);
+    alvo.textContent = partes.filter(Boolean).join(' · ');
+  }
+
+  document.getElementById('en-config')?.addEventListener('change', enAvResumo);
 
   (function montaQtds() {
     const TETO = 5;
@@ -3029,6 +3047,11 @@ const enrichState = { upload_id: null, sheets: [], result: null };
       const grp = e.target.closest('.en-group');
       grp.querySelectorAll('.en-field').forEach(f => { f.checked = e.target.checked; });
     }));
+    /* SÓ AGORA o resumo da tampa sabe contar. O catálogo chega por rede, e a
+       primeira contagem acontecia antes dele existir -- a tampa dizia
+       "0 campos" com 31 marcados, que é pior que não dizer nada: quem lê
+       abre o bloco para consertar um problema que não existe. */
+    enAvResumo();
   }).catch(() => {});
 
   fileEl.addEventListener('change', async () => {
