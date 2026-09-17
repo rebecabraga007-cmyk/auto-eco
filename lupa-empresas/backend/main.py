@@ -5305,6 +5305,15 @@ async def enrich_salvo_apagar(eid: str, request: Request):
 # após validar a sessão. O serviço de dados confia nele (só chega via proxy c/ segredo).
 
 def _is_admin(request: Request) -> bool:
+    """Admin do LOGIN do CapiBLU (`capiblu_auth.users.role`), não o nível
+    operacional do Bluutime (`ADMINISTRATOR`/`MANAGER`/`SDR` em
+    `bluutime/server/perm.py`). São dois cadastros de papel diferentes que
+    coexistem de propósito (ver o docstring de `perm.py`) — um
+    ADMINISTRATOR do Meetime que não seja também "admin" de login fica de
+    fora daqui; um "admin" de login que seja só SDR no Meetime passa. Não é
+    bug — é só a fonte de verdade que este gate em particular usa,
+    registrado aqui pra não confundir com o outro modelo na hora de mexer.
+    """
     return (request.headers.get("x-user-role") or "").lower() == "admin"
 
 

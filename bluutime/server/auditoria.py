@@ -33,6 +33,9 @@ ACOES = [
     (re.compile(r"/api/capiblu/prospect/(import|cobertura)"), "MONTAR_BASE"),
     (re.compile(r"/api/envio/(atividades|teste)"), "ENVIO"),
     (re.compile(r"/api/whatsapp/conversations/\d+/messages"), "ENVIO"),
+    # Ler o histórico de uma conversa é ler dado pessoal de terceiro (o
+    # lead) — mandar mensagem já entrava acima; abrir/listar não entrava.
+    (re.compile(r"/api/whatsapp/conversations(/\d+)?(\?|$)"), "WHATSAPP_CONVERSA"),
 ]
 
 # Documento ou telefone no caminho — é o "de quem" da consulta.

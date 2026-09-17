@@ -1,11 +1,11 @@
 """Conversas de WhatsApp — o módulo WHATSAPP do Meetime."""
 from datetime import datetime
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from .. import channels, perm
+from .. import channels, perm, ratelimit
 from ..db import get_db
 from ..models import Company, Conversation, Delivery, Lead, Message
 from ..serial import iso
@@ -153,7 +153,7 @@ def _ler_entrada(payload: dict) -> tuple[str, str, bool]:
 
 
 @router.post("/webhook")
-async def webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
+async def webhook(request: Request, payload: dict = Body(...), db: Session = Depends(get_db)):
     """Mensagem que chega da Evolution API.
 
     Aberta sem autenticação de usuário porque quem chama é o provedor, não o
@@ -163,6 +163,12 @@ async def webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
     """
     import hmac
     import os
+    origem = request.client.host if request.client else "desconhecido"
+    # Rota pública — sem isso, alguém tenta o token errado sem limite
+    # nenhum. O espaço do token já é grande o bastante pra tornar
+    # força-bruta inviável de qualquer forma; isto é só um freio a mais.
+    if not ratelimit.permitir(f"wa-webhook:{origem}", 120, 60):
+        raise HTTPException(429, "Muitas chamadas em pouco tempo.")
     esperado = os.environ.get("EVOLUTION_WEBHOOK_TOKEN", "")
     if not esperado:
         # Fail-closed: sem token configurado, a rota é pública sem exigir

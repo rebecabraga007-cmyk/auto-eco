@@ -11,7 +11,7 @@ Toda saída passa por aqui, e por três travas antes do provedor:
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from .. import agenda, auditoria, channels, perm, render, serial, webhooks
+from .. import agenda, auditoria, channels, perm, ratelimit, render, serial, webhooks
 from ..db import get_db
 from ..models import (AuditLog, CadenceStep, Company, Conversation, Delivery,
                       Lead, LeadActivity, Message, Template, User, channel_of)
@@ -219,7 +219,12 @@ async def enviar_teste(payload: dict = Body(...), db: Session = Depends(get_db))
     configura, não do dia a dia do SDR — por isso "gestor", igual ao
     conectar/parear do WhatsApp.
     """
-    perm.ator(db).exigir("gestor", "testar canal de envio")
+    ator = perm.ator(db)
+    ator.exigir("gestor", "testar canal de envio")
+    # Defesa em profundidade: mesmo já sendo gestor+, um relay de envio não
+    # deveria aguentar rajada — 10 tentativas a cada 10 min por conta.
+    if not ratelimit.permitir(f"envio-teste:{ator.user_id or ator.email}", 10, 600):
+        raise HTTPException(429, "Muitas tentativas de teste em pouco tempo. Aguarde um pouco.")
     canal = (payload.get("channel") or "").upper()
     destino = (payload.get("to") or "").strip()
     if not destino:

@@ -1452,7 +1452,7 @@ function openImportWizard() {
       step(3);
       body.innerHTML = `
         <div class="field"><label for="wizName">Nome da base *</label>
-          <input class="form-control" id="wizName" value="[Importação] - ${new Date().toLocaleDateString("pt-BR")}"></div>
+          <input class="form-control" id="wizName" value="[Importação CSV] - ${new Date().toLocaleDateString("pt-BR")}"></div>
         <div class="field-row">
           <div class="field"><label for="wizClient">Cliente</label>
             <select class="form-control" id="wizClient">${options(state.clients, "", { blank: "—" })}</select></div>
@@ -4480,7 +4480,7 @@ PAGES.ajustes = {
       await api("/api/flow/lost-reasons", { method: "POST", body: { name: v } });
       state.lostReasons = await api("/api/flow/lost-reasons");
       toast("Motivo adicionado.", "ok"); go("ajustes");
-    });
+    }, "Adicionar");
     document.getElementById("newField").onclick = () => {
       const m = modal({
         title: "Novo campo personalizado",
@@ -4560,12 +4560,12 @@ PAGES.ajustes = {
   },
 };
 
-function promptOne(title, label, onOk) {
+function promptOne(title, label, onOk, okLabel = "Salvar") {
   const m = modal({
     title,
     body: `<div class="field"><label for="promptVal">${h(label)}</label><input class="form-control" id="promptVal"></div>`,
     footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
-             <button class="btn btn-main btn-sm" data-ok>Salvar</button>`,
+             <button class="btn btn-main btn-sm" data-ok>${h(okLabel)}</button>`,
   });
   m.root.querySelector("[data-cancel]").onclick = m.close;
   m.root.querySelector("[data-ok]").onclick = async () => {
@@ -4737,7 +4737,7 @@ async function abaGrupos() {
       await api("/api/admin/grupos", { method: "POST", body: { nome } });
       toast("Grupo criado.", "ok");
       go("contas");
-    });
+    }, "Criar");
   out.querySelectorAll(".gr-del").forEach((b) => {
     b.onclick = () => confirmDialog("Excluir grupo",
       `Excluir o grupo "${b.dataset.nome}"? As contas dele ficam sem grupo.`, async () => {
