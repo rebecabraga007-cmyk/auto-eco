@@ -124,6 +124,7 @@ def delete_cadence(cid: int, db: Session = Depends(get_db)):
 
 @router.post("/cadences/{cid}/steps")
 def add_step(cid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "editar etapa de cadência")
     if not db.get(Cadence, cid):
         raise HTTPException(404, "Cadência não encontrada.")
     activity_id = payload.get("activityId")
@@ -153,6 +154,7 @@ def add_step(cid: int, payload: dict = Body(...), db: Session = Depends(get_db))
 
 @router.delete("/cadences/{cid}/steps/{sid}")
 def delete_step(cid: int, sid: int, db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "editar etapa de cadência")
     s = db.get(CadenceStep, sid)
     if s and s.cadence_id == cid:
         db.delete(s)
@@ -185,6 +187,7 @@ def list_templates(channel: str | None = None, client_id: int | None = None,
 
 @router.post("/templates")
 def create_template(payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "criar modelo de mensagem")
     channel = (payload.get("channel") or "EMAIL").upper()
     if channel not in TEMPLATE_CHANNELS:
         raise HTTPException(400, f"Canal inválido. Use: {', '.join(sorted(TEMPLATE_CHANNELS))}")
@@ -201,6 +204,7 @@ def create_template(payload: dict = Body(...), db: Session = Depends(get_db)):
 
 @router.patch("/templates/{tid}")
 def update_template(tid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "alterar modelo de mensagem")
     t = db.get(Template, tid)
     if not t:
         raise HTTPException(404, "Modelo não encontrado.")
@@ -218,6 +222,7 @@ def update_template(tid: int, payload: dict = Body(...), db: Session = Depends(g
 
 @router.delete("/templates/{tid}")
 def delete_template(tid: int, db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "excluir modelo de mensagem")
     t = db.get(Template, tid)
     if not t:
         raise HTTPException(404, "Modelo não encontrado.")
@@ -271,6 +276,7 @@ def list_activities(type: str | None = None, client_id: int | None = None,
 
 @router.post("/activities")
 def create_activity(payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "criar atividade")
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "Nome da atividade é obrigatório.")
@@ -287,6 +293,7 @@ def create_activity(payload: dict = Body(...), db: Session = Depends(get_db)):
 
 @router.patch("/activities/{aid}")
 def update_activity(aid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "alterar atividade")
     a = db.get(Activity, aid)
     if not a:
         raise HTTPException(404, "Atividade não encontrada.")
@@ -303,6 +310,7 @@ def update_activity(aid: int, payload: dict = Body(...), db: Session = Depends(g
 
 @router.delete("/activities/{aid}")
 def delete_activity(aid: int, db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "excluir atividade")
     a = db.get(Activity, aid)
     if not a:
         raise HTTPException(404, "Atividade não encontrada.")
@@ -416,6 +424,7 @@ def get_lead(lid: int, db: Session = Depends(get_db)):
     l = db.get(Lead, lid)
     if not l:
         raise HTTPException(404, "Lead não encontrado.")
+    perm.exigir_dono_lead(db, perm.ator(db), l)
     custom = _custom_values(db, lid)
     data = serial.lead(l, custom, _fitscore(db, custom))
     now = datetime.utcnow()
@@ -495,6 +504,7 @@ def update_lead(lid: int, payload: dict = Body(...), db: Session = Depends(get_d
     l = db.get(Lead, lid)
     if not l:
         raise HTTPException(404, "Lead não encontrado.")
+    perm.exigir_dono_lead(db, perm.ator(db), l)
     fields = {"name": "name", "firstName": "first_name", "email": "email",
               "company": "company", "position": "position", "phone": "phone",
               "site": "site", "state": "state", "city": "city", "linkedIn": "linkedin",
@@ -583,6 +593,14 @@ def start_lead(lid: int, payload: dict = Body(default={}), db: Session = Depends
     l = db.get(Lead, lid)
     if not l:
         raise HTTPException(404, "Lead não encontrado.")
+    a = perm.ator(db)
+    if not a.pelo_menos("gestor"):
+        # SDR pode puxar um lead disponível (sem dono) pra si; não pode tomar
+        # o lead de outro SDR nem se atribuir um lead em nome de terceiro.
+        if l.sdr_id and l.sdr_id != a.user_id:
+            raise HTTPException(403, "Este lead já é de outro usuário.")
+        if payload.get("sdrId") and payload["sdrId"] != a.user_id:
+            raise HTTPException(403, "Só é possível iniciar o lead para você mesmo.")
     if payload.get("cadenceId"):
         l.cadence_id = payload["cadenceId"]
     if payload.get("sdrId"):
@@ -733,6 +751,7 @@ def execute_activity(aid: int, payload: dict = Body(default={}),
     a = db.get(LeadActivity, aid)
     if not a:
         raise HTTPException(404, "Atividade não encontrada.")
+    perm.exigir_dono_lead(db, perm.ator(db), a.lead)
     if a.status != "PENDING":
         raise HTTPException(400, "Atividade já finalizada.")
     a.status = "SKIPPED" if payload.get("skip") else "DONE"
@@ -778,6 +797,7 @@ def resume_cadence(lid: int, payload: dict = Body(default={}),
     lead = db.get(Lead, lid)
     if not lead:
         raise HTTPException(404, "Lead não encontrado.")
+    perm.exigir_dono_lead(db, perm.ator(db), lead)
     paused = (db.query(LeadActivity)
               .filter(LeadActivity.lead_id == lid, LeadActivity.status == "PAUSED")
               .order_by(LeadActivity.scheduled_at).all())
@@ -805,6 +825,7 @@ def lead_outcome(lid: int, payload: dict = Body(...), db: Session = Depends(get_
     lead = db.get(Lead, lid)
     if not lead:
         raise HTTPException(404, "Lead não encontrado.")
+    perm.exigir_dono_lead(db, perm.ator(db), lead)
     outcome = payload.get("outcome")
     now = datetime.utcnow()
     if outcome == "WON":

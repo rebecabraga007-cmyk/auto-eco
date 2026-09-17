@@ -240,6 +240,12 @@ function aplicarPermissoesNav(nivel) {
   });
 }
 
+/** Pra gates que não são item de menu (botão dentro de uma tela) — mesma
+ *  regra do `data-min`, só que decidida em JS em vez de atributo no HTML. */
+function nivelPeloMenos(nivel) {
+  return NIVEIS.indexOf((state.me || {}).nivel || "sdr") >= NIVEIS.indexOf(nivel);
+}
+
 function renderNavAvatar() {
   const el = document.getElementById("navAvatar");
   if (!el) return;
@@ -4105,12 +4111,14 @@ PAGES.integracoes = {
         ${i.lastSync ? `<span class="text-muted text-size-small ml-5">${fmtDateTime(i.lastSync)}</span>` : ""}</div>
       <div class="mt-10"><button class="btn btn-default btn-xs" data-toggle-int="${h(i.key)}">
         ${i.connected ? "Desconectar" : "Conectar"}</button></div></div>`).join("");
+    const souAdmin = nivelPeloMenos("admin");
     const hookRows = hooks.map((w) => ({ cells: [
       w.events.map((e) => `<span class="pill">${h(e)}</span>`).join(" "),
       `<code>${h(w.targetUrl)}</code>`,
       w.enabled ? `<span class="pill green">Ativo</span>` : `<span class="pill grey">Inativo</span>`,
       fmtDate(w.created),
-      `<button class="btn btn-default btn-xs" data-del-hook="${w.id}">Remover</button>`] }));
+      souAdmin ? `<button class="btn btn-default btn-xs" data-del-hook="${w.id}">Remover</button>`
+               : `<span class="text-muted text-size-small">—</span>`] }));
 
     view.innerHTML = `
       ${panel("CapiBLU", `<div class="stat-line">
@@ -4120,8 +4128,10 @@ PAGES.integracoes = {
         ${capi.available ? "" : `<div class="alert alert-info alert-styled-left mt-10">${h(capi.error || "")}</div>`}`,
         { actions: `<button class="btn btn-default btn-xs" data-page="capiblu-ferramentas">Ver ferramentas</button>` })}
       ${panel("Integrações", `<div class="tool-grid">${cards}</div>`)}
-      ${panel("Webhooks", table(["Eventos", "URL de destino", "Situação", "Criado", ""], hookRows),
-        { actions: `<button class="btn btn-main btn-xs" id="newHook">Novo webhook</button>` })}`;
+      ${panel("Webhooks", table(["Eventos", "URL de destino", "Situação", "Criado", ""], hookRows)
+        + (souAdmin ? "" : `<div class="alert alert-info alert-styled-left mt-10">
+             Só administradores gerenciam webhooks.</div>`),
+        { actions: souAdmin ? `<button class="btn btn-main btn-xs" id="newHook">Novo webhook</button>` : "" })}`;
 
     view.querySelectorAll("[data-toggle-int]").forEach((b) => {
       b.onclick = async () => {
@@ -4135,7 +4145,8 @@ PAGES.integracoes = {
         toast("Webhook removido."); go("integracoes");
       };
     });
-    document.getElementById("newHook").onclick = () => {
+    const newHookBtn = document.getElementById("newHook");
+    if (newHookBtn) newHookBtn.onclick = () => {
       const m = modal({
         title: "Novo webhook",
         body: `<div class="field"><label>URL de destino *</label>

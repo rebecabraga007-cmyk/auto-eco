@@ -530,7 +530,10 @@ def webhooks(db: Session = Depends(get_db)):
 
 @router.post("/webhooks")
 def create_webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
-    perm.ator(db).exigir("gestor", "cadastrar webhook")
+    # Admin estrito, não gestor: webhook é integração de saída de dados da
+    # empresa inteira — no Meetime é `isAdministrator`, mais restrito que o
+    # resto de Integrações (que qualquer nível acessa).
+    perm.ator(db).exigir("admin", "cadastrar webhook")
     url = (payload.get("targetUrl") or "").strip()
     if not url.startswith("http"):
         raise HTTPException(400, "URL inválida.")
@@ -543,7 +546,7 @@ def create_webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
 
 @router.delete("/webhooks/{wid}")
 def delete_webhook(wid: int, db: Session = Depends(get_db)):
-    perm.ator(db).exigir("gestor", "excluir webhook")
+    perm.ator(db).exigir("admin", "excluir webhook")
     w = db.get(Webhook, wid)
     if w:
         db.delete(w)
@@ -553,6 +556,9 @@ def delete_webhook(wid: int, db: Session = Depends(get_db)):
 
 @router.get("/financial/company")
 def financial(db: Session = Depends(get_db)):
+    # Admin estrito, como no Meetime real (menu "Empresa" é isAdministrator,
+    # não abre nem pra Manager) — não tinha checagem nenhuma antes.
+    perm.ator(db).exigir("admin", "ver dados financeiros")
     c = _company(db)
     paid = db.query(func.count(User.id)).filter(User.active).scalar()
     return {"subscription": {"cycle": "MONTHLY", "value": c.monthly_value,

@@ -114,6 +114,7 @@ async def enviar_atividade(aid: int, payload: dict = Body(default={}),
     act = db.get(LeadActivity, aid)
     if not act:
         raise HTTPException(404, "Atividade não encontrada.")
+    perm.exigir_dono_lead(db, perm.ator(db), act.lead)
     if act.status != "PENDING":
         raise HTTPException(400, "Atividade já finalizada.")
     lead = act.lead

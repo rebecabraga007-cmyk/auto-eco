@@ -84,6 +84,24 @@ def escopo_leads(db: Session, query, a: Ator, coluna):
     return query.filter(coluna == (a.user_id or -1))
 
 
+def exigir_dono_lead(db: Session, a: Ator, lead) -> None:
+    """Mesma regra de `escopo_leads`, mas para acesso por ID direto.
+
+    A listagem já filtrava a carteira do SDR; o acesso por ID (`GET/PATCH
+    /leads/{lid}`, executar atividade, retomar cadência, marcar ganho/perda)
+    não conferia nada — um SDR que soubesse ou adivinhasse o ID de um lead
+    alheio lia e mexia nele mesmo sem "Ver leads de outros usuários" ligado.
+    """
+    if a.pelo_menos("gestor"):
+        return
+    empresa = db.query(Company).first()
+    if empresa and empresa.leads_visible_all:
+        return
+    if lead and lead.sdr_id == a.user_id:
+        return
+    raise HTTPException(403, "Este lead não é seu.")
+
+
 def exigir_ou_permissao(db: Session, a: Ator, campo: str, acao: str) -> None:
     """Gestor/admin sempre passam; SDR só se a empresa liberou essa permissão
     especificamente (equivalente ao LEADS_ADD_MANUAL/STATISTICS_ACCESS/etc. do
