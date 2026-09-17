@@ -2992,14 +2992,20 @@ const enrichState = { upload_id: null, sheets: [], result: null };
        não são por pessoa e continuam à vista: ninguém os pede por
        quantidade. */
     const porPessoa = k => /^(de_dec|so_socio)\d+_/.test(k);
+    /* MARCADAS POR PADRÃO, menos as por pessoa.
+       As colunas por pessoa (Decisor 2 Celular, Sócio 1 E-mail…) são do passo
+       3 — marcá-las aqui faria dois controles disputarem a mesma coluna, e o
+       que a pessoa escolhesse lá seria sobrescrito por um padrão que ela nem
+       viu. O resto nasce ligado. */
     const chk = c => `<label class="en-chk"><input type="checkbox" class="en-field"`
-      + ` value="${c.key}" ${c.key.startsWith('rfb_') ? 'checked' : ''}/> ${esc(c.label)}</label>`;
+      + ` value="${c.key}" ${porPessoa(c.key) ? '' : 'checked'}/> ${esc(c.label)}</label>`;
     box.innerHTML = cat.grupos.map(g => `
       <div class="en-group">
         <div class="en-group-head">
           <label><input type="checkbox" class="en-group-all" data-grupo="${esc(g.grupo)}" /> <strong>${esc(g.grupo)}</strong></label>
           <span class="en-group-src">${esc(g.fonte)}</span>
         </div>
+        ${g.sobre ? `<p class="en-group-sobre">${esc(g.sobre)}</p>` : ''}
         <div class="en-group-fields">
           ${g.campos.filter(c => !porPessoa(c.key)).map(chk).join('')}
         </div>
@@ -3088,7 +3094,7 @@ const enrichState = { upload_id: null, sheets: [], result: null };
       qtd_socios: q.qtd_socios,
       decisor_cargos: enrichCargos(),
       max_decisores: q.qtd_decisores || parseInt(document.getElementById('en-maxdec')?.value) || 3,
-      decisor_fonte: document.querySelector('input[name="en-dec-fonte"]:checked')?.value || 'linkedin',
+      decisor_fonte: document.querySelector('input[name="en-dec-fonte"]:checked')?.value || 'ambas',
       unir_telefones: !!document.getElementById('en-unir-tel')?.checked,
       formato_telefone: enrichFormatoTel(),
       /* NOME e E-MAIL viajam com o pedido porque quem termina o trabalho é o

@@ -3344,7 +3344,9 @@ async def modelos_excluir(mid: str):
 # grupo | [(key, rótulo)]. Prefixo da key indica a fonte:
 #   rfb_ = Receita local (grátis) · as_ = Assertiva · vf_ = verificação integralX
 _ENRICH_CATALOG = [
-    {"grupo": "Empresa (Receita Federal)", "fonte": "RFB local (instantâneo)", "campos": [
+    {"grupo": "Empresa (Receita Federal)", "fonte": "RFB local (instantâneo)",
+     "sobre": "O cadastro oficial da EMPRESA. Sai da nossa cópia da Receita, no disco: é instantâneo e não custa nada. O telefone daqui é o que a empresa declarou ao abrir o CNPJ — costuma ser recepção, e envelhece.",
+     "campos": [
         ("rfb_razao", "Razão Social (RFB)"), ("rfb_fantasia", "Nome Fantasia"),
         ("rfb_situacao", "Situação Cadastral"), ("rfb_cnae_cod", "CNAE Código"),
         ("rfb_cnae", "CNAE Descrição"), ("rfb_porte", "Porte"),
@@ -3356,13 +3358,17 @@ _ENRICH_CATALOG = [
         ("rfb_email", "E-mail Empresa (RFB)"), ("rfb_qtd_socios", "Qtd Sócios"),
         ("rfb_socio1", "Sócio Principal"), ("rfb_simples", "Simples"), ("rfb_mei", "MEI"),
     ]},
-    {"grupo": "Empresa – Telefone (Assertiva)", "fonte": "Assertiva Localize (consumo)", "campos": [
+    {"grupo": "Empresa – Telefone (Assertiva)", "fonte": "Assertiva Localize (consumo)",
+     "sobre": "O telefone ATUAL da empresa, não o declarado na Receita. A Assertiva é bureau: vê linha ativa hoje e diz se tem WhatsApp. Continua sendo o número da EMPRESA — quem atende é quem atende.",
+     "campos": [
         ("as_empresa_tel", "Telefone Empresa (Assertiva)"),
         ("as_empresa_tel2", "Telefone Empresa 2 (Assertiva)"),
         ("as_empresa_email", "E-mail Empresa (Assertiva)"),
         ("as_empresa_whatsapp", "WhatsApp Empresa"),
     ]},
-    {"grupo": "Decisores – quem manda (Assertiva)", "fonte": "Assertiva (consumo)", "campos": [
+    {"grupo": "Decisores – quem manda (Assertiva)", "fonte": "Assertiva (consumo)",
+     "sobre": "QUEM MANDA: diretor, gerente, head — gente contratada. Vem do LinkedIn (quem se declara) e da folha. É o alvo da ligação, e não aparece no quadro societário: na Google Brasil deu 602 decisores e NENHUM era sócio.",
+     "campos": [
         # DECISOR NAO E SOCIO, e esta e a razao deste grupo existir.
         #
         # Socio vem do QSA: e quem e DONO. Decisor vem da folha: e quem MANDA.
@@ -3388,7 +3394,9 @@ _ENRICH_CATALOG = [
         # quem recebe a planilha precisa poder saber qual leu.
         ("de_fonte", "Decisores — fonte"),
     ]},
-    {"grupo": "Sócios – contato pessoal (Assertiva)", "fonte": "JBR (CPF) + Assertiva (consumo)", "campos": [
+    {"grupo": "Sócios – contato pessoal (Assertiva)", "fonte": "JBR (CPF) + Assertiva (consumo)",
+     "sobre": "QUEM É DONO, do quadro societário. O NOME sai de graça da Receita; o que custa é o celular pessoal dele. Em empresa pequena costuma ser o único contato que existe — em empresa grande, quase nunca atende.",
+     "campos": [
         ("so_socio1_nome", "Sócio 1 Nome"),
         ("so_socio1_cpf", "Sócio 1 CPF"),
         ("so_socio1_celular", "Sócio 1 Celular"),
@@ -3399,7 +3407,9 @@ _ENRICH_CATALOG = [
         ("so_socio2_celular", "Sócio 2 Celular"),
         ("so_todos_tel", "Todos os sócios (nome — celular)"),
     ]},
-    {"grupo": "Verificação de telefone (integralX)", "fonte": "WorkAPI intelgrax-tel (consumo)", "campos": [
+    {"grupo": "Verificação de telefone (integralX)", "fonte": "WorkAPI intelgrax-tel (consumo)",
+     "sobre": "Não ACHA telefone: CONFERE um que já temos. Diz se o número é mesmo da pessoa e em quantos cadastros ele aparece — acima de 50 é número de call center ou recado, e ligar ali é perder a ligação.",
+     "campos": [
         ("vf_telefone", "Telefone Verificado"),
         ("vf_status", "Status Verificação"),
         ("vf_vinculos", "Nº de Vínculos"),
@@ -3476,7 +3486,7 @@ def _guess_cnpj_col(columns: list[str]) -> str:
 @app.get("/api/enrich/catalog")
 async def enrich_catalog():
     return {"grupos": [
-        {"grupo": g["grupo"], "fonte": g["fonte"],
+        {"grupo": g["grupo"], "fonte": g["fonte"], "sobre": g.get("sobre", ""),
          "campos": [{"key": k, "label": lbl} for k, lbl in g["campos"]]}
         for g in _ENRICH_CATALOG
     ], "assertiva_ok": assertiva.enabled(), "integralx_ok": bool(mkbuscas.TEL_AUTH_VALUE)}
@@ -4039,9 +4049,19 @@ def _enrich_preparo(payload: dict, usuario: str = ""):
         except (TypeError, ValueError):
             return padrao
 
-    fonte_dec = str(payload.get("decisor_fonte") or "linkedin").strip().lower()
+    # PADRAO: AS DUAS FONTES (decisao da Rebeca, 17/set/2026).
+    #
+    # Elas enxergam gente diferente: o LinkedIn ve quem SE DECLARA gerente ou
+    # diretor, a folha ve quem o cadastro trabalhista REGISTRA. Uma pega a
+    # empresa nova e o contratado recente, a outra pega a empresa que nao tem
+    # presenca la.
+    #
+    # E "ambas" nao dobra o custo: a folha so e consultada quando o LinkedIn
+    # nao encheu a cota de decisores daquela empresa. Onde o LinkedIn resolve,
+    # o preco e o mesmo.
+    fonte_dec = str(payload.get("decisor_fonte") or "ambas").strip().lower()
     if fonte_dec not in ("linkedin", "assertiva", "ambas"):
-        fonte_dec = "linkedin"
+        fonte_dec = "ambas"
     modo_tel = str(payload.get("formato_telefone") or "").strip().lower()
     if modo_tel not in ("", "bruto", "meetime", "zenvia"):
         modo_tel = ""

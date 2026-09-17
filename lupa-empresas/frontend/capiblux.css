@@ -1207,3 +1207,10 @@ body.sem-dossie .btn-dossie { display: none !important; }
 .en-group-antigo > summary { cursor: pointer; font-size: .78rem; color: var(--gray-500);
                              padding: 3px 0; }
 .en-group-antigo[open] > summary { margin-bottom: 4px; }
+
+/* A frase que explica o grupo. Mora AQUI, na tela, e nao numa conversa:
+   quem marca a caixa daqui a duas semanas nao vai lembrar a diferenca entre
+   "telefone da empresa" e "telefone do decisor" -- e essa diferenca e a que
+   separa falar com a recepcao de falar com quem decide. */
+.en-group-sobre { margin: 2px 0 8px; font-size: .78rem; line-height: 1.45;
+                  color: var(--gray-500); max-width: 78ch; }
