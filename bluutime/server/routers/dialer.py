@@ -60,6 +60,14 @@ def list_calls(user_id: int | None = None, status: str | None = None,
                since: str | None = None, until: str | None = None,
                page: int = 1, limit: int = Query(50, le=500),
                db: Session = Depends(get_db)):
+    ator = perm.ator(db)
+    if not ator.pelo_menos("gestor"):
+        empresa = _company(db)
+        # Sem isso, um SDR listava ligação (telefone e empresa do lead
+        # incluídos) de qualquer colega só passando outro user_id/lead_id —
+        # a listagem nunca filtrava por dono, só as telas de lead filtravam.
+        if not empresa.leads_visible_all:
+            user_id = ator.user_id or -1
     start, end = _range(since, until)
     query = db.query(Call).filter(Call.started_at.between(start, end))
     if user_id:
@@ -81,6 +89,12 @@ def list_calls(user_id: int | None = None, status: str | None = None,
 @router.post("/calls")
 def register_call(payload: dict = Body(...), db: Session = Depends(get_db)):
     """Registra o resultado de uma ligação feita pelo softphone."""
+    ator = perm.ator(db)
+    # userId vinha livre do payload — um SDR registrava ligação em nome de
+    # outro colega e inflava (ou sabotava) o ranking dele.
+    user_id = payload.get("userId")
+    if not ator.pelo_menos("gestor"):
+        user_id = ator.user_id
     lead = db.get(Lead, payload["leadId"]) if payload.get("leadId") else None
     if payload.get("leadId") and not lead:
         raise HTTPException(404, "Lead não encontrado.")
@@ -91,7 +105,7 @@ def register_call(payload: dict = Body(...), db: Session = Depends(get_db)):
         raise HTTPException(403, "Lead marcado como 'não perturbe'. "
                                  "Remova a marca no cadastro do lead.")
     status = payload.get("status", "NOT_PERFORMED")
-    c = Call(user_id=payload.get("userId"), lead_id=payload.get("leadId"),
+    c = Call(user_id=user_id, lead_id=payload.get("leadId"),
              origin_phone=payload.get("originPhone", ""),
              receiver_phone=payload.get("receiverPhone") or (lead.phone if lead else ""),
              receiver_type=payload.get("receiverType", "MOBILE"),

@@ -247,8 +247,20 @@ def preview_template(tid: int, payload: dict = Body(default={}),
     t = db.get(Template, tid)
     if not t:
         raise HTTPException(404, "Modelo não encontrado.")
-    lead = (db.get(Lead, payload["leadId"]) if payload.get("leadId")
-            else db.query(Lead).order_by(Lead.id.desc()).first())
+    ator = perm.ator(db)
+    if payload.get("leadId"):
+        lead = db.get(Lead, payload["leadId"])
+        perm.exigir_dono_lead(db, ator, lead)
+    else:
+        # Sem leadId, cai no lead mais recente — mas o mais recente DA
+        # CARTEIRA de quem pediu, não da empresa inteira (senão a prévia
+        # virava um jeito de espiar o cadastro de um lead alheio).
+        query = db.query(Lead)
+        if not ator.pelo_menos("gestor"):
+            empresa = db.query(Company).first()
+            if not (empresa and empresa.leads_visible_all):
+                query = query.filter(Lead.sdr_id == (ator.user_id or -1))
+        lead = query.order_by(Lead.id.desc()).first()
     if not lead:
         raise HTTPException(400, "Não há lead para pré-visualizar.")
     user = db.get(User, payload["userId"]) if payload.get("userId") else lead.sdr
@@ -436,10 +448,15 @@ def get_lead(lid: int, db: Session = Depends(get_db)):
 
 @router.post("/leads")
 def create_lead(payload: dict = Body(...), db: Session = Depends(get_db)):
-    perm.exigir_ou_permissao(db, perm.ator(db), "leads_add_manual", "adicionar lead manualmente")
+    ator = perm.ator(db)
+    perm.exigir_ou_permissao(db, ator, "leads_add_manual", "adicionar lead manualmente")
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "Nome do lead é obrigatório.")
+    if not ator.pelo_menos("gestor"):
+        # Sem isso, um SDR com a permissão de criar lead ligado atribuía o
+        # lead criado a QUALQUER colega, não só a si mesmo.
+        payload = {**payload, "sdrId": ator.user_id}
     l = _build_lead(db, payload)
     db.add(l)
     db.flush()
@@ -659,12 +676,19 @@ async def preview_csv(file: UploadFile = File(...)):
 @router.post("/lead-bases/import")
 def import_base(payload: dict = Body(...), db: Session = Depends(get_db)):
     """Passo 2 do wizard: cria a base a partir do CSV com o mapa de colunas."""
-    perm.exigir_ou_permissao(db, perm.ator(db), "regular_user_can_import", "importar lista de leads")
+    ator = perm.ator(db)
+    perm.exigir_ou_permissao(db, ator, "regular_user_can_import", "importar lista de leads")
     name = (payload.get("name") or "").strip()
     content = payload.get("content") or ""
     mapping = payload.get("mapping") or {}
     if not name or not content:
         raise HTTPException(400, "Informe o nome da base e o conteúdo do arquivo.")
+    sdr_id = payload.get("sdrId")
+    if not ator.pelo_menos("gestor"):
+        # Mesma regra de create_lead: SDR importa só pra si — nem no default
+        # da base, nem mapeando uma coluna do CSV pra "sdrId".
+        sdr_id = ator.user_id
+        mapping = {k: v for k, v in mapping.items() if k != "sdrId"}
     delim = payload.get("delimiter") or ","
     reader = csv.DictReader(io.StringIO(content), delimiter=delim)
 
@@ -673,7 +697,7 @@ def import_base(payload: dict = Body(...), db: Session = Depends(get_db)):
     db.add(base)
     db.flush()
 
-    defaults = {"cadenceId": payload.get("cadenceId"), "sdrId": payload.get("sdrId"),
+    defaults = {"cadenceId": payload.get("cadenceId"), "sdrId": sdr_id,
                 "clientId": payload.get("clientId"), "leadBaseId": base.id}
     imported = discarded = 0
     for raw in reader:

@@ -29,7 +29,7 @@ NATIVE_FIELDS = [
 FEATURE_FLAGS = ["CONTROL_PANEL", "ALLOW_CONFIGURABLE_PERMISSIONS", "CAPIBLU_LEAD_SOURCE",
                  "SMART_QUEUE", "MULTI_CLIENT", "SHOW_STATISTICS_ACTIVITIES_TAB"]
 PERMISSIONS = ["LEADS_VIEW_ALL", "LEADS_DELETE", "LEADS_ADD_MANUAL",
-               "LEADBASE_UPLOAD", "STATISTICS_ACCESS", "CAPIBLU_ACCESS"]
+               "LEADBASE_UPLOAD", "STATISTICS_ACCESS"]
 
 
 def _company(db: Session) -> Company:
@@ -130,7 +130,11 @@ def my_permissions(db: Session = Depends(get_db)):
     if perm.ator(db).pelo_menos("gestor"):
         return PERMISSIONS
     c = _company(db)
-    out = ["CAPIBLU_ACCESS"]
+    # "CAPIBLU_ACCESS" saiu daqui — não é uma permissão de verdade, nenhuma
+    # rota de capiblu.py confere isso, e não existe toggle em Ajustes pra
+    # desligar. Listar como se fosse configurável só prometia um controle
+    # que não existe.
+    out = []
     if c.leads_visible_all:
         out.append("LEADS_VIEW_ALL")
     if c.leads_add_manual:

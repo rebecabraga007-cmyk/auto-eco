@@ -213,7 +213,7 @@ function go(name) {
   view.innerHTML = LOADING;
   location.hash = name;
   Promise.resolve(page.render()).catch((e) => {
-    view.innerHTML = panel("Erro", `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`);
+    view.innerHTML = panel("Erro", `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`);
   });
 }
 
@@ -588,9 +588,8 @@ function enviarAtividade(act) {
     wide: true,
     title: `Enviar ${act.channel} para ${act.lead.name}`,
     body: `<div class="alert alert-info alert-styled-left" id="evAviso">
-        Conferindo o modelo e o destino…
+        O texto vem do modelo da etapa. Nada sai enquanto o envio estiver desligado.
       </div>
-      <div id="evPrev"></div>
       <div class="field">
         <label><input type="checkbox" id="evFora"> Enviar fora da janela de 9h–18h</label>
       </div>`,
@@ -618,7 +617,7 @@ function enviarAtividade(act) {
       go("execucao");
     } catch (e) {
       const faltando = /variáveis sem valor/i.test(e.message);
-      m.root.querySelector("#evAviso").className = "alert alert-info alert-styled-left";
+      m.root.querySelector("#evAviso").className = "alert alert-danger alert-styled-left";
       m.root.querySelector("#evAviso").innerHTML = h(e.message);
       ok.disabled = false;
       ok.textContent = faltando ? "Enviar mesmo assim" : "Enviar";
@@ -626,8 +625,6 @@ function enviarAtividade(act) {
     }
   };
   m.root.querySelector("[data-ok]").onclick = () => disparar(false);
-  m.root.querySelector("#evAviso").textContent =
-    "O texto vem do modelo da etapa. Nada sai enquanto o envio estiver desligado.";
 }
 
 /** Reagenda a atividade — o servidor encaixa na próxima janela útil. */
@@ -635,7 +632,7 @@ function adiarAtividade(act) {
   const amanha = new Date(Date.now() + 864e5);
   const m = modal({
     title: `Adiar atividade de ${act.lead.name}`,
-    body: `<div class="field"><label>Nova data e hora</label>
+    body: `<div class="field"><label for="adQuando">Nova data e hora</label>
         <input class="form-control" type="datetime-local" id="adQuando"
                value="${amanha.toISOString().slice(0, 11)}${String(act.lead.bestHour).padStart(2, "0")}:00"></div>
       <span class="text-muted text-size-small">
@@ -671,16 +668,16 @@ function openExecuteModal(act) {
   const callerIds = (state.dialerConfig && state.dialerConfig.callerIds) || [];
   const callBlock = act.type === "CALL" ? `
     <div class="field-row">
-      <div class="field"><label>Resultado da ligação</label>
+      <div class="field"><label for="callOutput">Resultado da ligação</label>
         <select class="form-control" id="callOutput">
           <option value="">Não conectou</option>
           <option value="NO_CONTACT">Conectou · sem contato</option>
           <option value="NOT_MEANINGFUL">Conectou · não significativa</option>
           <option value="MEANINGFUL">Conectou · significativa</option>
         </select></div>
-      <div class="field"><label>Duração (segundos)</label>
+      <div class="field"><label for="callDuration">Duração (segundos)</label>
         <input class="form-control" type="number" min="0" id="callDuration" value="0"></div>
-      ${callerIds.length ? `<div class="field"><label>Número de origem</label>
+      ${callerIds.length ? `<div class="field"><label for="callOrigin">Número de origem</label>
         <select class="form-control" id="callOrigin">
           ${callerIds.map((n) => `<option value="${h(n)}">${h(n)}</option>`).join("")}
         </select></div>` : ""}
@@ -700,7 +697,7 @@ function openExecuteModal(act) {
       ${tpl ? `<div class="field"><label>E-mail — ${h(merge(tpl.subject))}</label>
         <div class="json-box" style="max-height:200px">${h(merge(tpl.html).replace(/<[^>]+>/g, " "))}</div></div>` : ""}
       ${callBlock}
-      <div class="field"><label>Anotações</label><textarea class="form-control" id="execNotes"></textarea></div>`,
+      <div class="field"><label for="execNotes">Anotações</label><textarea class="form-control" id="execNotes"></textarea></div>`,
     footer: `<button class="btn btn-danger btn-sm" data-lost>Marcar perdido</button>
              <button class="btn btn-success btn-sm" data-won>Marcar ganho</button>
              <span style="flex:1"></span>
@@ -742,9 +739,9 @@ function openExecuteModal(act) {
 function openLostModal(leadId, after) {
   const m = modal({
     title: "Marcar como perdido",
-    body: `<div class="field"><label>Motivo da perda</label>
+    body: `<div class="field"><label for="lostReason">Motivo da perda</label>
         <select class="form-control" id="lostReason">${options(state.lostReasons, "", { blank: "Selecione…" })}</select></div>
-      <div class="field"><label>Anotações</label><textarea class="form-control" id="lostNotes"></textarea></div>`,
+      <div class="field"><label for="lostNotes">Anotações</label><textarea class="form-control" id="lostNotes"></textarea></div>`,
     footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
              <button class="btn btn-danger btn-sm" data-ok>Confirmar perda</button>`,
   });
@@ -843,7 +840,7 @@ function openBulkModal() {
   if (!ids.length) return toast("Selecione ao menos um lead.", "err");
   const m = modal({
     title: `Ações em massa · ${ids.length} leads`,
-    body: `<div class="field"><label>Ação</label>
+    body: `<div class="field"><label for="bulkAction">Ação</label>
         <select class="form-control" id="bulkAction">
           <option value="transfer">Transferir para outro SDR</option>
           <option value="switch_cadence">Trocar de cadência</option>
@@ -859,11 +856,11 @@ function openBulkModal() {
   const action = m.root.querySelector("#bulkAction");
   const renderExtra = () => {
     if (action.value === "transfer")
-      extra.innerHTML = `<label>SDR de destino</label><select class="form-control" id="bulkVal">${options(state.users, "")}</select>`;
+      extra.innerHTML = `<label for="bulkVal">SDR de destino</label><select class="form-control" id="bulkVal">${options(state.users, "")}</select>`;
     else if (action.value === "switch_cadence")
-      extra.innerHTML = `<label>Cadência</label><select class="form-control" id="bulkVal">${options(state.cadences, "")}</select>`;
+      extra.innerHTML = `<label for="bulkVal">Cadência</label><select class="form-control" id="bulkVal">${options(state.cadences, "")}</select>`;
     else if (action.value === "lost")
-      extra.innerHTML = `<label>Motivo</label><select class="form-control" id="bulkVal">${options(state.lostReasons, "")}</select>`;
+      extra.innerHTML = `<label for="bulkVal">Motivo</label><select class="form-control" id="bulkVal">${options(state.lostReasons, "")}</select>`;
     else extra.innerHTML = "";
   };
   renderExtra();
@@ -963,14 +960,14 @@ async function openLeadModal(id) {
         ${r.updated.length ? `Campos atualizados: ${h(r.updated.join(", "))}.` : "Nada novo a preencher."}
         ${r.contacts.length} contato(s) encontrados na empresa.</div>
         <div class="json-box">${h(JSON.stringify(r.contacts, null, 2))}</div>`;
-    } catch (e) { out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`; }
+    } catch (e) { out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`; }
   };
   m.root.querySelector("[data-validate]").onclick = async () => {
     out.innerHTML = `<span class="spinner"></span> validando telefone…`;
     try {
       const r = await api(`/api/capiblu/leads/${l.id}/validate-phone`, { method: "POST" });
       out.innerHTML = `<div class="json-box">${h(JSON.stringify(r, null, 2))}</div>`;
-    } catch (e) { out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`; }
+    } catch (e) { out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`; }
   };
 }
 
@@ -980,34 +977,34 @@ function openLeadForm(lead) {
     title: l.id ? `Editar ${l.name}` : "Novo lead",
     body: `
       <div class="field-row">
-        <div class="field"><label>Nome *</label><input class="form-control" id="fName" value="${h(l.name || "")}"></div>
-        <div class="field"><label>Cargo</label><input class="form-control" id="fPosition" value="${h(l.position || "")}"></div>
+        <div class="field"><label for="fName">Nome *</label><input class="form-control" id="fName" value="${h(l.name || "")}"></div>
+        <div class="field"><label for="fPosition">Cargo</label><input class="form-control" id="fPosition" value="${h(l.position || "")}"></div>
       </div>
       <div class="field-row">
-        <div class="field"><label>Empresa</label><input class="form-control" id="fCompany" value="${h(l.company || "")}"></div>
-        <div class="field"><label>CNPJ</label><input class="form-control" id="fCnpj" value="${h(l.cnpj || "")}"></div>
+        <div class="field"><label for="fCompany">Empresa</label><input class="form-control" id="fCompany" value="${h(l.company || "")}"></div>
+        <div class="field"><label for="fCnpj">CNPJ</label><input class="form-control" id="fCnpj" value="${h(l.cnpj || "")}"></div>
       </div>
       <div class="field-row">
-        <div class="field"><label>Telefone</label><input class="form-control" id="fPhone" value="${h(l.phone || "")}"></div>
-        <div class="field"><label>E-mail</label><input class="form-control" id="fEmail" value="${h(l.email || "")}"></div>
+        <div class="field"><label for="fPhone">Telefone</label><input class="form-control" id="fPhone" value="${h(l.phone || "")}"></div>
+        <div class="field"><label for="fEmail">E-mail</label><input class="form-control" id="fEmail" value="${h(l.email || "")}"></div>
       </div>
       <div class="field-row">
-        <div class="field"><label>Cidade</label><input class="form-control" id="fCity" value="${h(l.city || "")}"></div>
-        <div class="field"><label>UF</label><input class="form-control" id="fState" value="${h(l.state || "")}"></div>
+        <div class="field"><label for="fCity">Cidade</label><input class="form-control" id="fCity" value="${h(l.city || "")}"></div>
+        <div class="field"><label for="fState">UF</label><input class="form-control" id="fState" value="${h(l.state || "")}"></div>
       </div>
       <div class="field-row">
-        <div class="field"><label>Cliente</label>
+        <div class="field"><label for="fClient">Cliente</label>
           <select class="form-control" id="fClient">${options(state.clients, l.client && l.client.id, { blank: "—" })}</select></div>
-        <div class="field"><label>SDR</label>
+        <div class="field"><label for="fSdr">SDR</label>
           <select class="form-control" id="fSdr">${options(state.users, l.sdr && l.sdr.id, { blank: "—" })}</select></div>
       </div>
       <div class="field-row">
-        <div class="field"><label>Cadência</label>
+        <div class="field"><label for="fCadence">Cadência</label>
           <select class="form-control" id="fCadence">${options(state.cadences, l.cadence && l.cadence.id, { blank: "—" })}</select></div>
-        <div class="field"><label>Melhor horário de contato</label>
+        <div class="field"><label for="fHour">Melhor horário de contato</label>
           <input class="form-control" type="number" min="6" max="22" id="fHour" value="${l.bestHour || 18}"></div>
       </div>
-      <div class="field"><label>Anotações</label><textarea class="form-control" id="fNotes">${h(l.annotations || "")}</textarea></div>`,
+      <div class="field"><label for="fNotes">Anotações</label><textarea class="form-control" id="fNotes">${h(l.annotations || "")}</textarea></div>`,
     footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
              <button class="btn btn-main btn-sm" data-save>Salvar</button>`,
   });
@@ -1137,12 +1134,12 @@ async function openCadenceDetail(id) {
     const lista = acts.data || acts;
     const inner = modal({
       title: "Adicionar etapa",
-      body: `<div class="field"><label>Atividade</label>
+      body: `<div class="field"><label for="stepAct">Atividade</label>
           <select class="form-control" id="stepAct">${options(acts, "")}</select></div>
-        <div class="field" id="stepTplBox"><label>Modelo de mensagem</label>
+        <div class="field" id="stepTplBox"><label for="stepTpl">Modelo de mensagem</label>
           <select class="form-control" id="stepTpl"></select>
           <span class="text-muted text-size-small" id="stepTplAviso"></span></div>
-        <div class="field"><label>Dia da cadência</label>
+        <div class="field"><label for="stepDay">Dia da cadência</label>
           <input class="form-control" type="number" min="1" id="stepDay" value="1"></div>`,
       footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
                <button class="btn btn-main btn-sm" data-ok>Adicionar</button>`,
@@ -1201,28 +1198,28 @@ function openCadenceForm(cad) {
   const m = modal({
     title: c.id ? `Editar ${c.name}` : "Nova cadência",
     body: `
-      <div class="field"><label>Nome *</label><input class="form-control" id="cName" value="${h(c.name || "")}"></div>
-      <div class="field"><label>Descrição</label><textarea class="form-control" id="cDesc">${h(c.description || "")}</textarea></div>
+      <div class="field"><label for="cName">Nome *</label><input class="form-control" id="cName" value="${h(c.name || "")}"></div>
+      <div class="field"><label for="cDesc">Descrição</label><textarea class="form-control" id="cDesc">${h(c.description || "")}</textarea></div>
       <div class="field-row">
-        <div class="field"><label>Cliente</label>
+        <div class="field"><label for="cClientSel">Cliente</label>
           <select class="form-control" id="cClientSel">${options(state.clients, c.client && c.client.id, { blank: "—" })}</select></div>
-        <div class="field"><label>Foco</label>
+        <div class="field"><label for="cFocusSel">Foco</label>
           <select class="form-control" id="cFocusSel">
             ${Object.entries(FOCUS_LABEL).map(([k, v]) => `<option value="${k}"${c.cadenceFocus === k ? " selected" : ""}>${v}</option>`).join("")}
           </select></div>
       </div>
       <div class="field-row">
-        <div class="field"><label>Prioridade</label>
+        <div class="field"><label for="cPrioSel">Prioridade</label>
           <select class="form-control" id="cPrioSel">
             ${Object.entries(PRIORITY_LABEL).map(([k, v]) => `<option value="${k}"${c.priority === k ? " selected" : ""}>${v}</option>`).join("")}
           </select></div>
-        <div class="field"><label>Situação</label>
+        <div class="field"><label for="cExec">Situação</label>
           <select class="form-control" id="cExec">
             <option value="true"${c.executing !== false ? " selected" : ""}>Ativa</option>
             <option value="false"${c.executing === false ? " selected" : ""}>Pausada</option>
           </select></div>
       </div>
-      <div class="field"><label>Responsáveis</label>
+      <div class="field"><label for="cUsers">Responsáveis</label>
         <select class="form-control" id="cUsers" multiple size="4">
           ${state.users.map((u) => `<option value="${u.id}"${(c.users || []).some((x) => x.id === u.id) ? " selected" : ""}>${h(u.name)}</option>`).join("")}
         </select></div>`,
@@ -1307,24 +1304,24 @@ function openActivityForm(act) {
   const m = modal({
     title: a.id ? "Editar atividade" : "Nova atividade",
     body: `
-      <div class="field"><label>Nome *</label><input class="form-control" id="aName" value="${h(a.name || "")}"></div>
+      <div class="field"><label for="aName">Nome *</label><input class="form-control" id="aName" value="${h(a.name || "")}"></div>
       <div class="field-row">
-        <div class="field"><label>Tipo</label>
+        <div class="field"><label for="aTypeSel">Tipo</label>
           <select class="form-control" id="aTypeSel">
             ${Object.entries(TYPE_LABEL).map(([k, v]) => `<option value="${k}"${a.type === k ? " selected" : ""}>${v}</option>`).join("")}
           </select></div>
-        <div class="field"><label>Rede (ponto social)</label>
+        <div class="field"><label for="aSocial">Rede (ponto social)</label>
           <select class="form-control" id="aSocial">
             <option value="">—</option>
             <option value="WHATSAPP"${a.socialNetwork === "WHATSAPP" ? " selected" : ""}>WhatsApp</option>
             <option value="LINKEDIN"${a.socialNetwork === "LINKEDIN" ? " selected" : ""}>LinkedIn</option>
           </select></div>
       </div>
-      <div class="field"><label>Instrução / script</label>
+      <div class="field"><label for="aInstr">Instrução / script</label>
         <textarea class="form-control" id="aInstr">${h(a.instruction || "")}</textarea></div>
-      <div class="field"><label>Assunto do e-mail</label>
+      <div class="field"><label for="aSubject">Assunto do e-mail</label>
         <input class="form-control" id="aSubject" value="${h(tpl.subject || "")}"></div>
-      <div class="field"><label>Corpo do e-mail (HTML)</label>
+      <div class="field"><label for="aHtml">Corpo do e-mail (HTML)</label>
         <textarea class="form-control" id="aHtml">${h(tpl.html || "")}</textarea></div>`,
     footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
              <button class="btn btn-main btn-sm" data-save>Salvar</button>`,
@@ -1396,7 +1393,7 @@ function openImportWizard() {
     body: `<div class="wizard-steps"><span class="active" data-s="1">1. Arquivo</span>
       <span data-s="2">2. Campos</span><span data-s="3">3. Execução</span></div>
       <div id="wizBody">
-        <div class="field"><label>Arquivo CSV</label>
+        <div class="field"><label for="wizFile">Arquivo CSV</label>
           <input class="form-control" type="file" id="wizFile" accept=".csv,.txt"></div>
         <div class="text-muted text-size-small">A primeira linha precisa conter os nomes das colunas.</div>
       </div>`,
@@ -1448,15 +1445,15 @@ function openImportWizard() {
       preview.mapping = mapping;
       step(3);
       body.innerHTML = `
-        <div class="field"><label>Nome da base *</label>
+        <div class="field"><label for="wizName">Nome da base *</label>
           <input class="form-control" id="wizName" value="[Importação] - ${new Date().toLocaleDateString("pt-BR")}"></div>
         <div class="field-row">
-          <div class="field"><label>Cliente</label>
+          <div class="field"><label for="wizClient">Cliente</label>
             <select class="form-control" id="wizClient">${options(state.clients, "", { blank: "—" })}</select></div>
-          <div class="field"><label>SDR</label>
+          <div class="field"><label for="wizSdr">SDR</label>
             <select class="form-control" id="wizSdr">${options(state.users, "", { blank: "—" })}</select></div>
         </div>
-        <div class="field"><label>Colocar em cadência</label>
+        <div class="field"><label for="wizCad">Colocar em cadência</label>
           <select class="form-control" id="wizCad">${options(state.cadences.filter((c) => c.executing), "", { blank: "Não iniciar agora" })}</select></div>`;
       next.textContent = "Importar";
       return;
@@ -1523,10 +1520,10 @@ function openClientForm(client) {
   const c = client || {};
   const m = modal({
     title: c.id ? `Editar ${c.name}` : "Novo cliente",
-    body: `<div class="field"><label>Nome *</label><input class="form-control" id="clName" value="${h(c.name || "")}"></div>
+    body: `<div class="field"><label for="clName">Nome *</label><input class="form-control" id="clName" value="${h(c.name || "")}"></div>
       <div class="field-row">
-        <div class="field"><label>Cor</label><input class="form-control" type="color" id="clColor" value="${h(c.color || "#00a443")}"></div>
-        <div class="field"><label>Situação</label>
+        <div class="field"><label for="clColor">Cor</label><input class="form-control" type="color" id="clColor" value="${h(c.color || "#00a443")}"></div>
+        <div class="field"><label for="clActive">Situação</label>
           <select class="form-control" id="clActive">
             <option value="true"${c.active !== false ? " selected" : ""}>Ativo</option>
             <option value="false"${c.active === false ? " selected" : ""}>Inativo</option>
@@ -1892,7 +1889,7 @@ async function abrirFormFeedback(f) {
       ${cfg.qualificationTags.map((t) => `
         <div class="field"><label><input type="checkbox" class="fb-tag" data-tag="${h(t)}"> ${h(t)}</label></div>`).join("")
         || `<p class="text-muted">Nenhuma pergunta de qualificação cadastrada em Ajustes.</p>`}
-      <div class="field"><label>Observações</label><textarea class="form-control" id="fbNotes" rows="2"></textarea></div>`,
+      <div class="field"><label for="fbNotes">Observações</label><textarea class="form-control" id="fbNotes" rows="2"></textarea></div>`,
     footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
              <button class="btn btn-main btn-sm" data-save>Enviar</button>`,
   });
@@ -2348,7 +2345,7 @@ async function runB2B(offset) {
     state.b2bResult = res;
     renderB2B(res);
   } catch (e) {
-    out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+    out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
   }
 }
 
@@ -2513,7 +2510,7 @@ async function runSocios(offset = 0) {
       table(["Nome", "CPF", "Cargo", "Empresa", "CNPJ", "Local", "Entrada"], rows, { scroll: true }),
       { subtitle: r.status === "unavailable" ? r.message : "Base local — não gasta consulta" });
   } catch (e) {
-    out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+    out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
   }
 }
 
@@ -2526,37 +2523,37 @@ function openProspectImport(cnpjs) {
         O CapiBLU vai buscar sócios e decisores de cada CNPJ e trazer os telefones priorizados.
         Rotas de telefone <strong>gastam consulta</strong>.
       </div>
-      <div class="field"><label>Nome da base *</label>
+      <div class="field"><label for="pbName">Nome da base *</label>
         <input class="form-control" id="pbName" value="[CapiBLU] - ${new Date().toLocaleDateString("pt-BR")}"></div>
       <div class="field-row">
-        <div class="field"><label>Cliente</label>
+        <div class="field"><label for="pbClient">Cliente</label>
           <select class="form-control" id="pbClient">${options(state.clients, "", { blank: "—" })}</select></div>
-        <div class="field"><label>SDR responsável</label>
+        <div class="field"><label for="pbSdr">SDR responsável</label>
           <select class="form-control" id="pbSdr">${options(state.users, "", { blank: "—" })}</select></div>
       </div>
-      <div class="field"><label>Colocar em cadência</label>
+      <div class="field"><label for="pbCad">Colocar em cadência</label>
         <select class="form-control" id="pbCad">${options(state.cadences.filter((c) => c.executing), "", { blank: "Não iniciar agora" })}</select></div>
       <div class="field-row">
-        <div class="field"><label>Máx. decisores por empresa</label>
+        <div class="field"><label for="pbMaxDec">Máx. decisores por empresa</label>
           <input class="form-control" type="number" id="pbMaxDec" value="3" min="0" max="10"></div>
-        <div class="field"><label>Máx. telefones por contato</label>
+        <div class="field"><label for="pbMaxTel">Máx. telefones por contato</label>
           <input class="form-control" type="number" id="pbMaxTel" value="3" min="1" max="5"></div>
       </div>
       <div class="field-row">
-        <div class="field"><label>Tipo de telefone</label>
+        <div class="field"><label for="pbTipoTel">Tipo de telefone</label>
           <select class="form-control" id="pbTipoTel">
             <option value="celular">Celular</option>
             <option value="celular_fixo">Celular e fixo</option>
             <option value="todos">Todos</option>
           </select></div>
-        <div class="field"><label>Fonte do telefone</label>
+        <div class="field"><label for="pbFonte">Fonte do telefone</label>
           <select class="form-control" id="pbFonte">
             <option value="assertiva">Assertiva</option>
             <option value="mk">Mk Buscas</option>
           </select></div>
       </div>
       <div class="field-row">
-        <div class="field"><label>Sócios</label>
+        <div class="field"><label for="pbSocios">Sócios</label>
           <select class="form-control" id="pbSocios">
             <option value="todos">Todos os sócios</option>
             <option value="admin">Só sócio-administrador / diretor / presidente</option>
@@ -2565,7 +2562,7 @@ function openProspectImport(cnpjs) {
           <input class="form-control" type="number" id="pbMaxSocios" value="0" min="0" max="20"></div>
       </div>
       <div class="field-row">
-        <div class="field"><label>Fonte dos decisores</label>
+        <div class="field"><label for="pbDecFonte">Fonte dos decisores</label>
           <select class="form-control" id="pbDecFonte">
             <option value="assertiva">Assertiva (rápida)</option>
             <option value="linkedin">LinkedIn (lenta, costuma bloquear)</option>
@@ -2844,7 +2841,7 @@ async function buscarGente() {
   // As duas buscas saem juntas: a exata é curta, a ampla vem paginada.
   const [ex, am] = await Promise.all([pedir(false, 100, 0), pedir(true, PAGINA_GENTE, 0)]);
   if (ex.status === "error" && am.status === "error") {
-    out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(ex.message || am.message)}</div>`;
+    out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(ex.message || am.message)}</div>`;
     return;
   }
   gente.exatos = ex.pessoas || [];
@@ -3272,11 +3269,11 @@ function openLeadLote(pessoas) {
     body: `<div class="alert alert-info alert-styled-left">
         Os leads entram sem telefone confirmado; a validação continua disponível na ficha de cada um.
       </div>
-      <div class="field"><label>Cliente</label>
+      <div class="field"><label for="loteClient">Cliente</label>
         <select class="form-control" id="loteClient">${options(state.clients, "", { blank: "— sem cliente —" })}</select></div>
-      <div class="field"><label>Cadência</label>
+      <div class="field"><label for="loteCad">Cadência</label>
         <select class="form-control" id="loteCad">${options(state.cadences, "", { blank: "— sem cadência —" })}</select></div>
-      <div class="field"><label>SDR responsável</label>
+      <div class="field"><label for="loteSdr">SDR responsável</label>
         <select class="form-control" id="loteSdr">${options(state.users, state.me && state.me.id)}</select></div>`,
     footer: `<button class="btn btn-default" id="loteCancel">Cancelar</button>
              <button class="btn btn-main" id="loteOk">Criar leads</button>`,
@@ -3331,7 +3328,7 @@ PAGES["capiblu-vinculos"] = {
             <strong>Gasta consulta.</strong>
           </div>
           <div class="field-row">
-            <div class="field"><label>${porEmpresa ? "CNPJ da empresa" : "CPF da pessoa"}</label>
+            <div class="field"><label for="vinDoc">${porEmpresa ? "CNPJ da empresa" : "CPF da pessoa"}</label>
               <input class="form-control input-xlg" id="vinDoc" value="${h(doc)}"
                      placeholder="${porEmpresa ? "76.485.390/0001-07" : "somente números"}"></div>
             <div class="field" style="align-self:end">
@@ -3464,7 +3461,7 @@ PAGES["capiblu-assertiva"] = {
           </div>
           <div id="asStatus" class="help-block">verificando a credencial…</div>
           <div class="field-row">
-            <div class="field"><label>${h(meta[1])}</label>
+            <div class="field"><label for="asQ">${h(meta[1])}</label>
               <input class="form-control input-xlg" id="asQ" placeholder="${h(meta[2])}"></div>
             <div class="field" style="align-self:end">
               <button class="btn btn-main" id="asGo">Consultar</button></div>
@@ -3557,10 +3554,10 @@ PAGES["capiblu-telefone"] = {
               : "Responde se aquele número é mesmo daquele documento, e avisa quando a linha é compartilhada. <strong>Gasta uma consulta.</strong>"}
           </div>
           <div class="field-row">
-            <div class="field"><label>Telefone com DDD</label>
+            <div class="field"><label for="tPhone">Telefone com DDD</label>
               <input class="form-control input-xlg" id="tPhone" placeholder="41999998888"
                      value="${h(state.telPhone || "")}"></div>
-            ${aba === "posse" ? `<div class="field"><label>CPF ou CNPJ</label>
+            ${aba === "posse" ? `<div class="field"><label for="tDoc">CPF ou CNPJ</label>
               <input class="form-control input-xlg" id="tDoc" placeholder="somente números"></div>` : ""}
           </div>
           <button class="btn btn-main" id="tGo">Consultar</button>
@@ -3587,7 +3584,7 @@ PAGES["capiblu-telefone"] = {
         const r = await api(aba === "posse" ? `/api/capiblu/telefones/${phone}/pertence/${doc}`
                                            : `/api/capiblu/telefones/${phone}`);
         out.innerHTML = aba === "posse" ? renderPertence(r, phone, doc) : renderReverso(r, phone);
-      } catch (e) { out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`; }
+      } catch (e) { out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`; }
     };
   },
 };
@@ -3632,7 +3629,7 @@ function renderUploadStep() {
           <select class="form-control" id="pCnpjCol"></select></div>
       </div>` : `
       <div class="field">
-        <label>Arquivo XLSX ou CSV</label>
+        <label for="pFile">Arquivo XLSX ou CSV</label>
         <input type="file" class="form-control" id="pFile" accept=".xlsx,.xls,.csv">
       </div>
       <button class="btn btn-main btn-sm" id="pSubir">Subir planilha</button>`);
@@ -3680,7 +3677,7 @@ async function renderCamposStep() {
   try {
     planilha.catalogo = planilha.catalogo || await api("/api/capiblu/planilha/catalogo");
   } catch (e) {
-    el.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+    el.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
     return;
   }
   const grupos = planilha.catalogo.grupos || [];
@@ -3744,7 +3741,7 @@ async function rodarEnriquecimento(fields, limite, previa) {
     el.innerHTML = "";
     renderResultado();
   } catch (e) {
-    el.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+    el.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
   }
 }
 
@@ -3791,7 +3788,7 @@ PAGES["capiblu-modelos"] = {
       </div>
       ${panel("Novo modelo a partir de um exemplo", `
         <div class="field-row">
-          <div class="field"><label>Planilha de exemplo (só o cabeçalho importa)</label>
+          <div class="field"><label for="mFile">Planilha de exemplo (só o cabeçalho importa)</label>
             <input type="file" class="form-control" id="mFile" accept=".xlsx,.xls,.csv"></div>
           <div class="field"><label>&nbsp;</label>
             <button class="btn btn-main" style="width:100%" id="mAnalisar">Analisar colunas</button></div>
@@ -3808,7 +3805,7 @@ PAGES["capiblu-modelos"] = {
         const r = await apiUpload("/api/capiblu/modelo/analisar", file);
         renderAnalise(r, file.name);
       } catch (e) {
-        out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+        out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
       }
     };
     await listarModelos();
@@ -3867,7 +3864,7 @@ async function listarModelos() {
       b.onclick = () => exportarPorModelo(b.dataset.id);
     });
   } catch (e) {
-    el.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+    el.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
   }
 }
 
@@ -3894,12 +3891,12 @@ PAGES["capiblu-dossie"] = {
         vínculos e validações; com <code>insight</code> inclui resumo por IA.
       </div>
       <div class="field-row">
-        <div class="field"><label>Tipo</label>
+        <div class="field"><label for="dTipo">Tipo</label>
           <select class="form-control" id="dTipo">
             <option value="cnpj"${(state.dossieDoc || "").length === 14 ? " selected" : ""}>CNPJ</option>
             <option value="cpf"${(state.dossieDoc || "").length === 11 ? " selected" : ""}>CPF</option>
           </select></div>
-        <div class="field"><label>Documento</label>
+        <div class="field"><label for="dDoc">Documento</label>
           <input class="form-control" id="dDoc" value="${h(state.dossieDoc || "")}"></div>
       </div>
       <div class="field">
@@ -3953,7 +3950,7 @@ PAGES["capiblu-consumo"] = {
     try {
       r = await api(`/api/capiblu/consumo?dias=${dias}`);
     } catch (e) {
-      out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+      out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
       return;
     }
     if (r.status === "unavailable") {
@@ -4015,7 +4012,7 @@ PAGES["meu-perfil"] = {
             Trocar foto<input type="file" id="avatarInput" accept="image/*" hidden></label>
             <span class="text-muted text-size-small ml-5">JPG/PNG, até 4MB</span></div>
         </div>
-        <div class="field"><label>Nome</label>
+        <div class="field"><label for="perfNome">Nome</label>
           <input class="form-control" id="perfNome" value="${h(me.name)}"></div>
         <div class="field"><label>E-mail</label>
           <input class="form-control" value="${h(me.email)}" disabled></div>
@@ -4090,17 +4087,17 @@ function openUserForm(user) {
   const ROLES = ["ADMINISTRATOR", "MANAGER", "SDR", "SALESMAN"];
   const m = modal({
     title: u.id ? `Editar ${u.name}` : "Novo usuário",
-    body: `<div class="field"><label>Nome *</label><input class="form-control" id="uName" value="${h(u.name || "")}"></div>
-      <div class="field"><label>E-mail *</label>
+    body: `<div class="field"><label for="uName">Nome *</label><input class="form-control" id="uName" value="${h(u.name || "")}"></div>
+      <div class="field"><label for="uEmail">E-mail *</label>
         <input class="form-control" id="uEmail" value="${h(u.email || "")}"${u.id ? " disabled" : ""}></div>
-      <div class="field"><label>Papéis</label>
+      <div class="field"><label for="uRoles">Papéis</label>
         <select class="form-control" id="uRoles" multiple size="4">
           ${ROLES.map((r) => `<option value="${r}"${(u.roles || []).includes(r) ? " selected" : ""}>${r}</option>`).join("")}
         </select></div>
       <div class="field-row">
-        <div class="field"><label>Meta diária</label>
+        <div class="field"><label for="uGoal">Meta diária</label>
           <input class="form-control" type="number" id="uGoal" value="${u.dailyGoal || 170}"></div>
-        <div class="field"><label>Situação</label>
+        <div class="field"><label for="uActive">Situação</label>
           <select class="form-control" id="uActive">
             <option value="true"${u.active !== false ? " selected" : ""}>Ativo</option>
             <option value="false"${u.active === false ? " selected" : ""}>Inativo</option>
@@ -4181,9 +4178,9 @@ PAGES.integracoes = {
     if (newHookBtn) newHookBtn.onclick = () => {
       const m = modal({
         title: "Novo webhook",
-        body: `<div class="field"><label>URL de destino *</label>
+        body: `<div class="field"><label for="whUrl">URL de destino *</label>
             <input class="form-control" id="whUrl" placeholder="https://..."></div>
-          <div class="field"><label>Eventos</label>
+          <div class="field"><label for="whEvents">Eventos</label>
             <select class="form-control" id="whEvents" multiple size="7">
               <option value="LEAD.WON" selected>LEAD.WON</option>
               <option value="LEAD.LOST">LEAD.LOST</option>
@@ -4477,10 +4474,10 @@ PAGES.ajustes = {
     document.getElementById("newField").onclick = () => {
       const m = modal({
         title: "Novo campo personalizado",
-        body: `<div class="field"><label>Nome *</label><input class="form-control" id="cfName"></div>
-          <div class="field"><label>Identificador *</label>
+        body: `<div class="field"><label for="cfName">Nome *</label><input class="form-control" id="cfName"></div>
+          <div class="field"><label for="cfIdent">Identificador *</label>
             <input class="form-control" id="cfIdent" placeholder="ex.: segmento"></div>
-          <div class="field"><label>Tipo</label>
+          <div class="field"><label for="cfType">Tipo</label>
             <select class="form-control" id="cfType">
               <option value="STRING">Texto</option><option value="NUMBER">Número</option>
               <option value="DATE">Data</option></select></div>
@@ -4529,8 +4526,8 @@ PAGES.ajustes = {
     document.getElementById("newHoliday").onclick = () => {
       const m = modal({
         title: "Adicionar feriado",
-        body: `<div class="field"><label>Data</label><input class="form-control" type="date" id="hDate"></div>
-          <div class="field"><label>Descrição</label><input class="form-control" id="hName"></div>`,
+        body: `<div class="field"><label for="hDate">Data</label><input class="form-control" type="date" id="hDate"></div>
+          <div class="field"><label for="hName">Descrição</label><input class="form-control" id="hName"></div>`,
         footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
                  <button class="btn btn-main btn-sm" data-save>Adicionar</button>`,
       });
@@ -4550,7 +4547,7 @@ PAGES.ajustes = {
 function promptOne(title, label, onOk) {
   const m = modal({
     title,
-    body: `<div class="field"><label>${h(label)}</label><input class="form-control" id="promptVal"></div>`,
+    body: `<div class="field"><label for="promptVal">${h(label)}</label><input class="form-control" id="promptVal"></div>`,
     footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
              <button class="btn btn-main btn-sm" data-ok>Salvar</button>`,
   });
@@ -4596,7 +4593,7 @@ PAGES["contas"] = {
       await abas[aba]();
     } catch (e) {
       document.getElementById("ctOut").innerHTML =
-        `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+        `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
     }
   },
 };
@@ -4651,12 +4648,12 @@ function novaConta() {
   const m = modal({
     title: "Nova conta de acesso",
     body: `
-      <div class="field"><label>Nome</label><input class="form-control" id="ncNome"></div>
-      <div class="field"><label>E-mail</label>
+      <div class="field"><label for="ncNome">Nome</label><input class="form-control" id="ncNome"></div>
+      <div class="field"><label for="ncEmail">E-mail</label>
         <input class="form-control" id="ncEmail" type="email"></div>
       <div class="field"><label>Senha provisória <span class="text-grey">(mínimo 8 caracteres)</span></label>
         <input class="form-control" id="ncSenha" type="password"></div>
-      <div class="field"><label>Perfil</label>
+      <div class="field"><label for="ncRole">Perfil</label>
         <select class="form-control" id="ncRole">
           <option value="user">Usuário — usa as ferramentas, com limite diário</option>
           <option value="admin">Administrador — sem limite, gerencia contas</option>
@@ -4758,7 +4755,7 @@ async function abaTokens() {
       body: `<div class="field">
                <label>Nome <span class="text-grey">(para você reconhecer depois)</span></label>
                <input class="form-control" id="tnNome" placeholder="integração n8n"></div>
-             <div class="field"><label>Age em nome de</label>
+             <div class="field"><label for="tnUser">Age em nome de</label>
                <select class="form-control" id="tnUser">
                  ${(r.usuarios || []).map((u) =>
                    `<option value="${u.id}">${h(u.email)}</option>`).join("")}
@@ -4906,7 +4903,7 @@ async function listarModelosMensagem() {
         });
     });
   } catch (e) {
-    out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+    out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
   }
 }
 
@@ -4917,9 +4914,9 @@ function editarModelo(t) {
     title: novo ? "Novo modelo" : `Editar “${t.name}”`,
     body: `
       <div class="field-row">
-        <div class="field"><label>Nome</label>
+        <div class="field"><label for="tmNome">Nome</label>
           <input class="form-control" id="tmNome" value="${h(t ? t.name : "")}"></div>
-        <div class="field"><label>Canal</label>
+        <div class="field"><label for="tmCanal">Canal</label>
           <select class="form-control" id="tmCanal"${novo ? "" : " disabled"}>
             ${["EMAIL", "WHATSAPP", "SOCIAL"].map((c) =>
               `<option value="${c}"${t && t.channel === c ? " selected" : ""}>${c}</option>`).join("")}
@@ -4930,7 +4927,7 @@ function editarModelo(t) {
       <div class="field" id="tmAssuntoBox">
         <label>Assunto <span class="text-grey">(só e-mail)</span></label>
         <input class="form-control" id="tmAssunto" value="${h(t ? t.subject : "")}"></div>
-      <div class="field"><label>Mensagem</label>
+      <div class="field"><label for="tmCorpo">Mensagem</label>
         <textarea class="form-control" id="tmCorpo" style="min-height:190px">${h(t ? t.body : "")}</textarea></div>
       <div class="field">
         <label class="text-muted text-size-small">Clique para inserir no cursor</label><br>
@@ -5033,7 +5030,7 @@ PAGES["envio"] = {
       await ({ canais: abaCanais, entregas: abaEntregas, trilha: abaTrilha }[aba])();
     } catch (e) {
       document.getElementById("enOut").innerHTML =
-        `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+        `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
     }
   },
 };
@@ -5086,9 +5083,9 @@ function testarCanal(canal) {
     body: `<div class="alert alert-info alert-styled-left">
         Manda para o destino que você informar — use o seu, não o de um lead.
       </div>
-      <div class="field"><label>${eEmail ? "E-mail" : "Telefone com DDD"}</label>
+      <div class="field"><label for="etDest">${eEmail ? "E-mail" : "Telefone com DDD"}</label>
         <input class="form-control" id="etDest" placeholder="${eEmail ? "voce@blusalesgroup.com.br" : "41999999999"}"></div>
-      <div class="field"><label>Mensagem</label>
+      <div class="field"><label for="etCorpo">Mensagem</label>
         <textarea class="form-control" id="etCorpo" style="min-height:90px">Teste do Bluutime.</textarea></div>`,
     footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
              <button class="btn btn-main btn-sm" data-ok>Enviar</button>`,
@@ -5305,7 +5302,7 @@ async function buscarEmpresaPorNome() {
     fichaEmpresaBusca.resultados = r.empresas || [];
     renderEmpresaBusca();
   } catch (e) {
-    out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+    out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
   }
 }
 
@@ -5337,7 +5334,7 @@ async function renderFichaEmpresa(cnpj) {
   try {
     c = (await api(`/api/capiblu/empresas/${cnpj}`)).company;
   } catch (e) {
-    out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+    out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
     return;
   }
   const ativa = (c.descricao_situacao_cadastral || "").toUpperCase() === "ATIVA";
@@ -5425,7 +5422,7 @@ async function carregarBloco(cnpj, bloco) {
       b.onclick = () => carregarBloco(cnpj, b.dataset.bloco);
     });
   } catch (e) {
-    alvo.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>` + antes;
+    alvo.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>` + antes;
   }
 }
 
@@ -5802,7 +5799,7 @@ async function parearWhatsapp() {
   try {
     await api("/api/envio/whatsapp/conectar", { method: "POST", body: {} });
   } catch (e) {
-    alvo.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+    alvo.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
     if (btn) { btn.disabled = false; btn.textContent = "Parear número"; }
     return;
   }
@@ -5849,11 +5846,11 @@ function trocarMinhaSenha() {
   const m = modal({
     title: "Trocar minha senha",
     body: `
-      <div class="field"><label>Senha atual</label>
+      <div class="field"><label for="msAtual">Senha atual</label>
         <input class="form-control" id="msAtual" type="password"></div>
       <div class="field"><label>Nova senha <span class="text-grey">(mínimo 8)</span></label>
         <input class="form-control" id="msNova" type="password"></div>
-      <div class="field"><label>Repita a nova senha</label>
+      <div class="field"><label for="msRepete">Repita a nova senha</label>
         <input class="form-control" id="msRepete" type="password"></div>`,
     footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
              <button class="btn btn-main btn-sm" data-ok>Trocar</button>`,
@@ -5901,7 +5898,7 @@ async function renderStatusMigracao() {
   try {
     s = await api("/api/meetime/status");
   } catch (e) {
-    el.innerHTML = `<div class="alert alert-info alert-styled-left">${h(e.message)}</div>`;
+    el.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
     return;
   }
   if (!s.configured) {
@@ -5962,7 +5959,7 @@ async function acompanharProgresso() {
       ${p.feito.toLocaleString("pt-BR")} de ${p.total.toLocaleString("pt-BR")} · ${p.percentual}%
     </div>` : "";
 
-  const tom = p.estado === "ERRO" ? "alert-info" : p.estado === "PRONTO" ? "alert-success" : "alert-info";
+  const tom = p.estado === "ERRO" ? "alert-danger" : p.estado === "PRONTO" ? "alert-success" : "alert-info";
   el.innerHTML = panel(h(p.titulo || "Migração"), `
     <div class="alert ${tom} alert-styled-left">
       ${p.estado === "RODANDO" ? `<span class="spinner"></span> ` : ""}

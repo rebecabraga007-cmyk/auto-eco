@@ -161,9 +161,16 @@ async def webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
     próprio número (`fromMe`) é descartada: senão o que o SDR manda volta como
     se o lead tivesse respondido.
     """
+    import hmac
     import os
     esperado = os.environ.get("EVOLUTION_WEBHOOK_TOKEN", "")
-    if esperado and payload.get("token") != esperado:
+    if not esperado:
+        # Fail-closed: sem token configurado, a rota é pública sem exigir
+        # sessão — aceitar tudo mesmo sem token deixava qualquer request
+        # externo criar conversa/mensagem falsa e até disparar "lead
+        # respondeu" (pausa cadência de verdade).
+        raise HTTPException(503, "EVOLUTION_WEBHOOK_TOKEN não configurado no servidor.")
+    if not hmac.compare_digest(str(payload.get("token") or ""), esperado):
         raise HTTPException(401, "Token de webhook inválido.")
 
     texto, jid, proprio = _ler_entrada(payload)

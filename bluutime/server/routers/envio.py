@@ -235,7 +235,7 @@ def listar_entregas(lead_id: int | None = None, status: str | None = None,
                     channel: str | None = None, limit: int = 100,
                     db: Session = Depends(get_db)):
     """O histórico que responde 'por que este lead não recebeu nada?'."""
-    q = db.query(Delivery)
+    q = perm.escopo_leads(db, db.query(Delivery), perm.ator(db), Delivery.user_id)
     if lead_id:
         q = q.filter(Delivery.lead_id == lead_id)
     if status:

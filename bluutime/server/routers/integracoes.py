@@ -39,6 +39,7 @@ def eventos():
 
 @router.get("/webhooks")
 def listar(db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "ver webhooks")
     saida = []
     for w in db.query(Webhook).order_by(Webhook.id).all():
         linhas = db.query(WebhookDelivery).filter(WebhookDelivery.webhook_id == w.id).all()
@@ -109,6 +110,10 @@ def excluir(wid: int, db: Session = Depends(get_db)):
 @router.post("/webhooks/{wid}/testar")
 def testar(wid: int, db: Session = Depends(get_db)):
     """Manda um evento de mentira e entrega na hora, sem esperar o tick."""
+    # Sem isso, qualquer usuário disparava um POST real pra target_url de um
+    # webhook cadastrado e via o código de resposta — sonda de rede contra
+    # host arbitrário (possivelmente interno) escondida atrás de "testar".
+    perm.ator(db).exigir("gestor", "testar webhook")
     w = db.get(Webhook, wid)
     if not w:
         raise HTTPException(404, "Webhook não encontrado.")
@@ -135,6 +140,7 @@ def testar(wid: int, db: Session = Depends(get_db)):
 @router.get("/entregas")
 def entregas(webhook_id: int | None = None, status: str | None = None,
              limit: int = 100, db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "ver entregas de webhook")
     q = db.query(WebhookDelivery)
     if webhook_id:
         q = q.filter(WebhookDelivery.webhook_id == webhook_id)
@@ -153,6 +159,7 @@ def entregas(webhook_id: int | None = None, status: str | None = None,
 @router.post("/entregas/{did}/reenviar")
 def reenviar(did: int, db: Session = Depends(get_db)):
     """Devolve uma entrega desistida para a fila."""
+    perm.ator(db).exigir("gestor", "reenviar webhook")
     d = db.get(WebhookDelivery, did)
     if not d:
         raise HTTPException(404, "Entrega não encontrada.")
@@ -167,4 +174,5 @@ def reenviar(did: int, db: Session = Depends(get_db)):
 @router.post("/despachar")
 def despachar_agora(db: Session = Depends(get_db)):
     """Roda a fila agora, em vez de esperar o tick de 5 min."""
+    perm.ator(db).exigir("gestor", "despachar webhooks")
     return webhooks.despachar(db)

@@ -557,6 +557,12 @@ async def prospect_import(payload: dict = Body(...), db: Session = Depends(get_d
     Meetime. Aqui a base guarda a consulta em `sourceQuery`, então dá para
     reexecutá-la depois.
     """
+    # Mesma permissão do import por CSV (`flow.import_base`) — sem isso, um
+    # SDR importava por aqui mesmo com "Importar lista de leads" desligado
+    # nas Permissões, e ainda gastava consulta paga da empresa fazendo isso.
+    ator = perm.ator(db)
+    perm.exigir_ou_permissao(db, ator, "regular_user_can_import",
+                             "importar lista de leads")
     raw_list = [c for c in (payload.get("cnpjs") or []) if str(c).strip()]
     cnpjs, invalidos = [], []
     for raw in raw_list:
@@ -612,7 +618,10 @@ async def prospect_import(payload: dict = Body(...), db: Session = Depends(get_d
     imported = discarded = 0
     failures: list[str] = []
     sem_decisor: list[dict] = []
-    defaults = {"cadenceId": cadence_id, "sdrId": payload.get("sdrId"),
+    sdr_id = payload.get("sdrId")
+    if not ator.pelo_menos("gestor"):
+        sdr_id = ator.user_id
+    defaults = {"cadenceId": cadence_id, "sdrId": sdr_id,
                 "clientId": payload.get("clientId"), "leadBaseId": base.id}
     from .flow import _build_lead
 
