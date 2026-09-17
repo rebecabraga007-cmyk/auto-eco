@@ -44,6 +44,7 @@
     wireMenu();
     wireUsersModal();
     wireUmt();
+    wireAdmEmail();
     wirePassModal();
     wireConfigModal();
     // A sessão vem do cookie — basta perguntar quem sou eu (sem depender de token local).
@@ -447,6 +448,63 @@
       } catch (e) { nota.textContent = 'Cadastrada. Não consegui testar agora.'; }
       tok.value = ''; nome.value = '';
     });
+  }
+
+
+  /* ── TESTE DE ENVIO DE E-MAIL ──────────────────────────────────────
+     Configurar SMTP é quatro variáveis de ambiente e três registros de DNS.
+     Sem um teste, o único jeito de saber se funcionou seria gastar um
+     enriquecimento inteiro para ver se o anexo chega -- e, quando não
+     chegasse, não daria para saber se o problema é a senha, o DNS ou o
+     serviço que não foi reiniciado.
+
+     Por isso a tela mostra também O QUE O PROCESSO LEU (host, porta,
+     usuário, se tem senha). O erro mais comum não é senha errada: é a
+     variável posta no lugar errado e o serviço nunca reiniciado, e isso é
+     invisível até alguém mostrar o que o processo enxerga. */
+  function admEmailPinta(d) {
+    const box = document.getElementById('adm-email-estado');
+    if (!box) return;
+    const c = (d && d.config) || {};
+    const onde = `<code>${esc(c.usuario || '(sem usuário)')}</code> via `
+      + `<code>${esc(c.host || '?')}:${esc(String(c.porta || '?'))}</code>`
+      + (c.de && c.de !== c.usuario ? ` · remetente <code>${esc(c.de)}</code>` : '');
+    box.innerHTML = d && d.configurado
+      ? `✅ Envio ligado — ${onde}`
+      : `⚠️ Envio desligado — ${esc((d && d.motivo) || 'sem configuração')}`
+        + `<br><span class="pf-advanced-hint">O processo está lendo: ${onde}`
+        + ` · senha: ${c.tem_senha ? 'definida' : 'AUSENTE'}</span>`;
+  }
+
+  async function admEmailStatus() {
+    if (!document.getElementById('adm-email-estado')) return;
+    try {
+      admEmailPinta(await fetch('/api/admin/email/status').then(r => r.json()));
+    } catch (e) { /* painel some sozinho se a rota não existir */ }
+  }
+
+  function wireAdmEmail() {
+    const btn = document.getElementById('adm-email-testar');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      const res = document.getElementById('adm-email-resultado');
+      const para = (document.getElementById('adm-email-para').value || '').trim();
+      btn.disabled = true;
+      res.textContent = 'enviando…';
+      try {
+        const d = await fetch('/api/admin/email/testar', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: para }),
+        }).then(r => r.json());
+        res.innerHTML = d.status === 'ok'
+          ? `✅ ${esc(d.message || 'Enviado.')} Confira a caixa (e o spam).`
+          : `❌ ${esc(d.message || 'Não saiu.')}`;
+        admEmailPinta({ configurado: d.status === 'ok', motivo: d.message, config: d.config });
+      } catch (e) {
+        res.textContent = 'Erro: ' + e.message;
+      } finally { btn.disabled = false; }
+    });
+    admEmailStatus();
   }
 
   function wirePassModal() {

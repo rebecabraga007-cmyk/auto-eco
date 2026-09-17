@@ -59,6 +59,18 @@ def por_que_nao() -> str:
     return ""
 
 
+def como_esta() -> dict:
+    """O que o servidor esta enxergando -- SEM a senha.
+
+    Serve para a pessoa que configurou conferir se a variavel chegou mesmo no
+    processo. O erro mais comum nao e a senha errada: e a variavel escrita no
+    lugar errado e o servico nunca ter sido reiniciado, e isso e invisivel
+    ate alguem mostrar o que o processo leu.
+    """
+    return {"host": HOST, "porta": PORTA, "usuario": USUARIO,
+            "de": DE, "tem_senha": bool(SENHA)}
+
+
 def endereco_valido(e: str) -> bool:
     return bool(_RE_EMAIL.match((e or "").strip()))
 

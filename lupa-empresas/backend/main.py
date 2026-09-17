@@ -4584,6 +4584,40 @@ def _enrich_email(eid: str, nome: str, para: str, dados: bytes,
     return env
 
 
+@app.post("/api/admin/email/testar")
+async def admin_email_testar(request: Request, payload: dict = Body(default={})):
+    """Manda um e-mail de teste e devolve o erro EXATO se não sair.
+
+    Existe porque configurar SMTP é um ciclo de tentativa e erro com quatro
+    variáveis e três registros de DNS, e sem isso o único jeito de saber se
+    funcionou seria gastar um enriquecimento inteiro para ver se o anexo
+    chega. O erro volta em texto para quem for configurar não ter que caçar
+    log no servidor: "senha de app recusada" resolve sozinho,
+    "SMTPAuthenticationError" não.
+    """
+    if not _is_admin(request):
+        return {"status": "error", "message": "Só admin."}
+    if not correio.configurado():
+        return {"status": "error", "message": correio.por_que_nao(),
+                "config": correio.como_esta()}
+    para = str(payload.get("email") or "").strip() or _quem(request)
+    r = correio.enviar(
+        para, "CapiBLU — teste de envio",
+        "Se você está lendo isto, o envio de e-mail do CapiBLU está "
+        "funcionando.\n\nRemetente: %s\nServidor: %s:%s\n"
+        % (correio.DE, correio.HOST, correio.PORTA))
+    r["config"] = correio.como_esta()
+    return r
+
+
+@app.get("/api/admin/email/status")
+async def admin_email_status(request: Request):
+    if not _is_admin(request):
+        return {"status": "error", "message": "Só admin."}
+    return {"status": "ok", "configurado": correio.configurado(),
+            "motivo": correio.por_que_nao(), "config": correio.como_esta()}
+
+
 @app.get("/api/enrich/salvos")
 async def enrich_salvos(request: Request):
     """A lista de quem está pedindo. Admin vê a de todo mundo.

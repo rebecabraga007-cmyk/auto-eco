@@ -1513,6 +1513,28 @@
       <div id="adm-total-resultado"></div>
     </div>
 
+    <!-- ENVIO DE E-MAIL: configurar e CONFERIR no mesmo lugar.
+         São quatro variáveis de ambiente e três registros de DNS; sem um
+         teste, o único jeito de saber se funcionou seria gastar um
+         enriquecimento inteiro para ver se o anexo chega. -->
+    <div class="search-panel">
+      <h3 style="margin:0 0 6px;font-size:1.05rem">Envio de e-mail</h3>
+      <p class="pf-advanced-hint" style="display:block;margin:0 0 10px">
+        É por aqui que a planilha enriquecida sai por e-mail. Configura-se por
+        variáveis de ambiente no serviço
+        (<code>CAPIBLU_SMTP_HOST</code>, <code>_PORT</code>, <code>_USER</code>,
+        <code>_SENHA</code>, <code>_DE</code>) — o serviço precisa ser
+        reiniciado depois de mudá-las.
+      </p>
+      <div id="adm-email-estado" class="en-fname" style="margin-bottom:8px"></div>
+      <div class="filter-row" style="margin:0;gap:10px;flex-wrap:wrap">
+        <input id="adm-email-para" type="email" class="filter-select" style="width:280px"
+               placeholder="mandar o teste para… (vazio = para você)" />
+        <button id="adm-email-testar" class="btn-secondary">✉️ Mandar e-mail de teste</button>
+      </div>
+      <div id="adm-email-resultado" class="en-fname" style="margin-top:8px"></div>
+    </div>
+
     <div class="search-panel">
       <h3 style="margin:0 0 6px;font-size:1.05rem">Custo Bright Data (LinkedIn)</h3>
       <p class="pf-advanced-hint" style="display:block;margin:0 0 12px">A fatura da Bright Data
