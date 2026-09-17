@@ -91,13 +91,17 @@ def exigir_dono_lead(db: Session, a: Ator, lead) -> None:
     /leads/{lid}`, executar atividade, retomar cadência, marcar ganho/perda)
     não conferia nada — um SDR que soubesse ou adivinhasse o ID de um lead
     alheio lia e mexia nele mesmo sem "Ver leads de outros usuários" ligado.
+
+    `lead=None` passa direto: usado também para recursos que só ÀS VEZES têm
+    lead associado (conversa de WhatsApp por telefone avulso, sem lead) — não
+    há dono nenhum pra violar, então não há o que bloquear.
     """
-    if a.pelo_menos("gestor"):
+    if lead is None or a.pelo_menos("gestor"):
         return
     empresa = db.query(Company).first()
     if empresa and empresa.leads_visible_all:
         return
-    if lead and lead.sdr_id == a.user_id:
+    if lead.sdr_id == a.user_id:
         return
     raise HTTPException(403, "Este lead não é seu.")
 

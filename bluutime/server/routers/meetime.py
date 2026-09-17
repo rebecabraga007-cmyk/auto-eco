@@ -182,6 +182,12 @@ async def completar_juncao(payload: dict = Body(default={}),
 @router.post("/sync")
 async def sync(payload: dict = Body(default={}), db: Session = Depends(get_db)):
     """Importa a operação real. `reset=true` apaga antes o que veio do seed."""
+    # Faltava checagem nenhuma — qualquer conta autenticada disparava um sync
+    # (custoso) ou, pior, um reset=true (apaga leads/conversas/atividades e
+    # reatribui papel de usuário a partir da API do Meetime). Mesmo nível de
+    # /meetime/completar-juncao; reset pede admin por ser destrutivo.
+    perm.ator(db).exigir("admin" if payload.get("reset") else "gestor",
+                         "sincronizar com o Meetime")
     if not meetime_api.enabled():
         raise HTTPException(400, "MEETIME_TOKEN não configurado.")
     progresso.iniciar("meetime-sync", "Migração do Meetime")

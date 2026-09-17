@@ -255,7 +255,13 @@ def list_reports():
 @router.get("/reports/{key}")
 def download_report(key: str, since: str | None = None, until: str | None = None,
                     db: Session = Depends(get_db)):
-    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "baixar relatório")
+    # Os 4 relatórios são agregados da empresa inteira (todo usuário, toda
+    # carteira) — não é dado "meu", é dado de time. `statistics_access` nasce
+    # ligado por padrão (Company.statistics_access=True), então até aqui
+    # qualquer SDR baixava a base de leads inteira em CSV. O menu
+    # "Relatórios" já é gestor+ (index.html); o servidor tinha ficado mais
+    # permissivo que a própria tela que leva até ele.
+    perm.ator(db).exigir("gestor", "baixar relatório")
     end = datetime.fromisoformat(until) if until else datetime.utcnow()
     start = datetime.fromisoformat(since) if since else end - timedelta(days=30)
 

@@ -2,11 +2,12 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from .. import channels
+from .. import channels, perm
 from ..db import get_db
-from ..models import Conversation, Delivery, Lead, Message
+from ..models import Company, Conversation, Delivery, Lead, Message
 from ..serial import iso
 
 router = APIRouter(prefix="/api/whatsapp")
@@ -29,7 +30,16 @@ async def instance_state():
 
 @router.get("/conversations")
 def conversations(q: str | None = None, db: Session = Depends(get_db)):
+    ator = perm.ator(db)
     query = db.query(Conversation)
+    if not ator.pelo_menos("gestor"):
+        empresa = db.query(Company).first()
+        if not (empresa and empresa.leads_visible_all):
+            # Conversa sem lead (telefone avulso) não tem dono pra restringir;
+            # conversa de lead só aparece pra quem é dono dele.
+            minhas = db.query(Lead.id).filter(Lead.sdr_id == (ator.user_id or -1))
+            query = query.filter(or_(Conversation.lead_id.is_(None),
+                                     Conversation.lead_id.in_(minhas)))
     if q:
         query = query.filter(Conversation.title.ilike(f"%{q}%"))
     rows = query.order_by(Conversation.last_message_at.desc()).all()
@@ -46,6 +56,7 @@ def conversation(cid: int, db: Session = Depends(get_db)):
     c = db.get(Conversation, cid)
     if not c:
         raise HTTPException(404, "Conversa não encontrada.")
+    perm.exigir_dono_lead(db, perm.ator(db), c.lead)
     msgs = (db.query(Message).filter_by(conversation_id=cid)
             .order_by(Message.sent_at).all())
     return {**_conv(c), "messages": [{"id": m.id, "direction": m.direction,
@@ -56,6 +67,8 @@ def conversation(cid: int, db: Session = Depends(get_db)):
 @router.post("/conversations")
 def open_conversation(payload: dict = Body(...), db: Session = Depends(get_db)):
     lead = db.get(Lead, payload["leadId"]) if payload.get("leadId") else None
+    if lead:
+        perm.exigir_dono_lead(db, perm.ator(db), lead)
     phone = payload.get("phone") or (lead.phone if lead else "")
     if not phone:
         raise HTTPException(400, "Informe o telefone ou um lead com telefone.")
@@ -79,6 +92,7 @@ async def send_message(cid: int, payload: dict = Body(...), db: Session = Depend
     c = db.get(Conversation, cid)
     if not c:
         raise HTTPException(404, "Conversa não encontrada.")
+    perm.exigir_dono_lead(db, perm.ator(db), c.lead)
     body = (payload.get("body") or "").strip()
     if not body:
         raise HTTPException(400, "Mensagem vazia.")
