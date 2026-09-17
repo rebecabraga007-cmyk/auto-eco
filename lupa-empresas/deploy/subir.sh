@@ -24,7 +24,15 @@ HOST=${CAPIBLU_HOST:-root@167.233.71.218}
 CHAVE=${CAPIBLU_SSH_KEY:-$HOME/.ssh/capiblu_vps}
 REMOTO=/opt/capiblu/lupa-empresas
 SO_CONFERIR=0
-[ "${1:-}" = "--so-conferir" ] && SO_CONFERIR=1
+SEM_TESTES=0
+for a in "$@"; do
+  [ "$a" = "--so-conferir" ] && SO_CONFERIR=1
+  [ "$a" = "--sem-testes" ] && SEM_TESTES=1
+done
+# Olhar o que subiria nao precisa da suite: e leitura, nao deploy. Mas isso
+# NAO e "pular os testes" -- a mensagem tem que dizer a verdade sobre qual
+# dos dois casos e, senao ela assusta a toa em quem so quis conferir.
+[ "$SO_CONFERIR" = "1" ] && SEM_TESTES=1
 
 sr() { ssh -i "$CHAVE" -o BatchMode=yes "$HOST" "$@"; }
 
@@ -40,6 +48,35 @@ BACKEND=$(git ls-files 'backend/*.py' | tr '\n' ' ')
 ONLINE=$(git ls-files 'app_online/*.py' | tr '\n' ' ')
 FRONT=$(git ls-files 'frontend/*.html' 'frontend/*.js' 'frontend/*.css' | tr '\n' ' ')
 DOCS="deploy/EMAIL.md deploy/cloudflare_email_dns.py deploy/conferir_email_dns.py deploy/subir.sh"
+
+# ── A SUITE, ANTES DE TUDO ────────────────────────────────────────────
+#
+# Antes de olhar arquivo, antes de fazer backup: se a suite esta vermelha,
+# nao ha o que subir. Roda em ~30s e nao gasta nada -- a rede para fora esta
+# bloqueada em testes/base.py.
+#
+# Sete defeitos apareceram em um unico dia de trabalho, e cinco deles no
+# codigo que eu tinha acabado de escrever. O que mudou nao foi eu passar a
+# escrever melhor; foi isto aqui existir.
+#
+# `--sem-testes` existe para a emergencia de precisar subir um conserto com a
+# suite quebrada por outro motivo. Usar isso e uma decisao, e por isso ele
+# grita.
+if [ "$SO_CONFERIR" = "1" ]; then
+  :                       # so mostrando o que subiria; nao ha o que testar
+elif [ "$SEM_TESTES" = "1" ]; then
+  echo "!! SUBINDO SEM RODAR OS TESTES -- voce pediu. Confira na mao depois."
+  echo
+else
+  echo "== suite de testes =="
+  python testes/rodar.py || {
+    echo
+    echo "A SUITE ESTA VERMELHA. Nada foi copiado e nada foi reiniciado."
+    echo "Conserte, ou repita com --sem-testes se souber o que esta fazendo."
+    exit 1
+  }
+  echo
+fi
 
 echo "== arquivos que vao subir =="
 for f in $BACKEND $ONLINE $FRONT $DOCS; do

@@ -21,3 +21,6 @@ backend/enriquecimentos_arquivos/
 backend/enrich_jobs_parciais/
 backend/uploads_planilha/
 backend/memoria_empresa.db
+
+# Dados descartáveis que a suíte cria (testes/base.py aponta para o temp do SO)
+testes/__pycache__/
