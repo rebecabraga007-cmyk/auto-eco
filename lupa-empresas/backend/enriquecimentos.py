@@ -146,11 +146,17 @@ def listar(usuario: str, admin: bool = False, limite: int = 60) -> list:
     c = _con()
     try:
         if admin:
-            rs = c.execute("SELECT * FROM enriquecimento ORDER BY criado_em DESC"
+            # `rowid` DESEMPATA. `criado_em` e em segundos, e um complemento
+            # rapido termina no MESMO segundo da lista que o originou --
+            # nesse caso a ordem ficava indefinida e a mais nova podia
+            # aparecer embaixo. Quem clica em "completar" na primeira linha
+            # pegaria a lista errada.
+            rs = c.execute("SELECT * FROM enriquecimento"
+                           " ORDER BY criado_em DESC, rowid DESC"
                            " LIMIT ?", (int(limite),)).fetchall()
         else:
             rs = c.execute("SELECT * FROM enriquecimento WHERE usuario = ?"
-                           " ORDER BY criado_em DESC LIMIT ?",
+                           " ORDER BY criado_em DESC, rowid DESC LIMIT ?",
                            ((usuario or "").strip().lower(), int(limite))).fetchall()
         return [_linha(r) for r in rs]
     finally:
@@ -209,3 +215,44 @@ def apagar(eid: str, usuario: str, admin: bool = False) -> bool:
     finally:
         c.close()
     return True
+
+
+def ler_linhas(eid: str, usuario: str = "", admin: bool = False) -> tuple:
+    """As linhas de volta, lidas do PROPRIO XLSX que foi entregue.
+
+    POR QUE DO ARQUIVO, e nao de uma copia guardada a parte: o XLSX e o que a
+    pessoa recebeu e o que ela vai comparar. Se eu guardasse as linhas
+    separadas e as duas divergissem -- por um ajuste de formatacao, por uma
+    coluna renomeada -- o complemento sairia diferente do original e ninguem
+    saberia dizer qual dos dois esta certo.
+
+    O cabecalho do arquivo tem os ROTULOS ("Decisor 1 Telefone 1"), nao as
+    chaves internas (`de_dec1_tel1`). A traducao de volta sai de `colunas`,
+    que foi gravado junto no mesmo momento -- por isso ele existe.
+
+    Devolve (registro, linhas). `registro` e None quando nao e da pessoa.
+    """
+    d = pegar(eid, usuario, admin)
+    if not d or not os.path.exists(d.get("caminho") or ""):
+        return None, []
+    from openpyxl import load_workbook
+
+    wb = load_workbook(d["caminho"], read_only=True, data_only=True)
+    try:
+        ws = wb.active
+        it = ws.iter_rows(values_only=True)
+        try:
+            cabecalho = next(it)
+        except StopIteration:
+            return d, []
+        de_volta = {c.get("label"): c.get("key") for c in (d["colunas"] or [])}
+        chaves = [de_volta.get(h, h) for h in cabecalho]
+        linhas = []
+        for r in it:
+            # Celula vazia vem como None, e None atravessa o codigo todo ate
+            # virar a string "None" dentro de uma planilha de cliente.
+            linhas.append({k: ("" if v is None else v)
+                           for k, v in zip(chaves, r) if k})
+    finally:
+        wb.close()
+    return d, linhas

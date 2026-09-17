@@ -1266,6 +1266,48 @@
                 style="font-size:12px;padding:2px 10px">Atualizar</button>
       </div>
       <div id="en-salvos" class="prosp-table-scroll"></div>
+
+      <!-- ═══ COMPLETAR UMA LISTA PRONTA ═══════════════════════════════
+           Ninguém acerta de primeira o que quer numa planilha de 2.000
+           linhas. Descoberto o que faltou, a alternativa seria refazer tudo
+           — pagando de novo pela parte que já estava certa. -->
+      <div id="en-compl" hidden style="margin-top:14px;border-top:1px solid var(--gray-100);padding-top:12px">
+        <div class="en-fields-head">
+          <strong>➕ Completar <span id="en-compl-nome"></span></strong>
+          <button type="button" class="modal-x" id="en-compl-fechar" title="Fechar">×</button>
+        </div>
+        <p class="pf-advanced-hint" id="en-compl-tem" style="display:block;margin:2px 0 10px"></p>
+
+        <div class="en-qtds">
+          <label class="as-field"><span>👤 Decisores</span>
+            <select id="en-c-dec" class="filter-select en-c"></select></label>
+          <label class="as-field"><span>📞 Telefones de cada um</span>
+            <select id="en-c-tel" class="filter-select en-c"></select></label>
+          <label class="as-field"><span>✉️ E-mails de cada um</span>
+            <select id="en-c-email" class="filter-select en-c"></select></label>
+          <label class="as-field"><span>🧑‍💼 Sócios</span>
+            <select id="en-c-socio" class="filter-select en-c"></select></label>
+        </div>
+
+        <!-- EM QUAIS LINHAS. É o controle que separa "completar" de
+             "refazer": cada linha reconsultada é uma consulta paga de novo,
+             e quase nunca se quer pagar pelas que já vieram completas. -->
+        <div class="filter-row" style="margin:10px 0 0;gap:14px;flex-wrap:wrap">
+          <label class="en-chk"><input type="radio" name="en-c-alvo" value="faltantes" class="en-c" checked />
+            Só as linhas a que <b>falta</b> o que estou pedindo</label>
+          <label class="en-chk"><input type="radio" name="en-c-alvo" value="sem_telefone" class="en-c" />
+            Só as linhas <b>sem telefone nenhum</b></label>
+          <label class="en-chk"><input type="radio" name="en-c-alvo" value="todas" class="en-c" />
+            Todas, de novo</label>
+        </div>
+
+        <p class="pf-advanced-hint" id="en-compl-conta" style="display:block;margin:10px 0 0"></p>
+        <div class="filter-row" style="margin:8px 0 0;gap:10px;flex-wrap:wrap">
+          <input id="en-compl-nome-novo" type="text" class="filter-select" style="width:280px"
+                 placeholder="Nome da lista nova (opcional)" />
+          <button type="button" id="en-compl-rodar" class="btn-primary">⚡ Completar</button>
+        </div>
+      </div>
     </div>
   </section>
 

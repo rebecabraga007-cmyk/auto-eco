@@ -3214,11 +3214,33 @@ const enrichState = { upload_id: null, sheets: [], result: null };
     }
     if (st.erro) avisos.push(`Parou com erro: ${esc(st.erro)}`);
     avisos.push('💾 Guardada em <b>Enriquecimentos salvos</b>.');
+    /* A PERGUNTA DO SÓCIO. Quem manda é o servidor (`oferecer_socios`): o
+       critério mistura o que foi PEDIDO com o que SAIU, e os dois moram lá.
+       Tela que recalcula regra de negócio é tela que diverge na primeira
+       mudança.
+
+       Sócio não é substituto de decisor -- é outra pessoa: decisor é quem
+       MANDA, sócio é quem é DONO. Mas numa empresa que não devolveu ninguém,
+       o sócio costuma ser o único telefone que existe, e ele vem do quadro
+       societário, que é público. */
+    if (st.oferecer_socios && st.enriquecimento_id) {
+      const faltam = (st.total || 0) - (st.com_telefone || 0);
+      avisos.push(`<br><br>⚠️ <b>Só ${st.pct_telefone}% da lista veio com telefone.</b> `
+        + `Você não pediu sócios nesta rodada — e em empresa que não devolveu decisor, `
+        + `o sócio costuma ser o único contato que existe. `
+        + `<button type="button" id="en-quer-socio" class="btn-secondary" `
+        + `style="font-size:12px;padding:2px 10px;margin-left:6px">`
+        + `Buscar sócios nas ${faltam} sem telefone</button>`);
+    }
     if (document.getElementById('en-email')?.checked) {
       avisos.push('O arquivo também foi mandado para o seu e-mail de cadastro.');
     }
     out.insertAdjacentHTML('afterbegin',
       `<p class="msg${st.erro ? ' error' : ''}">${avisos.join(' ')}</p>`);
+    document.getElementById('en-quer-socio')?.addEventListener('click', () => {
+      enrichSalvosCarregar();
+      complAbrir(st.enriquecimento_id, true);
+    });
     enrichSalvosCarregar();
   }
 
@@ -3295,6 +3317,8 @@ const enrichState = { upload_id: null, sheets: [], result: null };
           <td><a href="${API}/api/enrich/salvo/${esc(i.id)}/arquivo">⬇️ ${esc(enBytes(i.bytes))}</a></td>
           <td>${mail}</td>
           <td style="white-space:nowrap">
+            <button data-act="compl" class="btn-secondary" style="font-size:12px;padding:1px 8px"
+                    title="Buscar o que ficou faltando, sem pagar de novo pelo que já está aqui">➕</button>
             ${d.email_disponivel ? '<button data-act="mail" class="btn-secondary" style="font-size:12px;padding:1px 8px">✉️</button>' : ''}
             <button data-act="del" class="btn-secondary" style="font-size:12px;padding:1px 8px">🗑</button>
           </td></tr>`;
@@ -3302,6 +3326,7 @@ const enrichState = { upload_id: null, sheets: [], result: null };
 
     box.querySelectorAll('button[data-act]').forEach(b => b.addEventListener('click', async () => {
       const tr = b.closest('tr'); const id = tr.dataset.id;
+      if (b.dataset.act === 'compl') { complAbrir(id); return; }
       if (b.dataset.act === 'del') {
         if (!confirm('Apagar esta lista guardada? O arquivo some do servidor.')) return;
         await fetch(`${API}/api/enrich/salvo/${id}`, { method: 'DELETE' });
@@ -3321,6 +3346,129 @@ const enrichState = { upload_id: null, sheets: [], result: null };
       enrichSalvosCarregar();
     }));
   }
+
+  /* ─── COMPLETAR UMA LISTA PRONTA ───────────────────────────────────
+     A regra inteira aqui é NÃO PAGAR DUAS VEZES. Por isso o painel começa
+     mostrando o que a lista já tem, e por isso o número de linhas que serão
+     consultadas aparece antes do botão -- é ele que separa "completar" de
+     "refazer", e a diferença é dinheiro. */
+  let complBase = null;
+  let complTimer = null;
+
+  function complQtds() {
+    const n = id => parseInt(document.getElementById(id)?.value) || 0;
+    return {
+      qtd_decisores: n('en-c-dec'), qtd_telefones: n('en-c-tel'),
+      qtd_emails: n('en-c-email'), qtd_socios: n('en-c-socio'),
+      alvo_linhas: document.querySelector('input[name="en-c-alvo"]:checked')?.value
+                   || 'faltantes',
+    };
+  }
+
+  /* As colunas que o complemento vai pedir. Mesmo cálculo do passo 3, mesma
+     função no servidor -- se eu montasse a lista aqui de outro jeito, o
+     complemento entregaria colunas diferentes das da primeira rodada. */
+  async function complCampos() {
+    const q = complQtds();
+    if (!(q.qtd_decisores + q.qtd_socios)) return [];
+    try {
+      const d = await fetch(`${API}/api/enrich/layout`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...q, com_cpf: true }),
+      }).then(r => r.json());
+      return (d.colunas || []).map(c => c.key);
+    } catch (e) { return []; }
+  }
+
+  async function complConta() {
+    const alvo = document.getElementById('en-compl-conta');
+    const campos = await complCampos();
+    if (!campos.length) {
+      alvo.textContent = 'Escolha ao menos um decisor ou sócio.';
+      return;
+    }
+    const r = await fetch(`${API}/api/enrich/complementar`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base: complBase, fields: campos, ...complQtds(),
+                             so_calcular: true }),
+    }).then(x => x.json());
+    alvo.innerHTML = r.status === 'ok'
+      ? `Vão ser consultadas <b>${r.linhas_a_consultar}</b> das `
+        + `${r.linhas_total} linhas — as outras já têm o que você está pedindo `
+        + `e não serão cobradas de novo.`
+      : esc(r.message || 'Não consegui calcular.');
+  }
+
+  function complAgenda() { clearTimeout(complTimer); complTimer = setTimeout(complConta, 300); }
+
+  async function complAbrir(eid, prefixoSocio) {
+    complBase = eid;
+    const box = document.getElementById('en-compl');
+    box.hidden = false;
+    document.getElementById('en-compl-conta').textContent = 'carregando…';
+    let v;
+    try {
+      v = await fetch(`${API}/api/enrich/salvo/${eid}/completar`).then(r => r.json());
+    } catch (e) { return; }
+    if (v.status !== 'ok') {
+      document.getElementById('en-compl-conta').textContent = v.message || 'Falhou.';
+      return;
+    }
+    document.getElementById('en-compl-nome').textContent = v.nome || '';
+    document.getElementById('en-compl-nome-novo').value = `${v.nome} + complemento`;
+    document.getElementById('en-compl-tem').innerHTML =
+      `${v.linhas} linhas · <b>${v.com_telefone}</b> com telefone `
+      + `(${v.pct_telefone}%) · ${v.com_email} com e-mail · `
+      + `${v.com_socio} com sócio`;
+
+    const TETO = 5;
+    ['en-c-dec', 'en-c-tel', 'en-c-email', 'en-c-socio'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el.options.length) return;
+      el.innerHTML = Array.from({ length: TETO + 1 },
+        (_, i) => `<option value="${i}">${i === 0 ? '0 — não buscar' : i}</option>`).join('');
+    });
+    /* Chegou pela pergunta do sócio? Então já vem preenchido para isso, e
+       mirando só as linhas sem telefone -- que é exatamente o que a pergunta
+       propôs. Reabrir e ter que remontar a escolha à mão faria a resposta
+       "sim" custar mais trabalho que o problema. */
+    const q = v.parametros || {};
+    document.getElementById('en-c-dec').value = prefixoSocio ? '0' : (q.qtd_decisores || 0);
+    document.getElementById('en-c-tel').value = q.qtd_telefones || 1;
+    document.getElementById('en-c-email').value = q.qtd_emails || 0;
+    document.getElementById('en-c-socio').value = prefixoSocio ? '2' : (q.qtd_socios || 0);
+    document.querySelector(`input[name="en-c-alvo"][value="${prefixoSocio ? 'sem_telefone' : 'faltantes'}"]`).checked = true;
+
+    box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    complConta();
+  }
+
+  document.querySelectorAll('.en-c').forEach(e => e.addEventListener('change', complAgenda));
+  document.getElementById('en-compl-fechar')?.addEventListener('click',
+    () => { document.getElementById('en-compl').hidden = true; });
+
+  document.getElementById('en-compl-rodar')?.addEventListener('click', async () => {
+    const botao = document.getElementById('en-compl-rodar');
+    const campos = await complCampos();
+    if (!campos.length) return;
+    botao.disabled = true;
+    try {
+      const j = await fetch(`${API}/api/enrich/complementar`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          base: complBase, fields: campos, ...complQtds(),
+          nome: (document.getElementById('en-compl-nome-novo').value || '').trim(),
+          email: !!document.getElementById('en-email')?.checked,
+        }),
+      }).then(r => r.json());
+      if (j.status !== 'ok') {
+        document.getElementById('en-compl-conta').textContent = j.message || 'Falhou.';
+        return;
+      }
+      document.getElementById('en-compl').hidden = true;
+      await enrichAcompanhar(j.job, j.total, j.nome);
+    } finally { botao.disabled = false; }
+  });
 
   document.getElementById('en-salvos-atualizar')?.addEventListener('click', enrichSalvosCarregar);
   enrichSalvosCarregar();

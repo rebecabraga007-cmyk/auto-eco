@@ -3959,7 +3959,31 @@ async def enrich_linha(payload: dict = Body(default={})):
     return {"status": "ok", "cnpj": cnpj, "dados": dados, "ignorados": ignorados}
 
 
-def _enrich_preparo(payload: dict):
+def _linha_precisa(row: dict, campos: list, modo: str) -> bool:
+    """Esta linha precisa ser consultada de novo? Tres criterios.
+
+    O ponto da funcao e NAO PAGAR DUAS VEZES. Completar uma lista pronta e,
+    por definicao, uma segunda consulta -- e a unica desculpa para gastar de
+    novo e trazer algo que ainda nao esta la.
+
+    `faltantes`    -- falta algum dos campos pedidos nesta linha.
+    `sem_telefone` -- a linha nao tem telefone NENHUM de pessoa. E o criterio
+                      certo quando o motivo do complemento e "a lista veio com
+                      pouco telefone": empresa que ja tem contato nao precisa
+                      do socio, e consultar todas dobraria a conta para
+                      resolver so uma parte.
+    `todas`        -- refaz tudo, quando a pessoa quer mesmo.
+    """
+    if modo == "todas":
+        return True
+    if modo == "sem_telefone":
+        return not any(
+            str(v or "").strip() for k, v in row.items()
+            if re.match(r"^(de_dec|so_socio)\d+_(tel\d+|celular)$", str(k)))
+    return any(not str(row.get(k) or "").strip() for k in campos)
+
+
+def _enrich_preparo(payload: dict, usuario: str = ""):
     """Le o pedido da tela UMA vez, para os dois caminhos que o executam.
 
     Quem executa e a rota antiga (`/api/enrich/run`, que a API publica ainda
@@ -3970,13 +3994,31 @@ def _enrich_preparo(payload: dict):
     Devolve (erro, cfg). `erro` preenchido = pedido invalido, com a frase
     pronta para a tela.
     """
-    store = _upload_ler(payload.get("upload_id"))
-    if not store:
-        return "Upload expirado — reenvie a planilha.", None
-    sheet = payload.get("sheet") or next(iter(store))
-    if sheet not in store:
-        return "Aba não encontrada.", None
-    cnpj_col = payload.get("cnpj_col") or _guess_cnpj_col(store[sheet]["columns"])
+    # DUAS ORIGENS POSSIVEIS: uma planilha recem-enviada, ou uma lista que ja
+    # foi enriquecida antes. A segunda existe porque ninguem acerta de
+    # primeira o que quer numa planilha de 2.000 linhas -- e, descoberto o que
+    # faltou, refazer tudo seria pagar duas vezes pela parte que ja estava
+    # certa.
+    base_id = str(payload.get("base") or "")
+    if base_id:
+        reg, linhas_base = enriquecimentos.ler_linhas(base_id, usuario)
+        if not reg:
+            return "Enriquecimento anterior não encontrado.", None
+        if not linhas_base:
+            return "O arquivo daquele enriquecimento está vazio.", None
+        # O "original" agora e o arquivo INTEIRO da rodada passada: o que era
+        # coluna acrescentada vira coluna de base, e o novo se soma a ela.
+        colunas_base = [c.get("key") for c in (reg["colunas"] or []) if c.get("key")]
+        store = {"(anterior)": {"columns": colunas_base, "rows": linhas_base}}
+        sheet, cnpj_col = "(anterior)", _guess_cnpj_col(colunas_base)
+    else:
+        store = _upload_ler(payload.get("upload_id"))
+        if not store:
+            return "Upload expirado — reenvie a planilha.", None
+        sheet = payload.get("sheet") or next(iter(store))
+        if sheet not in store:
+            return "Aba não encontrada.", None
+        cnpj_col = payload.get("cnpj_col") or _guess_cnpj_col(store[sheet]["columns"])
 
     # DUAS FAMILIAS DE CAMPO. As do catalogo continuam sendo conferidas
     # contra a lista de sempre; as que nascem da quantidade escolhida
@@ -4022,6 +4064,9 @@ def _enrich_preparo(payload: dict):
         return ""
 
     return None, {
+        "base_id": base_id,
+        # Como escolher quais linhas merecem uma nova consulta.
+        "alvo_linhas": str(payload.get("alvo_linhas") or "faltantes"),
         "store": store, "sheet": sheet, "cnpj_col": cnpj_col,
         "fields": fields, "want": set(fields), "todas": store[sheet]["rows"],
         "base_cols": colunas, "nome_da_linha": _nome_da_linha,
@@ -4109,8 +4154,20 @@ def _enrich_colunas_saida(cfg: dict) -> list:
     label_of.update({k: lbl for k, lbl in enrich_layout.colunas(
         enrich_layout.TETO, enrich_layout.TETO, enrich_layout.TETO,
         enrich_layout.TETO, com_cpf=True, com_whatsapp=True)})
-    cols = [{"key": c, "label": c} for c in cfg["base_cols"]]
-    cols += [{"key": f, "label": label_of.get(f, f)} for f in cfg["fields"]]
+    # SEM REPETIR. Num complemento, um campo pedido de novo (porque veio
+    # vazio) ja e coluna do arquivo anterior -- e duas colunas com o mesmo
+    # cabecalho numa planilha e o tipo de defeito que so aparece quando
+    # alguem faz PROCV e pega a errada.
+    vistos = set()
+    cols = []
+    for c in cfg["base_cols"]:
+        if c not in vistos:
+            vistos.add(c)
+            cols.append({"key": c, "label": label_of.get(c, c)})
+    for f in cfg["fields"]:
+        if f not in vistos:
+            vistos.add(f)
+            cols.append({"key": f, "label": label_of.get(f, f)})
     if cfg["unir_tel"]:
         # No fim, e nao no meio: a coluna unida e um RESUMO das outras, e
         # resumo que vem antes do detalhe faz a pessoa ler duas vezes.
@@ -4641,7 +4698,7 @@ async def _rodar_job(jid: str) -> None:
             d = enrich_jobs.pegar(jid)
             if not d or d["status"] not in ("fila", "processando"):
                 return
-            erro, cfg = _enrich_preparo(d["pedido"])
+            erro, cfg = _enrich_preparo(d["pedido"], d["usuario"])
             if erro:
                 enrich_jobs.marcar(jid, status="erro", erro=erro,
                                    terminado_em=int(time.time()))
@@ -4650,6 +4707,16 @@ async def _rodar_job(jid: str) -> None:
             inicio = max(0, int(d["pedido"].get("offset") or 0))
             limite = int(d["pedido"].get("limite") or 0) or len(cfg["todas"])
             alvo = cfg["todas"][inicio:inicio + limite]
+
+            # COMPLEMENTO: so as linhas que precisam. As outras ja estao
+            # pagas e prontas, e consultar de novo seria comprar o mesmo dado
+            # duas vezes. `_i` guarda de onde cada uma veio, para ela voltar
+            # ao lugar certo no fim -- sem isso a planilha sairia com as
+            # linhas embaralhadas em relacao a que a pessoa mandou.
+            if cfg["base_id"]:
+                cfg["todas_base"] = [dict(r) for r in cfg["todas"]]
+                alvo = [dict(r, _i=i) for i, r in enumerate(alvo)
+                        if _linha_precisa(r, cfg["fields"], cfg["alvo_linhas"])]
 
             # RETOMAR DE ONDE PAROU. O que ja esta no disco ja foi consultado
             # e pago; refazer seria cobrar a mesma linha duas vezes.
@@ -4690,6 +4757,28 @@ async def _rodar_job(jid: str) -> None:
                            erro="%s: %s" % (type(exc).__name__, str(exc)[:200]))
 
 
+def _parametros_do_pedido(pedido: dict) -> dict:
+    """O que foi PEDIDO nesta rodada, gravado junto do resultado.
+
+    Nao e registro por registro: e o que permite distinguir "nunca pedi
+    socio" de "pedi socio e nao veio ninguem". Sem isso, uma lista onde os
+    socios foram buscados e vieram vazios fica identica a uma onde ninguem
+    procurou -- e a tela oferece comprar de novo exatamente o nada que ja foi
+    comprado.
+    """
+    p = dict(pedido.get("parametros") or {})
+    for k in ("qtd_decisores", "qtd_telefones", "qtd_emails", "qtd_socios",
+              "decisor_fonte", "decisor_cargos", "max_decisores"):
+        if pedido.get(k) not in (None, ""):
+            p[k] = pedido[k]
+    # `max_decisores` e o que a rota antiga manda; a tela nova manda
+    # `qtd_decisores`. Guardar os dois com o mesmo significado embaralha a
+    # leitura depois -- aqui um vira o outro.
+    if not p.get("qtd_decisores") and p.get("max_decisores"):
+        p["qtd_decisores"] = p["max_decisores"]
+    return p
+
+
 async def _fechar_job(jid: str, cfg: dict) -> None:
     """Monta o XLSX, guarda na lista e manda o e-mail.
 
@@ -4701,6 +4790,19 @@ async def _fechar_job(jid: str, cfg: dict) -> None:
     if not d:
         return
     linhas = enrich_jobs.ler(jid)
+
+    # COMPLEMENTO: o arquivo final tem a lista INTEIRA, nao so as linhas que
+    # foram reconsultadas. Entregar apenas as consultadas seria devolver uma
+    # planilha menor que a que a pessoa mandou -- e ela descobriria isso
+    # abrindo o arquivo.
+    if cfg.get("todas_base") is not None:
+        completo = [dict(r) for r in cfg["todas_base"]]
+        for r in linhas:
+            i = r.pop("_i", None)
+            if isinstance(i, int) and 0 <= i < len(completo):
+                completo[i].update(r)
+        linhas = completo
+
     if not linhas:
         enrich_jobs.marcar(jid, status=(d["status"] if d["status"] in
                                         ("cancelado", "erro") else "concluido"),
@@ -4715,15 +4817,25 @@ async def _fechar_job(jid: str, cfg: dict) -> None:
     com_dec = sum(1 for r in linhas
                   if any(v for k, v in r.items() if str(k).startswith("de_dec")))
 
+    # QUANTAS LINHAS SAIRAM COM TELEFONE DE GENTE. E a medida que decide se
+    # vale oferecer a busca por socio: uma lista de 2.000 empresas com 18% de
+    # telefone nao e uma lista pronta, e o numero e a unica forma de dizer
+    # isso sem chutar.
+    com_tel = sum(1 for r in linhas if any(
+        str(v or "").strip() for k, v in r.items()
+        if re.match(r"^(de_dec|so_socio)\d+_(tel\d+|celular)$", str(k))))
+    pct_tel = round(100.0 * com_tel / max(1, len(linhas)), 1)
+
     salvo = enriquecimentos.salvar(
         usuario=d["usuario"], nome=d["nome"],
         origem=str(d["pedido"].get("origem") or ""), colunas=colunas,
         conteudo=dados, linhas=len(linhas), enriquecidas=enriquecidas,
-        com_decisor=com_dec, parametros=d["pedido"].get("parametros") or {})
+        com_decisor=com_dec, parametros=_parametros_do_pedido(d["pedido"]))
 
     final = "cancelado" if d["status"] == "cancelado" else (
         "erro" if d["erro"] else "concluido")
     enrich_jobs.marcar(jid, status=final, com_decisor=com_dec,
+                       com_telefone=com_tel, pct_telefone=pct_tel,
                        colunas=json.dumps(colunas, ensure_ascii=False),
                        enriquecimento_id=salvo["id"],
                        terminado_em=int(time.time()))
@@ -4772,6 +4884,108 @@ async def enrich_job_criar(request: Request, payload: dict = Body(default={})):
             "email_disponivel": correio.configurado()}
 
 
+@app.get("/api/enrich/salvo/{eid}/completar")
+async def enrich_completar_ver(eid: str, request: Request):
+    """O que esta lista JA TEM, e quanto dela veio com telefone.
+
+    A tela precisa das duas coisas antes de oferecer qualquer botao: sem
+    saber o que ja existe, ela ofereceria recomprar o que a pessoa acabou de
+    pagar; sem saber quanto veio com telefone, a pergunta sobre socios seria
+    um palpite.
+    """
+    reg, linhas = enriquecimentos.ler_linhas(eid, _quem(request),
+                                             admin=_is_admin(request))
+    if not reg:
+        return JSONResponse({"status": "error",
+                             "message": "Enriquecimento não encontrado."},
+                            status_code=404)
+    tem = {c.get("key") for c in (reg["colunas"] or [])}
+
+    def _preenchidas(padrao):
+        return sum(1 for r in linhas if any(
+            str(v or "").strip() for k, v in r.items()
+            if re.match(padrao, str(k))))
+
+    total = max(1, len(linhas))
+    com_tel = _preenchidas(r"^(de_dec|so_socio)\d+_(tel\d+|celular)$")
+    com_email = _preenchidas(r"^(de_dec|so_socio)\d+_(email\d+|email)$")
+    com_socio = _preenchidas(r"^so_socio\d+_")
+    pct = round(100.0 * com_tel / total, 1)
+    ja_pediu = int((reg["parametros"] or {}).get("qtd_socios") or 0) > 0
+    return {
+        "status": "ok", "id": eid, "nome": reg["nome"],
+        "linhas": len(linhas),
+        "parametros": reg["parametros"] or {},
+        "tem_campos": sorted(tem),
+        "com_telefone": com_tel, "pct_telefone": pct,
+        "com_email": com_email, "com_socio": com_socio,
+        # A OFERTA DO SOCIO, calculada aqui pelo mesmo criterio do job: pouca
+        # gente com telefone E socio nunca pedido. Repetir a regra na tela
+        # seria garantir que as duas divirjam na primeira mudanca.
+        # PEDIU E NAO VEIO e diferente de NUNCA PEDIU. A primeira nao se
+        # resolve comprando de novo -- aquelas empresas nao tem socio com
+        # contato, e insistir seria vender a mesma decepcao duas vezes.
+        "ja_pediu_socios": ja_pediu,
+        "oferecer_socios": bool(pct < 40.0 and not com_socio and not ja_pediu),
+        "sem_telefone": len(linhas) - com_tel,
+    }
+
+
+@app.post("/api/enrich/complementar")
+async def enrich_complementar(request: Request, payload: dict = Body(default={})):
+    """Roda de novo sobre uma lista pronta, buscando SÓ o que falta.
+
+    Existe porque ninguém acerta de primeira o que quer numa planilha de
+    2.000 linhas. Descoberto o que faltou, a alternativa seria refazer tudo
+    -- pagando de novo pela parte que já estava certa.
+
+    O resultado é uma lista NOVA, com todas as linhas e todas as colunas das
+    duas rodadas. A anterior fica onde está: sobrescrever o arquivo que a
+    pessoa já baixou e talvez já tenha mandado para alguém é destruir a
+    referência dela sem avisar.
+    """
+    usuario = _quem(request)
+    if not usuario:
+        return {"status": "error", "message": "Sem usuário na sessão."}
+    base = str(payload.get("base") or "")
+    reg = enriquecimentos.pegar(base, usuario, admin=_is_admin(request))
+    if not reg:
+        return {"status": "error", "message": "Enriquecimento não encontrado."}
+
+    pedido = dict(payload)
+    pedido["base"] = base
+    pedido.pop("upload_id", None)
+    pedido.pop("offset", None)
+    erro, cfg = _enrich_preparo(pedido, usuario)
+    if erro:
+        return {"status": "error", "message": erro}
+
+    # QUANTAS LINHAS VÃO CUSTAR, dito ANTES. É a única diferença que importa
+    # entre completar e refazer, e mostrar o número é o que prova que a
+    # promessa está sendo cumprida.
+    modo = cfg["alvo_linhas"]
+    a_fazer = [r for r in cfg["todas"]
+               if _linha_precisa(r, cfg["fields"], modo)]
+    if not a_fazer:
+        return {"status": "error",
+                "message": "Todas as linhas já têm o que você pediu — "
+                           "não há o que completar."}
+    if payload.get("so_calcular"):
+        return {"status": "ok", "linhas_a_consultar": len(a_fazer),
+                "linhas_total": len(cfg["todas"])}
+
+    nome = (str(payload.get("nome") or "").strip()
+            or "%s + complemento" % (reg["nome"] or "lista"))[:120]
+    pedido["nome"] = nome
+    pedido["origem"] = reg["origem"] or ""
+    jid = enrich_jobs.criar(usuario, nome, pedido, len(a_fazer),
+                            quer_email=bool(payload.get("email")))
+    asyncio.create_task(_rodar_job(jid))
+    return {"status": "ok", "job": jid, "total": len(a_fazer),
+            "linhas_total": len(cfg["todas"]), "nome": nome,
+            "email_disponivel": correio.configurado()}
+
+
 @app.get("/api/enrich/job/{jid}")
 async def enrich_job_ver(jid: str, request: Request):
     d = enrich_jobs.pegar(jid, _quem(request), admin=_is_admin(request))
@@ -4781,10 +4995,21 @@ async def enrich_job_ver(jid: str, request: Request):
     # `feitas` vem do banco, mas quem manda e o DISCO: o banco pode estar um
     # passo atras se o processo morreu entre gravar e marcar.
     feitas = max(int(d["feitas"] or 0), enrich_jobs.ja_feitas(jid))
+    pedido = d["pedido"] or {}
+    # A PERGUNTA DO SOCIO, decidida aqui e nao na tela: o criterio envolve o
+    # que foi PEDIDO (se ja pediram socio, nao ha o que oferecer) e o que
+    # SAIU, e os dois moram deste lado. Tela que recalcula regra de negocio
+    # e tela que diverge do servidor na primeira mudanca.
+    pct = d["pct_telefone"]
+    oferecer = bool(
+        d["status"] == "concluido" and pct is not None and pct < 40.0
+        and not int(pedido.get("qtd_socios") or 0))
     return {"status": "ok", "job": jid, "estado": d["status"],
             "nome": d["nome"], "total": d["total"], "feitas": feitas,
             "erro": d["erro"] or "", "cancelando": d["cancelar"],
             "enriquecimento_id": d["enriquecimento_id"],
+            "pct_telefone": pct, "com_telefone": d["com_telefone"],
+            "oferecer_socios": oferecer,
             "criado_em": d["criado_em"], "terminado_em": d["terminado_em"]}
 
 
@@ -4800,10 +5025,23 @@ async def enrich_job_resultado(jid: str, request: Request, limite: int = 300):
     if not d:
         return JSONResponse({"status": "error", "message": "Job não encontrado."},
                             status_code=404)
-    erro, cfg = _enrich_preparo(d["pedido"])
+    erro, cfg = _enrich_preparo(d["pedido"], d["usuario"])
     colunas = d["colunas"] or (_enrich_colunas_saida(cfg) if cfg else [])
     base = set(cfg["base_cols"]) if cfg else set()
-    rows = enrich_jobs.ler(jid, limite=max(1, min(int(limite), 1000)))
+    teto = max(1, min(int(limite), 1000))
+    # A PREVIA SAI DO ARQUIVO FINAL, quando ele ja existe.
+    #
+    # O parcial do job tem so as linhas que ESTE job processou -- e num
+    # complemento isso e um pedaco: rodar 8 de 10 mostrava uma tabela de 8
+    # linhas ao lado de um arquivo de 10. Quem confere pela tela concluiria
+    # que perdeu duas.
+    rows = []
+    if d["enriquecimento_id"]:
+        _reg, rows = enriquecimentos.ler_linhas(
+            d["enriquecimento_id"], d["usuario"], admin=True)
+        rows = rows[:teto]
+    if not rows:
+        rows = enrich_jobs.ler(jid, limite=teto)
     # Os avisos saem das MESMAS linhas, pela mesma função da rota antiga. Sem
     # isto o job entregaria a planilha sem dizer quais empresas ficaram sem
     # decisor -- caladas, que é o contrário do que o aviso existe para fazer.

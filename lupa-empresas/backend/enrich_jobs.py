@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS enrich_job (
   feitas        INTEGER DEFAULT 0,
   com_decisor   INTEGER DEFAULT 0,
   sem_telefone  INTEGER DEFAULT 0,
+  com_telefone  INTEGER DEFAULT 0,   -- linhas com telefone de PESSOA
+  pct_telefone  REAL,                -- e o mesmo em %, para a regra dos 40%
   pedido        TEXT,                -- JSON: o corpo original da tela
   colunas       TEXT,                -- JSON [{key,label}] do resultado
   erro          TEXT,
@@ -84,6 +86,15 @@ def _init():
     c = _con()
     try:
         c.executescript(DDL)
+        # COLUNA NOVA EM TABELA VELHA. `CREATE TABLE IF NOT EXISTS` nao mexe
+        # em tabela que ja existe -- entao num banco criado antes desta
+        # versao a coluna simplesmente nao estaria la, e o primeiro job
+        # morreria com "no such column" DEPOIS de ja ter consultado e pago.
+        ja = {r[1] for r in c.execute("PRAGMA table_info(enrich_job)")}
+        for nome, tipo in (("com_telefone", "INTEGER DEFAULT 0"),
+                           ("pct_telefone", "REAL")):
+            if nome not in ja:
+                c.execute("ALTER TABLE enrich_job ADD COLUMN %s %s" % (nome, tipo))
         c.commit()
     finally:
         c.close()
