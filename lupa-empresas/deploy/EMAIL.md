@@ -115,3 +115,66 @@ os dois sintomas são idênticos.
 | `O servidor recusou o login` | API key errada, revogada, ou sem `Sending access` |
 | `SMTPSenderRefused` / domínio não verificado | o DNS ainda não propagou ou um registro está proxied (nuvem laranja) |
 | Sai, mas cai no spam | DKIM ou SPF faltando — a Resend mostra quais registros ela ainda não enxerga |
+
+
+---
+
+# O outro domínio: `blusalesgroup.com.br`
+
+Medido em 17/set/2026. **O DNS deste domínio está na Hostinger** (`ns1`/`ns2.dns-parking.com`),
+não no Cloudflare — então o token do CapiBLU não alcança esta zona.
+
+| | Hoje |
+|---|---|
+| MX | `SMTP.GOOGLE.COM` (Google Workspace) |
+| SPF | `v=spf1 include:_spf.mail.hostinger.com ~all` |
+| DKIM | **nenhum** — conferidos 16 seletores |
+| DMARC | `v=DMARC1; p=none` |
+
+O MX aponta para o Google e o SPF autoriza só a Hostinger. **Todo e-mail que
+sai pelo Workspace falha SPF, e não há DKIM para compensar** — as duas
+autenticações falhando ao mesmo tempo. Nada quebra e ninguém recebe erro: a
+mensagem sai, chega, e cai no spam de uma parte dos destinatários. O sintoma
+aparece semanas depois como "fulano disse que não recebeu".
+
+## 1. SPF — hPanel da Hostinger → Domínios → DNS
+
+**EDITE** o TXT que já existe. Não crie um segundo: o padrão permite UM
+registro SPF, e com dois o destinatário trata como se não houvesse nenhum.
+
+```
+v=spf1 include:_spf.google.com include:_spf.mail.hostinger.com ~all
+```
+
+O `include` da Hostinger fica — se algum formulário do site ainda manda e-mail
+por lá, tirá-lo quebraria isso sem aviso. Custa 4 consultas de DNS no total,
+bem abaixo do teto de 10.
+
+Acrescentar o Google só AUTORIZA a mais; não há como essa mudança piorar o que
+já funciona.
+
+## 2. DKIM — e este importa mais
+
+DKIM sobrevive a encaminhamento e a listas de distribuição, onde o SPF sempre
+quebra. É no console de admin do Google, não no DNS:
+
+**admin.google.com → Apps → Google Workspace → Gmail → Autenticar e-mail →
+Gerar novo registro** (2048 bits). Ele devolve um TXT `google._domainkey`
+para publicar na Hostinger; depois volte na mesma tela e clique em **Iniciar
+autenticação**.
+
+## 3. Conferir
+
+```bash
+python conferir_email_dns.py blusalesgroup.com.br capiblu.net
+```
+
+Lê só DNS público, não precisa de credencial. Ele diz o que falta e por quê.
+
+## Antes de finalizar: quem mais manda como voces?
+
+O SPF precisa listar **todo** serviço que envia com o endereço de vocês no
+remetente. Se a Meetime dispara e-mail de cadência assinando como
+`@blusalesgroup.com.br`, ela também precisa entrar — e isso eu não tenho como
+descobrir pelo DNS. Vale conferir na configuração da Meetime antes de dar o
+assunto por encerrado.
