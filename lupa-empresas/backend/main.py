@@ -55,6 +55,9 @@ import rodadas
 import cargos
 import chamados
 import funcoes
+import correio
+import enrich_layout
+import enriquecimentos
 import setores_li
 import telefones as tel_fmt
 import meetime_leads
@@ -3478,6 +3481,42 @@ async def enrich_catalog():
     ], "assertiva_ok": assertiva.enabled(), "integralx_ok": bool(mkbuscas.TEL_AUTH_VALUE)}
 
 
+@app.post("/api/enrich/layout")
+async def enrich_layout_preview(payload: dict = Body(default={})):
+    """Que colunas essas quantidades geram, e como fica uma linha.
+
+    Existe por causa de uma pergunta que a tela antiga nao sabia responder:
+    "o que exatamente eu vou receber?". Marcar caixas nao responde -- so o
+    arquivo pronto respondia, depois de pago. A Datastone mostra "exemplo de
+    envio" e "exemplo de retorno" antes de qualquer gasto, e e o unico jeito
+    honesto de cobrar por algo que ainda nao existe.
+
+    Devolve tambem o CUSTO em consultas por linha. A regra da casa e que
+    preco em reais nao aparece para quem opera -- entao aqui vai a unidade
+    que a pessoa controla (consultas), nao o valor que so o admin ve.
+    """
+    def _q(chave, padrao=0):
+        try:
+            return max(0, min(int(payload.get(chave) or padrao),
+                              enrich_layout.TETO))
+        except (TypeError, ValueError):
+            return padrao
+
+    dec = _q("qtd_decisores", 0)
+    tel = _q("qtd_telefones", 1)
+    eml = _q("qtd_emails", 0)
+    soc = _q("qtd_socios", 0)
+    cpf = bool(payload.get("com_cpf", True))
+    wpp = bool(payload.get("com_whatsapp"))
+    linhas = max(0, int(payload.get("linhas") or 0))
+    ex = enrich_layout.exemplo(dec, tel, eml, soc, cpf, wpp)
+    por_linha = enrich_layout.consultas_por_linha(dec, tel, eml, soc)
+    return {"status": "ok", "colunas": ex["colunas"], "exemplo": ex["linha"],
+            "consultas_por_linha": por_linha,
+            "consultas_total": por_linha * linhas,
+            "teto": enrich_layout.TETO}
+
+
 @app.post("/api/enrich/upload")
 async def enrich_upload(file: UploadFile = File(...)):
     """Recebe XLSX/XLS/CSV/TSV e devolve as abas, colunas e um preview (sem enriquecer).
@@ -3517,7 +3556,9 @@ async def enrich_upload(file: UploadFile = File(...)):
 async def _enrich_cnpj(cnpj: str, want: set,
                        cargos_dec: str = "", max_dec: int = 3,
                        fonte_dec: str = "linkedin",
-                       nome_empresa: str = "") -> dict:
+                       nome_empresa: str = "",
+                       qtd_tel: int = 1, qtd_email: int = 0,
+                       qtd_socios: int = 0) -> dict:
     """Enriquece um CNPJ com os campos pedidos. Só chama Assertiva/integralX se
     houver campos daquela fonte selecionados (controla consumo)."""
     out = {k: "" for k in want}
@@ -3601,8 +3642,12 @@ async def _enrich_cnpj(cnpj: str, want: set,
         _enrich_qsa_cpf(company)  # resolve cpf_completo de cada sócio via JBR
         socios = [s for s in (company.get("qsa") or []) if isinstance(s, dict)]
         resumo = []
-        # processa no máx. 3 sócios (controla consumo)
-        for idx, s in enumerate(socios[:3], start=1):
+        # QUANTOS SOCIOS: o numero que a pessoa escolheu na tela, com 3 de
+        # padrao para quem nao mexeu. Cada socio a mais e uma consulta paga a
+        # mais -- por isso quem decide o tamanho e quem paga a conta, e nao
+        # um teto fixo escondido aqui dentro.
+        teto_so = max(1, min(int(qtd_socios or 3), enrich_layout.TETO))
+        for idx, s in enumerate(socios[:teto_so], start=1):
             nome = s.get("nome_socio") or ""
             cpf = s.get("cpf_completo") or ""
             cel, cel2, wa, email = "", "", "", ""
@@ -3623,17 +3668,27 @@ async def _enrich_cnpj(cnpj: str, want: set,
                 socio_vphone, socio_vcpf = cel, cpf
                 if not need_so:   # só precisávamos do telefone p/ verificar
                     break
-            if idx == 1:
-                for k, v in (("so_socio1_nome", nome), ("so_socio1_cpf", cpf),
-                             ("so_socio1_celular", cel), ("so_socio1_whatsapp", wa),
-                             ("so_socio1_email", email)):
-                    if k in want:
-                        out[k] = v
-            elif idx == 2:
-                for k, v in (("so_socio2_nome", nome), ("so_socio2_cpf", cpf),
-                             ("so_socio2_celular", cel)):
-                    if k in want:
-                        out[k] = v
+            # COLUNAS FIXAS (catalogo antigo) e COLUNAS POR QUANTIDADE
+            # convivem de proposito: quem ja tinha um modelo salvo marcando
+            # "Socio 1 Celular" continua recebendo aquela coluna com aquele
+            # nome. Trocar o cabecalho de quem ja usa quebra o PROCV do outro
+            # lado, e ninguem avisa -- a planilha so fica errada.
+            for k, v in ((("so_socio%d_nome" % idx), nome),
+                         (("so_socio%d_cpf" % idx), cpf),
+                         (("so_socio%d_celular" % idx), cel),
+                         (("so_socio%d_whatsapp" % idx), wa),
+                         (("so_socio%d_email" % idx), email)):
+                if k in want:
+                    out[k] = v
+            _tels_so = [t for t in (cel, cel2) if t]
+            for t in range(1, enrich_layout.TETO + 1):
+                k = "so_socio%d_tel%d" % (idx, t)
+                if k in want:
+                    out[k] = _tels_so[t - 1] if t <= len(_tels_so) else ""
+            for e in range(1, enrich_layout.TETO + 1):
+                k = "so_socio%d_email%d" % (idx, e)
+                if k in want:
+                    out[k] = email if e == 1 else ""
             if nome and cel:
                 resumo.append(f"{nome}: {cel}")
         if "so_todos_tel" in want:
@@ -3800,11 +3855,16 @@ async def _enrich_cnpj(cnpj: str, want: set,
                 # traz telefone). Lista vazia = perguntamos e nao tem.
                 if d.get("_tels") is None and cpf_d:
                     tels, emails = await _contato_for_cpf(
-                        cpf_d, "celular", 2, "assertiva", cnpj=digits)
+                        cpf_d, "celular", max(2, int(qtd_tel or 1)),
+                        "assertiva", cnpj=digits)
                 else:
                     tels = d.get("_tels") or []
                     emails = [d["_email"]] if d.get("_email") else []
-                cel = _fmt_phone_digits(tels[0]) if tels else ""
+                fones = [f for f in (_fmt_phone_digits(t) for t in (tels or [])) if f]
+                cel = fones[0] if fones else ""
+                # COLUNAS FIXAS: o que o catalogo antigo prometia continua
+                # valendo, com o mesmo nome, para nao quebrar planilha de
+                # quem ja usa.
                 if n <= 3:
                     out["de_dec%d_nome" % n] = nome_d
                     out["de_dec%d_cargo" % n] = cargo_d
@@ -3812,6 +3872,27 @@ async def _enrich_cnpj(cnpj: str, want: set,
                     if n == 1:
                         out["de_dec1_cpf"] = cpf_d
                         out["de_dec1_email"] = emails[0] if emails else ""
+                # COLUNAS POR QUANTIDADE: "3 decisores, 2 telefones cada" vira
+                # exatamente essas colunas -- e so essas. Escrever apenas o
+                # que foi pedido e o que faz o exemplo mostrado antes de rodar
+                # ser o mesmo arquivo que chega depois.
+                for k, v_ in (("de_dec%d_nome" % n, nome_d),
+                              ("de_dec%d_cargo" % n, cargo_d),
+                              ("de_dec%d_cpf" % n, cpf_d)):
+                    if k in want:
+                        out[k] = v_
+                for t in range(1, enrich_layout.TETO + 1):
+                    k = "de_dec%d_tel%d" % (n, t)
+                    if k in want:
+                        out[k] = fones[t - 1] if t <= len(fones) else ""
+                for e in range(1, enrich_layout.TETO + 1):
+                    k = "de_dec%d_email%d" % (n, e)
+                    if k in want:
+                        out[k] = emails[e - 1] if e <= len(emails) else ""
+                if ("de_dec%d_whatsapp" % n) in want:
+                    out["de_dec%d_whatsapp" % n] = "SIM" if any(
+                        t.get("whatsapp") for t in (tels or [])
+                        if isinstance(t, dict)) else ""
                 if nome_d:
                     resumo.append("%s — %s%s" % (nome_d, cargo_d or "?",
                                                  (" — " + cel) if cel else ""))
@@ -3823,9 +3904,19 @@ async def _enrich_cnpj(cnpj: str, want: set,
             # problemas diferentes -- um pede outro filtro de cargo, o outro
             # pede a consulta profunda.
             out["_de_achados"] = len(escolhidos)
-            out["_de_com_tel"] = sum(
-                1 for k in ("de_dec1_celular", "de_dec2_celular", "de_dec3_celular")
-                if out.get(k))
+            # Conta pelas DUAS familias de coluna: com o layout por
+            # quantidade ligado, `de_dec1_celular` pode nem existir, e contar
+            # so ela dizia "0 com telefone" com a planilha cheia deles.
+            # Conta PESSOAS, nao colunas: o mesmo decisor aparece em
+            # `de_dec1_celular` (catalogo) e em `de_dec1_tel1` (quantidade),
+            # e somar colunas dava o dobro -- "4 com telefone" com dois
+            # decisores na planilha.
+            _com_tel = set()
+            for k, v_ in out.items():
+                m_ = re.match(r"^de_dec(\d+)_(celular|tel1)$", k)
+                if m_ and v_:
+                    _com_tel.add(m_.group(1))
+            out["_de_com_tel"] = len(_com_tel)
             if pendentes:
                 out["_de_pendentes"] = pendentes[:10]
         except Exception as exc:
@@ -3852,9 +3943,12 @@ async def enrich_linha(payload: dict = Body(default={})):
     """
     cnpj = re.sub(r"\D", "", str(payload.get("cnpj") or ""))
     pedidos = [c for c in (payload.get("campos") or []) if isinstance(c, str)]
-    campos = [c for c in pedidos if c in _ENRICH_KEYS]
+    def _conhecido(c):
+        return c in _ENRICH_KEYS or enrich_layout.chave_valida(c)
+
+    campos = [c for c in pedidos if _conhecido(c)]
     # Campo com nome errado era descartado em silêncio; agora volta na resposta.
-    ignorados = [c for c in pedidos if c not in _ENRICH_KEYS]
+    ignorados = [c for c in pedidos if not _conhecido(c)]
     if len(cnpj) != 14:
         return {"status": "error", "message": "CNPJ inválido."}
     if not campos:
@@ -3875,7 +3969,15 @@ async def enrich_run(payload: dict = Body(default={})):
     if sheet not in store:
         return {"status": "error", "message": "Aba não encontrada."}
     cnpj_col = payload.get("cnpj_col") or _guess_cnpj_col(store[sheet]["columns"])
-    fields = [f for f in (payload.get("fields") or []) if f in _ENRICH_KEYS]
+    # DUAS FAMILIAS DE CAMPO. As do catalogo continuam sendo conferidas
+    # contra a lista de sempre; as que nascem da quantidade escolhida
+    # ("3 decisores x 2 telefones" -> de_dec3_tel2) nao cabem em lista fixa e
+    # sao conferidas pelo formato. Sem isso, a tela pedia a coluna e a rota
+    # descartava calada -- o sintoma seria a coluna prometida no exemplo
+    # chegar vazia, que e exatamente o erro que este layout existe para
+    # evitar.
+    fields = [f for f in (payload.get("fields") or [])
+              if f in _ENRICH_KEYS or enrich_layout.chave_valida(f)]
     if not fields:
         return {"status": "error", "message": "Selecione ao menos um campo para enriquecer."}
     limite = int(payload.get("limite") or 100)
@@ -3908,6 +4010,24 @@ async def enrich_run(payload: dict = Body(default={})):
     if fonte_dec not in ("linkedin", "assertiva", "ambas"):
         fonte_dec = "linkedin"
 
+    # ─── AS QUANTIDADES ───────────────────────────────────────────────
+    #
+    # Copiado da Datastone (analisada em 17/set/2026): a tela deles nao pede
+    # "marque os campos", pede QUANTOS -- 0 a 5 de telefone, e-mail, socio.
+    # O ganho nao e estetico: o numero e a mesma alavanca da PLANILHA e do
+    # CUSTO. Quem diz "3 decisores, 2 telefones cada" ja disse o cabecalho
+    # que quer e ja disse o tamanho da conta, na mesma frase.
+    def _q(chave, padrao):
+        try:
+            return max(0, min(int(payload.get(chave) or padrao),
+                              enrich_layout.TETO))
+        except (TypeError, ValueError):
+            return padrao
+
+    qtd_tel = _q("qtd_telefones", 1)
+    qtd_email = _q("qtd_emails", 0)
+    qtd_socios = _q("qtd_socios", 0)
+
     def _nome_da_linha(r: dict) -> str:
         """Nome da empresa como a pessoa escreveu na planilha dela.
 
@@ -3938,7 +4058,9 @@ async def enrich_run(payload: dict = Body(default={})):
             enr = await _enrich_cnpj(row.get(cnpj_col, ""), want,
                                      cargos_dec=cargos_dec, max_dec=max_dec,
                                      fonte_dec=fonte_dec,
-                                     nome_empresa=_nome_da_linha(row))
+                                     nome_empresa=_nome_da_linha(row),
+                                     qtd_tel=qtd_tel, qtd_email=qtd_email,
+                                     qtd_socios=qtd_socios)
         merged = dict(row)
         merged.update(enr)
         return merged
@@ -4010,6 +4132,12 @@ async def enrich_run(payload: dict = Body(default={})):
                                      # prontos para a consulta profunda.
                                      "perfis": pend or []})
     label_of = {k: lbl for g in _ENRICH_CATALOG for (k, lbl) in g["campos"]}
+    # As colunas por quantidade tambem tem nome bonito -- e tem que ser o
+    # MESMO nome que a tela mostrou no exemplo, senao o cabecalho do arquivo
+    # nao bate com o que foi prometido.
+    label_of.update({k: lbl for k, lbl in enrich_layout.colunas(
+        enrich_layout.TETO, enrich_layout.TETO, enrich_layout.TETO,
+        enrich_layout.TETO, com_cpf=True, com_whatsapp=True)})
     added_cols = [{"key": f, "label": label_of.get(f, f)} for f in fields]
     if unir_tel:
         # No fim, e nao no meio: a coluna unida e um RESUMO das outras, e
@@ -4336,15 +4464,18 @@ def _fmt_tel_br(tel: str) -> str:
     return tel
 
 
-@app.post("/api/enrich/export")
-async def enrich_export(payload: dict = Body(default={})):
-    """Gera XLSX com as colunas originais + as escolhidas. Body: {columns:[{key,label}], rows:[...]}."""
+def _enrich_xlsx(columns: list, rows: list) -> bytes:
+    """A planilha pronta, em bytes.
+
+    Virou funcao quando ganhou o segundo cliente: alem do download direto,
+    agora o arquivo e GUARDADO em disco e mandado por e-mail. Se cada caminho
+    montasse o seu, o arquivo baixado e o arquivo recebido por e-mail podiam
+    sair diferentes -- e ninguem compara os dois ate dar problema.
+    """
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
 
-    columns = payload.get("columns") or []
-    rows = payload.get("rows") or []
     wb = Workbook()
     ws = wb.active
     ws.title = "Lista enriquecida"
@@ -4366,10 +4497,144 @@ async def enrich_export(payload: dict = Body(default={})):
     ws.auto_filter.ref = f"A1:{get_column_letter(max(len(columns),1))}{max(len(rows)+1,1)}"
     buf = io.BytesIO()
     wb.save(buf)
-    buf.seek(0)
+    return buf.getvalue()
+
+
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@app.post("/api/enrich/export")
+async def enrich_export(payload: dict = Body(default={})):
+    """Gera XLSX com as colunas originais + as escolhidas. Body: {columns:[{key,label}], rows:[...]}."""
+    dados = _enrich_xlsx(payload.get("columns") or [], payload.get("rows") or [])
     return StreamingResponse(
-        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        io.BytesIO(dados), media_type=XLSX_MIME,
         headers={"Content-Disposition": 'attachment; filename="lista-enriquecida.xlsx"'})
+
+
+# ---------------------------------------------------------------------
+# ENRIQUECIMENTOS SALVOS — o resultado para de morrer com a aba
+# ---------------------------------------------------------------------
+# Copiado da tela de "Enriquecimentos" da Datastone (17/set/2026): cada
+# trabalho vira uma linha com nome, data, tamanho e o arquivo para baixar, e
+# o arquivo tambem chega por e-mail.
+#
+# O motor continua sendo o nosso: o lote roda em ondas no navegador, com
+# barra de progresso, porque foi assim que o corte de 100s da Cloudflare
+# parou de matar lote pago no meio. O que muda e o FIM: quando o ultimo lote
+# fecha, a tela manda o resultado para ca e ele vira arquivo em disco. Antes
+# disso, fechar o navegador antes de clicar em "Exportar" apagava trabalho ja
+# pago, consulta por consulta.
+
+def _quem(request: Request) -> str:
+    return (request.headers.get("x-user-email") or "").strip().lower()
+
+
+@app.post("/api/enrich/salvar")
+async def enrich_salvar(request: Request, payload: dict = Body(default={})):
+    """Guarda o resultado do lote como arquivo, e opcionalmente manda por e-mail."""
+    usuario = _quem(request)
+    if not usuario:
+        return {"status": "error", "message": "Sem usuário na sessão."}
+    columns = payload.get("columns") or []
+    rows = payload.get("rows") or []
+    if not rows:
+        return {"status": "error", "message": "Nada para salvar."}
+    nome = (str(payload.get("nome") or "").strip()
+            or time.strftime("Enriquecimento %d/%m %H:%M"))
+    dados = _enrich_xlsx(columns, rows)
+    # "Enriquecida" = a linha voltou com ALGUMA coluna nova preenchida. Contar
+    # linha processada daria sempre 100% e nao diria nada.
+    chaves_novas = [c.get("key") for c in columns
+                    if str(c.get("key") or "").split("_")[0]
+                    in ("rfb", "as", "de", "so", "vf")]
+    enriquecidas = sum(1 for r in rows if any(r.get(k) for k in chaves_novas))
+    com_dec = sum(1 for r in rows
+                  if any(r.get(k) for k in r
+                         if str(k).startswith("de_dec") and r.get(k)))
+    r = enriquecimentos.salvar(
+        usuario=usuario, nome=nome, origem=str(payload.get("origem") or ""),
+        colunas=columns, conteudo=dados, linhas=len(rows),
+        enriquecidas=enriquecidas, com_decisor=com_dec,
+        parametros=payload.get("parametros") or {})
+
+    para = str(payload.get("email") or "").strip()
+    if para:
+        env = _enrich_email(r["id"], nome, para, dados, len(rows), enriquecidas)
+        r["email"] = env
+    r["email_disponivel"] = correio.configurado()
+    return r
+
+
+def _enrich_email(eid: str, nome: str, para: str, dados: bytes,
+                  linhas: int, enriquecidas: int) -> dict:
+    corpo = (
+        "Sua lista enriquecida no CapiBLU está pronta.\n\n"
+        "Nome: %s\n"
+        "Linhas: %s\n"
+        "Linhas com algum dado novo: %s\n\n"
+        "O arquivo vai em anexo. Ele também fica guardado na aba "
+        "Enriquecimento, em \"Enriquecimentos salvos\".\n"
+    ) % (nome, linhas, enriquecidas)
+    env = correio.enviar(para, "CapiBLU — %s" % nome, corpo,
+                         anexo=("%s.xlsx" % re.sub(r"[^\w .-]+", "-", nome)[:60],
+                                dados, XLSX_MIME))
+    enriquecimentos.marcar_email(
+        eid, para, "" if env.get("status") == "ok" else env.get("message", ""))
+    return env
+
+
+@app.get("/api/enrich/salvos")
+async def enrich_salvos(request: Request):
+    """A lista de quem está pedindo. Admin vê a de todo mundo.
+
+    `email_disponivel` vai junto porque a TELA precisa saber antes de
+    oferecer o botão: e-mail sem credencial configurada é um botão que
+    promete e não cumpre, que é pior que botão nenhum.
+    """
+    usuario = _quem(request)
+    return {"status": "ok",
+            "itens": enriquecimentos.listar(usuario, admin=_is_admin(request)),
+            "email_disponivel": correio.configurado(),
+            "email_motivo": correio.por_que_nao()}
+
+
+@app.get("/api/enrich/salvo/{eid}/arquivo")
+async def enrich_salvo_arquivo(eid: str, request: Request):
+    d = enriquecimentos.pegar(eid, _quem(request), admin=_is_admin(request))
+    if not d or not os.path.exists(d.get("caminho") or ""):
+        return JSONResponse({"status": "error",
+                             "message": "Enriquecimento não encontrado."},
+                            status_code=404)
+    with open(d["caminho"], "rb") as f:
+        dados = f.read()
+    seguro = re.sub(r"[^\w .-]+", "-", d["nome"] or "lista")[:60]
+    return StreamingResponse(
+        io.BytesIO(dados), media_type=XLSX_MIME,
+        headers={"Content-Disposition": 'attachment; filename="%s.xlsx"' % seguro})
+
+
+@app.post("/api/enrich/salvo/{eid}/email")
+async def enrich_salvo_email(eid: str, request: Request,
+                             payload: dict = Body(default={})):
+    """Manda por e-mail um enriquecimento que já existe."""
+    d = enriquecimentos.pegar(eid, _quem(request), admin=_is_admin(request))
+    if not d or not os.path.exists(d.get("caminho") or ""):
+        return {"status": "error", "message": "Enriquecimento não encontrado."}
+    if not correio.configurado():
+        return {"status": "error", "message": correio.por_que_nao()}
+    para = str(payload.get("email") or "").strip() or _quem(request)
+    with open(d["caminho"], "rb") as f:
+        dados = f.read()
+    return _enrich_email(eid, d["nome"], para, dados, d["linhas"] or 0,
+                         d["enriquecidas"] or 0)
+
+
+@app.delete("/api/enrich/salvo/{eid}")
+async def enrich_salvo_apagar(eid: str, request: Request):
+    ok = enriquecimentos.apagar(eid, _quem(request), admin=_is_admin(request))
+    return {"status": "ok" if ok else "error",
+            "message": "" if ok else "Enriquecimento não encontrado."}
 
 
 # ---- Configurações de integração (admin) ----

@@ -103,7 +103,15 @@ body {
 .sidebar-user .user-dropdown { left: 12px; right: 12px; top: auto; bottom: 100%; margin: 0 0 8px; }
 
 /* ── LAYOUT ── */
-.main-wrap { max-width: 1180px; margin: 0 auto; padding: 56px 56px 96px; min-width: 0; }
+/* `width: 100%` nao e redundante com `max-width`, e a falta dele era um bug
+   latente. Item de grid com `margin: 0 auto` PERDE o esticamento automatico
+   (a margem automatica desliga o stretch) e passa a se dimensionar pelo
+   conteudo -- ou seja, ate 1180px mesmo quando a coluna tem 741. Enquanto
+   todo conteudo era estreito ninguem viu; a primeira tabela larga (o exemplo
+   de retorno do enriquecimento) empurrou o SITE INTEIRO para o lado, com
+   barra horizontal embaixo do menu. O `min-width: 0` sozinho nao resolve:
+   ele limita o minimo, e o problema era o maximo. */
+.main-wrap { max-width: 1180px; width: 100%; margin: 0 auto; padding: 56px 56px 96px; min-width: 0; }
 /* Prospecção ocupa a tela toda (estilo Datastone), fora do container de medida fixa. */
 .main-wrap:has(#tab-prospec.active) { max-width: 100%; padding: 34px 40px 80px; }
 
@@ -1155,3 +1163,47 @@ body.sem-dossie .btn-dossie { display: none !important; }
   .prg-fill::after, .prg-vivo i, .prg-agora-linha { animation: none; }
   .prg-fill { transition: none; }
 }
+
+/* ═══ QUANTIDADES E EXEMPLO DE RETORNO (aba Enriquecimento) ═════════════
+   Os seletores sao GRANDES e ficam lado a lado de proposito: sao quatro
+   numeros que a pessoa compara entre si ("3 decisores x 2 telefones"), e
+   numero que se compara nao pode estar em linhas separadas.  */
+.en-qtds { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+           gap: 10px 14px; margin-top: 4px; }
+.en-qtds .as-field { margin: 0; }
+.en-qtds .as-field > span { display: block; font-size: .78rem; color: var(--gray-500);
+                            margin-bottom: 3px; }
+.en-qtds select.en-q { width: 100%; font-size: 1rem; font-weight: 600;
+                       padding: 7px 10px; }
+
+/* O exemplo tem fundo proprio para nao ser confundido com resultado: e uma
+   PROMESSA do que vai chegar, nao um dado. Quem nao distingue os dois acha
+   que ja rodou. */
+.en-preview { margin-top: 12px; border: 1px dashed var(--gray-300, #cbd5e1);
+              border-radius: var(--radius-sm); padding: 10px 12px;
+              background: var(--gray-50, #f8fafc); }
+.en-preview-head { display: flex; justify-content: space-between; align-items: center;
+                   gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+/* Rola na horizontal porque cinco decisores x cinco telefones sao 35
+   colunas: ou rola aqui, ou empurra a pagina inteira para o lado. */
+.en-preview-scroll { overflow-x: auto; }
+.en-preview-table { border-collapse: collapse; font-size: .78rem; white-space: nowrap; }
+.en-preview-table th { text-align: left; font-weight: 600; color: #fff;
+                       background: var(--blue-700, #1d4ed8); padding: 5px 10px; }
+.en-preview-table td { padding: 5px 10px; border: 1px solid var(--gray-200);
+                       background: #fff; color: var(--gray-600, #475569);
+                       font-variant-numeric: tabular-nums; }
+
+/* O ROLAMENTO TEM QUE MORRER AQUI DENTRO.
+   Filho de flex/grid tem `min-width: auto`, entao ele CRESCE ate caber a
+   tabela inteira em vez de rolar -- e quem rola vira a pagina toda. Com 35
+   colunas (5 decisores x 5 telefones) a barra horizontal aparecia embaixo do
+   site inteiro e os seletores saiam da tela. Mesma armadilha do `min-height`
+   que ja quebrou o modal. */
+.en-fields-wrap { min-width: 0; }
+.en-preview { max-width: 100%; }
+.en-preview-scroll { max-width: 100%; }
+.en-group-antigo { margin-top: 6px; }
+.en-group-antigo > summary { cursor: pointer; font-size: .78rem; color: var(--gray-500);
+                             padding: 3px 0; }
+.en-group-antigo[open] > summary { margin-bottom: 4px; }

@@ -2872,9 +2872,128 @@ const enrichState = { upload_id: null, sheets: [], result: null };
   const out = document.getElementById('en-results');
   if (!fileEl) return;
 
+  /* ─── QUANTOS (passo 3) ────────────────────────────────────────────
+     Copiado da Datastone: em vez de marcar campo a campo, a pessoa diz
+     quantas pessoas e quantos contatos quer, e as COLUNAS nascem daí. O
+     backend gera as mesmas colunas com a mesma regra (`enrich_layout.py`),
+     então o exemplo mostrado aqui é literalmente o cabeçalho do arquivo --
+     não uma ilustração que pode divergir na hora H.
+
+     O exemplo existe por causa de uma pergunta que a tela antiga não sabia
+     responder: "o que exatamente eu vou receber?". Antes, só o arquivo
+     pronto respondia -- depois de pago. */
+  let enQtdTimer = null;
+
+  function enQtds() {
+    const n = id => parseInt(document.getElementById(id)?.value) || 0;
+    return {
+      qtd_decisores: n('en-q-dec'), qtd_telefones: n('en-q-tel'),
+      qtd_emails: n('en-q-email'), qtd_socios: n('en-q-socio'),
+      com_cpf: !!document.getElementById('en-q-cpf')?.checked,
+      com_whatsapp: !!document.getElementById('en-q-wpp')?.checked,
+    };
+  }
+
+  /* As colunas que as quantidades pedem. Guardadas aqui depois de cada
+     preview para o botão Enriquecer mandar EXATAMENTE o que foi mostrado --
+     recalcular no clique é como as duas listas divergem. */
+  let enColunasQtd = [];
+
+  async function enQtdPreview() {
+    const q = enQtds();
+    const alvo = document.getElementById('en-qtd-preview');
+    if (!alvo) return;
+    const pessoas = q.qtd_decisores + q.qtd_socios;
+    if (!pessoas) {
+      alvo.hidden = true; enColunasQtd = [];
+      enNumera();
+      return;
+    }
+    const linhas = parseInt(document.getElementById('en-limite')?.value) || 0;
+    let d;
+    try {
+      d = await fetch(`${API}/api/enrich/layout`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...q, linhas }),
+      }).then(r => r.json());
+    } catch (e) { return; }
+    if (d.status !== 'ok') return;
+    enColunasQtd = d.colunas.map(c => c.key);
+    document.getElementById('en-prev-head').innerHTML =
+      d.colunas.map(c => `<th>${esc(c.label)}</th>`).join('');
+    document.getElementById('en-prev-row').innerHTML =
+      d.colunas.map(c => `<td>${esc(d.exemplo[c.key] || '')}</td>`).join('');
+    /* CUSTO em CONSULTAS, não em reais: valor em real só aparece no painel
+       do admin. Consulta é a unidade que quem opera controla -- é o número
+       que muda quando ela mexe no seletor. */
+    const el = document.getElementById('en-qtd-custo');
+    const porLinha = d.consultas_por_linha;
+    el.textContent = linhas
+      ? `${d.colunas.length} colunas novas · ~${porLinha} consulta(s) por empresa · `
+        + `até ${(d.consultas_total || 0).toLocaleString('pt-BR')} nas ${linhas} linhas deste lote`
+      : `${d.colunas.length} colunas novas · ~${porLinha} consulta(s) por empresa`;
+    alvo.hidden = false;
+    enNumera();
+  }
+
+  function enQtdAgenda() {
+    clearTimeout(enQtdTimer);
+    enQtdTimer = setTimeout(enQtdPreview, 250);
+  }
+
+  /* A NUMERAÇÃO DOS PASSOS anda junto com os painéis que aparecem. Passo
+     fixo com painel escondido faz a pessoa procurar um "4" que não existe. */
+  function enNumera() {
+    const querDec = document.getElementById('en-dec-wrap')
+      && !document.getElementById('en-dec-wrap').hidden;
+    const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+    set('en-num-campos', '4');
+    set('en-num-dec', '5');
+    set('en-num-tel', querDec ? '6' : '5');
+    set('en-num-entrega', querDec ? '7' : '6');
+    set('en-num-run', querDec ? '8' : '7');
+  }
+
+  (function montaQtds() {
+    const TETO = 5;
+    ['en-q-dec', 'en-q-tel', 'en-q-email', 'en-q-socio'].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.innerHTML = Array.from({ length: TETO + 1 },
+        (_, i) => `<option value="${i}">${i === 0 ? '0 — não buscar' : i}</option>`).join('');
+      /* Padrão: 3 decisores com 1 telefone cada. É o pedido mais comum e o
+         mais barato que ainda serve para ligar. Sócio começa em 0 de
+         propósito: sócio é quem é DONO, decisor é quem MANDA, e quem abre a
+         planilha para prospectar quer o segundo. */
+      el.value = id === 'en-q-dec' ? '3' : (id === 'en-q-tel' ? '1' : '0');
+    });
+    document.querySelectorAll('.en-q').forEach(e => e.addEventListener('change', () => {
+      /* O painel de cargo segue a quantidade de decisores: pedir "quais
+         cargos" sem pedir decisor é controle que não faz nada. */
+      const w = document.getElementById('en-dec-wrap');
+      if (w) w.hidden = !(parseInt(document.getElementById('en-q-dec')?.value) || 0);
+      const md = document.getElementById('en-maxdec');
+      if (md) md.value = document.getElementById('en-q-dec')?.value || '3';
+      enQtdAgenda();
+    }));
+    document.getElementById('en-limite')?.addEventListener('change', enQtdAgenda);
+    const w = document.getElementById('en-dec-wrap');
+    if (w) w.hidden = false;     // nasce com 3 decisores pedidos
+    const md = document.getElementById('en-maxdec');
+    if (md) md.value = '3';
+    enQtdPreview();
+  })();
+
   // Carrega o catálogo de campos (checkboxes agrupados).
   fetch(`${API}/api/enrich/catalog`).then(r => r.json()).then(cat => {
     const box = document.getElementById('en-catalog');
+    /* Campo POR PESSOA é o que o passo 3 gera sozinho ("Decisor 2 Celular",
+       "Sócio 1 E-mail"). Os resumos (`de_todos`, `de_fonte`, `so_todos_tel`)
+       não são por pessoa e continuam à vista: ninguém os pede por
+       quantidade. */
+    const porPessoa = k => /^(de_dec|so_socio)\d+_/.test(k);
+    const chk = c => `<label class="en-chk"><input type="checkbox" class="en-field"`
+      + ` value="${c.key}" ${c.key.startsWith('rfb_') ? 'checked' : ''}/> ${esc(c.label)}</label>`;
     box.innerHTML = cat.grupos.map(g => `
       <div class="en-group">
         <div class="en-group-head">
@@ -2882,8 +3001,18 @@ const enrichState = { upload_id: null, sheets: [], result: null };
           <span class="en-group-src">${esc(g.fonte)}</span>
         </div>
         <div class="en-group-fields">
-          ${g.campos.map(c => `<label class="en-chk"><input type="checkbox" class="en-field" value="${c.key}" ${c.key.startsWith('rfb_') ? 'checked' : ''}/> ${esc(c.label)}</label>`).join('')}
+          ${g.campos.filter(c => !porPessoa(c.key)).map(chk).join('')}
         </div>
+        ${g.campos.some(c => porPessoa(c.key)) ? `
+        <!-- COLUNAS INDIVIDUAIS, RECOLHIDAS. Elas continuam existindo, com
+             o mesmo nome, para quem já tem um modelo salvo apontando para
+             elas -- mas o passo 3 faz a mesma coisa melhor. Deixar as duas
+             igualmente visíveis ensina a pessoa a marcar treze caixas para
+             pedir o que um seletor já pede. -->
+        <details class="en-group-antigo">
+          <summary>Colunas individuais (${g.campos.filter(c => porPessoa(c.key)).length}) — o passo 3 já cuida disso</summary>
+          <div class="en-group-fields">${g.campos.filter(c => porPessoa(c.key)).map(chk).join('')}</div>
+        </details>` : ''}
       </div>`).join('');
     const note = document.getElementById('en-src-note');
     const parts = [];
@@ -2926,8 +3055,12 @@ const enrichState = { upload_id: null, sheets: [], result: null };
      marcado. Filtro de cargo sem decisor pedido é controle que não faz nada,
      e controle que não faz nada ensina a pessoa a desconfiar dos outros. */
   document.getElementById('en-catalog')?.addEventListener('change', () => {
-    const querDec = [...document.querySelectorAll('.en-field:checked')]
-      .some(c => c.value.startsWith('de_'));
+    /* Decisor pode vir de DOIS lugares: da quantidade escolhida no passo 3
+       ou de um campo `de_` marcado à mão no catálogo. Olhar só as caixas
+       fazia o painel de cargo sumir de quem pediu decisor pelo seletor. */
+    const querDec = (parseInt(document.getElementById('en-q-dec')?.value) || 0) > 0
+      || [...document.querySelectorAll('.en-field:checked')]
+        .some(c => c.value.startsWith('de_'));
     const w = document.getElementById('en-dec-wrap');
     const apareceuAgora = w && w.hidden && querDec;
     if (w) w.hidden = !querDec;
@@ -2935,22 +3068,26 @@ const enrichState = { upload_id: null, sheets: [], result: null };
     // aparecia fora da tela e a pessoa concluía que não dava para escolher
     // cargo no enriquecimento. Aparecer e se mostrar são coisas diferentes.
     if (apareceuAgora) w.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    // A numeração dos passos anda junto com o painel que aparece.
-    const numTel = document.getElementById('en-num-tel');
-    if (numTel) numTel.textContent = querDec ? '5' : '4';
-    const num = document.getElementById('en-num-run');
-    if (num) num.textContent = querDec ? '6' : '5';
+    enNumera();
   });
 
   document.getElementById('en-run').addEventListener('click', async () => {
-    const fields = [...document.querySelectorAll('.en-field:checked')].map(c => c.value);
-    if (!fields.length) { out.innerHTML = `<p class="msg">Selecione ao menos um campo.</p>`; return; }
+    /* AS COLUNAS SÃO A SOMA DOS DOIS: o que foi marcado no catálogo mais o
+       que as quantidades pedem. `enColunasQtd` é exatamente a lista que o
+       exemplo mostrou -- mandar ela, e não uma recalculada aqui, é o que
+       garante que o cabeçalho prometido seja o cabeçalho entregue. */
+    const marcados = [...document.querySelectorAll('.en-field:checked')].map(c => c.value);
+    const fields = [...new Set([...marcados, ...enColunasQtd])];
+    if (!fields.length) { out.innerHTML = `<p class="msg">Escolha ao menos um campo ou uma quantidade.</p>`; return; }
+    const q = enQtds();
     const body = {
       upload_id: enrichState.upload_id, sheet: sheetSel.value,
       cnpj_col: colSel.value, fields,
       limite: parseInt(document.getElementById('en-limite').value) || 50,
+      qtd_telefones: q.qtd_telefones, qtd_emails: q.qtd_emails,
+      qtd_socios: q.qtd_socios,
       decisor_cargos: enrichCargos(),
-      max_decisores: parseInt(document.getElementById('en-maxdec')?.value) || 3,
+      max_decisores: q.qtd_decisores || parseInt(document.getElementById('en-maxdec')?.value) || 3,
       decisor_fonte: document.querySelector('input[name="en-dec-fonte"]:checked')?.value || 'linkedin',
       unir_telefones: !!document.getElementById('en-unir-tel')?.checked,
       formato_telefone: enrichFormatoTel(),
@@ -3052,9 +3189,138 @@ const enrichState = { upload_id: null, sheets: [], result: null };
         out.insertAdjacentHTML('afterbegin',
           `<p class="msg">Parado a pedido, com ${acumulado.length} linhas prontas.</p>`);
       }
+      /* GUARDA SEMPRE, inclusive quando foi parado no meio: as linhas que
+         chegaram até aqui já foram consultadas e pagas, e o motivo de terem
+         parado não muda isso. Salvar só o lote "completo" jogaria fora
+         exatamente o trabalho que mais custou a quem cancelou. */
+      await enrichSalvar(base, q);
     } catch (e) { out.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`; }
     finally { document.getElementById('en-run').disabled = false; }
   });
+
+  /* ─── GUARDAR E ENTREGAR ───────────────────────────────────────────
+     O resultado deixa de morar só na memória da aba. Isso não é comodidade:
+     até aqui, fechar o navegador antes de clicar em "Exportar XLSX" apagava
+     trabalho JÁ PAGO, consulta por consulta. */
+  async function enrichSalvar(base, q) {
+    if (!base || !(base.rows || []).length) return;
+    const columns = [...base.base_cols.map(c => ({ key: c, label: c })), ...base.added_cols];
+    const email = (document.getElementById('en-email')?.value || '').trim();
+    const nome = (document.getElementById('en-nome')?.value || '').trim();
+    let d;
+    try {
+      d = await fetch(`${API}/api/enrich/salvar`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          columns, rows: base.rows, nome, email,
+          origem: document.getElementById('en-file-name')?.textContent || '',
+          parametros: q || {},
+        }),
+      }).then(r => r.json());
+    } catch (e) {
+      /* FALHA AO GUARDAR NÃO PODE SER SILÊNCIO. A pessoa continua com o
+         resultado na tela e pode exportar à mão -- mas só se souber que o
+         automático não funcionou. */
+      out.insertAdjacentHTML('afterbegin',
+        `<p class="msg error">Não consegui guardar esta lista (${esc(e.message)}). `
+        + `Ela está aqui na tela — exporte antes de fechar a aba.</p>`);
+      return;
+    }
+    if (d.status !== 'ok') {
+      out.insertAdjacentHTML('afterbegin',
+        `<p class="msg error">Não consegui guardar esta lista: ${esc(d.message || 'erro')}. `
+        + `Exporte antes de fechar a aba.</p>`);
+      return;
+    }
+    let msg = '💾 Guardada em <b>Enriquecimentos salvos</b> — dá para fechar a aba.';
+    if (email) {
+      msg += (d.email && d.email.status === 'ok')
+        ? ` Enviada para ${esc(email)}.`
+        : ` <span style="color:var(--amber)">O e-mail não saiu: ${esc((d.email || {}).message || 'sem envio configurado')}.</span>`;
+    }
+    out.insertAdjacentHTML('afterbegin', `<p class="msg">${msg}</p>`);
+    enrichSalvosCarregar();
+  }
+
+  function enBytes(n) {
+    if (!n) return '—';
+    return n > 1048576 ? (n / 1048576).toFixed(1) + ' MB'
+                       : Math.max(1, Math.round(n / 1024)) + ' KB';
+  }
+
+  async function enrichSalvosCarregar() {
+    const box = document.getElementById('en-salvos');
+    if (!box) return;
+    let d;
+    try {
+      d = await fetch(`${API}/api/enrich/salvos`).then(r => r.json());
+    } catch (e) { box.innerHTML = `<p class="msg error">${esc(e.message)}</p>`; return; }
+    /* O CAMPO DE E-MAIL SÓ APARECE SE HOUVER COMO ENVIAR. Oferecer um campo
+       que não manda nada é pior que não oferecer: quem preenche vai embora
+       achando que o arquivo está a caminho. */
+    const nota = document.getElementById('en-email-nota');
+    const wrap = document.getElementById('en-email-wrap');
+    if (!d.email_disponivel) {
+      if (wrap) wrap.hidden = true;
+      if (nota) nota.textContent = 'envio por e-mail ainda não configurado no servidor';
+    } else {
+      if (wrap) wrap.hidden = false;
+      if (nota) nota.textContent = '';
+    }
+    const itens = d.itens || [];
+    if (!itens.length) {
+      box.innerHTML = '<p class="pf-advanced-hint" style="padding:8px 0">'
+        + 'Nenhuma lista guardada ainda. A próxima que você enriquecer aparece aqui.</p>';
+      return;
+    }
+    box.innerHTML = `<table class="prosp-table">
+      <thead><tr><th>Nome</th><th>Quando</th><th>Linhas</th><th>Com dado novo</th>
+        <th>Com decisor</th><th>Arquivo</th><th>E-mail</th><th></th></tr></thead>
+      <tbody>${itens.map(i => {
+        const quando = new Date((i.criado_em || 0) * 1000)
+          .toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+        /* O QUE ACONTECEU COM O E-MAIL, e não só "enviado": tentativa que
+           falhou mostrava o mesmo traço de quem nunca pediu, e a pessoa
+           concluía que tinha esquecido de clicar. */
+        const mail = i.email_erro
+          ? `<span title="${esc(i.email_erro)}" style="color:var(--amber)">falhou</span>`
+          : (i.email_em ? esc(i.email_para || 'enviado') : '—');
+        return `<tr data-id="${esc(i.id)}">
+          <td>${esc(i.nome)}</td><td>${esc(quando)}</td>
+          <td>${i.linhas || 0}</td><td>${i.enriquecidas || 0}</td>
+          <td>${i.com_decisor || 0}</td>
+          <td><a href="${API}/api/enrich/salvo/${esc(i.id)}/arquivo">⬇️ ${esc(enBytes(i.bytes))}</a></td>
+          <td>${mail}</td>
+          <td style="white-space:nowrap">
+            ${d.email_disponivel ? '<button data-act="mail" class="btn-secondary" style="font-size:12px;padding:1px 8px">✉️</button>' : ''}
+            <button data-act="del" class="btn-secondary" style="font-size:12px;padding:1px 8px">🗑</button>
+          </td></tr>`;
+      }).join('')}</tbody></table>`;
+
+    box.querySelectorAll('button[data-act]').forEach(b => b.addEventListener('click', async () => {
+      const tr = b.closest('tr'); const id = tr.dataset.id;
+      if (b.dataset.act === 'del') {
+        if (!confirm('Apagar esta lista guardada? O arquivo some do servidor.')) return;
+        await fetch(`${API}/api/enrich/salvo/${id}`, { method: 'DELETE' });
+        enrichSalvosCarregar();
+        return;
+      }
+      const para = prompt('Mandar para qual e-mail?',
+                          tr.children[6].textContent.trim().replace('—', '')) || '';
+      if (!para.trim()) return;
+      b.disabled = true;
+      const r = await fetch(`${API}/api/enrich/salvo/${id}/email`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: para.trim() }),
+      }).then(x => x.json());
+      b.disabled = false;
+      if (r.status !== 'ok') alert(r.message || 'Não consegui enviar.');
+      enrichSalvosCarregar();
+    }));
+  }
+
+  document.getElementById('en-salvos-atualizar')?.addEventListener('click', enrichSalvosCarregar);
+  enrichSalvosCarregar();
 
   document.getElementById('en-export').addEventListener('click', async () => {
     const j = enrichState.result;

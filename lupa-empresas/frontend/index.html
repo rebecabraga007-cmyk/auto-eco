@@ -1046,8 +1046,60 @@
           <label class="as-field"><span>Coluna do CNPJ</span><select id="en-cnpjcol"></select></label>
           <label class="as-field"><span>Qtd. de linhas</span><input id="en-limite" type="number" min="1" max="2000" value="50" class="filter-num" /></label>
         </div>
-        <div class="en-step en-step-fields">
+        <!-- ═══ QUANTOS ═══════════════════════════════════════════════
+             Copiado da Datastone (analisada em 17/set/2026): a tela deles
+             não pede "marque os campos", pede QUANTOS — 0 a 5 de telefone,
+             e-mail e sócio.
+
+             Não é preferência estética. "3 decisores, 2 telefones cada" é a
+             frase que a pessoa já tem pronta na cabeça; treze caixas
+             marcadas ("Decisor 1 Celular", "Decisor 2 Celular"…) obrigam ela
+             a montar a planilha de cabeça antes de pedir. E o mesmo número
+             que descreve o cabeçalho descreve a CONTA: cada contato a mais é
+             uma consulta paga a mais, então o controle da planilha e o
+             controle do custo são o mesmo botão. -->
+        <div class="en-step" id="en-qtd-step">
           <span class="en-num">3</span>
+          <div class="en-fields-wrap">
+            <div class="en-fields-head">
+              <strong>Quantas pessoas e quantos contatos por empresa</strong>
+              <span class="en-src-note">zero desliga a busca daquele tipo</span>
+            </div>
+            <div class="en-qtds">
+              <label class="as-field"><span>👤 Decisores</span>
+                <select id="en-q-dec" class="filter-select en-q"></select></label>
+              <label class="as-field"><span>📞 Telefones de cada um</span>
+                <select id="en-q-tel" class="filter-select en-q"></select></label>
+              <label class="as-field"><span>✉️ E-mails de cada um</span>
+                <select id="en-q-email" class="filter-select en-q"></select></label>
+              <label class="as-field"><span>🧑‍💼 Sócios</span>
+                <select id="en-q-socio" class="filter-select en-q"></select></label>
+            </div>
+            <div class="filter-row" style="margin:8px 0 0;gap:16px;flex-wrap:wrap">
+              <label class="en-chk"><input type="checkbox" id="en-q-cpf" class="en-q" checked /> Trazer o <b>CPF</b> de cada pessoa</label>
+              <label class="en-chk"><input type="checkbox" id="en-q-wpp" class="en-q" /> Marcar quem tem <b>WhatsApp</b></label>
+            </div>
+
+            <!-- EXEMPLO DE RETORNO. A pergunta "o que exatamente eu vou
+                 receber?" não tinha resposta antes de pagar: só o arquivo
+                 pronto respondia. A Datastone mostra exemplo de envio e de
+                 retorno antes de qualquer gasto, e é o único jeito honesto
+                 de cobrar por algo que ainda não existe. -->
+            <div id="en-qtd-preview" class="en-preview" hidden>
+              <div class="en-preview-head">
+                <strong>Exemplo do que vai chegar</strong>
+                <span class="en-src-note">valores fictícios — é só o formato</span>
+              </div>
+              <div class="en-preview-scroll"><table class="en-preview-table">
+                <thead><tr id="en-prev-head"></tr></thead>
+                <tbody><tr id="en-prev-row"></tr></tbody>
+              </table></div>
+              <p class="pf-advanced-hint" id="en-qtd-custo" style="margin:6px 0 0"></p>
+            </div>
+          </div>
+        </div>
+        <div class="en-step en-step-fields">
+          <span class="en-num" id="en-num-campos">4</span>
           <div class="en-fields-wrap">
             <div class="en-fields-head">
               <strong>Campos a adicionar após o enriquecimento</strong>
@@ -1059,7 +1111,7 @@
         <!-- Só aparece quando algum campo de decisor está marcado: filtro de
              cargo sem decisor pedido é controle que não faz nada. -->
         <div class="en-step" id="en-dec-wrap" hidden>
-          <span class="en-num">4</span>
+          <span class="en-num" id="en-num-dec">5</span>
           <div class="en-fields-wrap">
             <div class="en-fields-head">
               <strong>Quais decisores você quer</strong>
@@ -1114,10 +1166,14 @@
             <input id="en-cargo-entrada" type="text" autocomplete="off"
                    placeholder="Ex.: diretor comercial, head de vendas, sócio-administrador…" />
             <input id="en-cargo" type="hidden" />
-            <label class="as-field" style="margin-top:6px">
-              <span>Quantos decisores por empresa</span>
-              <input id="en-maxdec" type="number" min="1" max="10" value="3" class="filter-num" />
-            </label>
+            <!-- QUANTOS DECISORES agora mora no passo 3, junto das outras
+                 quantidades. Dois campos perguntando a mesma coisa em telas
+                 diferentes é o caminho mais curto para um contradizer o
+                 outro -- e a pessoa não descobre qual valeu. -->
+            <p class="pf-advanced-hint" style="margin:6px 0 0">
+              A quantidade de decisores por empresa está no passo 3, junto com
+              telefones e e-mails.</p>
+            <input id="en-maxdec" type="hidden" value="3" />
           </div>
         </div>
         <!-- ═══ TELEFONE: uma coluna com todos, e o formato do destino ═══
@@ -1154,14 +1210,56 @@
             </p>
           </div>
         </div>
+        <!-- ═══ COMO ENTREGAR ═════════════════════════════════════════
+             O NOME existe para a lista fazer sentido daqui a uma semana:
+             "Enriquecimento 17/09 14:22" não distingue a lista da Movida da
+             lista de construtoras de SC, e é sempre a segunda que a pessoa
+             procura.
+
+             O E-MAIL é o que permite FECHAR O NAVEGADOR. Mil linhas levam
+             minutos; hoje quem fecha a aba antes de exportar perde trabalho
+             já pago, consulta por consulta. -->
         <div class="en-step">
-          <span class="en-num" id="en-num-run">6</span>
+          <span class="en-num" id="en-num-entrega">6</span>
+          <div class="en-fields-wrap">
+            <div class="en-fields-head">
+              <strong>Como entregar</strong>
+              <span class="en-src-note" id="en-email-nota"></span>
+            </div>
+            <div class="filter-row" style="margin:0;gap:12px;flex-wrap:wrap">
+              <label class="as-field"><span>Nome desta lista</span>
+                <input id="en-nome" type="text" class="filter-select"
+                       style="width:260px" placeholder="Ex.: Construtoras SC — set/26" /></label>
+              <label class="as-field" id="en-email-wrap"><span>Mandar por e-mail quando terminar</span>
+                <input id="en-email" type="email" class="filter-select"
+                       style="width:260px" placeholder="opcional — deixe vazio para não enviar" /></label>
+            </div>
+          </div>
+        </div>
+        <div class="en-step">
+          <span class="en-num" id="en-num-run">7</span>
           <button id="en-run" class="btn-primary">⚡ Enriquecer lista</button>
           <button id="en-export" class="btn-secondary" hidden>⬇️ Exportar XLSX</button>
         </div>
       </div>
     </div>
     <div id="en-results" class="results-area"></div>
+
+    <!-- ═══ ENRIQUECIMENTOS SALVOS ══════════════════════════════════════
+         Copiado da tela de "Enriquecimentos" da Datastone: cada trabalho
+         vira uma linha com nome, data, tamanho e o arquivo para baixar.
+
+         O que isto conserta é concreto: até aqui o resultado morava só na
+         memória da aba. Fechou o navegador antes de exportar, perdeu -- e o
+         que se perdia era consulta já paga. -->
+    <div class="card" id="en-salvos-card" style="margin-top:14px">
+      <div class="en-fields-head">
+        <strong>📁 Enriquecimentos salvos</strong>
+        <button type="button" id="en-salvos-atualizar" class="btn-secondary"
+                style="font-size:12px;padding:2px 10px">Atualizar</button>
+      </div>
+      <div id="en-salvos" class="prosp-table-scroll"></div>
+    </div>
   </section>
 
   <!-- ═══════════════════════════════════════════════════════════════
