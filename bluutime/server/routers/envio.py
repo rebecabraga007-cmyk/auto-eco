@@ -26,9 +26,10 @@ async def canais():
 
 
 @router.post("/whatsapp/conectar")
-async def whatsapp_conectar():
+async def whatsapp_conectar(db: Session = Depends(get_db)):
     """Abre a sessão do WhatsApp. No wuzapi isso é explícito, ao contrário da
     Evolution, que reconecta sozinha."""
+    perm.ator(db).exigir("gestor", "conectar o WhatsApp")
     ch = channels.get("WHATSAPP")
     if not hasattr(ch, "connect"):
         raise HTTPException(400, f"O provedor {channels.provedor_whatsapp()} "
@@ -37,8 +38,13 @@ async def whatsapp_conectar():
 
 
 @router.get("/whatsapp/qrcode")
-async def whatsapp_qrcode():
-    """QR para parear o número. Vem vazio quando a sessão já está logada."""
+async def whatsapp_qrcode(db: Session = Depends(get_db)):
+    """QR para parear o número. Vem vazio quando a sessão já está logada.
+
+    Sem checagem, qualquer usuário conseguia o QR do número comercial único
+    da empresa e escaneava com o próprio celular — sequestro de canal.
+    """
+    perm.ator(db).exigir("gestor", "parear o WhatsApp")
     ch = channels.get("WHATSAPP")
     if not hasattr(ch, "qrcode"):
         raise HTTPException(400, f"O provedor {channels.provedor_whatsapp()} "
@@ -204,8 +210,16 @@ async def enviar_atividade(aid: int, payload: dict = Body(default={}),
 
 
 @router.post("/teste")
-async def enviar_teste(payload: dict = Body(...)):
-    """Manda uma mensagem para você mesmo, para conferir a configuração."""
+async def enviar_teste(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Manda uma mensagem para conferir a configuração de um canal.
+
+    Sem checagem, era um relay aberto: qualquer conta autenticada mandava
+    conteúdo arbitrário pra qualquer destinatário externo usando a
+    credencial de e-mail/WhatsApp da empresa. Testar canal é tarefa de quem
+    configura, não do dia a dia do SDR — por isso "gestor", igual ao
+    conectar/parear do WhatsApp.
+    """
+    perm.ator(db).exigir("gestor", "testar canal de envio")
     canal = (payload.get("channel") or "").upper()
     destino = (payload.get("to") or "").strip()
     if not destino:

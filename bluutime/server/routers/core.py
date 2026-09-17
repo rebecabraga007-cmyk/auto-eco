@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from .. import perm
 from ..config import WEB
 from ..db import get_db
+from ..deps import session_email
 from ..models import (Client, Company, CustomField, FitscoreRule, Goal, Holiday,
                       Integration, LostReason, Team, User, Webhook)
 from ..serial import client as ser_client
@@ -39,19 +40,32 @@ def _company(db: Session) -> Company:
 
 
 def _current_user(db: Session) -> User | None:
-    from ..deps import session_email
     email = session_email()
-    return (db.query(User).filter(func.lower(User.email) == (email or "").lower()).first()
-            or db.query(User).filter(User.roles.contains("ADMINISTRATOR")).first())
+    return db.query(User).filter(func.lower(User.email) == (email or "").lower()).first()
 
 
 @router.get("/me")
 def me(db: Session = Depends(get_db)):
     """Usuário operacional da sessão. Casa o e-mail da sessão CapiBLU com o
-    cadastro de SDR; se não houver, cai no administrador."""
+    cadastro de SDR.
+
+    Sem perfil de CRM correspondente (login liberado antes de alguém rodar
+    `POST /users` pra essa pessoa), a identidade é sintética a partir do
+    e-mail da sessão — nunca a de outra conta. Antes disto caía "em
+    qualquer administrador", e quem estivesse nessa janela editava
+    (PATCH /me, POST /me/avatar) o cadastro do administrador de verdade.
+    """
     u = _current_user(db)
     c = _company(db)
-    return {**user_full(u), "companyId": c.id, "nivel": perm.ator(db).nivel,
+    if u:
+        base = user_full(u)
+    else:
+        email = session_email()
+        base = {"id": None, "name": email, "email": email,
+                "initials": (email[:2] or "?").upper(), "avatarUrl": "",
+                "roles": [], "dailyGoal": 0, "team": None, "active": True,
+                "online": False, "created": None, "emailSignature": ""}
+    return {**base, "companyId": c.id, "nivel": perm.ator(db).nivel,
             "modules": c.modules.split(","), "addOns": c.add_ons.split(",") if c.add_ons else []}
 
 

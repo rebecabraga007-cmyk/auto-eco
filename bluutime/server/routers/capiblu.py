@@ -17,7 +17,7 @@ from fastapi import (APIRouter, Body, Depends, File, HTTPException, Query,
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from .. import serial
+from .. import perm, serial
 from ..capiblu_client import call_files, call_raw, capiblu_error, get, post
 from ..db import get_db
 from ..models import Cadence, Lead, LeadBase
@@ -665,6 +665,7 @@ async def enrich_lead(lid: int, db: Session = Depends(get_db)):
     lead = db.get(Lead, lid)
     if not lead:
         raise HTTPException(404, "Lead não encontrado.")
+    perm.exigir_dono_lead(db, perm.ator(db), lead)
     if not lead.cnpj:
         raise HTTPException(400, "O lead não tem CNPJ para consultar.")
     code, data = await get(f"/api/company/{lead.cnpj}/leads",
@@ -705,6 +706,7 @@ async def validate_phone(lid: int, db: Session = Depends(get_db)):
     lead = db.get(Lead, lid)
     if not lead:
         raise HTTPException(404, "Lead não encontrado.")
+    perm.exigir_dono_lead(db, perm.ator(db), lead)
     doc = lead.cpf or lead.cnpj
     number = (lead.phone or "").split("/")[0].strip()
     if not doc or not number:

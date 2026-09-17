@@ -710,22 +710,24 @@ function openExecuteModal(act) {
 
   m.root.querySelector("[data-cancel]").onclick = m.close;
   m.root.querySelector("[data-done]").onclick = async () => {
-    const notes = m.root.querySelector("#execNotes").value;
-    if (act.type === "CALL") {
-      const output = m.root.querySelector("#callOutput").value;
-      const originSelect = m.root.querySelector("#callOrigin");
-      await api("/api/dialer/calls", { method: "POST", body: {
-        leadId: act.lead.id, userId: state.me.id,
-        status: output ? "CONNECTED" : "NOT_PERFORMED", output,
-        duration: Number(m.root.querySelector("#callDuration").value) || 0,
-        receiverPhone: act.lead.phone,
-        originPhone: originSelect ? originSelect.value : "",
-      } });
-    }
-    await api(`/api/flow/execution/activities/${act.id}/execute`, { method: "POST", body: { notes } });
-    m.close();
-    toast("Atividade concluída.", "ok");
-    go("execucao");
+    try {
+      const notes = m.root.querySelector("#execNotes").value;
+      if (act.type === "CALL") {
+        const output = m.root.querySelector("#callOutput").value;
+        const originSelect = m.root.querySelector("#callOrigin");
+        await api("/api/dialer/calls", { method: "POST", body: {
+          leadId: act.lead.id, userId: state.me.id,
+          status: output ? "CONNECTED" : "NOT_PERFORMED", output,
+          duration: Number(m.root.querySelector("#callDuration").value) || 0,
+          receiverPhone: act.lead.phone,
+          originPhone: originSelect ? originSelect.value : "",
+        } });
+      }
+      await api(`/api/flow/execution/activities/${act.id}/execute`, { method: "POST", body: { notes } });
+      m.close();
+      toast("Atividade concluída.", "ok");
+      go("execucao");
+    } catch (e) { toast(e.message, "err"); }
   };
   m.root.querySelector("[data-won]").onclick = async () => {
     try {
@@ -867,14 +869,23 @@ function openBulkModal() {
   renderExtra();
   action.onchange = renderExtra;
   m.root.querySelector("[data-cancel]").onclick = m.close;
-  m.root.querySelector("[data-ok]").onclick = async () => {
-    const val = m.root.querySelector("#bulkVal");
-    const body = { leadIds: ids, action: action.value };
-    if (action.value === "transfer") body.sdrId = Number(val.value);
-    if (action.value === "switch_cadence") body.cadenceId = Number(val.value);
-    if (action.value === "lost") body.lostReasonId = Number(val.value);
-    const res = await api("/api/flow/leads/bulk", { method: "POST", body });
-    m.close(); toast(`${res.affected} leads atualizados.`, "ok"); go("leads");
+  const aplicar = async () => {
+    try {
+      const val = m.root.querySelector("#bulkVal");
+      const body = { leadIds: ids, action: action.value };
+      if (action.value === "transfer") body.sdrId = Number(val.value);
+      if (action.value === "switch_cadence") body.cadenceId = Number(val.value);
+      if (action.value === "lost") body.lostReasonId = Number(val.value);
+      const res = await api("/api/flow/leads/bulk", { method: "POST", body });
+      m.close(); toast(`${res.affected} leads atualizados.`, "ok"); go("leads");
+    } catch (e) { toast(e.message, "err"); }
+  };
+  m.root.querySelector("[data-ok]").onclick = () => {
+    if (action.value === "delete") {
+      confirmDialog("Apagar leads", `Apagar ${ids.length} lead(s) selecionado(s)? Não dá pra desfazer.`, aplicar);
+    } else {
+      aplicar();
+    }
   };
 }
 
@@ -937,8 +948,10 @@ async function openLeadModal(id) {
   };
   m.root.querySelector("[data-lost]").onclick = () => { m.close(); openLostModal(l.id, () => go(state.page)); };
   m.root.querySelector("[data-wa]").onclick = async () => {
-    const conv = await api("/api/whatsapp/conversations", { method: "POST", body: { leadId: l.id } });
-    m.close(); state.waActive = conv.id; go("whatsapp");
+    try {
+      const conv = await api("/api/whatsapp/conversations", { method: "POST", body: { leadId: l.id } });
+      m.close(); state.waActive = conv.id; go("whatsapp");
+    } catch (e) { toast(e.message, "err"); }
   };
 
   const out = m.root.querySelector("#enrichOut");
@@ -1010,9 +1023,11 @@ function openLeadForm(lead) {
       cadenceId: Number(g("#fCadence")) || null,
     };
     if (!body.name) return toast("O nome é obrigatório.", "err");
-    if (l.id) await api(`/api/flow/leads/${l.id}`, { method: "PATCH", body });
-    else await api("/api/flow/leads", { method: "POST", body });
-    m.close(); toast("Lead salvo.", "ok"); go("leads");
+    try {
+      if (l.id) await api(`/api/flow/leads/${l.id}`, { method: "PATCH", body });
+      else await api("/api/flow/leads", { method: "POST", body });
+      m.close(); toast("Lead salvo.", "ok"); go("leads");
+    } catch (e) { toast(e.message, "err"); }
   };
 }
 
@@ -1172,10 +1187,12 @@ async function openCadenceDetail(id) {
     };
   };
   m.root.querySelectorAll("[data-del-step]").forEach((b) => {
-    b.onclick = async () => {
-      await api(`/api/flow/cadences/${id}/steps/${b.dataset.delStep}`, { method: "DELETE" });
-      toast("Etapa removida."); openCadenceDetail(id);
-    };
+    b.onclick = () => confirmDialog("Remover etapa", "Remover esta etapa da cadência?", async () => {
+      try {
+        await api(`/api/flow/cadences/${id}/steps/${b.dataset.delStep}`, { method: "DELETE" });
+        toast("Etapa removida."); openCadenceDetail(id);
+      } catch (e) { toast(e.message, "err"); }
+    });
   });
 }
 
@@ -1230,9 +1247,11 @@ function openCadenceForm(cad) {
       userIds: [...m.root.querySelector("#cUsers").selectedOptions].map((o) => Number(o.value)),
     };
     if (!body.name) return toast("O nome é obrigatório.", "err");
-    if (c.id) await api(`/api/flow/cadences/${c.id}`, { method: "PATCH", body });
-    else await api("/api/flow/cadences", { method: "POST", body });
-    m.close(); toast("Cadência salva.", "ok"); go("cadencias");
+    try {
+      if (c.id) await api(`/api/flow/cadences/${c.id}`, { method: "PATCH", body });
+      else await api("/api/flow/cadences", { method: "POST", body });
+      m.close(); toast("Cadência salva.", "ok"); go("cadencias");
+    } catch (e) { toast(e.message, "err"); }
   };
 }
 
@@ -1321,9 +1340,11 @@ function openActivityForm(act) {
                        html: m.root.querySelector("#aHtml").value },
     };
     if (!body.name) return toast("O nome é obrigatório.", "err");
-    if (a.id) await api(`/api/flow/activities/${a.id}`, { method: "PATCH", body });
-    else await api("/api/flow/activities", { method: "POST", body });
-    m.close(); toast("Atividade salva.", "ok"); go("atividades");
+    try {
+      if (a.id) await api(`/api/flow/activities/${a.id}`, { method: "PATCH", body });
+      else await api("/api/flow/activities", { method: "POST", body });
+      m.close(); toast("Atividade salva.", "ok"); go("atividades");
+    } catch (e) { toast(e.message, "err"); }
   };
 }
 
@@ -1525,9 +1546,11 @@ function openClientForm(client) {
                    color: m.root.querySelector("#clColor").value,
                    active: m.root.querySelector("#clActive").value === "true" };
     if (!body.name) return toast("O nome é obrigatório.", "err");
-    if (c.id) await api(`/api/clients/${c.id}`, { method: "PATCH", body });
-    else await api("/api/clients", { method: "POST", body });
-    m.close(); toast("Cliente salvo.", "ok"); go("clientes");
+    try {
+      if (c.id) await api(`/api/clients/${c.id}`, { method: "PATCH", body });
+      else await api("/api/clients", { method: "POST", body });
+      m.close(); toast("Cliente salvo.", "ok"); go("clientes");
+    } catch (e) { toast(e.message, "err"); }
   };
 }
 
@@ -1740,8 +1763,13 @@ PAGES.whatsapp = {
       const submit = async () => {
         const body = input.value.trim();
         if (!body) return;
-        await api(`/api/whatsapp/conversations/${activeId}/messages`, { method: "POST", body: { body } });
-        go("whatsapp");
+        send.disabled = true; input.disabled = true;
+        try {
+          await api(`/api/whatsapp/conversations/${activeId}/messages`, { method: "POST", body: { body } });
+          go("whatsapp");
+        } catch (e) {
+          toast(e.message, "err"); send.disabled = false; input.disabled = false;
+        }
       };
       send.onclick = submit;
       input.onkeydown = (e) => { if (e.key === "Enter") submit(); };
@@ -4090,13 +4118,15 @@ function openUserForm(user) {
       active: m.root.querySelector("#uActive").value === "true",
     };
     if (!body.name) return toast("O nome é obrigatório.", "err");
-    if (u.id) await api(`/api/users/${u.id}`, { method: "PATCH", body });
-    else {
-      body.email = m.root.querySelector("#uEmail").value.trim();
-      if (!body.email) return toast("O e-mail é obrigatório.", "err");
-      await api("/api/users", { method: "POST", body });
-    }
-    m.close(); toast("Usuário salvo.", "ok"); go("usuarios");
+    try {
+      if (u.id) await api(`/api/users/${u.id}`, { method: "PATCH", body });
+      else {
+        body.email = m.root.querySelector("#uEmail").value.trim();
+        if (!body.email) return toast("O e-mail é obrigatório.", "err");
+        await api("/api/users", { method: "POST", body });
+      }
+      m.close(); toast("Usuário salvo.", "ok"); go("usuarios");
+    } catch (e) { toast(e.message, "err"); }
   };
 }
 
@@ -4140,10 +4170,12 @@ PAGES.integracoes = {
       };
     });
     view.querySelectorAll("[data-del-hook]").forEach((b) => {
-      b.onclick = async () => {
-        await api(`/api/webhooks/${b.dataset.delHook}`, { method: "DELETE" });
-        toast("Webhook removido."); go("integracoes");
-      };
+      b.onclick = () => confirmDialog("Remover webhook", "Remover este webhook?", async () => {
+        try {
+          await api(`/api/webhooks/${b.dataset.delHook}`, { method: "DELETE" });
+          toast("Webhook removido."); go("integracoes");
+        } catch (e) { toast(e.message, "err"); }
+      });
     });
     const newHookBtn = document.getElementById("newHook");
     if (newHookBtn) newHookBtn.onclick = () => {
@@ -4430,10 +4462,12 @@ PAGES.ajustes = {
       btn.disabled = false;
     };
     view.querySelectorAll("[data-del-reason]").forEach((b) => {
-      b.onclick = async () => {
-        await api(`/api/flow/lost-reasons/${b.dataset.delReason}`, { method: "DELETE" });
-        toast("Motivo removido."); go("ajustes");
-      };
+      b.onclick = () => confirmDialog("Remover motivo", "Remover este motivo de perda?", async () => {
+        try {
+          await api(`/api/flow/lost-reasons/${b.dataset.delReason}`, { method: "DELETE" });
+          toast("Motivo removido."); go("ajustes");
+        } catch (e) { toast(e.message, "err"); }
+      });
     });
     document.getElementById("newReason").onclick = () => promptOne("Novo motivo de perda", "Motivo", async (v) => {
       await api("/api/flow/lost-reasons", { method: "POST", body: { name: v } });
@@ -4471,10 +4505,12 @@ PAGES.ajustes = {
       };
     };
     view.querySelectorAll("[data-del-fit]").forEach((b) => {
-      b.onclick = async () => {
-        await api(`/api/flow/fitscore/${b.dataset.delFit}`, { method: "DELETE" });
-        toast("Regra removida."); go("ajustes");
-      };
+      b.onclick = () => confirmDialog("Remover regra", "Remover esta regra de fitscore?", async () => {
+        try {
+          await api(`/api/flow/fitscore/${b.dataset.delFit}`, { method: "DELETE" });
+          toast("Regra removida."); go("ajustes");
+        } catch (e) { toast(e.message, "err"); }
+      });
     });
     const fitBtn = document.getElementById("fitAdd");
     if (fitBtn) fitBtn.onclick = async () => {
@@ -4581,7 +4617,7 @@ async function abaContas() {
     u.ativo ? `<span class="pill green">ativo</span>` : `<span class="pill red">inativo</span>`,
     u.ultimo_login ? fmtDateTime(epoch(u.ultimo_login)) : "nunca entrou",
     `<button class="btn btn-default btn-xs ct-senha" data-id="${u.id}" data-nome="${h(u.email)}">Trocar senha</button>
-     <button class="btn btn-default btn-xs ct-toggle" data-id="${u.id}" data-ativo="${u.ativo}">${u.ativo ? "Desativar" : "Reativar"}</button>`,
+     <button class="btn btn-default btn-xs ct-toggle" data-id="${u.id}" data-ativo="${u.ativo}" data-nome="${h(u.email)}">${u.ativo ? "Desativar" : "Reativar"}</button>`,
   ] }));
   out.innerHTML = panel("Quem consegue entrar",
     table(["Nome", "E-mail", "Perfil", "Situação", "Último acesso", ""], rows),
@@ -4593,13 +4629,20 @@ async function abaContas() {
     b.onclick = () => trocarSenha(b.dataset.id, b.dataset.nome);
   });
   out.querySelectorAll(".ct-toggle").forEach((b) => {
-    b.onclick = async () => {
+    const trocar = async () => {
       const ativo = b.dataset.ativo !== "true";
       try {
         await api(`/api/admin/users/${b.dataset.id}`, { method: "PATCH", body: { ativo } });
         toast(ativo ? "Conta reativada." : "Conta desativada.", "ok");
         go("contas");
       } catch (e) { toast(e.message, "err"); }
+    };
+    b.onclick = () => {
+      if (b.dataset.ativo === "true") {
+        confirmDialog("Desativar conta", `Desativar o acesso de ${b.dataset.nome}? A pessoa não consegue mais entrar.`, trocar);
+      } else {
+        trocar();
+      }
     };
   });
 }
@@ -4668,7 +4711,7 @@ async function abaGrupos() {
   const rows = (grupos || []).map((g) => ({ cells: [
     `<strong>${h(g.nome || g.name)}</strong>`,
     g.criado_em ? fmtDate(epoch(g.criado_em)) : "—",
-    `<button class="btn btn-default btn-xs gr-del" data-id="${g.id}">Excluir</button>`,
+    `<button class="btn btn-default btn-xs gr-del" data-id="${g.id}" data-nome="${h(g.nome || g.name)}">Excluir</button>`,
   ] }));
   out.innerHTML = panel("Grupos", rows.length
     ? table(["Nome", "Criado em", ""], rows)
@@ -4683,12 +4726,13 @@ async function abaGrupos() {
       go("contas");
     });
   out.querySelectorAll(".gr-del").forEach((b) => {
-    b.onclick = async () => {
-      try {
-        await api(`/api/admin/grupos/${b.dataset.id}`, { method: "DELETE" });
-        toast("Grupo excluído.", "ok"); go("contas");
-      } catch (e) { toast(e.message, "err"); }
-    };
+    b.onclick = () => confirmDialog("Excluir grupo",
+      `Excluir o grupo "${b.dataset.nome}"? As contas dele ficam sem grupo.`, async () => {
+        try {
+          await api(`/api/admin/grupos/${b.dataset.id}`, { method: "DELETE" });
+          toast("Grupo excluído.", "ok"); go("contas");
+        } catch (e) { toast(e.message, "err"); }
+      });
   });
 }
 
@@ -4741,12 +4785,13 @@ async function abaTokens() {
     };
   };
   out.querySelectorAll(".tk-del").forEach((b) => {
-    b.onclick = async () => {
-      try {
-        await api(`/api/admin/tokens/${b.dataset.id}`, { method: "DELETE" });
-        toast("Token revogado.", "ok"); go("contas");
-      } catch (e) { toast(e.message, "err"); }
-    };
+    b.onclick = () => confirmDialog("Revogar token",
+      "Revogar este token? Quem usa essa integração perde acesso na hora.", async () => {
+        try {
+          await api(`/api/admin/tokens/${b.dataset.id}`, { method: "DELETE" });
+          toast("Token revogado.", "ok"); go("contas");
+        } catch (e) { toast(e.message, "err"); }
+      });
   });
 }
 

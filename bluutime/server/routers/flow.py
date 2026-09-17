@@ -884,6 +884,9 @@ def fill_deal_feedback(fid: int, payload: dict = Body(...), db: Session = Depend
     fb = db.get(LeadFeedback, fid)
     if not fb:
         raise HTTPException(404, "Feedback não encontrado.")
+    ator = perm.ator(db)
+    if fb.user_id and fb.user_id != ator.user_id and not ator.pelo_menos("gestor"):
+        raise HTTPException(403, "Este feedback não é seu.")
     fb.meeting_happened = bool(payload.get("meetingHappened"))
     fb.qualification = json.dumps(
         {str(k): bool(v) for k, v in (payload.get("qualification") or {}).items()})
@@ -925,6 +928,7 @@ def reschedule(aid: int, payload: dict = Body(...), db: Session = Depends(get_db
     a = db.get(LeadActivity, aid)
     if not a:
         raise HTTPException(404, "Atividade não encontrada.")
+    perm.exigir_dono_lead(db, perm.ator(db), a.lead)
     try:
         wanted = datetime.fromisoformat(payload["scheduledAt"].replace("Z", ""))
     except (KeyError, ValueError):

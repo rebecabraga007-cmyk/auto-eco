@@ -52,7 +52,10 @@ def listar(db: Session = Depends(get_db)):
 
 @router.post("/webhooks")
 def criar(payload: dict = Body(...), db: Session = Depends(get_db)):
-    perm.ator(db).exigir("gestor", "cadastrar webhook")
+    # Admin estrito, não gestor — mesmo nível do CRUD irmão em core.py.
+    # Webhook manda dado da empresa inteira pra fora; os dois caminhos pro
+    # mesmo recurso precisam concordar, senão o mais frouxo vira a porta.
+    perm.ator(db).exigir("admin", "cadastrar webhook")
     url = (payload.get("targetUrl") or "").strip()
     if not url.startswith(("http://", "https://")):
         raise HTTPException(400, "A URL precisa começar com http:// ou https://.")
@@ -76,7 +79,7 @@ def criar(payload: dict = Body(...), db: Session = Depends(get_db)):
 
 @router.patch("/webhooks/{wid}")
 def atualizar(wid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
-    perm.ator(db).exigir("gestor", "alterar webhook")
+    perm.ator(db).exigir("admin", "alterar webhook")
     w = db.get(Webhook, wid)
     if not w:
         raise HTTPException(404, "Webhook não encontrado.")
@@ -95,7 +98,7 @@ def atualizar(wid: int, payload: dict = Body(...), db: Session = Depends(get_db)
 
 @router.delete("/webhooks/{wid}")
 def excluir(wid: int, db: Session = Depends(get_db)):
-    perm.ator(db).exigir("gestor", "excluir webhook")
+    perm.ator(db).exigir("admin", "excluir webhook")
     w = db.get(Webhook, wid)
     if w:
         db.delete(w)
