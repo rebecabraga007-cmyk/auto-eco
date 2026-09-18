@@ -66,9 +66,9 @@
      Meetime já tinha nesses elementos (avatar, blue-dot, round-icon,
      alert-info/success/warning) antes de qualquer tema próprio. */
   --link-dark: #1565c0;  /* a:hover, .pill.blue */
-  --dot-blue: #15a6ed;   /* .blue-dot */
+  --dot-blue: #2196f3;   /* .blue-dot — sem equivalente no original; usa o azul da casa */
   --link: #1e88e5;       /* link, .btn-primary, .tool-card code */
-  --avatar-bg: #9ddca8;  /* .avatar (era verde no original) */
+  --avatar-bg: #e8f4ea;  /* .avatar — fundo de avatar da Meetime (.avatar--good-fit) */
   --icon-bg: #f7f7fb;    /* .round-icon */
   --info-bg: #e3f2fd;    /* fundo de .alert-info/.pill.blue */
   --info-line: #b3e5fc;  /* borda de .alert-info */
@@ -725,11 +725,12 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   background: var(--dot-blue);
   margin-right: 12px;
 }
+/* real: #goals-page .btn-rounded__green{border-color:#00c850;color:#00c850} */
 .btn-goal {
   height: 48px;
-  border: 2px solid #00b950;
+  border: 2px solid var(--green);
   border-radius: 26px;
-  color: #00a443;
+  color: var(--green);
   background: #fff;
   font-size: 18px;
   font-weight: 500;
@@ -762,7 +763,7 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   grid-template-columns: 74px 1fr;
   align-items: center;
   gap: 22px;
-  color: #8b8f96;
+  color: var(--muted);
   font-size: 18px;
   margin: 30px 0;
 }
@@ -786,7 +787,7 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   display: flex;
   justify-content: center;
   gap: 42px;
-  color: #8b8f96;
+  color: var(--muted);
   font-size: 16px;
   margin-top: -10px;
 }
@@ -1337,6 +1338,17 @@ tr.row-detail > td { padding: 0 16px 16px !important; border-top: 0 !important; 
 }
 .selbar.on { display: flex; }
 .selbar .spacer { margin-left: auto; }
+
+/* Página do lead: cabeçalho com nome à esquerda e as ações à direita, como
+   o header de /prospector/leads/{id} do original. */
+.lead-page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.lead-page-title { margin: 0 0 2px; font-size: 21px; font-weight: 500; }
 
 /* Últimas buscas — memória de trabalho na própria tela. */
 .recentes { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 10px; }

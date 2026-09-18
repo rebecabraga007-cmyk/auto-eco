@@ -202,17 +202,26 @@ document.getElementById("logoutBtn").addEventListener("click", async () => {
 /* ── roteamento ──────────────────────────────────────────────────────── */
 const PAGES = {};
 
+/** `lead/31343806` → ["lead", "31343806"]. O Meetime dá endereço próprio a cada
+ *  lead (/prospector/leads/{id}/timeline); sem isto, detalhe de lead só existia
+ *  como modal — não dava pra mandar o link pra ninguém. */
+function rota(hash) {
+  const [nome, ...resto] = String(hash || "").split("/");
+  return { nome, args: resto };
+}
+
 function go(name) {
-  const page = PAGES[name] || PAGES.dashboard;
+  const { nome, args } = rota(name);
+  const page = PAGES[nome] || PAGES.dashboard;
   state.page = name;
   document.getElementById("crumbArea").textContent = page.area || "Bluutime";
-  document.getElementById("crumbCurrent").textContent = page.title || name;
+  document.getElementById("crumbCurrent").textContent = page.title || nome;
   document.querySelectorAll(".navbar-nav > li").forEach((li) => {
-    li.classList.toggle("active", !!li.querySelector(`[data-page="${name}"]`));
+    li.classList.toggle("active", !!li.querySelector(`[data-page="${nome}"]`));
   });
   view.innerHTML = LOADING;
   location.hash = name;
-  Promise.resolve(page.render()).catch((e) => {
+  Promise.resolve(page.render(...args)).catch((e) => {
     view.innerHTML = panel("Erro", `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`);
   });
 }
@@ -806,7 +815,7 @@ PAGES.leads = {
     if (checkAll) checkAll.onchange = (e) =>
       view.querySelectorAll(".lead-check").forEach((c) => { c.checked = e.target.checked; });
     view.querySelectorAll("[data-open-lead]").forEach((a) => {
-      a.onclick = () => openLeadModal(Number(a.dataset.openLead));
+      a.onclick = () => go(`lead/${a.dataset.openLead}`);
     });
     view.querySelectorAll("[data-goto-page]").forEach((b) => {
       b.onclick = () => { state.leadFilter = { ...f, page: Number(b.dataset.gotoPage) }; go("leads"); };
@@ -885,6 +894,175 @@ function openBulkModal() {
     }
   };
 }
+
+/* ── página do lead ──────────────────────────────────────────────────────
+   Espelha /prospector/leads/{id}/timeline do Meetime: cabeçalho com as ações,
+   coluna da esquerda com os dados e a direita em abas. O modal continua
+   existindo para quem abre do meio de uma fila, mas agora o lead tem endereço. */
+
+function passoTimeline(a) {
+  if (a.kind === "CALL") {
+    const [rot, tom] = a.status === "CONNECTED"
+      ? ({ MEANINGFUL: ["Significativa", "green"], NOT_MEANINGFUL: ["Não significativa", "blue"],
+           NO_CONTACT: ["Sem contato", "amber"] }[a.output] || ["Conectada", "grey"])
+      : ["Não conectada", "red"];
+    return `<div class="timeline-item">
+      <span class="pill ${tom}">Ligação · ${h(rot)}</span>
+      <strong class="ml-5">${h(a.receiverPhone || "—")}</strong><br>
+      <span class="text-muted text-size-small">${fmtDateTime(a.originStarted)}
+        · ${fmtDuration(a.receiverConnectedDuration)}
+        ${a.user ? ` · ${h(a.user.name)}` : ""}</span>
+    </div>`;
+  }
+  return `<div class="timeline-item">
+    <span class="pill ${a.status === "DONE" ? "green" : a.status === "SKIPPED" ? "grey" : a.late ? "red" : "blue"}">
+      ${h(TYPE_LABEL[a.type] || a.type)}</span>
+    <strong class="ml-5">${h(a.activity ? a.activity.name : "")}</strong><br>
+    <span class="text-muted text-size-small">
+      ${a.status === "PENDING" ? `agendada ${fmtDateTime(a.scheduledAt)}${a.late ? " · atrasada" : ""}`
+        : `${a.status === "DONE" ? "realizada" : "ignorada"} ${fmtDateTime(a.doneAt)}`}
+      ${a.user ? ` · ${h(a.user.name)}` : ""}</span>
+    ${a.notes ? `<div class="text-size-small mt-10">${h(a.notes)}</div>` : ""}
+  </div>`;
+}
+
+PAGES.lead = {
+  area: "Prospecção", title: "Lead",
+  async render(id) {
+    const l = await api(`/api/flow/leads/${id}`);
+    const aba = state.leadAba || "historico";
+    document.getElementById("crumbCurrent").textContent = l.name || "Lead";
+
+    // O botão de executar age sobre a próxima atividade pendente — é o mesmo
+    // objeto que a fila de Execução passa pro modal.
+    const proxima = l.timeline.find((a) => a.status === "PENDING" && a.kind !== "CALL");
+    const filtro = state.leadFiltroTipo || "";
+    const passos = l.timeline.filter((a) => !filtro
+      || (filtro === "CALL" ? (a.kind === "CALL" || a.type === "CALL") : a.type === filtro));
+
+    const historico = `
+      <div class="toolbar">
+        <select class="form-control" id="ltTipo">
+          <option value="">Todos os tipos</option>
+          ${Object.entries(TYPE_LABEL).map(([k, v]) =>
+            `<option value="${k}"${filtro === k ? " selected" : ""}>${h(v)}</option>`).join("")}
+        </select>
+        <span class="spacer text-muted text-size-small">${passos.length} de ${l.timeline.length} eventos</span>
+      </div>
+      ${passos.length ? `<div class="timeline">${passos.map(passoTimeline).join("")}</div>`
+        : emptyState("Nenhum evento no histórico com esse filtro.")}`;
+
+    const dados = `<table class="table"><tbody>${[
+      ["Empresa", h(l.company || "—")], ["Cargo", h(l.position || "—")],
+      ["CNPJ", h(l.cnpj || "—")], ["Telefone", h(l.phone || "—")],
+      ["E-mail", h(l.email || "—")], ["LinkedIn", h(l.linkedIn || "—")],
+      ["Cidade", `${h(l.city || "—")}${l.state ? `/${h(l.state)}` : ""}`],
+      ["Base", l.leadBase ? h(l.leadBase.name) : "—"],
+      ["Melhor horário", `${l.bestHour}h`],
+    ].map(([k, v]) => `<tr><td class="text-grey">${k}</td><td>${v}</td></tr>`).join("")}</tbody></table>`;
+
+    const anotacoes = `
+      <textarea class="form-control" id="ltNotas" rows="6"
+        placeholder="O que é importante lembrar sobre este lead…">${h(l.annotations || "")}</textarea>
+      <button class="btn btn-main btn-sm mt-10" id="ltSalvarNotas">Salvar anotações</button>`;
+
+    view.innerHTML = `
+      <div class="panel panel-flat"><div class="panel-body">
+        <div class="lead-page-head">
+          <div>
+            <h1 class="lead-page-title">${h(l.name)}</h1>
+            <div class="text-muted">${h(l.company || "—")}${l.position ? ` · ${h(l.position)}` : ""}</div>
+          </div>
+          <div class="heading-elements">
+            ${statusPill(l.status)}
+            ${proxima ? `<button class="btn btn-main btn-sm" data-exec>Executar ${h(TYPE_LABEL[proxima.type] || "atividade")}</button>` : ""}
+            <button class="btn btn-success btn-sm" data-won>Ganho</button>
+            <button class="btn btn-danger btn-sm" data-lost>Perdido</button>
+            <button class="btn btn-default btn-sm" data-edit>Editar</button>
+          </div>
+        </div>
+      </div></div>
+
+      <div class="split">
+        <div>
+          ${panel("Lead", `<table class="table"><tbody>${[
+            ["Situação", statusPill(l.status)],
+            ["Cadência", l.cadence ? h(l.cadence.name) : "—"],
+            ["Responsável", l.sdr ? h(l.sdr.name) : "—"],
+            ["Cliente", l.client ? h(l.client.name) : "—"],
+            ["Fit score", String(l.fitscore ?? 0)],
+            ...(l.lostReason ? [["Motivo da perda", h(l.lostReason.name)]] : []),
+          ].map(([k, v]) => `<tr><td class="text-grey">${k}</td><td>${v}</td></tr>`).join("")}</tbody></table>`)}
+          ${panel("CapiBLU", `
+            <button class="btn btn-default btn-xs" data-enrich>Enriquecer</button>
+            <button class="btn btn-default btn-xs" data-validate>Validar telefone</button>
+            <button class="btn btn-default btn-xs" data-wa>Abrir WhatsApp</button>
+            <div id="enrichOut" class="mt-10"></div>`)}
+        </div>
+        <div>
+          <ul class="nav nav-tabs">
+            ${[["historico", "Histórico"], ["dados", "Dados"], ["anotacoes", "Anotações"]].map(([k, v]) =>
+              `<li${aba === k ? ' class="active"' : ""}><a data-laba="${k}">${v}</a></li>`).join("")}
+          </ul>
+          <div class="panel panel-flat"><div class="panel-body">
+            ${aba === "historico" ? historico : aba === "dados" ? dados : anotacoes}
+          </div></div>
+        </div>
+      </div>`;
+
+    view.querySelectorAll("[data-laba]").forEach((a) => {
+      a.onclick = () => { state.leadAba = a.dataset.laba; go(`lead/${id}`); };
+    });
+    const tipo = document.getElementById("ltTipo");
+    if (tipo) tipo.onchange = (e) => { state.leadFiltroTipo = e.target.value; go(`lead/${id}`); };
+
+    const notas = document.getElementById("ltSalvarNotas");
+    if (notas) notas.onclick = async () => {
+      notas.disabled = true;
+      try {
+        await api(`/api/flow/leads/${id}`, { method: "PATCH",
+          body: { annotations: document.getElementById("ltNotas").value } });
+        toast("Anotações salvas.", "ok");
+      } catch (e) { toast(e.message, "err"); }
+      notas.disabled = false;
+    };
+
+    view.querySelector("[data-edit]").onclick = () => openLeadForm(l);
+    const btExec = view.querySelector("[data-exec]");
+    if (btExec) btExec.onclick = () => openExecuteModal(proxima);
+    view.querySelector("[data-won]").onclick = async () => {
+      try {
+        await api(`/api/flow/execution/leads/${l.id}/outcome`, { method: "POST", body: { outcome: "WON" } });
+        toast("Lead ganho.", "ok"); go(`lead/${id}`);
+      } catch (e) { toast(e.message, "err"); }
+    };
+    view.querySelector("[data-lost]").onclick = () => openLostModal(l.id, () => go(`lead/${id}`));
+    view.querySelector("[data-wa]").onclick = async () => {
+      try {
+        const conv = await api("/api/whatsapp/conversations", { method: "POST", body: { leadId: l.id } });
+        state.waActive = conv.id; go("whatsapp");
+      } catch (e) { toast(e.message, "err"); }
+    };
+
+    const out = document.getElementById("enrichOut");
+    view.querySelector("[data-enrich]").onclick = async () => {
+      out.innerHTML = `<span class="spinner"></span> consultando CapiBLU…`;
+      try {
+        const r = await api(`/api/capiblu/leads/${l.id}/enrich`, { method: "POST" });
+        out.innerHTML = `<div class="alert alert-success alert-styled-left">
+          ${r.updated.length ? `Campos atualizados: ${h(r.updated.join(", "))}.` : "Nada novo a preencher."}
+          ${r.contacts.length} contato(s) encontrados na empresa.</div>`;
+      } catch (e) { out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`; }
+    };
+    view.querySelector("[data-validate]").onclick = async () => {
+      out.innerHTML = `<span class="spinner"></span> validando telefone…`;
+      try {
+        const r = await api(`/api/capiblu/leads/${l.id}/validate-phone`, { method: "POST" });
+        out.innerHTML = `<div class="json-box">${h(JSON.stringify(r, null, 2))}</div>`;
+      } catch (e) { out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`; }
+    };
+  },
+};
 
 async function openLeadModal(id) {
   const l = await api(`/api/flow/leads/${id}`);

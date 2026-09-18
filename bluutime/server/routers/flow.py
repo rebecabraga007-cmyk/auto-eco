@@ -9,7 +9,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import (Activity, Cadence, CadenceStep, CadenceUser, Client,
+from ..models import (Activity, Cadence, CadenceStep, CadenceUser, Call, Client,
                       Company, CustomField, FitscoreRule, Lead, LeadActivity,
                       LeadBase, LeadFeedback, LeadFieldValue, LostReason,
                       Template, User, channel_of)
@@ -442,7 +442,14 @@ def get_lead(lid: int, db: Session = Depends(get_db)):
     now = datetime.utcnow()
     acts = (db.query(LeadActivity).filter_by(lead_id=lid)
             .order_by(LeadActivity.scheduled_at).all())
-    data["timeline"] = [serial.lead_activity(a, now) for a in acts]
+    linha = [serial.lead_activity(a, now) for a in acts]
+    # A ligação mora em `Call`, não em `LeadActivity` — sem isto o histórico do
+    # lead mostrava a atividade "Ligar" agendada e nunca a ligação que aconteceu.
+    for c in db.query(Call).filter_by(lead_id=lid).all():
+        linha.append({"kind": "CALL", **serial.call(c)})
+    linha.sort(key=lambda r: r.get("originStarted") or r.get("doneAt")
+               or r.get("scheduledAt") or "")
+    data["timeline"] = linha
     return data
 
 

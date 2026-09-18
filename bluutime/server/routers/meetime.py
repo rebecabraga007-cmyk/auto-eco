@@ -361,7 +361,11 @@ async def sync(payload: dict = Body(default={}), db: Session = Depends(get_db)):
             continue
         _upsert(db, Call, c["id"],
                 user_id=by_user.get(str(c.get("user_id") or "")),
-                lead_id=by_lead.get(str(c.get("lead_id") or "")),
+                # A API do Meetime chama isto de `flowLeadId` (é o nome que o
+                # nosso próprio `serial.call` devolve). Lendo só `lead_id`, toda
+                # ligação sincronizada ficava sem lead — e o histórico do lead
+                # nunca mostrava a ligação que de fato aconteceu.
+                lead_id=by_lead.get(str(c.get("lead_id") or c.get("flowLeadId") or "")),
                 origin_phone=c.get("origin_phone") or "",
                 receiver_phone=c.get("receiver_phone") or "",
                 receiver_type=c.get("receiver_type") or "MOBILE",
