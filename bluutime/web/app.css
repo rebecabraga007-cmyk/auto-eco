@@ -62,16 +62,16 @@
   --cyan: #00bcd4;
 
   /* ── Extensões pós-Meetime (dossiê, funil, WhatsApp, etc.) ──────────────
-     Sem equivalente direto no app original — mantidas aqui como cores
-     próprias do Meetime já usadas nesses mesmos elementos antes do rebrand
-     BLU (avatar, blue-dot, round-icon, alert-info/success/warning). */
-  --blu-dark: #1565c0;   /* a:hover, .pill.blue */
-  --blu-mid: #15a6ed;    /* .blue-dot */
-  --blu-light: #1e88e5;  /* link, .btn-primary, .tool-card code */
-  --blu-pale: #9ddca8;   /* .avatar (era verde no original) */
-  --blu-soft: #f7f7fb;   /* .round-icon */
-  --blu-info: #e3f2fd;   /* fundo de .alert-info/.pill.blue */
-  --blu-line: #b3e5fc;   /* borda de .alert-info */
+     Sem equivalente direto no app original — usam as mesmas cores que a
+     Meetime já tinha nesses elementos (avatar, blue-dot, round-icon,
+     alert-info/success/warning) antes de qualquer tema próprio. */
+  --link-dark: #1565c0;  /* a:hover, .pill.blue */
+  --dot-blue: #15a6ed;   /* .blue-dot */
+  --link: #1e88e5;       /* link, .btn-primary, .tool-card code */
+  --avatar-bg: #9ddca8;  /* .avatar (era verde no original) */
+  --icon-bg: #f7f7fb;    /* .round-icon */
+  --info-bg: #e3f2fd;    /* fundo de .alert-info/.pill.blue */
+  --info-line: #b3e5fc;  /* borda de .alert-info */
 
   --creme: #f7f7f7;      /* .wa-thread */
   --creme-2: #f5f5f5;    /* hover de superfície clara, .pill.grey */
@@ -100,11 +100,11 @@ body {
   padding-top: 50px;
 }
 button, input, select, textarea { font: inherit; }
-a { color: var(--blu-light); text-decoration: none; cursor: pointer; }
-a:hover { color: var(--blu-dark); text-decoration: none; }
+a { color: var(--link); text-decoration: none; cursor: pointer; }
+a:hover { color: var(--link-dark); text-decoration: none; }
 /* [FIX 15] .text-semibold é 500 no original, não 600 */
 .text-semibold { font-weight: 500; }
-.text-muted { color: #6e6459; } /* ~2,7:1 antes, agora ~5,8:1 sobre branco (WCAG AA) */
+.text-muted { color: #999; }
 .text-grey { color: var(--muted); }
 .text-size-small { font-size: 12px; }
 .position-left { margin-right: 7px; }
@@ -216,7 +216,7 @@ a:hover { color: var(--blu-dark); text-decoration: none; }
   font-size: 13px;
   line-height: 1.5384616;
 }
-.dropdown-menu li a:hover { background: var(--creme-2); color: #1f1c19; }
+.dropdown-menu li a:hover { background: var(--creme-2); color: #262626; }
 .divider { height: 1px; margin: 6px 0; overflow: hidden; background: var(--line-soft); }
 /* [FIX 2] .navbar-lg .navbar-nav>.dropdown-user img{max-height:32px} */
 .avatar {
@@ -226,7 +226,7 @@ a:hover { color: var(--blu-dark); text-decoration: none; }
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: var(--blu-pale);
+  background: var(--avatar-bg);
   color: transparent;
   font-size: 12px;
   font-weight: 500;
@@ -257,9 +257,9 @@ a:hover { color: var(--blu-dark); text-decoration: none; }
 .label-info { background: var(--blue); border-color: var(--blue); }
 .label-danger { background: var(--red); border-color: var(--red); }
 .label-warning { background: var(--orange); border-color: var(--orange); }
-.label-default { background: #9b948a; border-color: #9b948a; }
+.label-default { background: #999; border-color: #999; }
 .label-light {
-  color: #5c574f;
+  color: #555;
   background: var(--creme-2);
   border-color: var(--line);
 }
@@ -332,7 +332,7 @@ a:hover { color: var(--blu-dark); text-decoration: none; }
 .breadcrumb li + li:before {
   content: "/";
   padding: 0 8px;
-  color: #cdc6ba;
+  color: #ccc;
 }
 .breadcrumb-elements {
   margin: 0;
@@ -341,13 +341,13 @@ a:hover { color: var(--blu-dark); text-decoration: none; }
   display: flex;
   align-items: center;
 }
-/* [FIX 8] .breadcrumb-elements>li>a{padding:8px 15px;color:var(--text)}, hover #faf8f5 */
+/* [FIX 8] .breadcrumb-elements>li>a{padding:8px 15px;color:var(--text)}, hover #fafafa */
 .breadcrumb-elements li a {
   display: block;
   color: var(--text);
   padding: 8px 15px;
 }
-.breadcrumb-elements li a:hover { background: #faf8f5; }
+.breadcrumb-elements li a:hover { background: #fafafa; }
 
 .page-container { max-width: 1340px; margin: 0 auto; }
 .page-content { padding: 0 20px 40px; }
@@ -417,11 +417,10 @@ a:hover { color: var(--blu-dark); text-decoration: none; }
   border-color: var(--line);
   cursor: pointer;
 }
-.btn:hover { background: var(--creme-2); border-color: #cdc6ba; }
+.btn:hover { background: var(--creme-2); border-color: #ccc; }
 .btn-xs { padding: 4px 9px; font-size: 12px; line-height: 1.6666667; }
 .btn-sm { padding: 6px 11px; font-size: 12px; }
-/* [FIX 3] a Meetime usava #00455e aqui em todos os estados; a BLU mantém a
-   regra de "mesma cor em todos os estados" e troca o valor por --green. */
+/* [FIX 3] .btn-main{background:#00c850;border-color:#00c850} em todos os estados */
 .btn-main, .btn-success {
   color: #fff;
   background: var(--green);
@@ -436,7 +435,7 @@ a:hover { color: var(--blu-dark); text-decoration: none; }
 .btn-primary {
   color: #fff;
   background: var(--blue);
-  border-color: var(--blu-light);
+  border-color: var(--link);
 }
 .btn-danger {
   color: #fff;
@@ -444,12 +443,12 @@ a:hover { color: var(--blu-dark); text-decoration: none; }
   border-color: var(--red);
 }
 .btn-default { color: var(--text); background: var(--panel-2); border-color: var(--line); }
-.btn-link { color: var(--blu-light); background: transparent; border-color: transparent; }
+.btn-link { color: var(--link); background: transparent; border-color: transparent; }
 .btn-group { display: inline-flex; position: relative; vertical-align: middle; }
 
 /* ── formulários ────────────────────────────────────────────────────── */
 .main-search .form-group { margin-bottom: 15px; }
-.panel .main-search input[type="text"] { background: #faf8f5; }
+.panel .main-search input[type="text"] { background: #fafafa; }
 .has-feedback { position: relative; }
 .has-feedback-left .form-control { padding-left: 42px; }
 /* [FIX 11] o original ZERA a sombra interna do input */
@@ -484,7 +483,7 @@ a:hover { color: var(--blu-dark); text-decoration: none; }
   height: 42px;
   line-height: 42px;
   text-align: center;
-  color: #9b948a;
+  color: #999;
 }
 .filter-row {
   display: grid;
@@ -496,7 +495,7 @@ a:hover { color: var(--blu-dark); text-decoration: none; }
   display: block;
   margin-top: 5px;
   margin-bottom: 10px;
-  color: #9b948a;
+  color: #999;
 }
 
 /* ── abas ───────────────────────────────────────────────────────────── */
@@ -512,7 +511,7 @@ a:hover { color: var(--blu-dark); text-decoration: none; }
 .nav-tabs > li > a {
   display: block;
   padding: 14px 16px 8px;
-  color: #857f76;
+  color: #888;
   font-size: 14px;
   border-bottom: 2px solid transparent;
 }
@@ -535,10 +534,10 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   text-align: left;
 }
 .table > thead > tr > th {
-  border-bottom: 1px solid #b8b1a6;
+  border-bottom: 1px solid #bbb;
   color: var(--muted);
   font-weight: 500;
-  background: #faf8f5;
+  background: #fafafa;
   font-size: 11px;
 }
 .table-striped > tbody > tr:nth-of-type(odd) { background: var(--panel-2); }
@@ -558,7 +557,7 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   font-weight: 500;
 }
 .lead-avatar-dot.success { background: var(--ok-bg); color: var(--green-label); }
-.lead-avatar-dot.info { background: var(--blu-info); color: var(--blue); }
+.lead-avatar-dot.info { background: var(--info-bg); color: var(--blue); }
 .lead-avatar-dot.warn { background: var(--warn-bg); color: var(--warn); }
 
 /* ── KPIs, alertas ──────────────────────────────────────────────────── */
@@ -587,9 +586,9 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   border-radius: 3px;
 }
 .alert-info {
-  color: var(--blu-dark);
-  background: var(--blu-info);
-  border-color: var(--blu-line);
+  color: var(--link-dark);
+  background: var(--info-bg);
+  border-color: var(--info-line);
 }
 .alert-success {
   color: var(--ok);
@@ -643,7 +642,7 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   border-radius: 2px;
   overflow: hidden;
 }
-.bar span { display: block; height: 100%; background: #9b948a; }
+.bar span { display: block; height: 100%; background: #999; }
 .bar.success span { background: var(--green); }
 .bar.info span { background: var(--blue); }
 .bar.warning span { background: var(--orange); }
@@ -660,12 +659,12 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   grid-template-columns: repeat(3, 1fr);
   gap: 1px;
   margin-top: 12px;
-  background: #5c574f;
+  background: #555;
 }
 .dial-grid button {
   border: 0;
   height: 42px;
-  background: #3d3934;
+  background: #444;
   color: #fff;
   font-size: 18px;
 }
@@ -708,7 +707,7 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   font-size: 27px;
   line-height: 1;
   font-weight: 700;
-  color: var(--preto);
+  color: #242826;
 }
 .goal-filters {
   display: flex;
@@ -723,7 +722,7 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   height: 10px;
   border-radius: 50%;
   display: inline-block;
-  background: var(--blu-mid);
+  background: var(--dot-blue);
   margin-right: 12px;
 }
 .btn-goal {
@@ -750,7 +749,7 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   font-size: 78px;
   line-height: 1;
   font-weight: 700;
-  color: var(--preto);
+  color: #242826;
   margin-bottom: 12px;
 }
 .goal-title {
@@ -763,7 +762,7 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   grid-template-columns: 74px 1fr;
   align-items: center;
   gap: 22px;
-  color: #857f76;
+  color: #8b8f96;
   font-size: 18px;
   margin: 30px 0;
 }
@@ -771,7 +770,7 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   width: 72px;
   height: 72px;
   border-radius: 50%;
-  background: var(--blu-soft);
+  background: var(--icon-bg);
   display: grid;
   place-items: center;
   color: var(--green);
@@ -787,7 +786,7 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   display: flex;
   justify-content: center;
   gap: 42px;
-  color: #857f76;
+  color: #8b8f96;
   font-size: 16px;
   margin-top: -10px;
 }
@@ -830,7 +829,7 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   display: grid;
   grid-template-columns: 1fr 48px 48px;
   gap: 10px;
-  border-top: 1px dashed #b8b1a6;
+  border-top: 1px dashed #bbb;
   padding: 8px 0;
   align-items: center;
   font-size: 11px;
@@ -905,7 +904,7 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   display: inline-block;
   padding: 12px 18px;
   border-bottom: 2px solid transparent;
-  color: #857f76;
+  color: #888;
   font-size: 14px;
   font-weight: 500;
 }
@@ -921,7 +920,7 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  color: #857f76;
+  color: #8b8b8b;
   font-size: 38px;
   pointer-events: none;
 }
@@ -1074,7 +1073,7 @@ body.app-loading .page-container { opacity: .35; }
   width: 380px; background: #fff; border-radius: 4px; padding: 32px 30px;
   box-shadow: 0 20px 60px rgba(0,0,0,.35);
 }
-.login-card h1 { margin: 0 0 4px; font-size: 22px; font-weight: 700; color: var(--preto); }
+.login-card h1 { margin: 0 0 4px; font-size: 22px; font-weight: 700; color: #242826; }
 .login-card .sub { color: var(--muted); font-size: 12px; margin-bottom: 24px; }
 .login-card .form-group { margin-bottom: 14px; }
 .login-card label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
@@ -1097,18 +1096,18 @@ body.app-loading .page-container { opacity: .35; }
 .pill {
   display: inline-block; padding: 1px 5px 0; border-radius: 2px;
   font-size: 10px; font-weight: 500; letter-spacing: .1px; text-transform: uppercase;
-  border: 1px solid var(--line); color: #5c574f; background: #faf8f5;
+  border: 1px solid var(--line); color: #555; background: #fafafa;
 }
 .pill.green { background: var(--ok-bg); border-color: var(--ok-line); color: var(--ok); }
-.pill.blue  { background: var(--blu-info); border-color: var(--blu-line); color: var(--blu-dark); }
+.pill.blue  { background: var(--info-bg); border-color: var(--info-line); color: var(--link-dark); }
 .pill.red   { background: var(--red-bg); border-color: var(--red-bg); color: var(--red); }
 .pill.amber { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn); }
 .pill.grey  { background: var(--creme-2); }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
 
-.empty-state { text-align: center; padding: 52px 20px; color: #9b948a; }
-.empty-state .big { font-size: 34px; margin-bottom: 10px; color: #cdc6ba; }
+.empty-state { text-align: center; padding: 52px 20px; color: #999; }
+.empty-state .big { font-size: 34px; margin-bottom: 10px; color: #ccc; }
 
 .modal-backdrop-x {
   position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.45);
@@ -1129,7 +1128,7 @@ body.app-loading .page-container { opacity: .35; }
   padding: 14px 20px; border-top: 1px solid var(--line-soft);
   display: flex; justify-content: flex-end; gap: 8px;
 }
-.close-x { border: 0; background: none; font-size: 20px; color: #9b948a; cursor: pointer; line-height: 1; }
+.close-x { border: 0; background: none; font-size: 20px; color: #999; cursor: pointer; line-height: 1; }
 
 .field { margin-bottom: 14px; }
 .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
@@ -1160,10 +1159,10 @@ body.app-loading .page-container { opacity: .35; }
 .tool-card { border: 1px solid var(--line); border-radius: 3px; background: #fff; padding: 15px 16px; }
 .tool-card h4 { margin: 0 0 4px; font-size: 13px; font-weight: 500; }
 .tool-card .what { color: var(--muted); font-size: 12px; min-height: 34px; }
-.tool-card code { font-size: 11px; color: var(--blu-light); word-break: break-all; }
+.tool-card code { font-size: 11px; color: var(--link); word-break: break-all; }
 
 .json-box {
-  background: #faf8f5; border: 1px solid var(--line-soft); border-radius: 3px; padding: 12px;
+  background: #fafafa; border: 1px solid var(--line-soft); border-radius: 3px; padding: 12px;
   font-family: Consolas, Menlo, monospace; font-size: 11px; line-height: 1.5;
   max-height: 460px; overflow: auto; white-space: pre-wrap; word-break: break-word;
 }
@@ -1176,12 +1175,12 @@ body.app-loading .page-container { opacity: .35; }
 .bubble { max-width: 72%; padding: 9px 12px; border-radius: 8px; font-size: 12px; line-height: 1.5; }
 .bubble.out { background: #dcf8c6; justify-self: end; }
 .bubble.in  { background: #fff; border: 1px solid var(--line-soft); justify-self: start; }
-.bubble time { display: block; font-size: 10px; color: #9b948a; margin-top: 4px; }
+.bubble time { display: block; font-size: 10px; color: #999; margin-top: 4px; }
 
 .wizard-steps { display: flex; gap: 6px; margin-bottom: 18px; }
 .wizard-steps span {
   flex: 1; text-align: center; padding: 9px; font-size: 12px; font-weight: 500;
-  background: var(--creme-2); color: #9b948a; border-bottom: 2px solid var(--line);
+  background: var(--creme-2); color: #999; border-bottom: 2px solid var(--line);
 }
 .wizard-steps span.active { background: #fff; color: var(--text); border-bottom-color: var(--green); }
 
@@ -1216,13 +1215,13 @@ body.app-loading .page-container { opacity: .35; }
   letter-spacing: .1px;
   text-transform: uppercase;
   line-height: 1.5384616;
-  color: #5c574f;
+  color: #555;
   background: var(--creme-2);
   border: 1px solid var(--line);
   border-radius: 2px;
   cursor: pointer;
 }
-.chip:hover { border-color: #b8b1a6; }
+.chip:hover { border-color: #bbb; }
 .chip.active { color: #fff; background: var(--green-label); border-color: var(--green-label); }
 .chip-grid.compact { max-height: 62px; overflow: auto; }
 
@@ -1239,7 +1238,7 @@ body.app-loading .page-container { opacity: .35; }
   align-items: center;
   min-height: 36px;
 }
-.token-field:focus-within { border-color: var(--blu-light); box-shadow: 0 0 0 2px rgba(30, 136, 229, .18); }
+.token-field:focus-within { border-color: var(--link); box-shadow: 0 0 0 2px rgba(30, 136, 229, .18); }
 .token-field input {
   border: 0;
   outline: 0;
@@ -1283,7 +1282,7 @@ body.app-loading .page-container { opacity: .35; }
   border-bottom: 1px solid var(--line-soft);
   margin-bottom: 14px;
 }
-.filter-summary .token { background: var(--creme-2); border-color: var(--line); color: #5c574f; }
+.filter-summary .token { background: var(--creme-2); border-color: var(--line); color: #555; }
 
 /* Filtros avançados: recolhidos, com contador do que está ativo lá dentro. */
 .adv-toggle { display: flex; align-items: center; gap: 8px; padding: 9px 0; }
@@ -1342,6 +1341,3 @@ tr.row-detail > td { padding: 0 16px 16px !important; border-top: 0 !important; 
 /* Últimas buscas — memória de trabalho na própria tela. */
 .recentes { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 10px; }
 .recentes .chip { text-transform: none; letter-spacing: 0; font-size: 11px; }
-
-/* Logo na navbar: a versão clara vive sobre o Hamilton blue. */
-.navbar-brand img { height: 26px; width: auto; display: block; }
