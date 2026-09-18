@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import Call, Company, Lead, User
 from .. import perm, serial
+from .analytics import usuarios_do_time
 
 router = APIRouter(prefix="/api/dialer")
 
@@ -58,6 +59,7 @@ def _range(since: str | None, until: str | None) -> tuple[datetime, datetime]:
 def list_calls(user_id: int | None = None, status: str | None = None,
                output: str | None = None, lead_id: int | None = None,
                since: str | None = None, until: str | None = None,
+               team_id: int | None = None,
                page: int = 1, limit: int = Query(50, le=500),
                db: Session = Depends(get_db)):
     ator = perm.ator(db)
@@ -78,6 +80,9 @@ def list_calls(user_id: int | None = None, status: str | None = None,
         query = query.filter(Call.output == output)
     if lead_id:
         query = query.filter(Call.lead_id == lead_id)
+    do_time = usuarios_do_time(db, team_id)
+    if do_time is not None:
+        query = query.filter(Call.user_id.in_(do_time))
     total = query.count()
     rows = (query.order_by(Call.started_at.desc())
             .offset((page - 1) * limit).limit(limit).all())
@@ -121,11 +126,15 @@ def register_call(payload: dict = Body(...), db: Session = Depends(get_db)):
 
 @router.get("/calls/statistics/overview")
 def overview(since: str | None = None, until: str | None = None,
-             user_id: int | None = None, db: Session = Depends(get_db)):
+             user_id: int | None = None, team_id: int | None = None,
+             db: Session = Depends(get_db)):
     start, end = _range(since, until)
     query = db.query(Call).filter(Call.started_at.between(start, end))
     if user_id:
         query = query.filter(Call.user_id == user_id)
+    do_time = usuarios_do_time(db, team_id)
+    if do_time is not None:
+        query = query.filter(Call.user_id.in_(do_time))
     calls = query.all()
     connected = [c for c in calls if c.status == "CONNECTED"]
     by_hour = defaultdict(lambda: [0, 0])
@@ -166,21 +175,28 @@ def overview(since: str | None = None, until: str | None = None,
 
 @router.get("/calls/statistics/dropped")
 def dropped(since: str | None = None, until: str | None = None,
-            db: Session = Depends(get_db)):
+            team_id: int | None = None, db: Session = Depends(get_db)):
     """Relatório de ligações derrubadas: conectadas e encerradas em até 10s."""
     start, end = _range(since, until)
-    rows = (db.query(Call).filter(Call.started_at.between(start, end),
-                                  Call.status == "CONNECTED", Call.duration <= 10)
-            .order_by(Call.started_at.desc()).all())
+    q = db.query(Call).filter(Call.started_at.between(start, end),
+                              Call.status == "CONNECTED", Call.duration <= 10)
+    do_time = usuarios_do_time(db, team_id)
+    if do_time is not None:
+        q = q.filter(Call.user_id.in_(do_time))
+    rows = q.order_by(Call.started_at.desc()).all()
     return {"data": [serial.call(c) for c in rows], "meta": {"total": len(rows)}}
 
 
 @router.get("/calls/statements")
 def statement(since: str | None = None, until: str | None = None,
-              db: Session = Depends(get_db)):
+              team_id: int | None = None, db: Session = Depends(get_db)):
     start, end = _range(since, until)
-    rows = (db.query(Call.user_id, func.count(Call.id), func.sum(Call.duration))
-            .filter(Call.started_at.between(start, end)).group_by(Call.user_id).all())
+    q = (db.query(Call.user_id, func.count(Call.id), func.sum(Call.duration))
+         .filter(Call.started_at.between(start, end)))
+    do_time = usuarios_do_time(db, team_id)
+    if do_time is not None:
+        q = q.filter(Call.user_id.in_(do_time))
+    rows = q.group_by(Call.user_id).all()
     users = {u.id: u for u in db.query(User).all()}
     data, total_min, total_cost = [], 0, 0.0
     for uid, count, seconds in rows:

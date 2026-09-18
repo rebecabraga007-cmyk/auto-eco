@@ -164,17 +164,34 @@ def calculate_effort(ref: str, db: Session = Depends(get_db)):
             "conversionRateGoal": conv}
 
 
+def usuarios_do_time(db: Session, team_id: int | None) -> list[int] | None:
+    """Ids de quem está no time, ou `None` quando não há filtro de time.
+
+    Lista vazia não é o mesmo que `None`: um time sem ninguém tem que devolver
+    zero, não a empresa inteira — por isso o chamador testa `is not None`.
+    """
+    if not team_id:
+        return None
+    return [r[0] for r in db.query(User.id).filter(User.team_id == team_id).all()]
+
+
 @router.get("/flow/statistics/summary")
 def statistics(since: str | None = None, until: str | None = None,
-               client_id: int | None = None, db: Session = Depends(get_db)):
+               client_id: int | None = None, team_id: int | None = None,
+               db: Session = Depends(get_db)):
     perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
     end = datetime.fromisoformat(until) if until else datetime.utcnow()
     start = datetime.fromisoformat(since) if since else end - timedelta(days=30)
+    # Time é um conjunto de pessoas, então filtrar por time é filtrar pelo dono:
+    # o executor da atividade, o SDR do lead.
+    do_time = usuarios_do_time(db, team_id)
 
     acts = db.query(LeadActivity).join(Lead, LeadActivity.lead_id == Lead.id) \
         .filter(LeadActivity.done_at.between(start, end))
     if client_id:
         acts = acts.filter(Lead.client_id == client_id)
+    if do_time is not None:
+        acts = acts.filter(LeadActivity.user_id.in_(do_time))
     acts = acts.all()
     done = [a for a in acts if a.status == "DONE"]
     late = [a for a in done if a.done_at > a.scheduled_at + timedelta(hours=1)]
@@ -185,6 +202,9 @@ def statistics(since: str | None = None, until: str | None = None,
     if client_id:
         won_q = won_q.filter(Lead.client_id == client_id)
         lost_q = lost_q.filter(Lead.client_id == client_id)
+    if do_time is not None:
+        won_q = won_q.filter(Lead.sdr_id.in_(do_time))
+        lost_q = lost_q.filter(Lead.sdr_id.in_(do_time))
     won, lost = won_q.all(), lost_q.all()
 
     reasons = Counter(l.lost_reason.name if l.lost_reason else "Sem motivo" for l in lost)
@@ -199,12 +219,17 @@ def statistics(since: str | None = None, until: str | None = None,
         q = db.query(func.count(Lead.id)).filter(Lead.status == status)
         if client_id:
             q = q.filter(Lead.client_id == client_id)
+        if do_time is not None:
+            q = q.filter(Lead.sdr_id.in_(do_time))
         funnel.append({"status": status, "count": q.scalar()})
 
     cadences = []
     for c in db.query(Cadence).filter(Cadence.executing).all():
-        total = db.query(func.count(Lead.id)).filter_by(cadence_id=c.id).scalar()
-        cwon = db.query(func.count(Lead.id)).filter_by(cadence_id=c.id, status="WON").scalar()
+        base = db.query(func.count(Lead.id)).filter(Lead.cadence_id == c.id)
+        if do_time is not None:
+            base = base.filter(Lead.sdr_id.in_(do_time))
+        total = base.scalar()
+        cwon = base.filter(Lead.status == "WON").scalar()
         if total:
             cadences.append({"id": c.id, "name": c.name, "priority": c.priority,
                              "client": serial.client(c.client), "total": total, "won": cwon,

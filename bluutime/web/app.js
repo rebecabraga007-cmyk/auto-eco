@@ -187,7 +187,21 @@ function periodoDatas(p = state.periodo || { tipo: "30d" }) {
   return { since: diaISO(ini), until: diaISO(hoje) };
 }
 
-/** Query string com o período atual mais o que a tela quiser juntar. */
+/** Query string dos filtros da tela: período, time e o que ela quiser juntar.
+ *  Período e time andam sempre juntos — são as mesmas telas —, então vale um
+ *  helper só em vez de cada chamada lembrar de somar os dois. */
+function filtrosQS(extra = {}) {
+  const { since, until } = periodoDatas();
+  const qs = new URLSearchParams();
+  if (since) qs.set("since", since);
+  if (until) qs.set("until", until);
+  if (state.teamId) qs.set("team_id", state.teamId);
+  Object.entries(extra).forEach(([k, v]) => { if (v) qs.set(k, v); });
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
+/** Só o período — para quem não tem recorte por time (ex.: relatórios). */
 function periodoQS(extra = {}) {
   const { since, until } = periodoDatas();
   const qs = new URLSearchParams();
@@ -196,6 +210,14 @@ function periodoQS(extra = {}) {
   Object.entries(extra).forEach(([k, v]) => { if (v) qs.set(k, v); });
   const s = qs.toString();
   return s ? `?${s}` : "";
+}
+
+/** Seletor de time. Some quando a empresa não tem times cadastrados. */
+function timeControle() {
+  const times = state.teams || [];
+  if (!times.length) return "";
+  return `<select class="form-control input-sm" id="pdTime" aria-label="Time">
+    ${options(times, state.teamId || "", { blank: "Todos os times" })}</select>`;
 }
 
 function periodoControle() {
@@ -231,6 +253,8 @@ function ligarPeriodo(aoMudar) {
   };
   de.onchange = manual;
   ate.onchange = manual;
+  const time = document.getElementById("pdTime");
+  if (time) time.onchange = () => { state.teamId = time.value; aoMudar(); };
 }
 
 /* ── login ───────────────────────────────────────────────────────────── */
@@ -340,15 +364,16 @@ async function boot() {
   aplicarPermissoesNav(state.me.nivel || "sdr");
   document.body.classList.remove("app-loading");
   loginShell.classList.add("hidden");
-  const [clients, users, cadences, reasons, dialerCfg] = await Promise.all([
+  const [clients, users, cadences, reasons, dialerCfg, teams] = await Promise.all([
     api("/api/clients"), api("/api/users"), api("/api/flow/cadences"), api("/api/flow/lost-reasons"),
-    api("/api/dialer/configuration"),
+    api("/api/dialer/configuration"), api("/api/teams").catch(() => []),
   ]);
   state.clients = clients;
   state.users = users.data;
   state.cadences = cadences;
   state.lostReasons = reasons;
   state.dialerConfig = dialerCfg;
+  state.teams = teams;
   go(location.hash.slice(1) || "dashboard");
 }
 
@@ -1813,7 +1838,7 @@ PAGES.ligacoes = {
   async render() {
     // Ligações derrubadas: conectou e caiu em até 10s. Não é falha técnica, é
     // sinal de abordagem — e não aparecia em tela nenhuma.
-    const qs = periodoQS();
+    const qs = filtrosQS();
     const [ov, derrubadas] = await Promise.all([
       api(`/api/dialer/calls/statistics/overview${qs}`),
       api(`/api/dialer/calls/statistics/dropped${qs}`).catch(() => ({ data: [] })),
@@ -1822,7 +1847,7 @@ PAGES.ligacoes = {
     const best = o.bestHourToCall;
     const listaDerrubadas = derrubadas.data || [];
     view.innerHTML = `
-      <div class="toolbar">${periodoControle()}</div>
+      <div class="toolbar">${periodoControle()}${timeControle()}</div>
       ${kpis([
         { value: o.totalCalls, label: "Ligações no período" },
         { value: o.totalConnected, label: "Conectadas", tone: "success" },
@@ -1906,11 +1931,11 @@ PAGES["lista-ligacoes"] = {
 PAGES.extrato = {
   area: "Ligações", title: "Extrato",
   async render() {
-    const res = await api(`/api/dialer/calls/statements${periodoQS()}`);
+    const res = await api(`/api/dialer/calls/statements${filtrosQS()}`);
     const rows = res.data.map((r) => ({ cells: [
       r.user ? h(r.user.name) : "—", r.calls, r.minutes, fmtMoney(r.cost)] }));
     view.innerHTML = `
-      <div class="toolbar">${periodoControle()}</div>
+      <div class="toolbar">${periodoControle()}${timeControle()}</div>
       ${kpis([
         { value: res.meta.totalMinutes, label: "Minutos no período" },
         { value: fmtMoney(res.meta.totalCost), label: "Custo estimado", tone: "warning" },
@@ -2040,7 +2065,7 @@ PAGES.estatisticas = {
   area: "Estatísticas", title: "Prospecção",
   async render() {
     const clientId = state.statClient || "";
-    const s = await api(`/api/flow/statistics/summary${periodoQS({ client_id: clientId })}`);
+    const s = await api(`/api/flow/statistics/summary${filtrosQS({ client_id: clientId })}`);
     const cadRows = s.cadences.map((c) => ({ cells: [
       h(c.name), c.client ? h(c.client.name) : "—",
       `<span class="pill">${h(PRIORITY_LABEL[c.priority])}</span>`,
@@ -2049,7 +2074,7 @@ PAGES.estatisticas = {
     view.innerHTML = `
       <div class="toolbar">
         <select class="form-control" id="sClient">${options(state.clients, clientId, { blank: "Todos os clientes" })}</select>
-        ${periodoControle()}
+        ${periodoControle()}${timeControle()}
       </div>
       ${kpis([
         { value: s.activities.total, label: "Atividades realizadas" },
