@@ -3124,6 +3124,7 @@ const BLOCOS_PESSOA = [
   ["vinculos", "Vínculos (RAIS)", false],
   ["parentes", "Parentes", false],
   ["contacts", "Contatos (Serasa)", true],
+  ["dossie", "Assertiva (telefone e sinais)", true],
 ];
 
 function detalhePessoa(p) {
@@ -3144,7 +3145,7 @@ function detalhePessoa(p) {
         ${pago && !dados ? `<div class="alert alert-info alert-styled-left">
             Este bloco <strong>gasta consulta</strong>. Carrega só quando você pedir.
             <button class="btn btn-main btn-xs ml-5" data-carregar="${h(cpf)}">Consultar agora</button>
-          </div>` : dados ? renderPessoa(dados, ativo === "mk" ? "mk" : ativo)
+          </div>` : dados ? (ativo === "dossie" ? renderDossieRico(dados) : renderPessoa(dados, ativo === "mk" ? "mk" : ativo))
                           : `<span class="spinner"></span> <span class="text-muted ml-5">consultando…</span>`}
         ${ativo === "mk" && gente.scores[cpf] && gente.scores[cpf].bateu.length
           ? `<div class="detail-note">Bateu em: ${gente.scores[cpf].bateu.map(h).join(" · ")}.</div>` : ""}
@@ -3211,7 +3212,7 @@ async function carregarCpfDireto(fonte) {
   renderCpfDireto();
   try {
     const r = fonte === "assertiva"
-      ? await api(`/api/capiblu/assertiva/cpf?q=${gente.cpfDireto}`)
+      ? await api(`/api/capiblu/pessoas/${gente.cpfDireto}/dossie`)
       : await api(`/api/capiblu/pessoas/${gente.cpfDireto}/mk`);
     gente.cpfDados[fonte] = r;
   } catch (e) {
@@ -3242,7 +3243,7 @@ function renderCpfDireto() {
           : carregando
             ? `<span class="spinner"></span> <span class="text-muted ml-5">consultando…</span>`
             : dados
-              ? (ativo === "mk" ? renderPessoa(dados, "mk") : renderAssertiva(dados, "cpf", gente.cpfDireto))
+              ? (ativo === "mk" ? renderPessoa(dados, "mk") : renderDossieRico(dados))
               : `<span class="spinner"></span> <span class="text-muted ml-5">consultando…</span>`}
       </div>
     </div>`;
@@ -5511,7 +5512,71 @@ function renderPessoa(r, bloco) {
   if (bloco === "parentes") return renderParentes(r);
   if (bloco === "vinculos") return renderVinculos(r);
   if (bloco === "contacts") return renderContatos(r);
+  if (bloco === "dossie") return renderDossieRico(r);
   return tabelaGenerica(r);
+}
+
+/** Dossiê rico do funil novo (Assertiva por trás): telefone ordenado por
+ *  chance de alguém atender — não-perturbe sempre por último, com o motivo
+ *  ao lado — mais situação do CPF, óbito provável, PPE e vínculo por área.
+ *  Sem isso o SDR discava do topo da lista e caía direto no número que a
+ *  própria Assertiva já avisava pra não usar. */
+function renderDossieRico(d) {
+  if (!d || d.status === "error") {
+    return `<div class="alert alert-danger alert-styled-left">${h((d && d.message) || "Falha ao consultar.")}</div>`;
+  }
+  const id = d.identificacao || {};
+  const doc = d.dossie || {};
+  if (!id.cpf) {
+    return `<div class="alert alert-info alert-styled-left">
+      <strong>Não consegui identificar o CPF.</strong><br>
+      <span class="text-muted text-size-small">${h(id.porque || id.situacao || "sem motivo registrado")}</span>
+    </div>`;
+  }
+  if (doc.status && doc.status !== "ok") {
+    return `<div class="alert alert-danger alert-styled-left">CPF encontrado, mas os dados não vieram: ${h(doc.message || doc.status)}</div>`;
+  }
+  const tels = doc.telefones || [];
+  const vinc = doc.vinculos || [];
+  const bloco = (titulo, corpo) => corpo
+    ? `<div class="sub-block"><h4>${h(titulo)}</h4>${corpo}</div>` : "";
+  const telLinha = (t) => {
+    const num = String(t.display || t.numero || t.telefone || "").replace(/\D/g, "");
+    const bloqueado = !!t.nao_perturbe;
+    return `<div style="display:flex;align-items:baseline;gap:10px;padding:5px 0;
+                border-bottom:1px solid #eee${bloqueado ? ";opacity:.55" : ""}">
+      <strong style="font-family:monospace">${h(num || t.display || "—")}</strong>
+      ${t.whatsapp ? '<span class="pill green">whatsapp</span>' : ""}
+      <span class="text-muted text-size-small">${h(t.porque || "")}</span>
+    </div>`;
+  };
+  return `
+    ${id.forte === false ? `<div class="alert alert-info alert-styled-left">
+        <strong>Sinal fraco — confira antes de ligar.</strong> Este é o candidato de maior
+        nota, não uma identificação confirmada.
+        ${(id.alternativas || []).length ? `<div class="text-muted text-size-small mt-5">
+          Outros possíveis: ${id.alternativas.map((a) => `${h(a.nome || a.cpf)} (${h(a.forca)})`).join(" · ")}</div>` : ""}
+      </div>` : ""}
+    ${grade([
+      campo("Nome", doc.nome), campo("CPF", fmtCPF(id.cpf)),
+      campo("Idade", doc.idade), campo("Situação do CPF", doc.situacao_cpf),
+      campo("Óbito provável", doc.obito_provavel ? "sim" : ""),
+      campo("PPE", doc.ppe ? "pessoa politicamente exposta" : ""),
+    ])}
+    <div class="text-muted text-size-small mt-5">identificado por <strong>${h(id.situacao || "")}</strong>
+      ${id.confianca ? ` · confiança ${h(id.confianca)}` : ""}${id.porque ? ` · ${h(id.porque)}` : ""}</div>
+    ${bloco(`Telefones (${tels.length}) — melhor primeiro`, tels.length
+      ? tels.map(telLinha).join("") : `<span class="text-muted">Nenhum telefone na base.</span>`)}
+    ${bloco("E-mails", (doc.emails || []).length ? h(doc.emails.join(" · ")) : "")}
+    ${bloco(`Histórico profissional (${vinc.length})`, vinc.length
+      ? table(["Empresa", "Cargo", "Desde", ""], vinc.slice(0, 8).map((v) => ({ cells: [
+          h(v.razao || "—"), h(v.cargo || "sem CBO"),
+          h(v.desde ? String(v.desde).slice(0, 10) : "—"),
+          v.tipo === "societario" ? `<span class="pill grey">sócio</span>` : "",
+        ] })), { scroll: true })
+      : `<span class="text-muted text-size-small">Sem vínculo no cadastro — acontece com
+         empresa aberta há pouco, PJ, ou quem trocou de emprego recentemente.</span>`)}
+    ${bloco("Endereço", (doc.enderecos || []).length ? h(endereco(doc.enderecos[0])) : "")}`;
 }
 
 function renderMk(r) {

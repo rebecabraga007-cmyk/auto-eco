@@ -184,8 +184,18 @@ async def pessoa(cpf: str):
 
 
 @router.get("/pessoas/{cpf}/{bloco}")
-async def pessoa_bloco(cpf: str, bloco: str):
-    """mk · parentes · vinculos · contacts"""
+async def pessoa_bloco(cpf: str, bloco: str, teto_brl: float = 3.0):
+    """mk · parentes · vinculos · contacts · dossie"""
+    if bloco == "dossie":
+        # Dossiê rico do funil novo: telefone ordenado por chance de atender
+        # (não-perturbe sempre por último, com o motivo ao lado), situação do
+        # CPF, óbito provável, PPE e vínculo com área — em vez do Mk cru.
+        # Mesma rota que `/api/funil/pessoa` usa quando já se tem o CPF.
+        code, data = await post("/api/funil/pessoa",
+                                json={"cpf": cpf, "teto_brl": teto_brl})
+        if code >= 400:
+            raise _proxy_erro(code, data, "Falha ao consultar o dossiê.")
+        return data
     if bloco not in {"mk", "parentes", "vinculos", "contacts"}:
         raise HTTPException(404, "Bloco desconhecido.")
     code, data = await get(f"/api/person/{cpf}/{bloco}")
