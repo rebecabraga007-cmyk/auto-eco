@@ -163,6 +163,76 @@ const options = (list, selected, { valueKey = "id", labelKey = "name", blank = "
   (blank ? `<option value="">${h(blank)}</option>` : "") +
   list.map((i) => `<option value="${h(i[valueKey])}"${String(i[valueKey]) === String(selected) ? " selected" : ""}>${h(i[labelKey])}</option>`).join("");
 
+/* ── período ─────────────────────────────────────────────────────────────
+   Toda rota de estatística (`/flow/statistics/summary`, `/dialer/calls*`,
+   `/reports/{key}`) já aceitava `since`/`until` desde sempre; o que não
+   existia era o controle. Sem ele cada tela ficava presa na janela padrão
+   do backend, e não havia como olhar um mês fechado nem comparar períodos. */
+const PERIODOS = [["7d", "Últimos 7 dias"], ["30d", "Últimos 30 dias"],
+                  ["90d", "Últimos 90 dias"], ["mes", "Este mês"],
+                  ["mes-1", "Mês passado"], ["livre", "Escolher datas"]];
+
+const diaISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+function periodoDatas(p = state.periodo || { tipo: "30d" }) {
+  const hoje = new Date();
+  if (p.tipo === "livre") return { since: p.since || "", until: p.until || "" };
+  if (p.tipo === "mes")
+    return { since: diaISO(new Date(hoje.getFullYear(), hoje.getMonth(), 1)), until: diaISO(hoje) };
+  if (p.tipo === "mes-1")
+    return { since: diaISO(new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1)),
+             until: diaISO(new Date(hoje.getFullYear(), hoje.getMonth(), 0)) };
+  const ini = new Date(hoje);
+  ini.setDate(ini.getDate() - (Number(String(p.tipo).replace("d", "")) || 30));
+  return { since: diaISO(ini), until: diaISO(hoje) };
+}
+
+/** Query string com o período atual mais o que a tela quiser juntar. */
+function periodoQS(extra = {}) {
+  const { since, until } = periodoDatas();
+  const qs = new URLSearchParams();
+  if (since) qs.set("since", since);
+  if (until) qs.set("until", until);
+  Object.entries(extra).forEach(([k, v]) => { if (v) qs.set(k, v); });
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
+function periodoControle() {
+  const p = state.periodo || { tipo: "30d" };
+  const { since, until } = periodoDatas(p);
+  return `<select class="form-control input-sm" id="pdTipo" aria-label="Período">
+      ${PERIODOS.map(([k, v]) => `<option value="${k}"${p.tipo === k ? " selected" : ""}>${h(v)}</option>`).join("")}
+    </select>
+    <input class="form-control input-sm" type="date" id="pdDe" value="${h(since)}" aria-label="Data inicial"${p.tipo === "livre" ? "" : " disabled"}>
+    <span class="text-muted text-size-small">até</span>
+    <input class="form-control input-sm" type="date" id="pdAte" value="${h(until)}" aria-label="Data final"${p.tipo === "livre" ? "" : " disabled"}>`;
+}
+
+/** Liga o controle. `aoMudar` costuma ser `() => go(state.page)`. */
+function ligarPeriodo(aoMudar) {
+  const tipo = document.getElementById("pdTipo");
+  if (!tipo) return;
+  const de = document.getElementById("pdDe");
+  const ate = document.getElementById("pdAte");
+  tipo.onchange = () => {
+    // Ao abrir "escolher datas" o intervalo já vem preenchido com o que estava
+    // valendo: começar com dois campos vazios obrigaria a redigitar tudo.
+    state.periodo = tipo.value === "livre"
+      ? { tipo: "livre", ...periodoDatas(state.periodo || { tipo: "30d" }) }
+      : { tipo: tipo.value };
+    aoMudar();
+  };
+  const manual = () => {
+    if (!de.value || !ate.value) return;
+    if (de.value > ate.value) { toast("A data inicial é depois da final.", "err"); return; }
+    state.periodo = { tipo: "livre", since: de.value, until: ate.value };
+    aoMudar();
+  };
+  de.onchange = manual;
+  ate.onchange = manual;
+}
+
 /* ── login ───────────────────────────────────────────────────────────── */
 const loginShell = document.getElementById("loginShell");
 
@@ -1743,14 +1813,16 @@ PAGES.ligacoes = {
   async render() {
     // Ligações derrubadas: conectou e caiu em até 10s. Não é falha técnica, é
     // sinal de abordagem — e não aparecia em tela nenhuma.
+    const qs = periodoQS();
     const [ov, derrubadas] = await Promise.all([
-      api("/api/dialer/calls/statistics/overview"),
-      api("/api/dialer/calls/statistics/dropped").catch(() => ({ data: [] })),
+      api(`/api/dialer/calls/statistics/overview${qs}`),
+      api(`/api/dialer/calls/statistics/dropped${qs}`).catch(() => ({ data: [] })),
     ]);
     const o = ov.data[0];
     const best = o.bestHourToCall;
     const listaDerrubadas = derrubadas.data || [];
     view.innerHTML = `
+      <div class="toolbar">${periodoControle()}</div>
       ${kpis([
         { value: o.totalCalls, label: "Ligações no período" },
         { value: o.totalConnected, label: "Conectadas", tone: "success" },
@@ -1787,6 +1859,7 @@ PAGES.ligacoes = {
             ] })), { scroll: true })
         : emptyState("Nenhuma ligação derrubada no período."),
         { subtitle: "Atendeu e desligou em até 10 segundos — sinal de abordagem, não de linha." })}`;
+    ligarPeriodo(() => go("ligacoes"));
   },
 };
 
@@ -1833,10 +1906,11 @@ PAGES["lista-ligacoes"] = {
 PAGES.extrato = {
   area: "Ligações", title: "Extrato",
   async render() {
-    const res = await api("/api/dialer/calls/statements");
+    const res = await api(`/api/dialer/calls/statements${periodoQS()}`);
     const rows = res.data.map((r) => ({ cells: [
       r.user ? h(r.user.name) : "—", r.calls, r.minutes, fmtMoney(r.cost)] }));
     view.innerHTML = `
+      <div class="toolbar">${periodoControle()}</div>
       ${kpis([
         { value: res.meta.totalMinutes, label: "Minutos no período" },
         { value: fmtMoney(res.meta.totalCost), label: "Custo estimado", tone: "warning" },
@@ -1844,6 +1918,7 @@ PAGES.extrato = {
         { value: res.data.length, label: "Usuários com consumo", tone: "info" },
       ])}
       ${panel("Consumo por usuário", table(["Usuário", "Ligações", "Minutos", "Custo"], rows))}`;
+    ligarPeriodo(() => go("extrato"));
   },
 };
 
@@ -1965,7 +2040,7 @@ PAGES.estatisticas = {
   area: "Estatísticas", title: "Prospecção",
   async render() {
     const clientId = state.statClient || "";
-    const s = await api(`/api/flow/statistics/summary${clientId ? `?client_id=${clientId}` : ""}`);
+    const s = await api(`/api/flow/statistics/summary${periodoQS({ client_id: clientId })}`);
     const cadRows = s.cadences.map((c) => ({ cells: [
       h(c.name), c.client ? h(c.client.name) : "—",
       `<span class="pill">${h(PRIORITY_LABEL[c.priority])}</span>`,
@@ -1974,7 +2049,7 @@ PAGES.estatisticas = {
     view.innerHTML = `
       <div class="toolbar">
         <select class="form-control" id="sClient">${options(state.clients, clientId, { blank: "Todos os clientes" })}</select>
-        <span class="spacer text-muted text-size-small">Últimos 30 dias</span>
+        ${periodoControle()}
       </div>
       ${kpis([
         { value: s.activities.total, label: "Atividades realizadas" },
@@ -1998,6 +2073,7 @@ PAGES.estatisticas = {
         table(["Cadência", "Cliente", "Prioridade", "Leads", "Ganhos", "Conversão"], cadRows))}`;
 
     document.getElementById("sClient").onchange = (e) => { state.statClient = e.target.value; go("estatisticas"); };
+    ligarPeriodo(() => go("estatisticas"));
   },
 };
 
@@ -2005,11 +2081,15 @@ PAGES.relatorios = {
   area: "Estatísticas", title: "Relatórios",
   async render() {
     const list = await api("/api/reports");
+    const qs = periodoQS();
     const rows = list.map((r) => ({ cells: [
       `<strong>${h(r.name)}</strong>`, h(r.description),
-      `<a class="btn btn-default btn-xs" href="/api/reports/${h(r.key)}">Baixar CSV</a>`] }));
-    view.innerHTML = panel("Relatórios", table(["Relatório", "Para que serve", ""], rows),
-      { subtitle: "Download imediato em CSV (separador ponto-e-vírgula, compatível com Excel pt-BR)" });
+      `<a class="btn btn-default btn-xs" href="/api/reports/${h(r.key)}${qs}">Baixar CSV</a>`] }));
+    view.innerHTML = `
+      <div class="toolbar">${periodoControle()}</div>
+      ${panel("Relatórios", table(["Relatório", "Para que serve", ""], rows),
+        { subtitle: "O período escolhido acima vale para o arquivo baixado. CSV com ponto-e-vírgula, compatível com Excel pt-BR." })}`;
+    ligarPeriodo(() => go("relatorios"));
   },
 };
 
