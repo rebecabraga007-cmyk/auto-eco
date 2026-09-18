@@ -39,68 +39,53 @@
 }
 
 :root {
-  /* ── Paleta BLU ───────────────────────────────────────────────────────
-   *
-   * Âncora: o Hamilton blue #00455E, medido no arquivo da logo institucional.
-   * Tudo o mais é derivado dele — os realces subindo em luminosidade na mesma
-   * família, os fundos como diluições do próprio azul, e os neutros puxados
-   * para o quente para conversar com o branco creme em vez de brigar com ele.
-   *
-   * Os semânticos não são cores prontas de biblioteca: o verde é um
-   * verde-petróleo, o âmbar é queimado e o vermelho é fechado, todos com a
-   * mesma saturação moderada do azul. Cor de alerta ainda grita quando
-   * precisa, mas nenhuma delas destoa da marca.
-   *
-   * Os nomes --green* são históricos: vieram da casca da Meetime e continuam
-   * porque centenas de regras apontam para eles. O papel é que importa —
-   * --green é ação, --green-label é rótulo.
-   */
-
-  /* Marca */
-  --blu: #00455e;           /* Hamilton blue — ação primária */
-  --blu-dark: #003347;      /* hover de botão, link visitado */
-  --blu-mid: #0b6b8f;       /* rótulo, badge, chip, token */
-  --blu-light: #1c7fa3;     /* link, foco, informação */
-  --blu-pale: #7fa8bb;      /* traço fraco, gráfico secundário */
-  --blu-soft: #e3edf1;      /* fundo de selo da marca */
-  --blu-info: #dcedf4;      /* fundo de aviso informativo */
-  --blu-line: #b9d5e0;      /* borda de selo e aviso */
-
-  /* Neutros — quentes, para assentar sobre o creme */
-  --creme: #f7f5f1;         /* fundo da aplicação */
-  --creme-2: #efebe4;       /* hover em superfície clara, chip apagado */
-  --creme-3: #f6f4f0;       /* zebra e hover de linha de tabela */
-  --preto: #1a1a1a;         /* logo sobre claro, texto máximo */
-
-  --nav: var(--blu);
-  --nav-hover: rgba(0, 0, 0, .18);
-  --body: var(--creme);
+  /* [FIX 2] navbar real: #3c3c3c !important (cinza neutro, não esverdeado) */
+  --nav: #3c3c3c;
+  --nav-hover: rgba(0, 0, 0, .1);
+  --body: #f5f5f5;
   --panel: #fff;
-  --panel-2: #fdfcfa;       /* botão default, cabeçalho de tabela */
-  --text: #2b2723;
-  --muted: #7b746a;
-  --line: #ddd8d0;
-  --line-soft: #ebe7e0;
+  /* [FIX 10] .btn-default/.table-striped real: #fcfcfc */
+  --panel-2: #fcfcfc;
+  --text: #333;
+  --muted: #777;
+  --line: #ddd;
+  --line-soft: #eee;
 
-  /* Papéis do sistema */
-  --green: var(--blu);          /* botão, aba ativa, indicador */
-  --green-label: var(--blu-mid); /* label, badge, chip, token */
-  --blue: var(--blu-light);      /* informação, link, foco */
+  /* [FIX 3] o original tem DOIS verdes com papéis separados:
+     #00c850 → botão, aba ativa, indicador
+     #4caf50 → label e badge (verde Material) */
+  --green: #00c850;
+  --green-label: #4caf50;
+  --blue: #2196f3;
+  --red: #f44336;
+  --orange: #ff5722;
+  --cyan: #00bcd4;
 
-  /* Semânticos — mesma saturação moderada da marca */
-  --ok: #1f7a5c;            /* verde-petróleo: confirmado, sucesso */
-  --ok-bg: #e2f0ea;
-  --ok-line: #c4ddd3;
-  --warn: #a86a12;          /* âmbar queimado: atenção, custo, pendência */
-  --warn-bg: #f9eedc;
-  --warn-line: #ecd8b6;
-  --red: #b3261e;           /* vermelho fechado: erro, atraso, perda */
-  --red-bg: #f9e7e5;
-  --red-line: #efc9c5;
-  --roxo: #5f4b8b;          /* ligação não significativa, categoria neutra */
+  /* ── Extensões pós-Meetime (dossiê, funil, WhatsApp, etc.) ──────────────
+     Sem equivalente direto no app original — mantidas aqui como cores
+     próprias do Meetime já usadas nesses mesmos elementos antes do rebrand
+     BLU (avatar, blue-dot, round-icon, alert-info/success/warning). */
+  --blu-dark: #1565c0;   /* a:hover, .pill.blue */
+  --blu-mid: #15a6ed;    /* .blue-dot */
+  --blu-light: #1e88e5;  /* link, .btn-primary, .tool-card code */
+  --blu-pale: #9ddca8;   /* .avatar (era verde no original) */
+  --blu-soft: #f7f7fb;   /* .round-icon */
+  --blu-info: #e3f2fd;   /* fundo de .alert-info/.pill.blue */
+  --blu-line: #b3e5fc;   /* borda de .alert-info */
 
-  --orange: var(--warn);
-  --cyan: var(--blu-mid);
+  --creme: #f7f7f7;      /* .wa-thread */
+  --creme-2: #f5f5f5;    /* hover de superfície clara, .pill.grey */
+  --creme-3: #f8f8f8;    /* hover de linha de tabela */
+  --preto: #111;         /* ilustração do WhatsApp vazio */
+
+  --ok: #2e7d32;
+  --ok-bg: #e8f5e9;
+  --ok-line: #c8e6c9;
+  --warn: #ef6c00;
+  --warn-bg: #fff3e0;
+  --warn-line: #ffe0b2;
+  --red-bg: #ffeceb;
+  --red-line: #f5c6c3;
 }
 
 * { box-sizing: border-box; }
@@ -483,9 +468,9 @@ a:hover { color: var(--blu-dark); text-decoration: none; }
   transition: border-color ease-in-out .15s, box-shadow ease-in-out .15s;
 }
 .form-control:focus {
-  border-color: var(--blu-light);
+  border-color: #2196f3;
   outline: 0;
-  box-shadow: 0 0 0 2px rgba(28, 127, 163, .18);
+  box-shadow: 0 0 0 2px rgba(33, 150, 243, .12);
 }
 /* [FIX 12] .input-xlg real: 42px · 10px 15px · 14px */
 .input-xlg { height: 42px; padding: 10px 15px; font-size: 14px; line-height: 1.4285715; }
@@ -743,9 +728,9 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
 }
 .btn-goal {
   height: 48px;
-  border: 2px solid var(--blu);
+  border: 2px solid #00b950;
   border-radius: 26px;
-  color: var(--blu);
+  color: #00a443;
   background: #fff;
   font-size: 18px;
   font-weight: 500;
@@ -1189,7 +1174,7 @@ body.app-loading .page-container { opacity: .35; }
 .wa-row:hover, .wa-row.active { background: var(--creme-2); }
 .wa-thread { display: grid; gap: 8px; padding: 16px; max-height: 420px; overflow: auto; background: var(--creme); }
 .bubble { max-width: 72%; padding: 9px 12px; border-radius: 8px; font-size: 12px; line-height: 1.5; }
-.bubble.out { background: var(--blu-soft); justify-self: end; }
+.bubble.out { background: #dcf8c6; justify-self: end; }
 .bubble.in  { background: #fff; border: 1px solid var(--line-soft); justify-self: start; }
 .bubble time { display: block; font-size: 10px; color: #9b948a; margin-top: 4px; }
 
@@ -1254,7 +1239,7 @@ body.app-loading .page-container { opacity: .35; }
   align-items: center;
   min-height: 36px;
 }
-.token-field:focus-within { border-color: var(--blu-light); box-shadow: 0 0 0 2px rgba(28, 127, 163, .18); }
+.token-field:focus-within { border-color: var(--blu-light); box-shadow: 0 0 0 2px rgba(30, 136, 229, .18); }
 .token-field input {
   border: 0;
   outline: 0;
