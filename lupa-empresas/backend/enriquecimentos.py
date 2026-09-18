@@ -51,6 +51,12 @@ CREATE TABLE IF NOT EXISTS enriquecimento (
   com_decisor  INTEGER,       -- quantas ficaram com pelo menos um decisor
   colunas      TEXT,          -- JSON [{key,label}] -- o cabecalho entregue
   parametros   TEXT,          -- JSON das quantidades escolhidas
+  -- DE QUAL ABA veio. Um store so para as duas, e de proposito: sao dois
+  -- tipos de planilha (uma nasce de arquivo enviado, a outra de filtro) mas
+  -- o que se faz com elas e identico -- baixar, mandar por e-mail, refazer.
+  -- Dois stores separados divergiriam no primeiro ajuste, e o sintoma seria
+  -- o e-mail funcionar numa aba e nao na outra.
+  tipo         TEXT DEFAULT 'planilha',   -- planilha | b2b
   arquivo      TEXT,          -- nome do .xlsx no disco
   bytes        INTEGER,
   email_para   TEXT,
@@ -78,6 +84,14 @@ def _init():
     c = _con()
     try:
         c.executescript(DDL)
+        # `tipo` em banco que ja existe: CREATE TABLE IF NOT EXISTS nao mexe
+        # em tabela criada antes. Sem isto, o primeiro acesso depois do deploy
+        # morreria com "no such column" -- e morreria DEPOIS de a pessoa ja
+        # ter esperado a lista inteira ser montada.
+        ja = {r[1] for r in c.execute("PRAGMA table_info(enriquecimento)")}
+        if "tipo" not in ja:
+            c.execute("ALTER TABLE enriquecimento ADD COLUMN tipo TEXT"
+                      " DEFAULT 'planilha'")
         c.commit()
     finally:
         c.close()
@@ -89,7 +103,8 @@ _init()
 
 def salvar(usuario: str, nome: str, origem: str, colunas: list,
            conteudo: bytes, linhas: int = 0, enriquecidas: int = 0,
-           com_decisor: int = 0, parametros: dict = None) -> dict:
+           com_decisor: int = 0, parametros: dict = None,
+           tipo: str = "planilha") -> dict:
     """Grava o XLSX em disco e registra a linha da lista."""
     eid = uuid.uuid4().hex[:12]
     seguro = re.sub(r"[^A-Za-z0-9._-]+", "-", (nome or "enriquecimento"))[:60]
@@ -109,13 +124,14 @@ def salvar(usuario: str, nome: str, origem: str, colunas: list,
         c.execute(
             "INSERT INTO enriquecimento (id, usuario, nome, origem, status,"
             " linhas, enriquecidas, com_decisor, colunas, parametros, arquivo,"
-            " bytes, criado_em) VALUES (?,?,?,?,'concluido',?,?,?,?,?,?,?,?)",
+            " bytes, tipo, criado_em)"
+            " VALUES (?,?,?,?,'concluido',?,?,?,?,?,?,?,?,?)",
             (eid, (usuario or "").strip().lower(), (nome or "").strip()[:120],
              (origem or "")[:160], int(linhas or 0), int(enriquecidas or 0),
              int(com_decisor or 0),
              json.dumps(colunas or [], ensure_ascii=False),
              json.dumps(parametros or {}, ensure_ascii=False),
-             arq, len(conteudo), int(time.time())))
+             arq, len(conteudo), tipo or "planilha", int(time.time())))
         c.commit()
     finally:
         c.close()
@@ -133,10 +149,12 @@ def _linha(r: sqlite3.Row) -> dict:
         "bytes": r["bytes"], "criado_em": r["criado_em"],
         "email_para": r["email_para"], "email_em": r["email_em"],
         "email_erro": r["email_erro"],
+        "tipo": (r["tipo"] if "tipo" in r.keys() else "planilha") or "planilha",
     }
 
 
-def listar(usuario: str, admin: bool = False, limite: int = 60) -> list:
+def listar(usuario: str, admin: bool = False, limite: int = 60,
+           tipo: str = "") -> list:
     """A lista de quem pediu. Admin ve de todo mundo.
 
     Sem admin, o filtro por usuario NAO e conveniencia de tela: a planilha
@@ -152,12 +170,15 @@ def listar(usuario: str, admin: bool = False, limite: int = 60) -> list:
             # aparecer embaixo. Quem clica em "completar" na primeira linha
             # pegaria a lista errada.
             rs = c.execute("SELECT * FROM enriquecimento"
+                           " WHERE (? = '' OR tipo = ?)"
                            " ORDER BY criado_em DESC, rowid DESC"
-                           " LIMIT ?", (int(limite),)).fetchall()
+                           " LIMIT ?", (tipo, tipo, int(limite))).fetchall()
         else:
             rs = c.execute("SELECT * FROM enriquecimento WHERE usuario = ?"
+                           " AND (? = '' OR tipo = ?)"
                            " ORDER BY criado_em DESC, rowid DESC LIMIT ?",
-                           ((usuario or "").strip().lower(), int(limite))).fetchall()
+                           ((usuario or "").strip().lower(), tipo, tipo,
+                            int(limite))).fetchall()
         return [_linha(r) for r in rs]
     finally:
         c.close()

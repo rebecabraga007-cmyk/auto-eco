@@ -2746,13 +2746,20 @@ def _site_from_email(email: str) -> str:
     return ""
 
 
-@app.post("/api/export/xlsx")
-async def export_xlsx(payload: dict = Body(default={})):
-    """Gera a planilha XLSX enriquecida (padrão Datastone), 1 linha por empresa.
+def _prospeccao_xlsx(payload: dict) -> bytes:
+    """A planilha da B2B, em bytes. UM construtor para os dois caminhos.
 
-    Body: {empresas: [{empresa:{...}, contatos:[{nome,cargo,cpf,telefones:[...],emails:[]}]}]}
-    Compat: se vier {rows:[...]} (formato antigo por telefone), exporta assim mesmo.
-    AutoFilter fica ligado em todas as colunas → dá pra adicionar mais filtros no Excel.
+    Virou funcao quando a aba ganhou historico: o arquivo GUARDADO tem que ser
+    byte a byte o mesmo que o BAIXADO. Se cada caminho montasse o seu, a
+    pessoa baixaria hoje uma planilha e amanha, do historico, outra -- com o
+    mesmo nome e conteudo diferente.
+
+    Body: {empresas: [{empresa:{...}, contatos:[{nome,cargo,cpf,
+    telefones:[...], emails:[]}]}]}. Compat: se vier {rows:[...]} (formato
+    antigo por telefone), exporta assim mesmo.
+
+    AutoFilter fica ligado em todas as colunas -- da para adicionar mais
+    filtros no Excel.
     """
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
@@ -2887,12 +2894,16 @@ async def export_xlsx(payload: dict = Body(default={})):
 
     buf = io.BytesIO()
     wb.save(buf)
-    buf.seek(0)
+    return buf.getvalue()
+
+
+@app.post("/api/export/xlsx")
+async def export_xlsx(payload: dict = Body(default={})):
+    """Baixa a planilha da B2B. Body: {empresas:[...]} ou {rows:[...]}."""
     return StreamingResponse(
-        buf,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="capiblu-prospeccao.xlsx"'},
-    )
+        io.BytesIO(_prospeccao_xlsx(payload)), media_type=XLSX_MIME,
+        headers={"Content-Disposition":
+                 'attachment; filename="capiblu-prospeccao.xlsx"'})
 
 
 # ============================================================
@@ -5244,6 +5255,82 @@ async def admin_email_status(request: Request):
             "motivo": correio.por_que_nao(), "config": correio.como_esta()}
 
 
+# ---------------------------------------------------------------------
+# LISTAS DA PROSPECÇÃO B2B — o mesmo tratamento que a planilha enriquecida
+# ---------------------------------------------------------------------
+# MESMO STORE, de propósito. Uma lista B2B nasce de filtro e uma planilha
+# enriquecida nasce de arquivo enviado, mas o que se faz com as duas é
+# idêntico: baixar, mandar por e-mail, refazer. Dois stores separados
+# divergiriam no primeiro ajuste, e o sintoma seria o e-mail funcionar numa
+# aba e não na outra.
+#
+# O que muda é o campo `tipo`, e é só isso que cada aba filtra.
+
+@app.post("/api/prospeccao/salvar")
+async def prospeccao_salvar(request: Request, payload: dict = Body(default={})):
+    """Guarda a lista montada, e opcionalmente manda por e-mail.
+
+    Até aqui a lista da B2B existia apenas na memória da aba: montar 200
+    empresas leva minutos de consulta paga, e fechar o navegador antes de
+    clicar em "Exportar" apagava tudo — o mesmo defeito que a aba de
+    enriquecimento tinha até hoje de manhã.
+
+    Os FILTROS vão junto, em `parametros`. É o que permite o botão de editar:
+    sem eles, "refazer com um ajuste" significaria remontar a busca inteira de
+    cabeça.
+    """
+    usuario = _quem(request)
+    if not usuario:
+        return {"status": "error", "message": "Sem usuário na sessão."}
+    columns = payload.get("columns") or []
+    rows = payload.get("rows") or []
+    if not rows:
+        return {"status": "error", "message": "Nada para salvar."}
+    nome = (str(payload.get("nome") or "").strip()
+            or time.strftime("Lista B2B %d/%m %H:%M"))
+    # O MESMO construtor do botao de baixar. Guardar com outro produziria um
+    # arquivo diferente do que a pessoa acabou de baixar -- mesmo nome,
+    # conteudo distinto, e a descoberta acontece semanas depois.
+    if payload.get("empresas"):
+        dados = _prospeccao_xlsx({"empresas": payload["empresas"],
+                                  "layout": payload.get("layout") or "empresa",
+                                  "fonte_tel": payload.get("fonte_tel") or ""})
+    else:
+        dados = _prospeccao_xlsx({"rows": rows,
+                                  "fonte_tel": payload.get("fonte_tel") or ""})
+
+    # Quantas LINHAS têm telefone de alguém: é o número que diz se a lista
+    # serve para ligar, e é o mesmo critério da aba de enriquecimento.
+    def _tem_tel(r):
+        return any(str(v or "").strip() for k, v in r.items()
+                   if re.search(r"tel|celular|fone", str(k), re.I))
+
+    com_tel = sum(1 for r in rows if _tem_tel(r))
+    r = enriquecimentos.salvar(
+        usuario=usuario, nome=nome, origem="Prospecção B2B",
+        colunas=columns, conteudo=dados, linhas=len(rows),
+        enriquecidas=com_tel, com_decisor=com_tel,
+        parametros={"filtros": payload.get("filtros") or {},
+                    "opcoes": payload.get("opcoes") or {}},
+        tipo="b2b")
+    if payload.get("email"):
+        r["email"] = _enrich_email(r["id"], nome, usuario, dados,
+                                   len(rows), com_tel)
+    r["email_disponivel"] = correio.configurado()
+    return r
+
+
+@app.get("/api/prospeccao/salvos")
+async def prospeccao_salvos(request: Request):
+    """O histórico de listas B2B de quem está pedindo."""
+    usuario = _quem(request)
+    return {"status": "ok",
+            "itens": enriquecimentos.listar(usuario, admin=_is_admin(request),
+                                            tipo="b2b"),
+            "email_disponivel": correio.configurado(),
+            "email_motivo": correio.por_que_nao()}
+
+
 @app.get("/api/enrich/salvos")
 async def enrich_salvos(request: Request):
     """A lista de quem está pedindo. Admin vê a de todo mundo.
@@ -5254,7 +5341,10 @@ async def enrich_salvos(request: Request):
     """
     usuario = _quem(request)
     return {"status": "ok",
-            "itens": enriquecimentos.listar(usuario, admin=_is_admin(request)),
+            # `tipo` filtra: sem isso as duas abas mostrariam a mesma lista, e
+            # a pessoa veria na aba de planilha um item que nasceu de filtro.
+            "itens": enriquecimentos.listar(usuario, admin=_is_admin(request),
+                                            tipo="planilha"),
             "email_disponivel": correio.configurado(),
             "email_motivo": correio.por_que_nao()}
 

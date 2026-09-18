@@ -1826,11 +1826,24 @@ async function prospMontar() {
 
   const rowsAcc = [], leadsAcc = [], infoAcc = [], puladasSemTel = [];
   let ponteiro = 0, aceitas = 0, tentadas = 0, offsetBase = prospState.empresas.length;
+  /* A BARRA, NO LUGAR DO SPINNER.
+     Montar 200 empresas leva minutos de consulta paga, e um spinner girando
+     é indistinguível de travado -- foi o relato que motivou a barra da aba de
+     enriquecimento ("ficou uns 5 min e aí travou"). O mesmo vale aqui, e é a
+     mesma função: número que anda, ritmo, e o que está sendo feito agora.
+
+     O alvo é `tentadas` contra o teto, não `aceitas` contra o pedido: é o
+     primeiro que realmente anda. Empresa sem decisor não conta como aceita e
+     a barra ficaria parada consultando. */
+  const t0Prosp = Date.now();
   const tick = () => {
-    const extra = continuar
-      ? ` · ${aceitas} de ${alvoQtd} com decisor (teto de ${limite} tentativas)`
-      : '';
-    wrap.innerHTML = `<div class="prosp-progress"><span class="spinner"></span> Montando: ${tentadas} empresa(s) consultada(s)${extra}…</div>`;
+    progresso(wrap, {
+      feitas: tentadas, total: limite, t0: t0Prosp,
+      rotulo: 'empresas consultadas',
+      agora: continuar
+        ? `${aceitas} de ${alvoQtd} com decisor até agora`
+        : `${aceitas} com decisor`,
+    });
   };
   tick();
 
@@ -1929,7 +1942,13 @@ async function prospMontar() {
   prospState.puladasSemTel = puladasSemTel;
   prospState.building = false;
   btn.disabled = false;
+  progressoFim();
   renderProspTable();
+  /* GUARDA SEMPRE. As consultas que montaram esta lista já foram pagas, e
+     até aqui ela existia só na memória da aba: fechar o navegador antes de
+     clicar em Exportar apagava tudo -- o mesmo defeito que a aba de
+     enriquecimento tinha até hoje de manhã. */
+  prospSalvar();
   if (puladasSemTel.length) {
     const wrap2 = document.getElementById('prosp-table-wrap');
     if (wrap2) {
@@ -2207,6 +2226,190 @@ async function prospValidar() {
   prospState.validating = false;
   btn.disabled = false; exp.disabled = false;
 }
+
+/* ─── GUARDAR E ENTREGAR (aba B2B) ──────────────────────────────────
+   Mesma máquina da aba de enriquecimento, de propósito: um store, um
+   caminho de e-mail, um caminho de download. O que separa as duas abas é o
+   campo `tipo` no servidor. Duas implementações divergiriam, e o sintoma
+   seria o e-mail funcionar numa e não na outra. */
+async function prospSalvar() {
+  if (!(prospState.rows || []).length) return;
+  const wrap = document.getElementById('prosp-table-wrap');
+  const nome = (document.getElementById('pf-nome')?.value || '').trim();
+  const quer = !!document.getElementById('pf-email')?.checked;
+  const corpo = {
+    nome, email: quer,
+    rows: prospState.rows,
+    empresas: (prospState.leads || []).map(l => ({ empresa: l.empresa, contatos: l.contatos })),
+    layout: document.getElementById('pf-layout')?.value || 'empresa',
+    fonte_tel: document.getElementById('pf-fontetel')?.value || 'assertiva',
+    /* OS FILTROS VÃO JUNTO, e é o que permite o botão de editar: sem eles,
+       "refazer com um ajuste" significaria remontar a busca de cabeça. */
+    filtros: (typeof prospFiltros === 'function' ? prospFiltros() : {}),
+    opcoes: {
+      decisores: document.getElementById('pf-decisores')?.value,
+      max_decisores: document.getElementById('pf-maxdec')?.value,
+      socios_modo: document.getElementById('pf-socios')?.value,
+    },
+  };
+  let d;
+  try {
+    d = await fetch(`${API}/api/prospeccao/salvar`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(corpo),
+    }).then(r => r.json());
+  } catch (e) {
+    /* FALHA AO GUARDAR NÃO PODE SER SILÊNCIO: a lista está na tela e dá para
+       exportar à mão -- mas só se a pessoa souber que o automático falhou. */
+    wrap?.insertAdjacentHTML('afterbegin',
+      `<p class="msg error">Não consegui guardar esta lista (${esc(e.message)}). `
+      + `Ela está aqui — exporte antes de fechar a aba.</p>`);
+    return;
+  }
+  if (d.status !== 'ok') {
+    wrap?.insertAdjacentHTML('afterbegin',
+      `<p class="msg error">Não consegui guardar: ${esc(d.message || 'erro')}.</p>`);
+    return;
+  }
+  let msg = '💾 Guardada em <b>Listas salvas</b> — dá para fechar a aba.';
+  if (quer) {
+    msg += (d.email && d.email.status === 'ok')
+      ? ` ${esc(d.email.message || 'Enviada por e-mail.')}`
+      : ` <span style="color:var(--amber)">O e-mail não saiu: `
+        + `${esc((d.email || {}).message || 'sem envio configurado')}.</span>`;
+  }
+  wrap?.insertAdjacentHTML('afterbegin', `<p class="msg">${msg}</p>`);
+  prospSalvosCarregar();
+}
+
+function prospBytes(n) {
+  if (!n) return '—';
+  return n > 1048576 ? (n / 1048576).toFixed(1) + ' MB'
+                     : Math.max(1, Math.round(n / 1024)) + ' KB';
+}
+
+async function prospSalvosCarregar() {
+  const box = document.getElementById('pf-salvos');
+  if (!box) return;
+  let d;
+  try {
+    d = await fetch(`${API}/api/prospeccao/salvos`).then(r => r.json());
+  } catch (e) { box.innerHTML = `<p class="msg error">${esc(e.message)}</p>`; return; }
+
+  /* O campo de e-mail só aparece se houver como enviar. Campo que engole o
+     endereço e não manda nada é pior que campo nenhum. */
+  const wrapMail = document.getElementById('pf-email-wrap');
+  const nota = document.getElementById('pf-email-nota');
+  if (wrapMail) wrapMail.hidden = !d.email_disponivel;
+  if (nota) nota.textContent = d.email_disponivel ? ''
+    : 'envio por e-mail ainda não configurado no servidor';
+
+  const itens = d.itens || [];
+  if (!itens.length) {
+    box.innerHTML = '<p class="pf-advanced-hint" style="padding:8px 0">'
+      + 'Nenhuma lista guardada ainda. A próxima que você montar aparece aqui.</p>';
+    return;
+  }
+  box.innerHTML = `<table class="prosp-table">
+    <thead><tr><th>Nome</th><th>Quando</th><th>Linhas</th><th>Com telefone</th>
+      <th>Arquivo</th><th>E-mail</th><th></th></tr></thead>
+    <tbody>${itens.map(i => {
+      const quando = new Date((i.criado_em || 0) * 1000)
+        .toLocaleString('pt-BR', { day: '2-digit', month: '2-digit',
+                                   hour: '2-digit', minute: '2-digit' });
+      const mail = i.email_erro
+        ? `<span title="${esc(i.email_erro)}" style="color:var(--amber)">falhou</span>`
+        : (i.email_em ? esc(i.email_para || 'enviado') : '—');
+      return `<tr data-id="${esc(i.id)}">
+        <td>${esc(i.nome)}</td><td>${esc(quando)}</td>
+        <td>${i.linhas || 0}</td><td>${i.enriquecidas || 0}</td>
+        <td><a href="${API}/api/enrich/salvo/${esc(i.id)}/arquivo">⬇️ ${esc(prospBytes(i.bytes))}</a></td>
+        <td>${mail}</td>
+        <td style="white-space:nowrap">
+          <button data-act="editar" class="btn-secondary" style="font-size:12px;padding:1px 8px"
+                  title="Traz os filtros desta lista de volta para a tela">✏️</button>
+          ${d.email_disponivel ? '<button data-act="mail" class="btn-secondary" style="font-size:12px;padding:1px 8px">✉️</button>' : ''}
+          <button data-act="del" class="btn-secondary" style="font-size:12px;padding:1px 8px">🗑</button>
+        </td></tr>`;
+    }).join('')}</tbody></table>`;
+
+  box.querySelectorAll('button[data-act]').forEach(b => b.addEventListener('click', async () => {
+    const tr = b.closest('tr'); const id = tr.dataset.id;
+    const item = itens.find(x => x.id === id);
+    if (b.dataset.act === 'editar') { prospEditar(item); return; }
+    if (b.dataset.act === 'del') {
+      if (!confirm('Apagar esta lista guardada? O arquivo some do servidor.')) return;
+      await fetch(`${API}/api/enrich/salvo/${id}`, { method: 'DELETE' });
+      prospSalvosCarregar();
+      return;
+    }
+    b.disabled = true;
+    const r = await fetch(`${API}/api/enrich/salvo/${id}/email`, { method: 'POST' })
+      .then(x => x.json());
+    b.disabled = false;
+    if (r.status !== 'ok') alert(r.message || 'Não consegui enviar.');
+    prospSalvosCarregar();
+  }));
+}
+
+/* EDITAR = trazer os filtros de volta, não abrir o arquivo.
+   Ninguém quer editar célula de planilha aqui -- para isso existe o Excel.
+   O que se quer é "aquela busca, com um ajuste", e isso é o formulário
+   preenchido como estava. */
+function prospEditar(item) {
+  const f = ((item || {}).parametros || {}).filtros || {};
+  if (!Object.keys(f).length) {
+    alert('Esta lista foi guardada antes de o sistema registrar os filtros. '
+          + 'As próximas trazem.');
+    return;
+  }
+  /* CONTA O QUE REALMENTE COLOU, não o que eu tentei colar.
+     A primeira versão contava as tentativas, e a mensagem mentia: num
+     `<select>`, atribuir um valor que não está entre as opções falha em
+     SILÊNCIO -- o campo fica vazio e o contador não percebe. Dizia "3
+     filtros voltaram" com 2 na tela, e a pessoa buscava achando que o
+     terceiro estava aplicado. */
+  const postos = [], falharam = [];
+  Object.entries(f).forEach(([k, v]) => {
+    // Os ids do formulário seguem o nome do filtro; o que não casar é
+    // ignorado de propósito -- filtro que mudou de nome não deve impedir os
+    // outros de voltarem.
+    const el = document.getElementById('pf-' + k) || document.getElementById(k);
+    if (!el || v === null || v === undefined || v === '') return;
+    const alvo = Array.isArray(v) ? v.join(',') : String(v);
+    if (el.type === 'checkbox') {
+      el.checked = !!v;
+      postos.push(k);
+      return;
+    }
+    el.value = alvo;
+    // A CONFERÊNCIA: leu de volta o que acabou de escrever?
+    if (String(el.value) === alvo) postos.push(k);
+    else falharam.push(k);
+  });
+  document.getElementById('pf-nome') && (document.getElementById('pf-nome').value =
+    (item.nome || '') + ' (ajustada)');
+  const topo = document.querySelector('#tab-prospec .search-panel');
+  topo?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (!postos.length) {
+    alert('Não consegui recolocar nenhum filtro desta lista.');
+    return;
+  }
+  // Dizer QUAIS falharam, não só quantos: o nome do filtro é o que permite
+  // à pessoa repô-lo à mão em vez de buscar com metade do que pediu.
+  const aviso = falharam.length
+    ? '\n\nNÃO voltaram: ' + falharam.join(', ')
+      + ' — o valor guardado não existe mais entre as opções. Reponha à mão.'
+    : '';
+  alert(postos.length + ' filtro(s) voltaram para a tela.' + aviso
+        + '\n\nAjuste e busque de novo.');
+}
+
+document.getElementById('pf-salvos-atualizar')?.addEventListener('click',
+  prospSalvosCarregar);
+/* Carrega ao abrir: quem volta no dia seguinte tem que encontrar as listas
+   que montou, sem precisar clicar em nada para descobrir que existem. */
+if (document.getElementById('pf-salvos')) prospSalvosCarregar();
 
 async function prospExportar() {
   const exp = document.getElementById('pf-export');

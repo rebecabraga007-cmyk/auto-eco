@@ -809,6 +809,43 @@
           </div>
         </div>
         <div id="prosp-results" class="results-area"></div>
+
+        <!-- ═══ COMO ENTREGAR ═════════════════════════════════════════
+             Montar 200 empresas leva minutos de consulta paga. Até aqui a
+             lista existia só na memória da aba: fechar o navegador antes de
+             exportar apagava trabalho já pago, o mesmo defeito que a aba de
+             enriquecimento tinha. O NOME existe para o histórico fazer
+             sentido daqui a uma semana. -->
+        <div class="en-fields-wrap" style="margin-top:14px;border-top:1px solid var(--gray-100);padding-top:12px">
+          <div class="en-fields-head">
+            <strong>Como entregar</strong>
+            <span class="en-src-note" id="pf-email-nota"></span>
+          </div>
+          <div class="filter-row" style="margin:0;gap:12px;flex-wrap:wrap">
+            <label class="as-field"><span>Nome desta lista</span>
+              <input id="pf-nome" type="text" class="filter-select" style="width:260px"
+                     placeholder="Ex.: Transporte SP — set/26" /></label>
+            <label class="as-field" id="pf-email-wrap"><span>Mandar por e-mail quando terminar</span>
+              <span class="en-chk" style="padding-top:6px">
+                <input type="checkbox" id="pf-email" />
+                Sim — para o meu e-mail de cadastro
+              </span></label>
+          </div>
+        </div>
+
+        <!-- ═══ LISTAS SALVAS ═══════════════════════════════════════════
+             Mesmo store da aba de enriquecimento, separado só pelo campo
+             `tipo` no servidor. Um lugar guardando planilha, um caminho de
+             e-mail, um de download -- duas implementações divergiriam, e o
+             sintoma seria o e-mail funcionar numa aba e não na outra. -->
+        <div class="card" id="pf-salvos-card" style="margin-top:14px">
+          <div class="en-fields-head">
+            <strong>📁 Listas salvas</strong>
+            <button type="button" id="pf-salvos-atualizar" class="btn-secondary"
+                    style="font-size:12px;padding:2px 10px">Atualizar</button>
+          </div>
+          <div id="pf-salvos" class="prosp-table-scroll"></div>
+        </div>
       </div>
     </div>
   </section>
