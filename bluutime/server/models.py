@@ -54,6 +54,9 @@ class Company(Base):
     # banco e têm PATCH de verdade.
     default_daily_goal: Mapped[int] = mapped_column(Integer, default=170)
     account_based_sales: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Etapa do lead não é tabela própria: o Meetime elege UM campo
+    # personalizado e usa as opções dele como as etapas do funil.
+    lead_stage_field_id: Mapped[int | None] = mapped_column(ForeignKey("custom_field.id"))
     regular_user_can_import: Mapped[bool] = mapped_column(Boolean, default=False)
     smart_queue_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     working_days: Mapped[str] = mapped_column(String(20), default="1,2,3,4,5")  # 1=segunda .. 7=domingo
@@ -235,6 +238,9 @@ class CustomField(Base):
     visible: Mapped[bool] = mapped_column(Boolean, default=True)
     won_mandatory: Mapped[bool] = mapped_column(Boolean, default=False)
     lost_mandatory: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Opções de um campo de escolha, uma por linha. É o que vira etapa do lead
+    # quando este campo é o eleito em `Company.lead_stage_field_id`.
+    options: Mapped[str] = mapped_column(Text, default="")
 
 
 class FitscoreRule(Base):

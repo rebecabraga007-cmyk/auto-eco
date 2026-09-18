@@ -361,6 +361,7 @@ def flow_config(db: Session = Depends(get_db)):
             "smartQueueEnabled": c.smart_queue_enabled,
             "blacklist": [d for d in c.blacklist_domains.splitlines() if d.strip()],
             "workingDays": [int(x) for x in c.working_days.split(",") if x.strip()],
+            "leadStageFieldId": c.lead_stage_field_id,
             "usersGoals": [{"userId": u.id, "dailyGoal": u.daily_goal} for u in users]}
 
 
@@ -378,6 +379,10 @@ def update_flow_config(payload: dict = Body(...), db: Session = Depends(get_db))
         c.regular_user_can_import = bool(payload["regularUserCanImportLeadList"])
     if "smartQueueEnabled" in payload:
         c.smart_queue_enabled = bool(payload["smartQueueEnabled"])
+    if "leadStageFieldId" in payload:
+        # Vazio desliga o funil por etapa; o valor tem que ser um campo que existe.
+        fid = payload["leadStageFieldId"]
+        c.lead_stage_field_id = int(fid) if fid else None
     if "workingDays" in payload:
         days = sorted({int(d) for d in payload["workingDays"] if 1 <= int(d) <= 7})
         c.working_days = ",".join(str(d) for d in days) or "1,2,3,4,5"
@@ -453,8 +458,24 @@ def lead_fields(db: Session = Depends(get_db)):
         out.append({"id": f.id, "name": f.name, "identifier": f.identifier,
                     "dataType": f.data_type, "index": f.index,
                     "customField": True, "visible": f.visible, "required": False,
-                    "wonMandatory": f.won_mandatory, "lostMandatory": f.lost_mandatory})
+                    "wonMandatory": f.won_mandatory, "lostMandatory": f.lost_mandatory,
+                    "options": [o.strip() for o in (f.options or "").splitlines() if o.strip()]})
     return out
+
+
+@router.patch("/flow/new-lead-fields/{fid}")
+def update_field(fid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Hoje só as opções — é o que a etapa do lead precisa para existir."""
+    perm.ator(db).exigir("gestor", "editar campo personalizado")
+    f = db.get(CustomField, fid)
+    if not f:
+        raise HTTPException(404, "Campo não encontrado.")
+    if "options" in payload:
+        valor = payload["options"]
+        linhas = valor if isinstance(valor, list) else str(valor).splitlines()
+        f.options = "\n".join(o.strip() for o in linhas if str(o).strip())
+    db.commit()
+    return {"id": f.id, "options": [o for o in f.options.splitlines() if o]}
 
 
 @router.post("/flow/new-lead-fields")

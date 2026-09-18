@@ -368,6 +368,9 @@ async function boot() {
     api("/api/clients"), api("/api/users"), api("/api/flow/cadences"), api("/api/flow/lost-reasons"),
     api("/api/dialer/configuration"), api("/api/teams").catch(() => []),
   ]);
+  const etapas = await api("/api/flow/lead-stages").catch(() => ({ field: null, options: [] }));
+  state.stageField = etapas.field;
+  state.stageOptions = etapas.options;
   state.clients = clients;
   state.users = users.data;
   state.cadences = cadences;
@@ -885,6 +888,13 @@ PAGES.leads = {
     ] }));
 
     view.innerHTML = `
+      ${res.stages && res.stages.length ? `<ul class="nav nav-tabs">
+        <li${!f.stage ? ' class="active"' : ""}><a data-stage="">Todas
+          <span class="badge${!f.stage ? " badge-success" : ""}">${res.pagination.totalRowCount}</span></a></li>
+        ${res.stages.map((e) => `<li${f.stage === e.label ? ' class="active"' : ""}>
+          <a data-stage="${h(e.label)}">${h(e.label)}
+            <span class="badge${f.stage === e.label ? " badge-success" : ""}">${e.count}</span></a></li>`).join("")}
+      </ul>` : ""}
       <div class="toolbar">
         <input class="form-control grow" id="lq" placeholder="Buscar por nome, empresa, e-mail ou CNPJ" value="${h(f.q || "")}">
         <select class="form-control" id="lStatus">
@@ -904,6 +914,9 @@ PAGES.leads = {
         { actions: pager(res.pagination) })}`;
 
     bindLeadFilters(f);
+    view.querySelectorAll("[data-stage]").forEach((a) => {
+      a.onclick = () => { state.leadFilter = { ...f, stage: a.dataset.stage, page: 1 }; go("leads"); };
+    });
     document.getElementById("newLead").onclick = () => openLeadForm();
     document.getElementById("bulkBtn").onclick = openBulkModal;
     const checkAll = document.getElementById("checkAll");
@@ -1031,6 +1044,10 @@ PAGES.lead = {
     // O botão de executar age sobre a próxima atividade pendente — é o mesmo
     // objeto que a fila de Execução passa pro modal.
     const proxima = l.timeline.find((a) => a.status === "PENDING" && a.kind !== "CALL");
+    // Etapa do lead mora no campo personalizado eleito pela empresa.
+    const campoEtapa = state.stageField || null;
+    const etapas = (state.stageOptions || []);
+    const etapaAtual = campoEtapa ? (l.customFields || {})[campoEtapa.identifier] || "" : "";
     const filtro = state.leadFiltroTipo || "";
     const passos = l.timeline.filter((a) => !filtro
       || (filtro === "CALL" ? (a.kind === "CALL" || a.type === "CALL") : a.type === filtro));
@@ -1070,6 +1087,10 @@ PAGES.lead = {
           </div>
           <div class="heading-elements">
             ${statusPill(l.status)}
+            ${etapas.length ? `<select class="form-control input-sm" id="ltEtapa" aria-label="Etapa do lead" style="width:auto">
+              <option value="">Sem etapa</option>
+              ${etapas.map((e) => `<option value="${h(e)}"${etapaAtual === e ? " selected" : ""}>${h(e)}</option>`).join("")}
+            </select>` : ""}
             ${proxima ? `<button class="btn btn-main btn-sm" data-exec>Executar ${h(TYPE_LABEL[proxima.type] || "atividade")}</button>` : ""}
             <button class="btn btn-success btn-sm" data-won>Ganho</button>
             <button class="btn btn-danger btn-sm" data-lost>Perdido</button>
@@ -1120,6 +1141,16 @@ PAGES.lead = {
         toast("Anotações salvas.", "ok");
       } catch (e) { toast(e.message, "err"); }
       notas.disabled = false;
+    };
+
+    const selEtapa = document.getElementById("ltEtapa");
+    if (selEtapa) selEtapa.onchange = async () => {
+      selEtapa.disabled = true;
+      try {
+        await api(`/api/flow/leads/${id}/stage`, { method: "PUT", body: { stage: selEtapa.value } });
+        toast(selEtapa.value ? `Etapa: ${selEtapa.value}.` : "Etapa removida.", "ok");
+      } catch (e) { toast(e.message, "err"); }
+      selEtapa.disabled = false;
     };
 
     view.querySelector("[data-edit]").onclick = () => openLeadForm(l);
@@ -4606,6 +4637,21 @@ PAGES.ajustes = {
             f.wonMandatory ? "Sim" : "—", f.lostMandatory ? "Sim" : "—"] }))),
         { actions: `<button class="btn btn-main btn-xs" id="newField">Novo campo</button>` })}
 
+      ${panel("Etapa do lead (funil)", `
+        <p class="text-muted text-size-small" style="margin-top:0">
+          A etapa não é um cadastro à parte: escolha um campo personalizado e as
+          opções dele viram as etapas, com aba e contagem na lista de Leads.</p>
+        <div class="field-row">
+          <div class="field"><label for="cfgEtapaCampo">Campo que representa a etapa</label>
+            <select class="form-control" id="cfgEtapaCampo">
+              <option value="">Nenhum — funil desligado</option>
+              ${camposPersonalizados.map((f) => `<option value="${f.id}"${String(cfg.leadStageFieldId) === String(f.id) ? " selected" : ""}>${h(f.name)}</option>`).join("")}
+            </select></div>
+          <div class="field"><label for="cfgEtapaOpcoes">Etapas, uma por linha</label>
+            <textarea class="form-control" id="cfgEtapaOpcoes" rows="4" placeholder="Conexão&#10;Qualificação&#10;Reunião marcada">${h((camposPersonalizados.find((f) => String(f.id) === String(cfg.leadStageFieldId)) || {}).options?.join("\n") || "")}</textarea></div>
+        </div>
+        <button class="btn btn-main btn-sm" id="cfgEtapaSalvar">Salvar etapas</button>`)}
+
       ${panel("Lead scoring (fitscore)", `
         ${table(["Campo", "Condição", "Valor", "Pontos", ""], fitscore.map((r) => ({ cells: [
           h(r.fieldName || "—"), r.expressionType === "LIKE" ? "Contém" : "Igual a",
@@ -4699,6 +4745,23 @@ PAGES.ajustes = {
           blacklist: document.getElementById("cfgBlacklist").value.split("\n").map((s) => s.trim()).filter(Boolean),
         } });
         toast("Configurações salvas.", "ok");
+        go("ajustes");
+      } catch (err) { toast(err.message, "err"); btn.disabled = false; }
+    };
+    document.getElementById("cfgEtapaSalvar").onclick = async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        const fid = document.getElementById("cfgEtapaCampo").value;
+        await api("/api/flow/configuration", { method: "PATCH", body: { leadStageFieldId: fid || null } });
+        if (fid) {
+          await api(`/api/flow/new-lead-fields/${fid}`, { method: "PATCH",
+            body: { options: document.getElementById("cfgEtapaOpcoes").value.split("\n") } });
+        }
+        const et = await api("/api/flow/lead-stages");
+        state.stageField = et.field;
+        state.stageOptions = et.options;
+        toast("Etapas salvas.", "ok");
         go("ajustes");
       } catch (err) { toast(err.message, "err"); btn.disabled = false; }
     };

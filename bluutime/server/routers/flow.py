@@ -398,15 +398,45 @@ def _fitscore_bulk(db: Session, lead_ids: list[int]) -> dict[int, int]:
     return out
 
 
+def _campo_etapa(db: Session) -> CustomField | None:
+    """O campo personalizado eleito como etapa do lead, se houver.
+
+    O Meetime não tem tabela de etapa: ele elege UM campo personalizado e usa
+    as opções dele como as etapas do funil. Copiar isso é mais barato e evita
+    um segundo lugar para cadastrar a mesma lista.
+    """
+    empresa = db.query(Company).first()
+    fid = getattr(empresa, "lead_stage_field_id", None) if empresa else None
+    return db.get(CustomField, fid) if fid else None
+
+
+def etapas_do_funil(db: Session, campo: CustomField | None) -> list[dict]:
+    """Cada opção do campo eleito com quantos leads estão nela."""
+    if not campo:
+        return []
+    contagem = dict(db.query(LeadFieldValue.value, func.count(LeadFieldValue.id))
+                    .filter(LeadFieldValue.field_id == campo.id)
+                    .group_by(LeadFieldValue.value).all())
+    return [{"label": o, "count": contagem.get(o, 0)}
+            for o in (campo.options or "").splitlines() if o.strip()]
+
+
 @router.get("/leads")
 def list_leads(status: str | None = None, cadence_id: int | None = None,
                client_id: int | None = None, sdr_id: int | None = None,
                lead_base_id: int | None = None, q: str | None = None,
+               stage: str | None = None,
                page: int = 1, limit: int = Query(50, le=500),
                db: Session = Depends(get_db)):
     # SDR vê só a própria carteira; gestor e admin veem tudo. Antes disso,
     # qualquer conta listava os leads da empresa inteira.
     query = perm.escopo_leads(db, db.query(Lead), perm.ator(db), Lead.sdr_id)
+    campo_etapa = _campo_etapa(db)
+    if stage and campo_etapa:
+        query = query.filter(Lead.id.in_(
+            db.query(LeadFieldValue.lead_id)
+            .filter(LeadFieldValue.field_id == campo_etapa.id,
+                    LeadFieldValue.value == stage)))
     if status:
         query = query.filter(Lead.status.in_(status.split(",")))
     if cadence_id:
@@ -426,9 +456,47 @@ def list_leads(status: str | None = None, cadence_id: int | None = None,
             .offset((page - 1) * limit).limit(limit).all())
     scores = _fitscore_bulk(db, [l.id for l in rows])
     return {"data": [serial.lead(l, fitscore=scores.get(l.id, 0)) for l in rows],
+            "stageField": ({"id": campo_etapa.id, "name": campo_etapa.name,
+                            "identifier": campo_etapa.identifier} if campo_etapa else None),
+            "stages": etapas_do_funil(db, campo_etapa),
             "pagination": {"page": page, "perPage": limit, "totalRowCount": total,
                            "totalPageCount": max(1, -(-total // limit)),
                            "hasPrev": page > 1, "hasNext": page * limit < total}}
+
+
+@router.get("/lead-stages")
+def lead_stages(db: Session = Depends(get_db)):
+    """Qual campo é a etapa e quais são as opções — a página do lead precisa
+    disso mesmo quando aberta direto pela URL, sem passar pela lista."""
+    campo = _campo_etapa(db)
+    if not campo:
+        return {"field": None, "options": []}
+    return {"field": {"id": campo.id, "name": campo.name, "identifier": campo.identifier},
+            "options": [o.strip() for o in (campo.options or "").splitlines() if o.strip()]}
+
+
+@router.put("/leads/{lid}/stage")
+def set_lead_stage(lid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Move o lead de etapa — grava no campo eleito, não num campo próprio."""
+    lead = db.get(Lead, lid)
+    if not lead:
+        raise HTTPException(404, "Lead não encontrado.")
+    perm.exigir_dono_lead(db, perm.ator(db), lead)
+    campo = _campo_etapa(db)
+    if not campo:
+        raise HTTPException(400, "Nenhum campo personalizado está definido como etapa do lead.")
+    etapa = (payload.get("stage") or "").strip()
+    validas = [o.strip() for o in (campo.options or "").splitlines() if o.strip()]
+    if etapa and etapa not in validas:
+        raise HTTPException(400, f"Etapa desconhecida: {etapa}.")
+    linha = (db.query(LeadFieldValue)
+             .filter_by(lead_id=lid, field_id=campo.id).first())
+    if linha:
+        linha.value = etapa
+    else:
+        db.add(LeadFieldValue(lead_id=lid, field_id=campo.id, value=etapa))
+    db.commit()
+    return {"ok": True, "stage": etapa}
 
 
 @router.get("/leads/{lid}")
