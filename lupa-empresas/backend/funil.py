@@ -81,6 +81,7 @@ import cidades
 import funcoes
 import identidade as I
 import linkedin_cache
+import socio_unico
 import mkbuscas
 import rais
 import workapi
@@ -209,6 +210,45 @@ def socios_da_empresa(cnpj: str) -> list[dict[str, Any]]:
             "qualificacao": str(qualif or ""), "desde": str(desde or ""),
             "faixa_etaria": str(faixa or ""),
         })
+
+    # ── EMPRESARIO INDIVIDUAL: o dono E a razao social ────────────────
+    #
+    # A consulta acima devolve zero linhas, e nao por falta de dado:
+    # Empresario Individual nao tem quadro societario por lei. Sao 44,4
+    # milhoes de empresas na base (64,7%) que nunca rendiam nem um nome.
+    #
+    # Quando a razao social termina em CPF -- 73% dos casos, medido -- o
+    # documento vem INTEIRO e de graca, e isso pula a desambiguacao de
+    # homonimo, que e a etapa mais caro deste arquivo (ate R$ 2,38 por
+    # pessoa). Aqui nao ha homonimo a desempatar: e o CPF que o proprio
+    # registro da empresa carrega.
+    if not saida:
+        try:
+            con = sqlite3.connect("file:%s?mode=ro" % I.CNPJ_DB, uri=True)
+            r = con.execute(
+                "SELECT e.razao_social, COALESCE(l.descricao, e.natureza) "
+                "FROM empresas e LEFT JOIN lookup l "
+                "  ON l.tipo='natureza' AND l.codigo=e.natureza "
+                "WHERE e.cnpj_basico=?", (base,)).fetchone()
+            con.close()
+        except Exception:
+            r = None
+        if r:
+            d = socio_unico.dono({"razao_social": r[0], "natureza_juridica": r[1],
+                                  "qsa": []})
+            if d:
+                saida.append({
+                    "nome": d["nome_socio"],
+                    "cpf_mascarado": "",
+                    "cpf": d["cpf_completo"],
+                    # Nao passou pela JBR e nao precisava: o CPF nao foi
+                    # DEDUZIDO, foi LIDO do registro. Zero aqui nao e falha
+                    # de conferencia -- e ausencia de conferencia necessaria.
+                    "conferidos_na_jbr": 0,
+                    "qualificacao": d["qualificacao_socio"],
+                    "desde": "", "faixa_etaria": "",
+                    "origem": "razao_social",
+                })
     return saida
 
 

@@ -60,6 +60,7 @@ import enrich_jobs
 import enrich_layout
 import enriquecimentos
 import memoria_empresa
+import socio_unico
 import setores_li
 import telefones as tel_fmt
 import meetime_leads
@@ -144,6 +145,21 @@ def _enrich_qsa_cpf(company: dict) -> None:
 
     Cruza nome + 6 digitos do meio da mascara (ex.: '***912137**') na base JBR.
     """
+    # O TITULAR DO EI ENTRA AQUI, antes de tudo.
+    #
+    # Empresario Individual nao tem QSA por lei: o dono e a empresa sao a
+    # mesma pessoa, e o nome dele E a razao social. Sem isto, dois tercos da
+    # base (44,4 milhoes de empresas) nunca rendiam sequer um nome, e a tela
+    # dizia "nenhuma pessoa identificada" -- que parece falta de dado e e
+    # falta de leitura.
+    #
+    # Roda mesmo sem a JBR pronta: aqui nao ha o que desambiguar. Quando a
+    # razao social termina em CPF (73% dos casos, medido), o documento vem
+    # inteiro e de graca -- e pula a etapa mais cara do funil.
+    dono = socio_unico.dono(company)
+    if dono:
+        company["qsa"] = [dono]
+
     if not _cpf_ready():
         return
     qsa = company.get("qsa") or []
@@ -2487,7 +2503,12 @@ async def company_leads(cnpj: str, decisores: bool = False,
                  "display": t.get("telefone") or "", "categoria": t.get("categoria"),
                  "whatsapp": t.get("whatsapp")} for t in tels]
 
-    socios = [s for s in (data.get("qsa") or []) if isinstance(s, dict)]
+    # `socios_efetivos` em vez de ler o QSA cru: ele devolve o quadro
+    # societario quando existe, e o TITULAR do Empresario Individual quando
+    # nao existe. Uma funcao so para a pergunta "quem sao as pessoas desta
+    # empresa" -- se cada tela decidisse por conta, umas lembrariam do EI e
+    # outras nao, e a mesma empresa renderia socio numa e nenhum na outra.
+    socios = socio_unico.socios_efetivos(data)
     # Preferir SÓCIO-ADMINISTRADOR como contato principal (Contato 1). A qualificação
     # societária (QSA) traz "Administrador"/"Sócio-Administrador"/"Diretor" — ordena
     # esses primeiro; mantém a ordem original como desempate.
@@ -3722,7 +3743,7 @@ async def _enrich_cnpj(cnpj: str, want: set,
     # Sócios — contato PESSOAL: resolve CPF do sócio (JBR) + celular/e-mail (Assertiva)
     if (need_so or need_vf) and company:
         _enrich_qsa_cpf(company)  # resolve cpf_completo de cada sócio via JBR
-        socios = [s for s in (company.get("qsa") or []) if isinstance(s, dict)]
+        socios = socio_unico.socios_efetivos(company)
         resumo = []
         # QUANTOS SOCIOS: o numero que a pessoa escolheu na tela, com 3 de
         # padrao para quem nao mexeu. Cada socio a mais e uma consulta paga a

@@ -32,6 +32,7 @@ TESTES = [
     ("t_05_complemento.py", "completar não encolhe, não repete coluna, não recobra"),
     ("t_06_cache_cpf.py", "o CPF resolvido não é comprado duas vezes"),
     ("t_07_sinais_memoria.py", "os sinais chegam na planilha e a empresa vazia é lembrada"),
+    ("t_08_empresario_individual.py", "Empresário Individual rende o titular, não vazio"),
 ]
 
 

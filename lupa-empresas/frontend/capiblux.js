@@ -1242,7 +1242,15 @@ function renderProspList() {
           </select>
         </label>
         <label>máx sócios/empresa
-          <input id="pf-maxsocios" type="number" min="0" max="20" value="0" class="filter-num" title="0 = sem limite" />
+          <!-- PADRAO 2 (decisao da Rebeca, 18/set/2026).
+               Nao e numero redondo: e o teto que segura o caso extremo sem
+               perder cobertura. Medido na base SP CAPITAL -- media de 4,6
+               socios por empresa, mas uma delas (PricewaterhouseCoopers) tem
+               89. Sem teto, ela sozinha custa R$ 10,59; com 2, custa R$ 0,24.
+               E o socio numero 40 de uma sociedade de auditoria nao vai
+               atender a ligacao de ninguem. -->
+          <input id="pf-maxsocios" type="number" min="0" max="20" value="2" class="filter-num"
+                 title="Padrão 2 — segura o caso extremo (há empresa com 89 sócios). 0 = sem limite." />
         </label>
         <label>Modelo (custo Assertiva vai pra ele)
           <select id="pf-modelo" class="filter-select" title="Atribui o custo das consultas Assertiva a este modelo, visível na aba Meus Modelos">
@@ -1786,7 +1794,7 @@ async function prospMontar() {
   const maxTel = parseInt(document.getElementById('pf-maxtel').value) || 3;
   const fonteTel = document.getElementById('pf-fontetel')?.value || 'assertiva';
   const sociosModo = document.getElementById('pf-sociosmodo')?.value || 'todos';
-  const maxSocios = parseInt(document.getElementById('pf-maxsocios')?.value) || 0;
+  const maxSocios = maxSociosDaTela();
   const modeloId = document.getElementById('pf-modelo')?.value || '';
   const decFonte = document.getElementById('pf-decfonte')?.value || 'assertiva';
   const maxDec = parseInt(document.getElementById('pf-maxdec')?.value) || 3;
@@ -2190,7 +2198,15 @@ async function prospValidar() {
   let done = 0, semAcesso = false, trocas = 0;
   const totalPessoas = porPessoa.size;
   for (const [, idxsPessoa] of porPessoa) {
-    prog.innerHTML = `<div class="prosp-progress"><span class="spinner"></span> Validando pessoa ${++done} de ${totalPessoas} (telefone reverso)…</div>`;
+    /* "de 37" numa lista de 72 contatos parece teto, e não é: a validação
+       roda POR PESSOA, e uma pessoa com três telefones é uma pessoa. Sem
+       dizer isso, o número vira relato de bug -- foi exatamente o que
+       aconteceu. */
+    prog.innerHTML = `<div class="prosp-progress"><span class="spinner"></span> `
+      + `Validando pessoa ${++done} de ${totalPessoas} `
+      + `<span style="opacity:.75">(${prospState.rows.length} linhas viram `
+      + `${totalPessoas} pessoas — quem tem vários números é testado uma vez, `
+      + `até um confirmar)</span></div>`;
     let confirmou = false;
     for (let ordem = 0; ordem < idxsPessoa.length; ordem++) {
       const i = idxsPessoa[ordem];
@@ -2217,9 +2233,27 @@ async function prospValidar() {
   if (semAcesso) {
     prog.innerHTML = `<div class="prosp-progress" style="color:#b45309">🔒 A chave da WorkAPI não tem acesso ao módulo de telefone reverso (intelgrax-tel) — peça pra habilitar. Os telefones vieram da Mk Buscas (já associados ao CPF); a coluna "Validado" ficou como 🔒 sem acesso.</div>`;
   } else {
-    const ok = prospState.rows.filter(r => r.validado === 'sim').length;
+    /* PRESTAÇÃO DE CONTAS DE TODAS AS LINHAS.
+       A versão anterior dizia só "22 confirmados" numa lista de 72 e calava
+       sobre os outros 50 -- e quem lê conclui que a validação tem um teto
+       escondido. Cada linha tem um destino e cada destino pede uma ação
+       diferente: "não pertence" pede outro número, "sem CPF" pede resolver o
+       CPF, "não testado" não pede nada porque a pessoa já foi confirmada. */
+    const conta = (estado) => prospState.rows.filter(r => r.validado === estado).length;
+    const ok = conta('sim');
+    const naoEdela = conta('não');
+    const semCpf = conta('sem_cpf');
+    const naoTestado = conta('nao_testado');
+    const indefinido = conta('n/d');
     const trocou = prospState.trocasValidacao || 0;
-    prog.innerHTML = `<div class="prosp-progress prosp-done">✅ Validação concluída: ${ok} telefone(s) confirmado(s)`
+    const partes = [`<b>${ok}</b> confirmado(s)`];
+    if (naoEdela) partes.push(`${naoEdela} não é da pessoa`);
+    if (semCpf) partes.push(`${semCpf} sem CPF (não deu para testar)`);
+    if (naoTestado) partes.push(`${naoTestado} não testado — outro número da mesma pessoa já confirmou`);
+    if (indefinido) partes.push(`${indefinido} a fonte não soube responder`);
+    prog.innerHTML = `<div class="prosp-progress prosp-done">✅ Validação concluída `
+      + `em ${prospState.rows.length} linha(s) de ${totalPessoas} pessoa(s): `
+      + partes.join(' · ')
       + (trocou ? ` — em ${trocou} caso(s) o primeiro número falhou e o confirmado foi o seguinte da lista da pessoa.` : '.')
       + `</div>`;
   }
@@ -2410,6 +2444,21 @@ document.getElementById('pf-salvos-atualizar')?.addEventListener('click',
 /* Carrega ao abrir: quem volta no dia seguinte tem que encontrar as listas
    que montou, sem precisar clicar em nada para descobrir que existem. */
 if (document.getElementById('pf-salvos')) prospSalvosCarregar();
+
+/* O TETO DE SOCIOS, lido de um lugar so.
+   Havia duas leituras iguais com `|| 0` no fim, e 0 aqui significa SEM
+   LIMITE -- entao apagar o campo para digitar outro numero pedia
+   silenciosamente a opcao mais cara. O padrao da tela e 2 e o vazio tem que
+   valer 2, nao o oposto. */
+const MAX_SOCIOS_PADRAO = 2;
+
+function maxSociosDaTela() {
+  const bruto = document.getElementById('pf-maxsocios')?.value;
+  if (bruto === '' || bruto === null || bruto === undefined) return MAX_SOCIOS_PADRAO;
+  const n = parseInt(bruto, 10);
+  // 0 continua sendo "sem limite" -- é escolha explícita de quem digitou.
+  return Number.isFinite(n) ? n : MAX_SOCIOS_PADRAO;
+}
 
 async function prospExportar() {
   const exp = document.getElementById('pf-export');
@@ -6706,7 +6755,7 @@ async function decLiBuscar() {
   }
   try {
     const maxDec = parseInt(document.getElementById('pf-maxdec')?.value) || 0;
-    const maxSoc = parseInt(document.getElementById('pf-maxsocios')?.value) || 0;
+    const maxSoc = maxSociosDaTela();
     const soTel = (document.getElementById('pf-so-com-tel')?.checked ?? true);
     const d = await fetch(`${API}/api/funil/decisores-linkedin`, {
       method: 'POST',
