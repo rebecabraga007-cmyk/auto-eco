@@ -619,7 +619,10 @@ PAGES.execucao = {
   async render() {
     const f = state.queueFilter || {};
     const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v));
-    const res = await api(`/api/flow/execution/queue?${qs}`);
+    const [res, quentes] = await Promise.all([
+      api(`/api/flow/execution/queue?${qs}`),
+      api("/api/flow/hot-leads").catch(() => ({ data: [] })),
+    ]);
     const items = res.data;
 
     const list = items.length ? items.map((a, i) => `
@@ -678,7 +681,18 @@ PAGES.execucao = {
       ${panel("Fila priorizada",
         `<div class="alert alert-info alert-styled-left">A ordem combina atraso, prioridade da cadência e janela de melhor contato — não é ordem cronológica.</div>
          <div style="margin:0 -20px -20px">${list}</div>`,
-        { subtitle: "Atividades pendentes das próximas 24 horas" })}`;
+        { subtitle: "Atividades pendentes das próximas 24 horas" })}
+      ${quentes.data.length ? panel(`Leads aguardando a primeira ligação (${quentes.data.length})`,
+        table(["Lead", "Empresa", "Telefone", "Esperando há", ""],
+          quentes.data.map((l) => ({ cells: [
+            `<a data-lead="${l.id}"><strong>${h(l.name)}</strong></a>`,
+            h(l.company || "—"), h(l.phone || "—"),
+            l.horasEsperando >= 48 ? `<span class="pill red">${Math.round(l.horasEsperando / 24)} dias</span>`
+              : l.horasEsperando >= 24 ? `<span class="pill amber">${Math.round(l.horasEsperando / 24)} dia</span>`
+              : `<span class="pill">${l.horasEsperando}h</span>`,
+            `<button class="btn btn-default btn-xs" data-lead="${l.id}">Abrir</button>`,
+          ] })), { scroll: true }),
+        { subtitle: "Ninguém ligou para eles ainda. Os mais antigos vêm primeiro — lead novo esfria rápido." }) : ""}`;
 
     const setFilter = (key, value) => {
       state.queueFilter = { ...(state.queueFilter || {}), [key]: value };
@@ -1344,6 +1358,42 @@ async function openLeadModal(id) {
       const r = await api(`/api/capiblu/leads/${l.id}/validate-phone`, { method: "POST" });
       out.innerHTML = `<div class="json-box">${h(JSON.stringify(r, null, 2))}</div>`;
     } catch (e) { out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`; }
+  };
+}
+
+function openTeamForm(time, usuarios) {
+  const t = time || {};
+  const dentro = new Set((t.users || []).map((u) => u.id));
+  const m = modal({
+    title: t.id ? `Editar ${t.name}` : "Novo time",
+    body: `
+      <div class="field"><label for="tmNome">Nome do time *</label>
+        <input class="form-control" id="tmNome" value="${h(t.name || "")}"></div>
+      <div class="field"><label>Integrantes</label>
+        <div class="chip-grid" id="tmGente">
+          ${usuarios.map((u) => `<button type="button" class="chip${dentro.has(u.id) ? " active" : ""}"
+            data-uid="${u.id}">${h(u.name)}</button>`).join("")}
+        </div>
+        <span class="help-block">Uma pessoa pertence a um time só — marcar aqui tira do time anterior.</span></div>`,
+    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+             <button class="btn btn-main btn-sm" data-ok>Salvar</button>`,
+  });
+  m.root.querySelectorAll("#tmGente .chip").forEach((c) => {
+    c.onclick = () => c.classList.toggle("active");
+  });
+  m.root.querySelector("[data-cancel]").onclick = m.close;
+  m.root.querySelector("[data-ok]").onclick = async (ev) => {
+    const bt = ev.currentTarget;
+    const nome = m.root.querySelector("#tmNome").value.trim();
+    if (!nome) return toast("Dê um nome ao time.", "err");
+    bt.disabled = true;
+    const corpo = { name: nome,
+      userIds: [...m.root.querySelectorAll("#tmGente .chip.active")].map((c) => Number(c.dataset.uid)) };
+    try {
+      await api(t.id ? `/api/teams/${t.id}` : "/api/teams",
+                { method: t.id ? "PATCH" : "POST", body: corpo });
+      m.close(); toast("Time salvo.", "ok"); go("usuarios");
+    } catch (e) { toast(e.message, "err"); bt.disabled = false; }
   };
 }
 
@@ -4708,7 +4758,8 @@ PAGES["meu-perfil"] = {
 PAGES.usuarios = {
   area: "Empresa", title: "Usuários e times",
   async render() {
-    const [users, teams] = await Promise.all([api("/api/users"), api("/api/teams")]);
+    const [users, teams, empresa] = await Promise.all([
+      api("/api/users"), api("/api/teams"), api("/api/me/company")]);
     state.users = users.data;
     const rows = users.data.map((u) => ({ cells: [
       `<div class="media-left"><div class="lead-avatar-dot ${u.online ? "success" : ""}">${h(u.initials)}</div></div>
@@ -4725,12 +4776,60 @@ PAGES.usuarios = {
         <span class="spacer"></span>
         <button class="btn btn-main btn-xs" id="newUser">Novo usuário</button></div>
       ${panel("Usuários", table(["Usuário", "Papéis", "Time", "Meta diária", "Situação", ""], rows))}
-      ${panel("Times", table(["Time", "Integrantes"],
-        teams.map((t) => ({ cells: [h(t.name), t.users.map((u) => h(u.name)).join(", ") || "—"] }))))}`;
+      ${panel("Times", table(["Time", "Integrantes", ""],
+        teams.map((t) => ({ cells: [
+          h(t.name),
+          t.users.map((u) => h(u.name)).join(", ") || "—",
+          `<button class="btn btn-default btn-xs" data-edit-team="${t.id}">Editar</button>
+           <button class="btn btn-default btn-xs" data-del-team="${t.id}" data-nome="${h(t.name)}">Remover</button>`,
+        ] })), { empty: "Nenhum time ainda." }),
+        { actions: nivelPeloMenos("admin") ? `<button class="btn btn-main btn-xs" id="newTeam">Criar time</button>` : "" })}
+      ${panel("Dados da empresa", `
+        <div class="field-row">
+          <div class="field"><label for="emNome">Nome</label>
+            <input class="form-control" id="emNome" value="${h(empresa.name || "")}"></div>
+          <div class="field"><label for="emTel">Telefone</label>
+            <input class="form-control" id="emTel" value="${h(empresa.phone || "")}"></div>
+        </div>
+        <div class="field"><label for="emSite">Site</label>
+          <input class="form-control" id="emSite" value="${h(empresa.site || "")}"></div>
+        ${nivelPeloMenos("admin") ? `<button class="btn btn-main btn-sm" id="emSalvar">Atualizar dados</button>`
+          : `<span class="text-muted text-size-small">Só administrador edita os dados da empresa.</span>`}`)}`;
     document.getElementById("newUser").onclick = () => openUserForm();
     view.querySelectorAll("[data-edit-user]").forEach((b) => {
       b.onclick = () => openUserForm(users.data.find((u) => String(u.id) === b.dataset.editUser));
     });
+
+    const novoTime = document.getElementById("newTeam");
+    if (novoTime) novoTime.onclick = () => openTeamForm(null, users.data);
+    view.querySelectorAll("[data-edit-team]").forEach((b) => {
+      b.onclick = () => openTeamForm(teams.find((t) => String(t.id) === b.dataset.editTeam), users.data);
+    });
+    view.querySelectorAll("[data-del-team]").forEach((b) => {
+      b.onclick = () => confirmDialog("Remover time",
+        `Remover o time "${b.dataset.nome}"? As pessoas continuam, só ficam sem time.`,
+        async () => {
+          try {
+            await api(`/api/teams/${b.dataset.delTeam}`, { method: "DELETE" });
+            toast("Time removido.", "ok"); go("usuarios");
+          } catch (e) { toast(e.message, "err"); }
+        });
+    });
+
+    const salvarEmpresa = document.getElementById("emSalvar");
+    if (salvarEmpresa) salvarEmpresa.onclick = async (ev) => {
+      const bt = ev.currentTarget;
+      bt.disabled = true;
+      try {
+        await api("/api/me/company", { method: "PATCH", body: {
+          name: document.getElementById("emNome").value,
+          phone: document.getElementById("emTel").value,
+          site: document.getElementById("emSite").value,
+        } });
+        toast("Dados da empresa atualizados.", "ok");
+      } catch (e) { toast(e.message, "err"); }
+      bt.disabled = false;
+    };
   },
 };
 

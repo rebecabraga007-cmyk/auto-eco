@@ -522,6 +522,27 @@ def set_lead_stage(lid: int, payload: dict = Body(...), db: Session = Depends(ge
     return {"ok": True, "stage": etapa}
 
 
+@router.get("/hot-leads")
+def hot_leads(limit: int = Query(20, le=100), db: Session = Depends(get_db)):
+    """Leads esperando a PRIMEIRA ligação — o painel `mtHotLeads` do original.
+
+    O critério é literal: lead em prospecção que ainda não tem nenhuma ligação
+    registrada. Quanto mais tempo desde a entrada, mais no topo — lead novo
+    esfria rápido, e é justamente essa fila que a tela existe para furar.
+    """
+    ator = perm.ator(db)
+    q = perm.escopo_leads(db, db.query(Lead), ator, Lead.sdr_id)
+    q = q.filter(Lead.status.in_(["WAITING", "EXECUTING"]),
+                 ~Lead.id.in_(db.query(Call.lead_id).filter(Call.lead_id.isnot(None))),
+                 Lead.phone != "")
+    linhas = q.order_by(Lead.created_at).limit(limit).all()
+    agora = datetime.utcnow()
+    return {"data": [{**serial.lead(l),
+                      "horasEsperando": round((agora - l.created_at).total_seconds() / 3600, 1)
+                      if l.created_at else None}
+                     for l in linhas]}
+
+
 @router.get("/leads/export")
 def export_leads(status: str | None = None, cadence_id: int | None = None,
                  client_id: int | None = None, sdr_id: int | None = None,

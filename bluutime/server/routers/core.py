@@ -290,6 +290,84 @@ def list_teams(db: Session = Depends(get_db)):
             for t in db.query(Team).all()]
 
 
+@router.post("/teams")
+def create_team(payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("admin", "criar time")
+    nome = (payload.get("name") or "").strip()
+    if not nome:
+        raise HTTPException(400, "Nome do time é obrigatório.")
+    if db.query(Team).filter(func.lower(Team.name) == nome.lower()).first():
+        raise HTTPException(400, "Já existe um time com esse nome.")
+    t = Team(name=nome)
+    db.add(t)
+    db.flush()
+    _definir_membros(db, t, payload.get("userIds"))
+    db.commit()
+    return {"id": t.id, "name": t.name}
+
+
+@router.patch("/teams/{tid}")
+def update_team(tid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("admin", "editar time")
+    t = db.get(Team, tid)
+    if not t:
+        raise HTTPException(404, "Time não encontrado.")
+    if "name" in payload:
+        nome = (payload["name"] or "").strip()
+        if not nome:
+            raise HTTPException(400, "Nome do time é obrigatório.")
+        t.name = nome
+    if "userIds" in payload:
+        _definir_membros(db, t, payload["userIds"])
+    db.commit()
+    return {"id": t.id, "name": t.name}
+
+
+@router.delete("/teams/{tid}")
+def delete_team(tid: int, db: Session = Depends(get_db)):
+    """Apaga o time, não as pessoas — elas voltam a ficar sem time."""
+    perm.ator(db).exigir("admin", "remover time")
+    t = db.get(Team, tid)
+    if not t:
+        raise HTTPException(404, "Time não encontrado.")
+    db.query(User).filter(User.team_id == tid).update({"team_id": None},
+                                                      synchronize_session=False)
+    db.delete(t)
+    db.commit()
+    return {"ok": True}
+
+
+def _definir_membros(db: Session, time: Team, ids) -> None:
+    """Quem está no time passa a ser exatamente esta lista.
+
+    Tira de quem saiu antes de pôr em quem entrou — um usuário só pertence a
+    um time, então trocar de time é sair de um e entrar no outro.
+    """
+    if ids is None:
+        return
+    novos = {int(i) for i in ids}
+    db.query(User).filter(User.team_id == time.id, ~User.id.in_(novos or [0])) \
+        .update({"team_id": None}, synchronize_session=False)
+    if novos:
+        db.query(User).filter(User.id.in_(novos)) \
+            .update({"team_id": time.id}, synchronize_session=False)
+
+
+@router.patch("/me/company")
+def update_company(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Dados gerais da empresa — nome, telefone e site."""
+    perm.ator(db).exigir("admin", "editar dados da empresa")
+    c = _company(db)
+    for chave, attr in (("name", "name"), ("phone", "phone"), ("site", "site")):
+        if chave in payload:
+            valor = (payload[chave] or "").strip()
+            if chave == "name" and not valor:
+                raise HTTPException(400, "Nome da empresa é obrigatório.")
+            setattr(c, attr, valor)
+    db.commit()
+    return my_company(db)
+
+
 @router.get("/flow/users")
 def flow_users(db: Session = Depends(get_db)):
     return [{"id": u.id, "name": u.name, "email": u.email, "dailyGoal": u.daily_goal}
