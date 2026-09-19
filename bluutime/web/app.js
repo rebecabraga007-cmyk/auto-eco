@@ -1778,6 +1778,7 @@ PAGES.atividades = {
         ${h(TYPE_LABEL[a.type] || a.type)}${a.socialNetwork ? ` · ${h(a.socialNetwork)}` : ""}</span>`,
       a.emailTemplate ? h(a.emailTemplate.subject) : h((a.instruction || "").slice(0, 110) || "—"),
       `<button class="btn btn-default btn-xs" data-edit-act="${a.id}">Editar</button>
+       <button class="btn btn-default btn-xs" data-dup-act="${a.id}">Duplicar</button>
        <button class="btn btn-default btn-xs" data-del-act="${a.id}">Excluir</button>`,
     ] }));
 
@@ -1801,6 +1802,14 @@ PAGES.atividades = {
     document.getElementById("newAct").onclick = () => openActivityForm();
     view.querySelectorAll("[data-edit-act]").forEach((b) => {
       b.onclick = () => openActivityForm(list.find((a) => String(a.id) === b.dataset.editAct));
+    });
+    view.querySelectorAll("[data-dup-act]").forEach((b) => {
+      b.onclick = () => {
+        const base = list.find((a) => String(a.id) === b.dataset.dupAct);
+        // Sem `id` o formulário salva como nova — é o "criar a partir desta"
+        // do original, que poupa reescrever script e assunto do zero.
+        openActivityForm({ ...base, id: null, name: `${base.name} (cópia)` });
+      };
     });
     view.querySelectorAll("[data-del-act]").forEach((b) => {
       b.onclick = () => confirmDialog("Excluir atividade", "Confirma a exclusão?", async () => {
@@ -1874,7 +1883,9 @@ PAGES.bases = {
       b.createdBy ? h(b.createdBy.name) : "—",
       fmtDate(b.created),
       `<button class="btn btn-default btn-xs" data-leads-base="${b.id}">Ver leads</button>
-       ${b.sourceQuery ? `<button class="btn btn-default btn-xs" data-query="${b.id}">Ver consulta</button>` : ""}`,
+       ${b.sourceQuery ? `<button class="btn btn-default btn-xs" data-query="${b.id}">Ver consulta</button>` : ""}
+       ${nivelPeloMenos("admin") ? `<button class="btn btn-default btn-xs" data-del-base="${b.id}"
+         data-nome="${h(b.name)}" data-n="${b.numberOfLeads}">Excluir</button>` : ""}`,
     ] }));
 
     view.innerHTML = `
@@ -1891,6 +1902,20 @@ PAGES.bases = {
     document.getElementById("importCsv").onclick = openImportWizard;
     view.querySelectorAll("[data-leads-base]").forEach((b) => {
       b.onclick = () => { state.leadFilter = { lead_base_id: b.dataset.leadsBase, page: 1 }; go("leads"); };
+    });
+    view.querySelectorAll("[data-del-base]").forEach((b) => {
+      const n = Number(b.dataset.n) || 0;
+      b.onclick = () => confirmDialog("Excluir base",
+        n ? `Excluir "${b.dataset.nome}" apaga também os ${n} leads importados por ela, com o histórico de cada um. Não dá pra desfazer.`
+          : `Excluir a base "${b.dataset.nome}"?`,
+        async () => {
+          try {
+            const r = await api(`/api/flow/lead-bases/${b.dataset.delBase}?com_leads=${n > 0}`,
+                                { method: "DELETE" });
+            toast(r.leadsApagados ? `Base e ${r.leadsApagados} leads apagados.` : "Base apagada.", "ok");
+            go("bases");
+          } catch (e) { toast(e.message, "err"); }
+        });
     });
     view.querySelectorAll("[data-query]").forEach((b) => {
       b.onclick = () => {

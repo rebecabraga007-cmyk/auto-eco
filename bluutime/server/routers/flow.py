@@ -889,16 +889,29 @@ def import_base(payload: dict = Body(...), db: Session = Depends(get_db)):
 
 
 @router.delete("/lead-bases/{bid}")
-def delete_base(bid: int, db: Session = Depends(get_db)):
+def delete_base(bid: int, com_leads: bool = False, db: Session = Depends(get_db)):
+    """Apaga a base. Com `com_leads=true`, apaga também os leads importados.
+
+    O padrão continua recusando: apagar uma importação leva junto o histórico
+    de quem já foi trabalhado. Quem quiser mesmo pede explicitamente, e a tela
+    mostra quantos leads vão embora antes de perguntar.
+    """
     perm.ator(db).exigir("gestor", "excluir base de leads")
     b = db.get(LeadBase, bid)
     if not b:
         raise HTTPException(404, "Base não encontrada.")
-    if db.query(func.count(Lead.id)).filter_by(lead_base_id=bid).scalar():
-        raise HTTPException(400, "A base tem leads vinculados.")
+    quantos = db.query(func.count(Lead.id)).filter_by(lead_base_id=bid).scalar()
+    if quantos and not com_leads:
+        raise HTTPException(400, f"A base tem {quantos} leads vinculados. "
+                                 "Use com_leads=true para apagar tudo.")
+    if quantos:
+        # Apagar leads em massa sem admin seria perda de dado grande demais
+        # para um papel que não responde pela conta.
+        perm.ator(db).exigir("admin", f"apagar {quantos} leads junto com a base")
+        db.query(Lead).filter(Lead.lead_base_id == bid).delete(synchronize_session=False)
     db.delete(b)
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "leadsApagados": quantos if com_leads else 0}
 
 
 # ── Execução: a fila do SDR ──
