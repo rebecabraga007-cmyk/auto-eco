@@ -619,9 +619,10 @@ PAGES.execucao = {
   async render() {
     const f = state.queueFilter || {};
     const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v));
-    const [res, quentes] = await Promise.all([
+    const [res, quentes, geral] = await Promise.all([
       api(`/api/flow/execution/queue?${qs}`),
       api("/api/flow/hot-leads").catch(() => ({ data: [] })),
+      api("/api/flow/execution/overall").catch(() => null),
     ]);
     const items = res.data;
 
@@ -672,6 +673,30 @@ PAGES.execucao = {
         <span class="spacer"></span>
         <button class="btn btn-default btn-xs" id="refresh">Atualizar</button>
       </div>
+      ${geral ? panel("Meu dia", `
+        <div class="split" style="grid-template-columns:1fr auto;align-items:center">
+          <div>
+            <div style="font-size:15px">
+              Você está prospectando <strong>${geral.prospectando}</strong> leads
+              ${geral.disponiveis ? `· <strong>${geral.disponiveis}</strong> em espera para começar` : ""}
+            </div>
+            <div class="bar mt-10" style="height:22px">
+              <span style="width:${Math.min(100, geral.hoje.percentual)}%;background:${geral.bateuMeta ? "var(--green)" : "var(--blue)"}"></span>
+            </div>
+            <div class="text-muted text-size-small mt-10">
+              ${geral.hoje.feitas} de ${geral.hoje.meta || "—"} atividades hoje
+              ${geral.hoje.meta ? ` · ${geral.hoje.percentual}%` : " (sem meta definida)"}
+              ${geral.hoje.ignoradas ? ` · ${geral.hoje.ignoradas} ignoradas` : ""}
+            </div>
+          </div>
+          <div style="text-align:center;min-width:120px">
+            ${geral.bateuMeta
+              ? `<div style="font-size:42px;line-height:1">🏆</div>
+                 <div class="pill green">Meta batida</div>`
+              : `<div class="round-icon" style="margin:0 auto">${Math.round(geral.hoje.percentual)}%</div>`}
+            ${geral.disponiveis ? `<button class="btn btn-main btn-sm mt-10" id="puxarLeads">Ver leads em espera</button>` : ""}
+          </div>
+        </div>`) : ""}
       ${kpis([
         { value: res.meta.total, label: "Na fila", tone: "info" },
         { value: res.meta.late, label: "Atrasadas", tone: "danger" },
@@ -693,6 +718,15 @@ PAGES.execucao = {
             `<button class="btn btn-default btn-xs" data-lead="${l.id}">Abrir</button>`,
           ] })), { scroll: true }),
         { subtitle: "Ninguém ligou para eles ainda. Os mais antigos vêm primeiro — lead novo esfria rápido." }) : ""}`;
+
+    const puxar = document.getElementById("puxarLeads");
+    // Leva para a lista filtrada em vez de iniciar tudo de uma vez: começar
+    // cadência é decisão por lead (qual cadência, qual cliente), e um botão
+    // que dispara em lote esconderia essa escolha.
+    if (puxar) puxar.onclick = () => {
+      state.leadFilter = { page: 1, limit: 50, status: "WAITING" };
+      go("leads");
+    };
 
     const setFilter = (key, value) => {
       state.queueFilter = { ...(state.queueFilter || {}), [key]: value };

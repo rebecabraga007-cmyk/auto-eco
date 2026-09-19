@@ -523,6 +523,46 @@ def set_lead_stage(lid: int, payload: dict = Body(...), db: Session = Depends(ge
     return {"ok": True, "stage": etapa}
 
 
+@router.get("/execution/overall")
+def execution_overall(db: Session = Depends(get_db)):
+    """Meu progresso de hoje — o `executionOverall` do original.
+
+    Responde três perguntas que a fila sozinha não responde: quantos leads eu
+    estou tocando, quantos ainda dá para puxar, e quanto já andei da meta.
+    """
+    ator = perm.ator(db)
+    hoje = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    meus = perm.escopo_leads(db, db.query(Lead), ator, Lead.sdr_id)
+    por_situacao = dict(meus.with_entities(Lead.status, func.count(Lead.id))
+                        .group_by(Lead.status).all())
+    prospectando = por_situacao.get("EXECUTING", 0) + por_situacao.get("ON_EXTRA_ACTIVITY", 0)
+
+    # Disponíveis: em espera E sem cadência começada — é o que o botão
+    # "iniciar novos leads" consegue de fato puxar.
+    disponiveis = meus.filter(Lead.status == "WAITING").count()
+
+    feitas = db.query(func.count(LeadActivity.id)).filter(
+        LeadActivity.user_id == (ator.user_id or -1),
+        LeadActivity.status == "DONE", LeadActivity.done_at >= hoje).scalar()
+    ignoradas = db.query(func.count(LeadActivity.id)).filter(
+        LeadActivity.user_id == (ator.user_id or -1),
+        LeadActivity.status == "SKIPPED", LeadActivity.done_at >= hoje).scalar()
+    porTipo = dict(db.query(LeadActivity.type, func.count(LeadActivity.id)).filter(
+        LeadActivity.user_id == (ator.user_id or -1),
+        LeadActivity.status == "DONE", LeadActivity.done_at >= hoje)
+        .group_by(LeadActivity.type).all())
+
+    usuario = db.get(User, ator.user_id) if ator.user_id else None
+    meta = (usuario.daily_goal if usuario else 0) or 0
+    return {"prospectando": prospectando, "disponiveis": disponiveis,
+            "ganhos": por_situacao.get("WON", 0), "perdidos": por_situacao.get("LOST", 0),
+            "hoje": {"feitas": feitas, "ignoradas": ignoradas, "meta": meta,
+                     "percentual": round(feitas / meta * 100, 1) if meta else 0,
+                     "porTipo": porTipo},
+            "bateuMeta": bool(meta and feitas >= meta)}
+
+
 @router.get("/hot-leads")
 def hot_leads(limit: int = Query(20, le=100), db: Session = Depends(get_db)):
     """Leads esperando a PRIMEIRA ligação — o painel `mtHotLeads` do original.
