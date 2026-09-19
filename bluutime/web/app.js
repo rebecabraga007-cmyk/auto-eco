@@ -1421,8 +1421,13 @@ PAGES.cadencias = {
       `<span class="pill">${h(FOCUS_LABEL[c.cadenceFocus] || c.cadenceFocus)}</span>`,
       `<span class="pill ${c.priority === "VERY_HIGH" ? "red" : c.priority === "HIGH" ? "amber" : "grey"}">${h(PRIORITY_LABEL[c.priority])}</span>`,
       c.stepsCount,
-      c.overview.total, `<span style="color:#00a443">${c.overview.won}</span>`,
-      `<span style="color:#f44336">${c.overview.lost}</span>`,
+      // Clicar no número leva para a lista já filtrada — o overview do
+      // original é porta de entrada, não só contagem.
+      `<a data-drill="${c.id}" data-st="">${c.overview.total}</a>`,
+      `<a data-drill="${c.id}" data-st="WAITING">${c.overview.waiting}</a>`,
+      `<a data-drill="${c.id}" data-st="EXECUTING">${c.overview.executing + c.overview.onExtraActivity}</a>`,
+      `<a data-drill="${c.id}" data-st="WON" style="color:#00a443">${c.overview.won}</a>`,
+      `<a data-drill="${c.id}" data-st="LOST" style="color:#f44336">${c.overview.lost}</a>`,
       c.overview.total ? `${Math.round((c.overview.won / c.overview.total) * 100)}%` : "—",
       c.users.map((u) => h(u.name)).join(", ") || "—",
       c.executing ? `<span class="pill green">Ativa</span>` : `<span class="pill grey">Pausada</span>`,
@@ -1445,8 +1450,9 @@ PAGES.cadencias = {
         <button class="btn btn-main btn-xs" id="newCad">Criar cadência</button>
       </div>
       ${panel(`${list.length} cadências`,
-        table(["Cadência", "Cliente", "Foco", "Prioridade", "Etapas", "Leads", "Ganhos",
-               "Perdidos", "Conversão", "Responsáveis", "Situação", ""], rows, { scroll: true }))}`;
+        table(["Cadência", "Cliente", "Foco", "Prioridade", "Etapas", "Leads",
+               "Esperando", "Em execução", "Ganhos", "Perdidos", "Conversão",
+               "Responsáveis", "Situação", ""], rows, { scroll: true }))}`;
 
     const set = (k, v) => { state.cadFilter = { ...f, [k]: v }; go("cadencias"); };
     const q = document.getElementById("cq");
@@ -1455,6 +1461,13 @@ PAGES.cadencias = {
     document.getElementById("cFocus").onchange = (e) => set("focus", e.target.value);
     document.getElementById("cPrio").onchange = (e) => set("priority", e.target.value);
     document.getElementById("newCad").onclick = () => openCadenceForm();
+    view.querySelectorAll("[data-drill]").forEach((a) => {
+      a.onclick = () => {
+        state.leadFilter = { page: 1, limit: 50, cadence_id: a.dataset.drill,
+                             status: a.dataset.st || "" };
+        go("leads");
+      };
+    });
     view.querySelectorAll("[data-open-cad]").forEach((a) => {
       a.onclick = () => openCadenceDetail(Number(a.dataset.openCad));
     });
