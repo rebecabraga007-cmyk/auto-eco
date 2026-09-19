@@ -288,6 +288,58 @@ def cadence_steps(cadence_id: int, since: str | None = None, until: str | None =
             "passos": passos}
 
 
+@router.get("/flow/statistics/performance")
+def performance(since: str | None = None, until: str | None = None,
+                team_id: int | None = None, db: Session = Depends(get_db)):
+    """Eficiência por vendedor — a tela `statistics/flow/performance`.
+
+    "Execução geral" é realizadas sobre o que foi atribuído. Atividade
+    ignorada entra no denominador e não no numerador: ignorar tudo tem que
+    derrubar a taxa, senão quem não trabalha aparece com 100%.
+    """
+    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
+    end = datetime.fromisoformat(until) if until else datetime.utcnow()
+    start = datetime.fromisoformat(since) if since else end - timedelta(days=30)
+    do_time = usuarios_do_time(db, team_id)
+
+    usuarios = db.query(User).filter(User.active)
+    if do_time is not None:
+        usuarios = usuarios.filter(User.id.in_(do_time))
+
+    linhas = []
+    for u in usuarios.all():
+        base = db.query(LeadActivity).filter(
+            LeadActivity.user_id == u.id,
+            LeadActivity.done_at.between(start, end),
+            LeadActivity.status.in_(["DONE", "SKIPPED"]))
+        feitas = base.filter(LeadActivity.status == "DONE").all()
+        atribuidas = base.count()
+        por_tipo = Counter(a.type for a in feitas)
+        chamadas = db.query(Call).filter(Call.user_id == u.id,
+                                         Call.started_at.between(start, end)).all()
+        significativas = sum(1 for c in chamadas if c.output == "MEANINGFUL")
+        ganhos = db.query(func.count(Lead.id)).filter(
+            Lead.sdr_id == u.id, Lead.won_at.between(start, end)).scalar()
+        linhas.append({
+            "user": serial.user_min(u),
+            "atividades": len(feitas), "atribuidas": atribuidas,
+            "execucao": round(len(feitas) / atribuidas * 100, 1) if atribuidas else 0.0,
+            "ligacoes": len(chamadas), "significativas": significativas,
+            "taxaSignificativa": round(significativas / len(chamadas) * 100, 1) if chamadas else 0.0,
+            "pesquisas": por_tipo.get("SEARCH", 0),
+            "social": por_tipo.get("SOCIAL_POINT", 0),
+            "emails": por_tipo.get("E_MAIL", 0),
+            "ganhos": ganhos,
+        })
+    linhas.sort(key=lambda r: r["ganhos"], reverse=True)
+
+    outros = dict(db.query(Lead.status, func.count(Lead.id)).group_by(Lead.status).all())
+    return {"geral": {"atividades": sum(r["atividades"] for r in linhas),
+                      "ganhos": sum(r["ganhos"] for r in linhas),
+                      "outrasSituacoes": {k: v for k, v in outros.items() if k not in ("WON",)}},
+            "performances": linhas}
+
+
 @router.get("/flow/statistics/response-time")
 def response_time(since: str | None = None, until: str | None = None,
                   team_id: int | None = None, db: Session = Depends(get_db)):

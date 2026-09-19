@@ -2258,8 +2258,8 @@ PAGES.estatisticas = {
     const clientId = state.statClient || "";
     const abas = `<ul class="nav nav-tabs">
       ${[["geral", "Visão geral"], ["cadencias", "Distribuição nas cadências"],
-         ["conversao", "Conversão por passo"], ["motivos", "Motivos de perda"],
-         ["resposta", "Tempo de resposta"]].map(([k, v]) =>
+         ["conversao", "Conversão por passo"], ["desempenho", "Desempenho"],
+         ["motivos", "Motivos de perda"], ["resposta", "Tempo de resposta"]].map(([k, v]) =>
         `<li${aba === k ? ' class="active"' : ""}><a data-estaba="${k}">${v}</a></li>`).join("")}
     </ul>`;
     const barra = `<div class="toolbar">
@@ -2339,6 +2339,29 @@ PAGES.estatisticas = {
       const sm = document.getElementById("smPor");
       if (sm) sm.onchange = () => { state.estMotivoPor = sm.value; go("estatisticas"); };
       return;
+    }
+
+    if (aba === "desempenho") {
+      const d = await api(`/api/flow/statistics/performance${filtrosQS()}`);
+      view.innerHTML = `${barra}${abas}<div class="mt-10">
+        ${kpis([
+          { value: d.geral.atividades, label: "Atividades realizadas" },
+          { value: d.geral.ganhos, label: "Leads ganhos", tone: "success" },
+          { value: d.performances.length, label: "Vendedores no período", tone: "info" },
+        ])}
+        ${panel("Qual a eficiência dos vendedores",
+          table(["Vendedor", "Atividades", "Execução geral", "Ligações", "Significativas", "Pesquisas", "Social", "E-mails", "Ganhos"],
+            d.performances.map((p) => ({ cells: [
+              h(p.user.name), p.atividades,
+              `<span class="pill ${p.execucao >= 80 ? "green" : p.execucao >= 50 ? "amber" : "red"}">${p.execucao}%</span>`,
+              p.ligacoes,
+              `${p.significativas}${p.ligacoes ? ` <span class="text-muted text-size-small">(${p.taxaSignificativa}%)</span>` : ""}`,
+              p.pesquisas, p.social, p.emails,
+              `<strong>${p.ganhos}</strong>`] })),
+            { scroll: true, empty: "Nenhuma atividade no período." }),
+          { subtitle: "Execução geral é realizadas sobre atribuídas — atividade ignorada conta no total e não como executada. Abertura e clique de e-mail entram quando o rastreio estiver ligado." })}
+      </div>`;
+      return ligar();
     }
 
     if (aba === "resposta") {
