@@ -2247,36 +2247,69 @@ PAGES["lista-ligacoes"] = {
   area: "Ligações", title: "Lista de Ligações",
   async render() {
     const f = state.callFilter || { page: 1 };
-    const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v));
-    const res = await api(`/api/dialer/calls?${qs}`);
+    const extra = Object.fromEntries(Object.entries(f).filter(([, v]) => v));
+    const res = await api(`/api/dialer/calls${filtrosQS(extra)}`);
     const OUT = { MEANINGFUL: ["Significativa", "green"], NOT_MEANINGFUL: ["Não significativa", "blue"],
                   NO_CONTACT: ["Sem contato", "amber"] };
     const rows = res.data.map((c) => {
       const [label, tone] = c.status === "CONNECTED" ? (OUT[c.output] || ["Conectada", "grey"]) : ["Não conectada", "red"];
       return { cells: [
+        `<button class="btn btn-default btn-xs" data-star="${c.id}" data-on="${c.important ? 1 : 0}"
+          title="${c.important ? "Desmarcar" : "Marcar como importante"}">${c.important ? "★" : "☆"}</button>`,
         `<span class="pill ${tone}">${label}</span>`,
         c.user ? h(c.user.name) : "—",
-        `${h(c.flowLeadName || "—")}<br><span class="text-muted text-size-small">${h(c.flowLeadCompany || "")}</span>`,
+        c.flowLeadId
+          ? `<a data-lead="${c.flowLeadId}">${h(c.flowLeadName || "—")}</a><br><span class="text-muted text-size-small">${h(c.flowLeadCompany || "")}</span>`
+          : `${h(c.flowLeadName || "—")}<br><span class="text-muted text-size-small">${h(c.flowLeadCompany || "")}</span>`,
+        h(c.originPhone || "—"),
         h(c.receiverPhone), fmtDateTime(c.originStarted), fmtDuration(c.receiverConnectedDuration),
         c.receiverType === "MOBILE" ? "Celular" : "Fixo",
       ] };
     });
     view.innerHTML = `
       <div class="toolbar">
+        <input class="form-control grow" id="cfQ" placeholder="Buscar por número, lead ou empresa" value="${h(f.q || "")}">
         <select class="form-control" id="cfUser">${options(state.users, f.user_id, { blank: "Todos os usuários" })}</select>
         <select class="form-control" id="cfOut">
           <option value="">Todos os resultados</option>
           ${Object.entries(OUT).map(([k, v]) => `<option value="${k}"${f.output === k ? " selected" : ""}>${v[0]}</option>`).join("")}
         </select>
+        <select class="form-control input-sm" id="cfImp">
+          <option value="">Todas</option>
+          <option value="true"${f.important === "true" ? " selected" : ""}>Só importantes</option>
+        </select>
+        ${periodoControle()}${timeControle()}
         <span class="spacer"></span>
+        <a class="btn btn-default btn-xs" href="/api/dialer/calls/export${filtrosQS(extra)}">Exportar</a>
         <a class="btn btn-default btn-xs" href="/api/reports/dropped-calls">Baixar derrubadas</a>
       </div>
       ${panel(`${res.pagination.totalRowCount} ligações`,
-        table(["Situação", "Usuário", "Lead", "Destino", "Data", "Duração", "Tipo"], rows, { scroll: true }),
+        table(["", "Situação", "Usuário", "Lead", "Origem", "Destino", "Data", "Duração", "Tipo"],
+              rows, { scroll: true }),
         { actions: pager(res.pagination) })}`;
     const set = (k, v) => { state.callFilter = { ...f, [k]: v, page: 1 }; go("lista-ligacoes"); };
     document.getElementById("cfUser").onchange = (e) => set("user_id", e.target.value);
     document.getElementById("cfOut").onchange = (e) => set("output", e.target.value);
+    document.getElementById("cfImp").onchange = (e) => set("important", e.target.value);
+    const busca = document.getElementById("cfQ");
+    let tb;
+    busca.oninput = () => { clearTimeout(tb); tb = setTimeout(() => set("q", busca.value), 350); };
+    ligarPeriodo(() => go("lista-ligacoes"));
+    view.querySelectorAll("[data-lead]").forEach((a) => {
+      a.onclick = () => go(`lead/${a.dataset.lead}`);
+    });
+    view.querySelectorAll("[data-star]").forEach((b) => {
+      b.onclick = async () => {
+        b.disabled = true;
+        try {
+          const r = await api(`/api/dialer/calls/${b.dataset.star}`, { method: "PATCH",
+            body: { important: b.dataset.on !== "1" } });
+          b.dataset.on = r.important ? "1" : "0";
+          b.textContent = r.important ? "★" : "☆";
+        } catch (e) { toast(e.message, "err"); }
+        b.disabled = false;
+      };
+    });
     view.querySelectorAll("[data-goto-page]").forEach((b) => {
       b.onclick = () => { state.callFilter = { ...f, page: Number(b.dataset.gotoPage) }; go("lista-ligacoes"); };
     });

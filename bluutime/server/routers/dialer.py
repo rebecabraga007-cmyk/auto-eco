@@ -1,9 +1,12 @@
 """Ligações: lista, estatísticas, extrato e click-to-call."""
+import csv
+import io
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from sqlalchemy import func
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -86,6 +89,53 @@ def _variacao(agora: int, antes: int) -> dict:
             "percentual": round((agora - antes) / antes * 100, 1) if antes else None}
 
 
+@router.patch("/calls/{cid}")
+def update_call(cid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Hoje só marcar/desmarcar como importante — o que o original chama de
+    estrela na lista, para achar de novo a ligação que interessou."""
+    c = db.get(Call, cid)
+    if not c:
+        raise HTTPException(404, "Ligação não encontrada.")
+    ator = perm.ator(db)
+    if not ator.pelo_menos("gestor") and c.user_id != ator.user_id:
+        raise HTTPException(403, "Só dá para marcar as próprias ligações.")
+    if "important" in payload:
+        c.important = bool(payload["important"])
+    db.commit()
+    return serial.call(c)
+
+
+@router.get("/calls/export")
+def export_calls(user_id: int | None = None, status: str | None = None,
+                 output: str | None = None, since: str | None = None,
+                 until: str | None = None, team_id: int | None = None,
+                 q: str | None = None, db: Session = Depends(get_db)):
+    """Exporta a lista filtrada, como o botão Exportar do original."""
+    res = list_calls(user_id=user_id, status=status, output=output, since=since,
+                     until=until, team_id=team_id, q=q, page=1, limit=20000, db=db)
+    rotulo = {"MEANINGFUL": "Significativa", "NOT_MEANINGFUL": "Não significativa",
+              "NO_CONTACT": "Sem contato"}
+    linhas = [[c["originStarted"][:16].replace("T", " ") if c["originStarted"] else "",
+               (c["user"] or {}).get("name", ""), c["flowLeadName"] or "",
+               c["flowLeadCompany"] or "", c["originPhone"], c["receiverPhone"],
+               "Celular" if c["receiverType"] == "MOBILE" else "Fixo",
+               "Conectada" if c["status"] == "CONNECTED" else "Não conectada",
+               rotulo.get(c["output"], ""), c["receiverConnectedDuration"],
+               f'{c["receiverPrice"]:.4f}'.replace(".", ","),
+               "sim" if c["important"] else ""]
+              for c in res["data"]]
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["Data", "Usuário", "Lead", "Empresa", "Origem", "Destino", "Tipo",
+                "Situação", "Resultado", "Duração (s)", "Custo (R$)", "Importante"])
+    w.writerows(linhas)
+    buf.seek(0)
+    return StreamingResponse(iter([buf.getvalue().encode("utf-8-sig")]),
+                             media_type="text/csv",
+                             headers={"Content-Disposition":
+                                      f'attachment; filename="ligacoes-{datetime.utcnow():%Y%m%d}.csv"'})
+
+
 @router.get("/calls/statistics/funnel")
 def funnel(since: str | None = None, until: str | None = None,
            team_id: int | None = None, user_id: int | None = None,
@@ -163,7 +213,8 @@ def history(since: str | None = None, until: str | None = None,
 def list_calls(user_id: int | None = None, status: str | None = None,
                output: str | None = None, lead_id: int | None = None,
                since: str | None = None, until: str | None = None,
-               team_id: int | None = None,
+               team_id: int | None = None, q: str | None = None,
+               important: bool | None = None,
                page: int = 1, limit: int = Query(50, le=500),
                db: Session = Depends(get_db)):
     ator = perm.ator(db)
@@ -187,6 +238,15 @@ def list_calls(user_id: int | None = None, status: str | None = None,
     do_time = usuarios_do_time(db, team_id)
     if do_time is not None:
         query = query.filter(Call.user_id.in_(do_time))
+    if important is not None:
+        query = query.filter(Call.important.is_(important))
+    if q:
+        # Busca pelo número discado ou pelo nome do lead — as duas formas de
+        # procurar "aquela ligação" quando não se lembra da data.
+        alvo = f"%{q}%"
+        query = query.outerjoin(Lead, Call.lead_id == Lead.id).filter(
+            or_(Call.receiver_phone.ilike(alvo), Lead.name.ilike(alvo),
+                Lead.company.ilike(alvo)))
     total = query.count()
     rows = (query.order_by(Call.started_at.desc())
             .offset((page - 1) * limit).limit(limit).all())
