@@ -15,7 +15,7 @@ from ..models import (Activity, Cadence, CadenceStep, CadenceUser, Call, Client,
                       Company, Conversation, CustomField, Delivery, FitscoreRule,
                       Lead, LeadActivity,
                       LeadBase, LeadFeedback, LeadFieldValue, LostReason,
-                      Template, User, channel_of)
+                      Template, User, ACTIVITY_TYPES, channel_of)
 from .. import agenda, perm, render, serial, webhooks
 
 router = APIRouter(prefix="/api/flow")
@@ -521,6 +521,48 @@ def set_lead_stage(lid: int, payload: dict = Body(...), db: Session = Depends(ge
         db.add(LeadFieldValue(lead_id=lid, field_id=campo.id, value=etapa))
     db.commit()
     return {"ok": True, "stage": etapa}
+
+
+@router.post("/leads/{lid}/activities")
+def create_extra_activity(lid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Agenda uma atividade avulsa no lead — a aba "Agendar atividade" do
+    original.
+
+    Não precisa de campo novo: atividade SEM `cadence_step_id` já é, por
+    construção, atividade fora da cadência. Inventar um "scope" duplicaria
+    uma informação que a própria ausência do passo já dá.
+    """
+    lead = db.get(Lead, lid)
+    if not lead:
+        raise HTTPException(404, "Lead não encontrado.")
+    ator = perm.ator(db)
+    perm.exigir_dono_lead(db, ator, lead)
+
+    tipo = (payload.get("type") or "").strip().upper()
+    if tipo not in ACTIVITY_TYPES:
+        raise HTTPException(400, f"Tipo inválido. Use um de: {', '.join(ACTIVITY_TYPES)}.")
+    quando = payload.get("scheduledAt")
+    try:
+        agendada = datetime.fromisoformat(quando) if quando else datetime.utcnow()
+    except ValueError:
+        raise HTTPException(400, "Data inválida.")
+
+    modelo_id = payload.get("activityId")
+    if modelo_id and not db.get(Activity, modelo_id):
+        raise HTTPException(400, "Atividade da biblioteca não encontrada.")
+
+    a = LeadActivity(lead_id=lid, activity_id=modelo_id, cadence_step_id=None,
+                     user_id=lead.sdr_id or ator.user_id, type=tipo,
+                     social_network=payload.get("socialNetwork", ""),
+                     status="PENDING", scheduled_at=agendada,
+                     notes=(payload.get("notes") or "").strip())
+    db.add(a)
+    # Lead parado com atividade marcada volta a contar como em prospecção —
+    # senão ele sumiria da fila justamente depois de alguém agendar algo.
+    if lead.status == "WAITING":
+        lead.status = "EXECUTING"
+    db.commit()
+    return serial.lead_activity(a, datetime.utcnow())
 
 
 @router.get("/execution/overall")

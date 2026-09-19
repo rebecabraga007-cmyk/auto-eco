@@ -1193,6 +1193,26 @@ PAGES.lead = {
       ["Melhor horário", `${l.bestHour}h`],
     ].map(([k, v]) => `<tr><td class="text-grey">${k}</td><td>${v}</td></tr>`).join("")}</tbody></table>`;
 
+    const agendar = `
+      <p class="text-muted text-size-small" style="margin-top:0">
+        Atividade fora da cadência — para quando combinou algo com o lead que a
+        sequência não prevê. Entra na fila de Execução como qualquer outra.</p>
+      <div class="field-row">
+        <div class="field"><label for="agTipo">Tipo</label>
+          <select class="form-control" id="agTipo">
+            ${Object.entries(TYPE_LABEL).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}
+          </select></div>
+        <div class="field"><label for="agQuando">Quando</label>
+          <input class="form-control" type="datetime-local" id="agQuando"
+            value="${new Date(Date.now() + 864e5 - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 16)}"></div>
+      </div>
+      <div class="field"><label for="agModelo">Atividade da biblioteca (opcional)</label>
+        <select class="form-control" id="agModelo"><option value="">Nenhuma — atividade avulsa</option></select>
+        <span class="help-block">Se escolher, o script e o modelo de mensagem dela vêm junto na hora de executar.</span></div>
+      <div class="field"><label for="agNota">Observação</label>
+        <textarea class="form-control" id="agNota" rows="3" placeholder="Por que esta atividade existe…"></textarea></div>
+      <button class="btn btn-main btn-sm" id="agSalvar">Agendar</button>`;
+
     const anotacoes = `
       <textarea class="form-control" id="ltNotas" rows="6"
         placeholder="O que é importante lembrar sobre este lead…">${h(l.annotations || "")}</textarea>
@@ -1253,11 +1273,13 @@ PAGES.lead = {
         </div>
         <div>
           <ul class="nav nav-tabs">
-            ${[["historico", "Histórico"], ["dados", "Dados"], ["anotacoes", "Anotações"]].map(([k, v]) =>
+            ${[["historico", "Histórico"], ["agendar", "Agendar atividade"],
+               ["dados", "Dados"], ["anotacoes", "Anotações"]].map(([k, v]) =>
               `<li${aba === k ? ' class="active"' : ""}><a data-laba="${k}">${v}</a></li>`).join("")}
           </ul>
           <div class="panel panel-flat"><div class="panel-body">
-            ${aba === "historico" ? historico : aba === "dados" ? dados : anotacoes}
+            ${aba === "historico" ? historico : aba === "agendar" ? agendar
+              : aba === "dados" ? dados : anotacoes}
           </div></div>
         </div>
       </div>`;
@@ -1267,6 +1289,39 @@ PAGES.lead = {
     });
     const tipo = document.getElementById("ltTipo");
     if (tipo) tipo.onchange = (e) => { state.leadFiltroTipo = e.target.value; go(`lead/${id}`); };
+
+    const agSalvar = document.getElementById("agSalvar");
+    if (agSalvar) {
+      // A biblioteca de atividades só é buscada quando a aba abre — a página
+      // do lead não precisa dela para nada além deste formulário.
+      api("/api/flow/activities").then((lista) => {
+        const sel = document.getElementById("agModelo");
+        if (!sel) return;
+        const tipo = () => document.getElementById("agTipo").value;
+        const preencher = () => {
+          const compativeis = lista.filter((a) => a.type === tipo());
+          sel.innerHTML = `<option value="">Nenhuma — atividade avulsa</option>` +
+            compativeis.map((a) => `<option value="${a.id}">${h(a.name)}</option>`).join("");
+        };
+        preencher();
+        document.getElementById("agTipo").onchange = preencher;
+      }).catch(() => {});
+
+      agSalvar.onclick = async () => {
+        agSalvar.disabled = true;
+        try {
+          await api(`/api/flow/leads/${id}/activities`, { method: "POST", body: {
+            type: document.getElementById("agTipo").value,
+            scheduledAt: document.getElementById("agQuando").value,
+            activityId: Number(document.getElementById("agModelo").value) || null,
+            notes: document.getElementById("agNota").value,
+          } });
+          toast("Atividade agendada.", "ok");
+          state.leadAba = "historico";
+          go(`lead/${id}`);
+        } catch (e) { toast(e.message, "err"); agSalvar.disabled = false; }
+      };
+    }
 
     const notas = document.getElementById("ltSalvarNotas");
     if (notas) notas.onclick = async () => {
