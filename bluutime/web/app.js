@@ -371,6 +371,11 @@ async function boot() {
   const etapas = await api("/api/flow/lead-stages").catch(() => ({ field: null, options: [] }));
   state.stageField = etapas.field;
   state.stageOptions = etapas.options;
+  // Os campos personalizados alimentam o formulário de lead e o filtro da
+  // lista — carregar aqui evita que abrir o formulário por outro caminho
+  // (pela página do lead, por exemplo) mostre um cadastro incompleto.
+  state.leadFields = (await api("/api/flow/new-lead-fields").catch(() => []))
+    .filter((c) => c.customField);
   state.clients = clients;
   state.users = users.data;
   state.cadences = cadences;
@@ -954,11 +959,6 @@ PAGES.leads = {
     const f = state.leadFilter || { page: 1, limit: 50 };
     const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v));
     const res = await api(`/api/flow/leads?${qs}`);
-    // Os campos personalizados alimentam o filtro; carrega uma vez e guarda.
-    if (!state.leadFields) {
-      state.leadFields = (await api("/api/flow/new-lead-fields").catch(() => []))
-        .filter((c) => c.customField);
-    }
     const campos = state.leadFields || [];
     const rows = res.data.map((l) => ({ cells: [
       `<input type="checkbox" class="lead-check" value="${l.id}">`,
@@ -1744,7 +1744,23 @@ function openLeadForm(lead) {
         <div class="field"><label for="fHour">Melhor horário de contato</label>
           <input class="form-control" type="number" min="6" max="22" id="fHour" value="${l.bestHour || 18}"></div>
       </div>
-      <div class="field"><label for="fNotes">Anotações</label><textarea class="form-control" id="fNotes">${h(l.annotations || "")}</textarea></div>`,
+      <div class="field"><label for="fNotes">Anotações</label><textarea class="form-control" id="fNotes">${h(l.annotations || "")}</textarea></div>
+      ${(state.leadFields || []).length ? `<div class="sub-block">
+        <h4>Campos personalizados</h4>
+        <div class="field-row">
+          ${(state.leadFields || []).map((c) => {
+            const atual = (l.customFields || {})[c.identifier] || "";
+            const opcoes = c.options || [];
+            return `<div class="field"><label for="cf-${h(c.identifier)}">${h(c.name)}</label>
+              ${opcoes.length
+                ? `<select class="form-control" data-cf="${h(c.identifier)}" id="cf-${h(c.identifier)}">
+                     <option value="">—</option>
+                     ${opcoes.map((o) => `<option value="${h(o)}"${atual === o ? " selected" : ""}>${h(o)}</option>`).join("")}
+                   </select>`
+                : `<input class="form-control" data-cf="${h(c.identifier)}" id="cf-${h(c.identifier)}" value="${h(atual)}">`}
+            </div>`;
+          }).join("")}
+        </div></div>` : ""}`,
     footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
              <button class="btn btn-main btn-sm" data-save>Salvar</button>`,
   });
@@ -1756,6 +1772,8 @@ function openLeadForm(lead) {
       cnpj: g("#fCnpj"), phone: g("#fPhone"), email: g("#fEmail"),
       city: g("#fCity"), state: g("#fState"), annotations: g("#fNotes"),
       bestHour: Number(g("#fHour")) || 18,
+      customFields: Object.fromEntries(
+        [...m.root.querySelectorAll("[data-cf]")].map((el) => [el.dataset.cf, el.value])),
       clientId: Number(g("#fClient")) || null, sdrId: Number(g("#fSdr")) || null,
       cadenceId: Number(g("#fCadence")) || null,
     };

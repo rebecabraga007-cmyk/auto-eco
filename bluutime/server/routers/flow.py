@@ -344,6 +344,24 @@ def _custom_values(db: Session, lead_id: int) -> dict:
     return dict(rows)
 
 
+def _gravar_campos(db: Session, lead_id: int, valores: dict | None) -> None:
+    """Grava valores de campo personalizado por IDENTIFICADOR.
+
+    Campo que não existe é ignorado em silêncio de propósito: o payload vem de
+    importação e de formulário, e derrubar a criação inteira de um lead por
+    causa de uma chave a mais seria pior que guardar o que dá.
+    """
+    for ident, value in (valores or {}).items():
+        f = db.query(CustomField).filter_by(identifier=ident).first()
+        if not f:
+            continue
+        v = db.query(LeadFieldValue).filter_by(lead_id=lead_id, field_id=f.id).first()
+        if v:
+            v.value = str(value)
+        else:
+            db.add(LeadFieldValue(lead_id=lead_id, field_id=f.id, value=str(value)))
+
+
 def _campos_faltando(db: Session, lead_id: int, campo_obrigatorio: str) -> list[str]:
     """Nomes dos campos personalizados marcados como obrigatórios (ganho ou
     perda, conforme `campo_obrigatorio`) que este lead ainda não preencheu."""
@@ -708,6 +726,9 @@ def create_lead(payload: dict = Body(...), db: Session = Depends(get_db)):
     l = _build_lead(db, payload)
     db.add(l)
     db.flush()
+    # Campos personalizados na CRIAÇÃO — antes só o update gravava, então o
+    # lead nascia sem etapa, sem porte, sem nada do que o formulário pedia.
+    _gravar_campos(db, l.id, payload.get("customFields"))
     _schedule_cadence(db, l)
     _fire_webhooks(db, "LEAD.CREATED", serial.lead(l))
     db.commit()
@@ -789,15 +810,7 @@ def update_lead(lid: int, payload: dict = Body(...), db: Session = Depends(get_d
     for key, attr in fields.items():
         if key in payload:
             setattr(l, attr, payload[key])
-    for ident, value in (payload.get("customFields") or {}).items():
-        f = db.query(CustomField).filter_by(identifier=ident).first()
-        if not f:
-            continue
-        v = db.query(LeadFieldValue).filter_by(lead_id=lid, field_id=f.id).first()
-        if v:
-            v.value = str(value)
-        else:
-            db.add(LeadFieldValue(lead_id=lid, field_id=f.id, value=str(value)))
+    _gravar_campos(db, lid, payload.get("customFields"))
     db.commit()
     return serial.lead(l, _custom_values(db, lid))
 
