@@ -875,6 +875,7 @@ def execute_activity(aid: int, payload: dict = Body(default={}),
     # Continuar disparando e-mail de cadência para quem já está conversando com
     # o SDR é o jeito mais rápido de queimar o lead.
     paused = 0
+    a.replied = bool(payload.get("replied"))
     if payload.get("replied"):
         # `LeadActivity.id != aid` porque a atividade recém-executada ainda não
         # foi para o banco: sem isso ela entraria na contagem das pausadas.

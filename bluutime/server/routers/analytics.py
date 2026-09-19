@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from .. import perm, serial
 from ..db import get_db
 from ..models import (Cadence, Call, Client, Goal, Lead, LeadActivity, LeadBase,
-                      LostReason, User)
+                      LostReason, Team, User)
 
 router = APIRouter(prefix="/api")
 
@@ -173,6 +173,107 @@ def usuarios_do_time(db: Session, team_id: int | None) -> list[int] | None:
     if not team_id:
         return None
     return [r[0] for r in db.query(User.id).filter(User.team_id == team_id).all()]
+
+
+@router.get("/flow/statistics/cadence-overview")
+def cadence_overview(team_id: int | None = None, db: Session = Depends(get_db)):
+    """Distribuição dos leads nas cadências — quantos em cada situação.
+
+    É a tela `cadence-overview` do original: mostra onde a base está parada,
+    coisa que a conversão sozinha não conta.
+    """
+    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
+    do_time = usuarios_do_time(db, team_id)
+    situacoes = ["WAITING", "EXECUTING", "ON_EXTRA_ACTIVITY", "WON", "LOST"]
+    saida = []
+    for c in db.query(Cadence).order_by(Cadence.name).all():
+        q = db.query(Lead.status, func.count(Lead.id)).filter(Lead.cadence_id == c.id)
+        if do_time is not None:
+            q = q.filter(Lead.sdr_id.in_(do_time))
+        por_situacao = dict(q.group_by(Lead.status).all())
+        total = sum(por_situacao.values())
+        if not total:
+            continue
+        saida.append({"id": c.id, "name": c.name, "total": total,
+                      "porSituacao": {s: por_situacao.get(s, 0) for s in situacoes},
+                      "conversao": round(por_situacao.get("WON", 0) / total * 100, 1)})
+    saida.sort(key=lambda r: r["total"], reverse=True)
+    return {"data": saida}
+
+
+@router.get("/flow/statistics/cadence-steps/{cadence_id}")
+def cadence_steps(cadence_id: int, since: str | None = None, until: str | None = None,
+                  db: Session = Depends(get_db)):
+    """Conversão passo a passo de UMA cadência.
+
+    O original só oferece isto com uma cadência escolhida, e por um bom
+    motivo: passo 3 de cadências diferentes não é a mesma coisa, então somar
+    tudo produziria uma média sem significado.
+    """
+    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
+    end = datetime.fromisoformat(until) if until else datetime.utcnow()
+    start = datetime.fromisoformat(since) if since else end - timedelta(days=30)
+
+    cad = db.get(Cadence, cadence_id)
+    if not cad:
+        raise HTTPException(404, "Cadência não encontrada.")
+
+    passos = []
+    for i, step in enumerate(sorted(cad.steps, key=lambda s: (s.day, s.order_in_day)), 1):
+        base = db.query(LeadActivity).filter(LeadActivity.cadence_step_id == step.id,
+                                             LeadActivity.done_at.between(start, end))
+        executados = base.filter(LeadActivity.status == "DONE").count()
+        engajadas = base.filter(LeadActivity.status == "DONE",
+                                LeadActivity.replied.is_(True)).count()
+        ganhos = (base.filter(LeadActivity.status == "DONE")
+                  .join(Lead, LeadActivity.lead_id == Lead.id)
+                  .filter(Lead.status == "WON").count())
+        passos.append({"passo": i, "dia": step.day,
+                       "atividade": step.activity.name if step.activity else "—",
+                       "executados": executados, "engajadas": engajadas, "ganhos": ganhos,
+                       "engajamento": round(engajadas / executados * 100, 1) if executados else 0.0})
+
+    leads_q = db.query(Lead).filter(Lead.cadence_id == cadence_id)
+    finalizados = leads_q.filter(Lead.status.in_(["WON", "LOST"])).count()
+    ganhos_total = leads_q.filter(Lead.status == "WON").count()
+    engajados = (db.query(func.count(func.distinct(LeadActivity.lead_id)))
+                 .join(Lead, LeadActivity.lead_id == Lead.id)
+                 .filter(Lead.cadence_id == cadence_id, LeadActivity.replied.is_(True)).scalar())
+    total_leads = leads_q.count()
+    return {"cadence": {"id": cad.id, "name": cad.name},
+            "resumo": {"leads": total_leads, "finalizados": finalizados,
+                       "ganhos": ganhos_total, "engajados": engajados,
+                       "taxaEngajados": round(engajados / total_leads * 100, 1) if total_leads else 0.0,
+                       "taxaGanhos": round(ganhos_total / total_leads * 100, 1) if total_leads else 0.0},
+            "passos": passos}
+
+
+@router.get("/flow/statistics/lost-reasons")
+def lost_reasons_breakdown(since: str | None = None, until: str | None = None,
+                           by: str = "reason", team_id: int | None = None,
+                           db: Session = Depends(get_db)):
+    """Motivos de perda por motivo, usuário, time ou cadência."""
+    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
+    end = datetime.fromisoformat(until) if until else datetime.utcnow()
+    start = datetime.fromisoformat(since) if since else end - timedelta(days=30)
+    q = db.query(Lead).filter(Lead.lost_at.between(start, end))
+    do_time = usuarios_do_time(db, team_id)
+    if do_time is not None:
+        q = q.filter(Lead.sdr_id.in_(do_time))
+
+    times = {t.id: t.name for t in db.query(Team).all()}
+    contagem: Counter = Counter()
+    for l in q.all():
+        if by == "user":
+            chave = l.sdr.name if l.sdr else "Sem SDR"
+        elif by == "team":
+            chave = times.get(l.sdr.team_id, "Sem time") if l.sdr and l.sdr.team_id else "Sem time"
+        elif by == "cadence":
+            chave = l.cadence.name if l.cadence else "Sem cadência"
+        else:
+            chave = l.lost_reason.name if l.lost_reason else "Sem motivo"
+        contagem[chave] += 1
+    return {"by": by, "data": [{"label": k, "count": v} for k, v in contagem.most_common()]}
 
 
 @router.get("/flow/statistics/summary")

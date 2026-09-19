@@ -328,6 +328,10 @@ class LeadActivity(Base):
     scheduled_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     done_at: Mapped[datetime | None] = mapped_column(DateTime)
     notes: Mapped[str] = mapped_column(Text, default="")
+    # O SDR já informa "o lead respondeu" ao executar a atividade, mas isso era
+    # usado só para pausar a cadência e jogado fora em seguida. Sem guardar,
+    # engajamento por passo é número que não dá para calcular.
+    replied: Mapped[bool] = mapped_column(Boolean, default=False)
     lead: Mapped["Lead"] = relationship()
     activity: Mapped["Activity | None"] = relationship()
     user: Mapped["User | None"] = relationship()

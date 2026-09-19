@@ -2220,7 +2220,92 @@ PAGES.whatsapp = {
 PAGES.estatisticas = {
   area: "Estatísticas", title: "Prospecção",
   async render() {
+    const aba = state.estAba || "geral";
     const clientId = state.statClient || "";
+    const abas = `<ul class="nav nav-tabs">
+      ${[["geral", "Visão geral"], ["cadencias", "Distribuição nas cadências"],
+         ["conversao", "Conversão por passo"], ["motivos", "Motivos de perda"]].map(([k, v]) =>
+        `<li${aba === k ? ' class="active"' : ""}><a data-estaba="${k}">${v}</a></li>`).join("")}
+    </ul>`;
+    const barra = `<div class="toolbar">
+        <select class="form-control" id="sClient">${options(state.clients, clientId, { blank: "Todos os clientes" })}</select>
+        ${periodoControle()}${timeControle()}
+      </div>`;
+
+    const ligar = () => {
+      const c = document.getElementById("sClient");
+      if (c) c.onchange = (e) => { state.statClient = e.target.value; go("estatisticas"); };
+      ligarPeriodo(() => go("estatisticas"));
+      view.querySelectorAll("[data-estaba]").forEach((a) => {
+        a.onclick = () => { state.estAba = a.dataset.estaba; go("estatisticas"); };
+      });
+    };
+
+    if (aba === "cadencias") {
+      const co = await api(`/api/flow/statistics/cadence-overview${filtrosQS()}`);
+      view.innerHTML = `${barra}${abas}<div class="mt-10">
+        ${panel("Onde os leads estão parados",
+          table(["Cadência", "Total", "Em espera", "Prospectando", "Ganhos", "Perdidos", "Conversão"],
+            co.data.map((c) => ({ cells: [
+              h(c.name), c.total, c.porSituacao.WAITING,
+              c.porSituacao.EXECUTING + c.porSituacao.ON_EXTRA_ACTIVITY,
+              `<span class="pill green">${c.porSituacao.WON}</span>`,
+              `<span class="pill red">${c.porSituacao.LOST}</span>`,
+              `${c.conversao}%`] })),
+            { scroll: true, empty: "Nenhuma cadência com lead." }),
+          { subtitle: "A conversão mostra o resultado; isto mostra onde a base está agora." })}
+      </div>`;
+      return ligar();
+    }
+
+    if (aba === "conversao") {
+      const cid = state.estCadencia || (state.cadences[0] && state.cadences[0].id);
+      const dados = cid ? await api(`/api/flow/statistics/cadence-steps/${cid}${filtrosQS()}`).catch(() => null) : null;
+      view.innerHTML = `${barra}${abas}<div class="mt-10">
+        <div class="toolbar">
+          <select class="form-control" id="scCad">${options(state.cadences, cid)}</select>
+          <span class="spacer text-muted text-size-small">
+            Passo a passo só faz sentido dentro de uma cadência — o passo 3 de duas cadências não é a mesma coisa.</span>
+        </div>
+        ${!dados ? emptyState("Escolha uma cadência.") : `
+          ${kpis([
+            { value: dados.resumo.leads, label: "Leads na cadência" },
+            { value: dados.resumo.finalizados, label: "Finalizados" },
+            { value: `${dados.resumo.taxaEngajados}%`, label: "Engajados", tone: "info" },
+            { value: `${dados.resumo.taxaGanhos}%`, label: "Ganhos", tone: "success" },
+          ])}
+          ${panel(`Passos de ${h(dados.cadence.name)}`,
+            table(["Passo", "Dia", "Atividade", "Executados", "Engajadas", "Ganhos", "Engajamento"],
+              dados.passos.map((p) => ({ cells: [p.passo, p.dia, h(p.atividade),
+                p.executados, p.engajadas, p.ganhos, `${p.engajamento}%`] })),
+              { scroll: true, empty: "Esta cadência não tem passos." }),
+            { subtitle: "Engajamento começa a contar a partir de agora: até hoje a resposta do lead era usada para pausar a cadência e descartada." })}`}
+      </div>`;
+      ligar();
+      const sc = document.getElementById("scCad");
+      if (sc) sc.onchange = () => { state.estCadencia = sc.value; go("estatisticas"); };
+      return;
+    }
+
+    if (aba === "motivos") {
+      const por = state.estMotivoPor || "reason";
+      const lr = await api(`/api/flow/statistics/lost-reasons${filtrosQS({ by: por })}`);
+      view.innerHTML = `${barra}${abas}<div class="mt-10">
+        <div class="toolbar">
+          <select class="form-control" id="smPor">
+            ${[["reason", "Por motivo"], ["user", "Por usuário"], ["team", "Por time"], ["cadence", "Por cadência"]]
+              .map(([k, v]) => `<option value="${k}"${por === k ? " selected" : ""}>${v}</option>`).join("")}
+          </select>
+        </div>
+        ${panel("Por que os leads são perdidos",
+          bars(lr.data.map((r) => ({ label: r.label, value: r.count, tone: "warning" }))))}
+      </div>`;
+      ligar();
+      const sm = document.getElementById("smPor");
+      if (sm) sm.onchange = () => { state.estMotivoPor = sm.value; go("estatisticas"); };
+      return;
+    }
+
     const s = await api(`/api/flow/statistics/summary${filtrosQS({ client_id: clientId })}`);
     const cadRows = s.cadences.map((c) => ({ cells: [
       h(c.name), c.client ? h(c.client.name) : "—",
@@ -2228,10 +2313,7 @@ PAGES.estatisticas = {
       c.total, c.won, `${c.conversion}%`] }));
 
     view.innerHTML = `
-      <div class="toolbar">
-        <select class="form-control" id="sClient">${options(state.clients, clientId, { blank: "Todos os clientes" })}</select>
-        ${periodoControle()}${timeControle()}
-      </div>
+      ${barra}${abas}
       ${kpis([
         { value: s.activities.total, label: "Atividades realizadas" },
         { value: `${s.activities.latePercent}%`, label: "Fora do prazo", tone: "danger" },
@@ -2253,8 +2335,7 @@ PAGES.estatisticas = {
       ${panel("Conversão por cadência",
         table(["Cadência", "Cliente", "Prioridade", "Leads", "Ganhos", "Conversão"], cadRows))}`;
 
-    document.getElementById("sClient").onchange = (e) => { state.statClient = e.target.value; go("estatisticas"); };
-    ligarPeriodo(() => go("estatisticas"));
+    ligar();
   },
 };
 
