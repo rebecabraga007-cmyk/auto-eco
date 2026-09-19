@@ -1177,6 +1177,7 @@ PAGES.lead = {
               <option value="">Sem etapa</option>
               ${etapas.map((e) => `<option value="${h(e)}"${etapaAtual === e ? " selected" : ""}>${h(e)}</option>`).join("")}
             </select>` : ""}
+            ${l.phone ? `<button class="btn btn-default btn-sm" data-ligar>Registrar ligação</button>` : ""}
             ${proxima ? `<button class="btn btn-main btn-sm" data-exec>Executar ${h(TYPE_LABEL[proxima.type] || "atividade")}</button>` : ""}
             <button class="btn btn-success btn-sm" data-won>Ganho</button>
             <button class="btn btn-danger btn-sm" data-lost>Perdido</button>
@@ -1195,6 +1196,21 @@ PAGES.lead = {
             ["Fit score", String(l.fitscore ?? 0)],
             ...(l.lostReason ? [["Motivo da perda", h(l.lostReason.name)]] : []),
           ].map(([k, v]) => `<tr><td class="text-grey">${k}</td><td>${v}</td></tr>`).join("")}</tbody></table>`)}
+          ${(() => {
+            const c = l.contadores;
+            if (!c) return "";
+            return panel("Atividade", `<table class="table"><tbody>${[
+              ["Concluídas", c.concluidas],
+              ["Pendentes", c.pendentes],
+              ["Ligações", c.ligacoes],
+              ["E-mails enviados", c.emailsEnviados],
+              ["E-mails abertos", c.emailsAbertos
+                ? `${c.emailsAbertos} <span class="text-muted text-size-small">(${Math.round(c.emailsAbertos / c.emailsEnviados * 100)}%)</span>`
+                : "0"],
+              ["Conversas", c.conversas],
+              ...(c.proximaAtividade ? [["Próxima atividade", fmtDateTime(c.proximaAtividade)]] : []),
+            ].map(([k, v]) => `<tr><td class="text-grey">${k}</td><td>${v}</td></tr>`).join("")}</tbody></table>`);
+          })()}
           ${panel("CapiBLU", `
             <button class="btn btn-default btn-xs" data-enrich>Enriquecer</button>
             <button class="btn btn-default btn-xs" data-validate>Validar telefone</button>
@@ -1238,6 +1254,9 @@ PAGES.lead = {
       } catch (e) { toast(e.message, "err"); }
       selEtapa.disabled = false;
     };
+
+    const btLigar = view.querySelector("[data-ligar]");
+    if (btLigar) btLigar.onclick = () => openRegistrarLigacao(l, () => go(`lead/${id}`));
 
     view.querySelector("[data-edit]").onclick = () => openLeadForm(l);
     const btExec = view.querySelector("[data-exec]");
@@ -1358,6 +1377,57 @@ async function openLeadModal(id) {
       const r = await api(`/api/capiblu/leads/${l.id}/validate-phone`, { method: "POST" });
       out.innerHTML = `<div class="json-box">${h(JSON.stringify(r, null, 2))}</div>`;
     } catch (e) { out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`; }
+  };
+}
+
+/** Registrar uma ligação avulsa a partir do lead.
+ *  No original é o botão "Ligar" do cabeçalho; aqui não há softphone, então o
+ *  que existe é lançar o resultado — que é o que alimenta funil e ranking. */
+function openRegistrarLigacao(lead, depois) {
+  const m = modal({
+    title: `Registrar ligação — ${lead.name}`,
+    body: `
+      <div class="field"><label for="rlFone">Número discado</label>
+        <input class="form-control" id="rlFone" value="${h((lead.phone || "").split(",")[0].trim())}"></div>
+      <div class="field-row">
+        <div class="field"><label for="rlStatus">Situação</label>
+          <select class="form-control" id="rlStatus">
+            <option value="CONNECTED">Conectada</option>
+            <option value="NOT_PERFORMED">Não conectada</option>
+          </select></div>
+        <div class="field"><label for="rlDur">Duração (segundos)</label>
+          <input class="form-control" type="number" min="0" id="rlDur" value="0"></div>
+      </div>
+      <div class="field"><label for="rlOut">Resultado</label>
+        <select class="form-control" id="rlOut">
+          <option value="MEANINGFUL">Significativa</option>
+          <option value="NOT_MEANINGFUL">Não significativa</option>
+          <option value="NO_CONTACT">Sem contato</option>
+        </select></div>`,
+    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+             <button class="btn btn-main btn-sm" data-ok>Registrar</button>`,
+  });
+  const status = m.root.querySelector("#rlStatus");
+  const out = m.root.querySelector("#rlOut");
+  // Resultado só faz sentido em ligação que conectou; deixar habilitado
+  // convidaria a registrar "significativa" numa chamada que ninguém atendeu.
+  const sincronizar = () => { out.disabled = status.value !== "CONNECTED"; };
+  status.onchange = sincronizar;
+  sincronizar();
+  m.root.querySelector("[data-cancel]").onclick = m.close;
+  m.root.querySelector("[data-ok]").onclick = async (ev) => {
+    const bt = ev.currentTarget;
+    bt.disabled = true;
+    try {
+      await api("/api/dialer/calls", { method: "POST", body: {
+        leadId: lead.id,
+        receiverPhone: m.root.querySelector("#rlFone").value.trim(),
+        status: status.value,
+        output: status.value === "CONNECTED" ? out.value : "",
+        duration: Number(m.root.querySelector("#rlDur").value) || 0,
+      } });
+      m.close(); toast("Ligação registrada.", "ok"); depois && depois();
+    } catch (e) { toast(e.message, "err"); bt.disabled = false; }
   };
 }
 

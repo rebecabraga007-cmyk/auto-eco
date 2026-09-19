@@ -12,7 +12,8 @@ from fastapi.responses import StreamingResponse
 
 from ..db import get_db
 from ..models import (Activity, Cadence, CadenceStep, CadenceUser, Call, Client,
-                      Company, CustomField, FitscoreRule, Lead, LeadActivity,
+                      Company, Conversation, CustomField, Delivery, FitscoreRule,
+                      Lead, LeadActivity,
                       LeadBase, LeadFeedback, LeadFieldValue, LostReason,
                       Template, User, channel_of)
 from .. import agenda, perm, render, serial, webhooks
@@ -592,6 +593,22 @@ def get_lead(lid: int, db: Session = Depends(get_db)):
     linha.sort(key=lambda r: r.get("originStarted") or r.get("doneAt")
                or r.get("scheduledAt") or "")
     data["timeline"] = linha
+
+    # Contadores da sidebar do original: o que já foi feito, quantos e-mails o
+    # lead abriu e se há conversa. Antes a coluna só repetia o cadastro.
+    entregas = db.query(Delivery).filter(Delivery.lead_id == lid,
+                                         Delivery.channel == "EMAIL").all()
+    proxima = next((a for a in acts if a.status == "PENDING"), None)
+    data["contadores"] = {
+        "concluidas": sum(1 for a in acts if a.status == "DONE"),
+        "pendentes": sum(1 for a in acts if a.status == "PENDING"),
+        "ligacoes": db.query(func.count(Call.id)).filter(Call.lead_id == lid).scalar(),
+        "emailsEnviados": sum(1 for d in entregas if d.status in ("SENT", "SIMULATED")),
+        "emailsAbertos": sum(1 for d in entregas if d.opened_at),
+        "conversas": db.query(func.count(Conversation.id))
+                       .filter(Conversation.lead_id == lid).scalar(),
+        "proximaAtividade": serial.iso(proxima.scheduled_at) if proxima else None,
+    }
     return data
 
 
