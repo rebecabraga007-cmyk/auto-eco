@@ -1417,6 +1417,115 @@ async function openLeadModal(id) {
 /** Registrar uma ligação avulsa a partir do lead.
  *  No original é o botão "Ligar" do cabeçalho; aqui não há softphone, então o
  *  que existe é lançar o resultado — que é o que alimenta funil e ranking. */
+/** Detalhe da ligação com o histórico de coaching.
+ *  É o `modalCallDetails` do original menos gravação e transcrição, que
+ *  dependem de telefonia — o resto (custo, resultado, lead, feedback) existe. */
+async function openDetalheLigacao(id) {
+  let d;
+  try { d = await api(`/api/dialer/calls/${id}/detail`); }
+  catch (e) { return toast(e.message, "err"); }
+
+  const OUT = { MEANINGFUL: "Significativa", NOT_MEANINGFUL: "Não significativa",
+                NO_CONTACT: "Sem contato" };
+  const souDono = state.me && d.user && state.me.id === d.user.id;
+
+  const listaFeedback = (fs) => fs.length ? fs.map((f) => `
+    <div class="timeline-item">
+      <strong>${h((f.author || {}).name || "—")}</strong>
+      <span class="text-muted text-size-small ml-5">${fmtDateTime(f.createdAt)}${f.updatedAt ? " · editado" : ""}</span>
+      ${f.readAt ? `<span class="pill green ml-5">lido</span>`
+        : `<span class="pill amber ml-5">não lido</span>`}
+      <div class="mt-10" style="white-space:pre-wrap">${h(f.text)}</div>
+      ${!f.readAt && souDono ? `<button class="btn btn-default btn-xs mt-10" data-ler="${f.id}">Marcar como lido</button>` : ""}
+    </div>`).join("") : emptyState("Nenhum feedback nesta ligação ainda.");
+
+  const m = modal({
+    title: `Ligação · ${d.receiverPhone || "—"}`, wide: true,
+    body: `
+      <div class="split">
+        <div>
+          <table class="table"><tbody>
+            <tr><td class="text-grey">Quando</td><td>${fmtDateTime(d.originStarted)}</td></tr>
+            <tr><td class="text-grey">Usuário</td><td>${h((d.user || {}).name || "—")}</td></tr>
+            <tr><td class="text-grey">Origem</td><td>${h(d.originPhone || "—")}</td></tr>
+            <tr><td class="text-grey">Destino</td><td>${h(d.receiverPhone || "—")}</td></tr>
+            <tr><td class="text-grey">Tipo</td><td>${d.receiverType === "MOBILE" ? "Celular" : "Fixo"}</td></tr>
+            <tr><td class="text-grey">Duração</td><td>${fmtDuration(d.receiverConnectedDuration)}</td></tr>
+            <tr><td class="text-grey">Custo</td><td>${fmtMoney(d.receiverPrice)}</td></tr>
+          </tbody></table>
+          ${d.lead ? `<div class="detail-note">Lead:
+            <a data-ir-lead="${d.lead.id}"><strong>${h(d.lead.name)}</strong></a>
+            ${d.lead.company ? ` · ${h(d.lead.company)}` : ""}</div>` : ""}
+          <div class="field mt-10"><label for="dlOut">Resultado</label>
+            <select class="form-control" id="dlOut"${d.status === "CONNECTED" ? "" : " disabled"}>
+              <option value="">—</option>
+              ${Object.entries(OUT).map(([k, v]) => `<option value="${k}"${d.output === k ? " selected" : ""}>${v}</option>`).join("")}
+            </select>
+            <span class="help-block">${d.status === "CONNECTED"
+              ? "Dá para reclassificar depois — foi ouvindo de novo que se descobre que não era significativa."
+              : "A ligação não conectou, então não há resultado a classificar."}</span></div>
+          <div class="alert alert-info alert-styled-left text-size-small">
+            Gravação e transcrição dependem de telefonia, que ainda não está ligada.
+          </div>
+        </div>
+        <div>
+          <h4 style="margin:0 0 10px;font-size:13px">Coaching</h4>
+          <div class="timeline" id="dlFeedbacks">${listaFeedback(d.feedbacks)}</div>
+          ${nivelPeloMenos("gestor") ? `
+            <div class="field mt-10">
+              <textarea class="form-control" id="dlTexto" rows="3" placeholder="O que funcionou e o que faria diferente…"></textarea>
+            </div>
+            <button class="btn btn-main btn-sm" id="dlEnviar">Adicionar feedback</button>`
+            : `<span class="text-muted text-size-small">Só gestor escreve feedback.</span>`}
+        </div>
+      </div>`,
+    footer: `<button class="btn btn-default btn-sm" data-fechar>Fechar</button>`,
+  });
+
+  m.root.querySelector("[data-fechar]").onclick = m.close;
+  const irLead = m.root.querySelector("[data-ir-lead]");
+  if (irLead) irLead.onclick = () => { m.close(); go(`lead/${irLead.dataset.irLead}`); };
+
+  const sel = m.root.querySelector("#dlOut");
+  if (sel && !sel.disabled) sel.onchange = async () => {
+    try {
+      await api(`/api/dialer/calls/${id}`, { method: "PATCH", body: { output: sel.value } });
+      toast("Resultado atualizado.", "ok");
+    } catch (e) { toast(e.message, "err"); }
+  };
+
+  const recarregar = async () => {
+    const novo = await api(`/api/dialer/calls/${id}/detail`);
+    m.root.querySelector("#dlFeedbacks").innerHTML = listaFeedback(novo.feedbacks);
+    ligarLeitura();
+  };
+  const ligarLeitura = () => {
+    m.root.querySelectorAll("[data-ler]").forEach((b) => {
+      b.onclick = async () => {
+        try {
+          await api(`/api/dialer/calls/feedback/${b.dataset.ler}`, { method: "PATCH", body: { read: true } });
+          await recarregar();
+        } catch (e) { toast(e.message, "err"); }
+      };
+    });
+  };
+  ligarLeitura();
+
+  const enviar = m.root.querySelector("#dlEnviar");
+  if (enviar) enviar.onclick = async () => {
+    const txt = m.root.querySelector("#dlTexto");
+    if (!txt.value.trim()) return toast("Escreva o feedback.", "err");
+    enviar.disabled = true;
+    try {
+      await api(`/api/dialer/calls/${id}/feedback`, { method: "POST", body: { text: txt.value } });
+      txt.value = "";
+      await recarregar();
+      toast("Feedback enviado.", "ok");
+    } catch (e) { toast(e.message, "err"); }
+    enviar.disabled = false;
+  };
+}
+
 function openRegistrarLigacao(lead, depois) {
   const m = modal({
     title: `Registrar ligação — ${lead.name}`,
@@ -2298,6 +2407,7 @@ PAGES["lista-ligacoes"] = {
         h(c.originPhone || "—"),
         h(c.receiverPhone), fmtDateTime(c.originStarted), fmtDuration(c.receiverConnectedDuration),
         c.receiverType === "MOBILE" ? "Celular" : "Fixo",
+        `<button class="btn btn-default btn-xs" data-det="${c.id}">Detalhes</button>`,
       ] };
     });
     view.innerHTML = `
@@ -2318,7 +2428,7 @@ PAGES["lista-ligacoes"] = {
         <a class="btn btn-default btn-xs" href="/api/reports/dropped-calls">Baixar derrubadas</a>
       </div>
       ${panel(`${res.pagination.totalRowCount} ligações`,
-        table(["", "Situação", "Usuário", "Lead", "Origem", "Destino", "Data", "Duração", "Tipo"],
+        table(["", "Situação", "Usuário", "Lead", "Origem", "Destino", "Data", "Duração", "Tipo", ""],
               rows, { scroll: true }),
         { actions: pager(res.pagination) })}`;
     const set = (k, v) => { state.callFilter = { ...f, [k]: v, page: 1 }; go("lista-ligacoes"); };
@@ -2331,6 +2441,9 @@ PAGES["lista-ligacoes"] = {
     ligarPeriodo(() => go("lista-ligacoes"));
     view.querySelectorAll("[data-lead]").forEach((a) => {
       a.onclick = () => go(`lead/${a.dataset.lead}`);
+    });
+    view.querySelectorAll("[data-det]").forEach((b) => {
+      b.onclick = () => openDetalheLigacao(b.dataset.det);
     });
     view.querySelectorAll("[data-star]").forEach((b) => {
       b.onclick = async () => {

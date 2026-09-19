@@ -506,6 +506,24 @@ class Delivery(Base):
     lead: Mapped["Lead | None"] = relationship()
 
 
+class CallFeedback(Base):
+    """Sales Coaching: o gestor comenta a ligação de um SDR.
+
+    Fica separado de `Call` porque uma ligação pode ter vários feedbacks, e
+    porque quem escreve não é quem ligou — são duas pessoas na mesma linha.
+    """
+    __tablename__ = "call_feedback"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("call.id", ondelete="CASCADE"), index=True)
+    author_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    text: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime)
+    call: Mapped["Call"] = relationship()
+    author: Mapped["User | None"] = relationship()
+
+
 class LeadFeedback(Base):
     """Feedback de oportunidade: nasce quando um lead é marcado como ganho (se
     a empresa tiver a funcionalidade ativada) e fica pendente até o vendedor

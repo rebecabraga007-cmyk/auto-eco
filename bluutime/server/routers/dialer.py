@@ -10,7 +10,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Call, Company, Lead, Team, User
+from ..models import Call, CallFeedback, Company, Lead, Team, User
 from .. import perm, serial
 from .analytics import usuarios_do_time
 
@@ -89,18 +89,106 @@ def _variacao(agora: int, antes: int) -> dict:
             "percentual": round((agora - antes) / antes * 100, 1) if antes else None}
 
 
+def _pode_ver_ligacao(db: Session, c: Call) -> None:
+    ator = perm.ator(db)
+    if ator.pelo_menos("gestor"):
+        return
+    empresa = db.query(Company).first()
+    if c.user_id != ator.user_id and not (empresa and empresa.leads_visible_all):
+        raise HTTPException(403, "Esta ligação é de outro usuário.")
+
+
+def _ser_feedback(f) -> dict:
+    return {"id": f.id, "callId": f.call_id, "text": f.text,
+            "author": serial.user_min(f.author),
+            "createdAt": serial.iso(f.created_at),
+            "updatedAt": serial.iso(f.updated_at),
+            "readAt": serial.iso(f.read_at)}
+
+
+@router.get("/calls/{cid}/detail")
+def call_detail(cid: int, db: Session = Depends(get_db)):
+    """Detalhe da ligação com o histórico de coaching.
+
+    É o `modalCallDetails` do original, menos o que depende de telefonia
+    (gravação e transcrição): custo, resultado, o lead e os feedbacks.
+    """
+    c = db.get(Call, cid)
+    if not c:
+        raise HTTPException(404, "Ligação não encontrada.")
+    _pode_ver_ligacao(db, c)
+    feedbacks = (db.query(CallFeedback).filter(CallFeedback.call_id == cid)
+                 .order_by(CallFeedback.created_at).all())
+    return {**serial.call(c),
+            "lead": serial.lead(c.lead) if c.lead else None,
+            "feedbacks": [_ser_feedback(f) for f in feedbacks]}
+
+
+@router.post("/calls/{cid}/feedback")
+def add_call_feedback(cid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Coaching é do gestor para o SDR — quem fez a ligação não se avalia."""
+    c = db.get(Call, cid)
+    if not c:
+        raise HTTPException(404, "Ligação não encontrada.")
+    ator = perm.ator(db)
+    ator.exigir("gestor", "dar feedback de ligação")
+    texto = (payload.get("text") or "").strip()
+    if not texto:
+        raise HTTPException(400, "Escreva o feedback.")
+    f = CallFeedback(call_id=cid, author_id=ator.user_id, text=texto)
+    db.add(f)
+    db.commit()
+    return _ser_feedback(f)
+
+
+@router.patch("/calls/feedback/{fid}")
+def update_call_feedback(fid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Editar o próprio texto, ou marcar como lido — e só o DONO da ligação
+    marca como lido, porque é ele quem leu."""
+    f = db.get(CallFeedback, fid)
+    if not f:
+        raise HTTPException(404, "Feedback não encontrado.")
+    ator = perm.ator(db)
+    if "text" in payload:
+        if f.author_id != ator.user_id:
+            raise HTTPException(403, "Só o autor edita o próprio feedback.")
+        texto = (payload["text"] or "").strip()
+        if not texto:
+            raise HTTPException(400, "O feedback não pode ficar vazio.")
+        f.text = texto
+        f.updated_at = datetime.utcnow()
+    if payload.get("read"):
+        if f.call.user_id != ator.user_id:
+            raise HTTPException(403, "Quem marca como lido é quem recebeu o feedback.")
+        f.read_at = f.read_at or datetime.utcnow()
+    db.commit()
+    return _ser_feedback(f)
+
+
 @router.patch("/calls/{cid}")
 def update_call(cid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
-    """Hoje só marcar/desmarcar como importante — o que o original chama de
-    estrela na lista, para achar de novo a ligação que interessou."""
+    """Marcar como importante (a estrela da lista) e reclassificar o resultado.
+
+    Reclassificar existe porque ouvir de novo muda a leitura: o que parecia
+    significativa no calor da hora nem sempre era.
+    """
     c = db.get(Call, cid)
     if not c:
         raise HTTPException(404, "Ligação não encontrada.")
     ator = perm.ator(db)
     if not ator.pelo_menos("gestor") and c.user_id != ator.user_id:
-        raise HTTPException(403, "Só dá para marcar as próprias ligações.")
+        raise HTTPException(403, "Só dá para alterar as próprias ligações.")
     if "important" in payload:
         c.important = bool(payload["important"])
+    if "output" in payload:
+        valor = (payload["output"] or "").strip()
+        if valor and valor not in ("MEANINGFUL", "NOT_MEANINGFUL", "NO_CONTACT"):
+            raise HTTPException(400, f"Resultado desconhecido: {valor}.")
+        # Resultado só existe em ligação conectada — o registro já seguia essa
+        # regra na criação, e reclassificar não é porta dos fundos para furá-la.
+        if valor and c.status != "CONNECTED":
+            raise HTTPException(400, "A ligação não conectou; não há resultado a classificar.")
+        c.output = valor
     db.commit()
     return serial.call(c)
 
