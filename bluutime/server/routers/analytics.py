@@ -1,6 +1,7 @@
 """Painel do gestor, metas, estatísticas e relatórios."""
 import csv
 import io
+import os
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 
@@ -11,8 +12,8 @@ from sqlalchemy.orm import Session
 
 from .. import perm, serial
 from ..db import get_db
-from ..models import (Cadence, Call, Client, Company, Goal, Lead, LeadActivity,
-                      LeadBase, LostReason, Team, User)
+from ..models import (Cadence, Call, Client, Company, Delivery, Goal, Lead,
+                      LeadActivity, LeadBase, LostReason, Team, Template, User)
 
 router = APIRouter(prefix="/api")
 
@@ -286,6 +287,54 @@ def cadence_steps(cadence_id: int, since: str | None = None, until: str | None =
                        "taxaEngajados": round(engajados / total_leads * 100, 1) if total_leads else 0.0,
                        "taxaGanhos": round(ganhos_total / total_leads * 100, 1) if total_leads else 0.0},
             "passos": passos}
+
+
+@router.get("/flow/statistics/email")
+def email_statistics(since: str | None = None, until: str | None = None,
+                     db: Session = Depends(get_db)):
+    """Enviados, abertos, clicados e respondidos — por modelo de mensagem.
+
+    "Não entregues" aqui são os FAILED do provedor; e-mail que some depois do
+    aceite (bounce assíncrono) só apareceria com webhook do Resend, então não
+    finjo que esta contagem é entregabilidade completa.
+    """
+    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
+    end = datetime.fromisoformat(until) if until else datetime.utcnow()
+    start = datetime.fromisoformat(since) if since else end - timedelta(days=30)
+
+    entregas = (db.query(Delivery)
+                .filter(Delivery.channel == "EMAIL",
+                        Delivery.created_at.between(start, end)).all())
+    enviados = [d for d in entregas if d.status in ("SENT", "SIMULATED")]
+    falhas = [d for d in entregas if d.status == "FAILED"]
+    bloqueados = [d for d in entregas if d.status == "BLOCKED"]
+    abertos = [d for d in enviados if d.opened_at]
+    clicados = [d for d in enviados if d.clicked_at]
+
+    modelos = {t.id: t.name for t in db.query(Template).all()}
+    por_modelo: dict = {}
+    for d in enviados:
+        chave = d.template_id or 0
+        linha = por_modelo.setdefault(chave, {
+            "modelo": modelos.get(chave, "Sem modelo"),
+            "enviados": 0, "abertos": 0, "clicados": 0})
+        linha["enviados"] += 1
+        linha["abertos"] += 1 if d.opened_at else 0
+        linha["clicados"] += 1 if d.clicked_at else 0
+    linhas = sorted(por_modelo.values(), key=lambda r: r["enviados"], reverse=True)
+    for l in linhas:
+        l["taxaAbertura"] = round(l["abertos"] / l["enviados"] * 100, 1) if l["enviados"] else 0.0
+        l["taxaClique"] = round(l["clicados"] / l["enviados"] * 100, 1) if l["enviados"] else 0.0
+
+    total = len(enviados)
+    return {
+        "rastreioLigado": os.environ.get("EMAIL_TRACK") == "1",
+        "resumo": {"enviados": total, "falhas": len(falhas), "bloqueados": len(bloqueados),
+                   "abertos": len(abertos), "clicados": len(clicados),
+                   "taxaAbertura": round(len(abertos) / total * 100, 1) if total else 0.0,
+                   "taxaClique": round(len(clicados) / total * 100, 1) if total else 0.0},
+        "porModelo": linhas,
+    }
 
 
 @router.get("/flow/statistics/performance")

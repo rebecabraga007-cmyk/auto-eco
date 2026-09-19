@@ -55,6 +55,7 @@ app.include_router(analytics.router)
 app.include_router(whatsapp.router)
 app.include_router(capiblu.router)
 app.include_router(envio.router)
+app.include_router(envio.publico)            # /t/o/*, /t/c/* — abertos pelo lead
 app.include_router(integracoes.router)
 app.include_router(meetime.router)
 

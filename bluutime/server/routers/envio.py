@@ -8,7 +8,13 @@ Toda saída passa por aqui, e por três travas antes do provedor:
 2. **Janela útil.** Mandar WhatsApp de cadência às 23h queima o número.
 3. **Freio de mão.** `BLUUTIME_SEND != 1` faz tudo voltar como `SIMULATED`.
 """
-from fastapi import APIRouter, Body, Depends, HTTPException
+import base64
+import secrets
+from datetime import datetime
+from urllib.parse import unquote
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Response
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from .. import agenda, auditoria, channels, perm, ratelimit, render, serial, webhooks
@@ -17,6 +23,9 @@ from ..models import (AuditLog, CadenceStep, Company, Conversation, Delivery,
                       Lead, LeadActivity, Message, Template, User, channel_of)
 
 router = APIRouter(prefix="/api/envio")
+# Rastreio mora fora de /api: são endereços que o LEAD abre, não a aplicação.
+# Curto, sem prefixo e sem sessão — o destinatário do e-mail não está logado.
+publico = APIRouter()
 
 
 @router.get("/canais")
@@ -99,14 +108,60 @@ def _pode_enviar(lead: Lead, canal: str, fora_da_janela: bool) -> str:
 
 
 def _registrar(db: Session, *, lead, canal, destino, assunto, corpo, resultado,
-               user_id=None, activity_id=None, template_id=None) -> Delivery:
+               user_id=None, activity_id=None, template_id=None, token="") -> Delivery:
     d = Delivery(lead_id=lead.id, lead_activity_id=activity_id, user_id=user_id,
                  template_id=template_id, channel=canal, to_address=destino,
                  subject=assunto, body=corpo, status=resultado.status,
                  provider=resultado.provider, provider_id=resultado.provider_id,
-                 error=resultado.error)
+                 error=resultado.error, tracking_token=token)
     db.add(d)
     return d
+
+
+# 1×1 transparente. Fica embutido para o pixel não depender de arquivo em disco.
+_PIXEL = base64.b64decode(
+    "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
+
+
+def _marcar(db: Session, token: str, campo: str) -> Delivery | None:
+    d = db.query(Delivery).filter(Delivery.tracking_token == token).first()
+    if not d:
+        return None
+    agora = datetime.utcnow()
+    if campo == "open":
+        d.open_count += 1
+        # Guarda a PRIMEIRA abertura: é ela que diz quanto tempo o lead levou
+        # para abrir. A última seria sobrescrita a cada releitura.
+        d.opened_at = d.opened_at or agora
+    else:
+        d.click_count += 1
+        d.clicked_at = d.clicked_at or agora
+        # Clicou, então abriu — mesmo que a imagem tenha sido bloqueada.
+        d.opened_at = d.opened_at or agora
+    db.commit()
+    return d
+
+
+@publico.get("/t/o/{token}.gif", include_in_schema=False)
+def rastrear_abertura(token: str, db: Session = Depends(get_db)):
+    _marcar(db, token, "open")
+    # Devolve o pixel mesmo com token desconhecido: a imagem quebrada no
+    # e-mail do lead denunciaria o rastreio sem nenhum ganho.
+    return Response(content=_PIXEL, media_type="image/gif",
+                    headers={"Cache-Control": "no-store"})
+
+
+@publico.get("/t/c/{token}", include_in_schema=False)
+def rastrear_clique(token: str, u: str = "", db: Session = Depends(get_db)):
+    destino = unquote(u or "")
+    # Valida ANTES de contar. Contar primeiro inflava a métrica com tentativa
+    # recusada — clique que não levou a lugar nenhum não é clique.
+    # Só http(s): sem isto o redirecionador viraria um encaminhador aberto
+    # para `javascript:` e afins, assinado pelo nosso domínio.
+    if not destino.startswith(("http://", "https://")):
+        raise HTTPException(400, "Destino inválido.")
+    _marcar(db, token, "click")
+    return RedirectResponse(destino, status_code=302)
 
 
 @router.post("/atividades/{aid}")
@@ -161,17 +216,21 @@ async def enviar_atividade(aid: int, payload: dict = Body(default={}),
         resultado = channels.SendResult("BLOCKED", canal, error=bloqueio)
     elif canal == "EMAIL":
         empresa = db.query(Company).first()
+        # Sorteado antes porque a linha de Delivery só nasce depois do envio.
+        token = secrets.token_urlsafe(16)
         resultado = await channels.send(canal, to=destino, body=corpo, subject=assunto,
                                         reply_to=(user.email if user else ""),
                                         from_name=(empresa.email_from_name if empresa else ""),
-                                        from_addr=(empresa.email_from_address if empresa else ""))
+                                        from_addr=(empresa.email_from_address if empresa else ""),
+                                        tracking_token=token)
     else:
         resultado = await channels.send(canal, to=destino, body=corpo, subject=assunto,
                                         reply_to=(user.email if user else ""))
 
     entrega = _registrar(db, lead=lead, canal=canal, destino=destino, assunto=assunto,
                          corpo=corpo, resultado=resultado, user_id=act.user_id,
-                         activity_id=act.id, template_id=tpl.id)
+                         activity_id=act.id, template_id=tpl.id,
+                         token=token if canal == "EMAIL" else "")
 
     # WhatsApp entra no histórico da conversa; e-mail vive só em `Delivery`.
     if canal == "WHATSAPP" and resultado.status in ("SENT", "SIMULATED"):

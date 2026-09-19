@@ -6,10 +6,12 @@ justamente o que faz e-mail cair em spam, e é dado pessoal coletado sem
 necessidade. Quem quiser liga em `EMAIL_TRACK_OPEN=1`.
 """
 import os
+import re
 import smtplib
 import ssl
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
+from urllib.parse import quote
 
 import anyio
 
@@ -57,8 +59,26 @@ class Email(Channel):
                 s.starttls(context=ssl.create_default_context())
             s.login(self.user, self.password)
 
+    def _html(self, body: str, token: str) -> str:
+        """Corpo em HTML, com pixel e links reescritos quando há rastreio.
+
+        O rastreio é opcional de propósito (`EMAIL_TRACK=1`): imagem remota e
+        link mascarado são justamente o que derruba reputação de domínio, e é
+        dado pessoal coletado. Quem liga, liga sabendo.
+        """
+        html = ("<div style=\"font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif\">"
+                + body.replace("&", "&amp;").replace("<", "&lt;").replace("\n", "<br>")
+                + "</div>")
+        if not (token and os.environ.get("EMAIL_TRACK") == "1"):
+            return html
+        base = (os.environ.get("TRACK_BASE_URL") or "https://bluu.capiblu.net").rstrip("/")
+        html = re.sub(
+            r'(?<![\w/])(https?://[^\s<>"]+)',
+            lambda m: f"{base}/t/c/{token}?u={quote(m.group(1), safe='')}", html)
+        return html + f'<img src="{base}/t/o/{token}.gif" width="1" height="1" alt="">'
+
     def _send_sync(self, to: str, subject: str, body: str, reply_to: str,
-                   from_name: str = "", from_addr: str = "") -> str:
+                   from_name: str = "", from_addr: str = "", token: str = "") -> str:
         msg = EmailMessage()
         msg["Subject"] = subject
         msg["From"] = formataddr((from_name or self.from_name, from_addr or self.from_addr))
@@ -72,10 +92,9 @@ class Email(Channel):
         msg.set_content(body)
         # O corpo vem de um Template, que é texto puro; a versão HTML só troca
         # quebra de linha por <br> para não exigir dois campos de quem escreve.
-        msg.add_alternative(
-            "<div style=\"font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif\">"
-            + body.replace("&", "&amp;").replace("<", "&lt;").replace("\n", "<br>")
-            + "</div>", subtype="html")
+        # A versão em texto fica SEM rastreio — quem lê em texto puro não é
+        # contabilizado, e é melhor não contar do que contar errado.
+        msg.add_alternative(self._html(body, token), subtype="html")
         with smtplib.SMTP(self.host, self.port, timeout=30) as s:
             if self.starttls:
                 s.starttls(context=ssl.create_default_context())
@@ -94,7 +113,8 @@ class Email(Channel):
         try:
             mid = await anyio.to_thread.run_sync(
                 self._send_sync, to, subject, body, extra.get("reply_to", ""),
-                extra.get("from_name", ""), extra.get("from_addr", ""))
+                extra.get("from_name", ""), extra.get("from_addr", ""),
+                extra.get("tracking_token", ""))
             return SendResult("SENT", self.key, provider_id=mid)
         except Exception as exc:
             return SendResult("FAILED", self.key, error=type(exc).__name__)

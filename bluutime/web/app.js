@@ -2279,7 +2279,8 @@ PAGES.estatisticas = {
     const abas = `<ul class="nav nav-tabs">
       ${[["geral", "Visão geral"], ["cadencias", "Distribuição nas cadências"],
          ["conversao", "Conversão por passo"], ["desempenho", "Desempenho"],
-         ["motivos", "Motivos de perda"], ["resposta", "Tempo de resposta"]].map(([k, v]) =>
+         ["email", "E-mail"], ["motivos", "Motivos de perda"],
+         ["resposta", "Tempo de resposta"]].map(([k, v]) =>
         `<li${aba === k ? ' class="active"' : ""}><a data-estaba="${k}">${v}</a></li>`).join("")}
     </ul>`;
     const barra = `<div class="toolbar">
@@ -2359,6 +2360,30 @@ PAGES.estatisticas = {
       const sm = document.getElementById("smPor");
       if (sm) sm.onchange = () => { state.estMotivoPor = sm.value; go("estatisticas"); };
       return;
+    }
+
+    if (aba === "email") {
+      const e = await api(`/api/flow/statistics/email${periodoQS()}`);
+      const r = e.resumo;
+      view.innerHTML = `${barra}${abas}<div class="mt-10">
+        ${!e.rastreioLigado ? `<div class="alert alert-info alert-styled-left">
+          Rastreio de abertura e clique <strong>desligado</strong>. Envio e falha já são
+          contados; abertura e clique só passam a contar depois de ligar
+          <code>EMAIL_TRACK=1</code> — e valem daí para a frente, não retroativamente.</div>` : ""}
+        ${kpis([
+          { value: r.enviados, label: "Enviados" },
+          { value: `${r.taxaAbertura}%`, label: `Abertos (${r.abertos})`, tone: "info" },
+          { value: `${r.taxaClique}%`, label: `Clicados (${r.clicados})`, tone: "success" },
+          { value: r.falhas + r.bloqueados, label: "Falhas e bloqueios", tone: "danger" },
+        ])}
+        ${panel("Por modelo de mensagem",
+          table(["Modelo", "Enviados", "Abertos", "Abertura", "Clicados", "Clique"],
+            e.porModelo.map((m) => ({ cells: [h(m.modelo), m.enviados, m.abertos,
+              `${m.taxaAbertura}%`, m.clicados, `${m.taxaClique}%`] })),
+            { empty: "Nenhum e-mail enviado no período." }),
+          { subtitle: "Falha aqui é recusa do provedor no envio. Bounce que chega depois só apareceria com webhook do Resend — não está contado." })}
+      </div>`;
+      return ligar();
     }
 
     if (aba === "desempenho") {

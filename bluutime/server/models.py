@@ -492,6 +492,13 @@ class Delivery(Base):
     provider_id: Mapped[str] = mapped_column(String(120), default="", index=True)
     error: Mapped[str] = mapped_column(String(240), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Rastreio de abertura e clique. O token é sorteado ANTES do envio porque a
+    # linha só nasce depois; é ele que o pixel e o redirecionador procuram.
+    tracking_token: Mapped[str] = mapped_column(String(40), default="", index=True)
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime)
+    clicked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    open_count: Mapped[int] = mapped_column(Integer, default=0)
+    click_count: Mapped[int] = mapped_column(Integer, default=0)
     lead: Mapped["Lead | None"] = relationship()
 
 
