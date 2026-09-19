@@ -5333,7 +5333,41 @@ PAGES.ajustes = {
           <span class="spacer"></span>
           <button class="btn btn-default btn-sm" id="emlVerificar">Verificar domínio</button>
           <button class="btn btn-main btn-sm" id="emlSalvar">Salvar</button>
-        </div>`)}`;
+        </div>`)}
+      ${panel("Domínios de envio (whitelabel)",
+        `<div id="dominiosBox">${LOADING}</div>`,
+        { subtitle: "Estado real dos domínios no provedor de envio. Cadastrar ou remover domínio se faz no painel do provedor — é recurso da conta que paga a fatura." })}`;
+
+    // Carrega depois de pintar a tela: a consulta sai para fora e não pode
+    // segurar o resto de Ajustes.
+    (async () => {
+      const box = document.getElementById("dominiosBox");
+      if (!box) return;
+      try {
+        const d = await api("/api/flow/email/domains");
+        if (!d.configurado || d.motivo) {
+          box.innerHTML = `<div class="alert alert-info alert-styled-left">${h(d.motivo)}</div>`;
+          return;
+        }
+        box.innerHTML = d.dominios.length ? d.dominios.map((dom) => `
+          <div class="sub-block">
+            <h4>${h(dom.nome)}
+              <span class="pill ${dom.status === "verified" ? "green" : dom.status === "failed" ? "red" : "amber"}">${h(dom.status)}</span>
+              ${dom.envio === "enabled" ? `<span class="pill green">envio liberado</span>` : `<span class="pill grey">envio bloqueado</span>`}
+              <span class="text-muted text-size-small">${h(dom.regiao || "")} · desde ${h(dom.criado || "—")}</span>
+            </h4>
+            ${table(["Registro", "Nome", "Valor", "Situação"],
+              dom.registros.map((r) => ({ cells: [
+                `<span class="pill">${h(r.tipo || "")}</span>`,
+                `<code class="text-size-small">${h(r.nome || "")}</code>`,
+                `<code class="text-size-small" style="word-break:break-all">${h(r.valor || "")}</code>`,
+                `<span class="pill ${r.status === "verified" ? "green" : "amber"}">${h(r.status || "—")}</span>`,
+              ] })), { scroll: true, empty: "Sem registros DNS informados pelo provedor." })}
+          </div>`).join("") : emptyState("Nenhum domínio cadastrado no provedor.");
+      } catch (e) {
+        box.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
+      }
+    })();
 
     document.getElementById("cfgDias").onclick = (e) => {
       const b = e.target.closest(".chip"); if (!b) return;

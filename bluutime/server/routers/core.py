@@ -184,6 +184,49 @@ def email_configuration(db: Session = Depends(get_db)):
             "domainVerified": c.email_domain_verified}
 
 
+@router.get("/flow/email/domains")
+async def email_domains(db: Session = Depends(get_db)):
+    """Domínios de envio e o estado do DNS de cada um, direto do Resend.
+
+    É a tela `company/email-whitelabel` do original. Só LEITURA: cadastrar
+    domínio cria recurso na conta do provedor, e isso é decisão de quem paga
+    a conta, não efeito colateral de abrir uma tela.
+
+    A chave é a mesma senha SMTP — no Resend a senha do relay É a API key.
+    """
+    perm.ator(db).exigir("gestor", "ver domínios de envio")
+    chave = (os.environ.get("CAPIBLU_SMTP_SENHA") or os.environ.get("RESEND_API_KEY") or "").strip()
+    if not chave.startswith("re_"):
+        return {"configurado": False,
+                "motivo": "Sem chave do Resend no ambiente — a tela não tem o que consultar.",
+                "dominios": []}
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15) as cli:
+            r = await cli.get("https://api.resend.com/domains",
+                              headers={"Authorization": f"Bearer {chave}"})
+            r.raise_for_status()
+            lista = r.json().get("data", [])
+            # O registro DNS só vem no detalhe — sem ele a tela diria
+            # "pendente" sem dizer o que publicar, que é o que resolve.
+            for d in lista:
+                det = await cli.get(f"https://api.resend.com/domains/{d['id']}",
+                                    headers={"Authorization": f"Bearer {chave}"})
+                d["records"] = det.json().get("records", []) if det.status_code == 200 else []
+    except Exception as exc:  # noqa: BLE001
+        return {"configurado": True, "motivo": f"{type(exc).__name__} ao falar com o Resend.",
+                "dominios": []}
+    return {"configurado": True, "motivo": "", "dominios": [
+        {"id": d.get("id"), "nome": d.get("name"), "status": d.get("status"),
+         "regiao": d.get("region"), "criado": d.get("created_at", "")[:10],
+         "envio": (d.get("capabilities") or {}).get("sending"),
+         "registros": [{"tipo": rg.get("record"), "nome": rg.get("name"),
+                        "valor": rg.get("value"), "status": rg.get("status"),
+                        "prioridade": rg.get("priority")}
+                       for rg in d.get("records", [])]}
+        for d in lista]}
+
+
 @router.patch("/flow/email/configuration")
 def update_email_configuration(payload: dict = Body(...), db: Session = Depends(get_db)):
     """Remetente de e-mail — antes só dava pra trocar editando SMTP_FROM no
