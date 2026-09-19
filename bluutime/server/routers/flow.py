@@ -722,13 +722,26 @@ def update_lead(lid: int, payload: dict = Body(...), db: Session = Depends(get_d
 
 @router.post("/leads/bulk")
 def bulk_action(payload: dict = Body(...), db: Session = Depends(get_db)):
-    perm.ator(db).exigir("gestor", "ação em massa sobre leads")
-    """Ações em massa da lista de leads (transferir, trocar cadência, perder, apagar)."""
+    """Ações em massa da lista de leads (transferir, trocar cadência, perder, apagar).
+
+    Tudo exige gestor, com UMA exceção: apagar, quando a empresa liga
+    `leads_delete` — e aí só os próprios leads. É a permissão "Deletar leads"
+    do original, que aqui era anunciada e não existia de fato.
+    """
+    ator = perm.ator(db)
     ids = payload.get("leadIds") or []
     action = payload.get("action")
     if not ids or not action:
         raise HTTPException(400, "Informe leadIds e action.")
     leads = db.query(Lead).filter(Lead.id.in_(ids)).all()
+
+    if not ator.pelo_menos("gestor"):
+        empresa = db.query(Company).first()
+        if action != "delete" or not getattr(empresa, "leads_delete", False):
+            raise HTTPException(403, "Ação em massa sobre leads exige gestor.")
+        alheios = [l.id for l in leads if l.sdr_id != ator.user_id]
+        if alheios:
+            raise HTTPException(403, f"{len(alheios)} lead(s) não são seus.")
     if action == "transfer":
         uid = payload.get("sdrId")
         if not db.get(User, uid):

@@ -85,6 +85,10 @@ class Company(Base):
     leads_visible_all: Mapped[bool] = mapped_column(Boolean, default=False)
     leads_add_manual: Mapped[bool] = mapped_column(Boolean, default=True)
     statistics_access: Mapped[bool] = mapped_column(Boolean, default=True)
+    # `LEADS_DELETE` era anunciada em PERMISSIONS sem coluna e sem nenhuma rota
+    # conferindo — permissão decorativa. Nasce desligada: apagar lead é perda
+    # de dado, e quem liga tem que ligar de propósito.
+    leads_delete: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Remetente de e-mail — antes só dava pra trocar editando SMTP_FROM no
     # .env do servidor. `email_domain_verified` é checado de verdade (registro

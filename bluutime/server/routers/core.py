@@ -142,6 +142,8 @@ def my_permissions(db: Session = Depends(get_db)):
         out.append("LEADS_VIEW_ALL")
     if c.leads_add_manual:
         out.append("LEADS_ADD_MANUAL")
+    if c.leads_delete:
+        out.append("LEADS_DELETE")
     if c.regular_user_can_import:
         out.append("LEADBASE_UPLOAD")
     if c.statistics_access:
@@ -153,7 +155,8 @@ def my_permissions(db: Session = Depends(get_db)):
 def permissions_config(db: Session = Depends(get_db)):
     c = _company(db)
     return {"leadsVisibleAll": c.leads_visible_all, "leadsAddManual": c.leads_add_manual,
-            "leadbaseUpload": c.regular_user_can_import, "statisticsAccess": c.statistics_access}
+            "leadbaseUpload": c.regular_user_can_import, "statisticsAccess": c.statistics_access,
+            "leadsDelete": c.leads_delete}
 
 
 @router.patch("/flow/permissions/configuration")
@@ -164,6 +167,8 @@ def update_permissions_config(payload: dict = Body(...), db: Session = Depends(g
         c.leads_visible_all = bool(payload["leadsVisibleAll"])
     if "leadsAddManual" in payload:
         c.leads_add_manual = bool(payload["leadsAddManual"])
+    if "leadsDelete" in payload:
+        c.leads_delete = bool(payload["leadsDelete"])
     if "leadbaseUpload" in payload:
         c.regular_user_can_import = bool(payload["leadbaseUpload"])
     if "statisticsAccess" in payload:

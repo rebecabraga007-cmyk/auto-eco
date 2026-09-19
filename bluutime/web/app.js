@@ -5221,6 +5221,10 @@ PAGES.ajustes = {
           <label><input type="checkbox" id="permStats"${permCfg.statisticsAccess ? " checked" : ""}>
             Acessar a aba de Estatísticas</label>
         </div>
+        <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
+          <label><input type="checkbox" id="permDel"${permCfg.leadsDelete ? " checked" : ""}>
+            Apagar leads <span class="text-muted text-size-small">— só os da própria carteira, e a ação não tem volta</span></label>
+        </div>
         <div class="toolbar mt-10" style="border:0;padding:0;background:none">
           <span class="spacer"></span>
           <button class="btn btn-main btn-sm" id="permSalvar">Salvar</button>
@@ -5393,6 +5397,7 @@ PAGES.ajustes = {
         await api("/api/flow/permissions/configuration", { method: "PATCH", body: {
           leadsVisibleAll: document.getElementById("permVisivel").checked,
           leadsAddManual: document.getElementById("permAdd").checked,
+          leadsDelete: document.getElementById("permDel").checked,
           statisticsAccess: document.getElementById("permStats").checked,
         } });
         toast("Permissões salvas.", "ok");
