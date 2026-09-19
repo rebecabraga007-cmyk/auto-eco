@@ -1574,6 +1574,52 @@ function openRegistrarLigacao(lead, depois) {
   };
 }
 
+/** Editar um campo personalizado. O identificador fica de fora de propósito:
+ *  é a chave do valor já gravado em cada lead e das merge tags dos modelos. */
+function openCampoForm(campo) {
+  const f = campo || {};
+  const m = modal({
+    title: `Editar campo — ${f.name || ""}`,
+    body: `
+      <div class="field"><label for="cpNome">Nome *</label>
+        <input class="form-control" id="cpNome" value="${h(f.name || "")}"></div>
+      <div class="field"><label for="cpIdent">Identificador</label>
+        <input class="form-control" id="cpIdent" value="${h(f.identifier || "")}" disabled>
+        <span class="help-block">Não muda: é a chave do valor já gravado em cada lead e das merge tags.</span></div>
+      <div class="field"><label for="cpOrdem">Ordem</label>
+        <input class="form-control" type="number" id="cpOrdem" value="${f.index || 0}"></div>
+      <div class="field">
+        <label><input type="checkbox" id="cpVisivel"${f.visible !== false ? " checked" : ""}> Visível no formulário do lead</label></div>
+      <div class="field">
+        <label><input type="checkbox" id="cpGanhar"${f.wonMandatory ? " checked" : ""}> Obrigatório para marcar como ganho</label></div>
+      <div class="field">
+        <label><input type="checkbox" id="cpPerder"${f.lostMandatory ? " checked" : ""}> Obrigatório para marcar como perdido</label></div>
+      <div class="field"><label for="cpOpcoes">Opções, uma por linha</label>
+        <textarea class="form-control" id="cpOpcoes" rows="4">${h((f.options || []).join("\n"))}</textarea>
+        <span class="help-block">Só faz sentido em campo de escolha. É daqui que saem as etapas, se este for o campo do funil.</span></div>`,
+    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+             <button class="btn btn-main btn-sm" data-ok>Salvar</button>`,
+  });
+  m.root.querySelector("[data-cancel]").onclick = m.close;
+  m.root.querySelector("[data-ok]").onclick = async (ev) => {
+    const bt = ev.currentTarget;
+    const nome = m.root.querySelector("#cpNome").value.trim();
+    if (!nome) return toast("O campo precisa de um nome.", "err");
+    bt.disabled = true;
+    try {
+      await api(`/api/flow/new-lead-fields/${f.id}`, { method: "PATCH", body: {
+        name: nome,
+        index: Number(m.root.querySelector("#cpOrdem").value) || 0,
+        visible: m.root.querySelector("#cpVisivel").checked,
+        wonMandatory: m.root.querySelector("#cpGanhar").checked,
+        lostMandatory: m.root.querySelector("#cpPerder").checked,
+        options: m.root.querySelector("#cpOpcoes").value.split("\n"),
+      } });
+      m.close(); toast("Campo atualizado.", "ok"); go("ajustes");
+    } catch (e) { toast(e.message, "err"); bt.disabled = false; }
+  };
+}
+
 function openTeamForm(time, usuarios) {
   const t = time || {};
   const dentro = new Set((t.users || []).map((u) => u.id));
@@ -5379,15 +5425,17 @@ PAGES.ajustes = {
 
       ${panel("Motivos de perda",
         table(["Motivo", ""], reasons.map((r) => ({ cells: [h(r.name),
-          `<button class="btn btn-default btn-xs" data-del-reason="${r.id}">Remover</button>`] }))),
+          `<button class="btn btn-default btn-xs" data-edit-reason="${r.id}" data-nome="${h(r.name)}">Editar</button>
+           <button class="btn btn-default btn-xs" data-del-reason="${r.id}">Remover</button>`] }))),
         { actions: `<button class="btn btn-main btn-xs" id="newReason">Adicionar</button>` })}
 
       ${panel("Campos do lead",
-        table(["Campo", "Identificador", "Tipo", "Obrigatório", "Obrig. p/ ganhar", "Obrig. p/ perder"],
+        table(["Campo", "Identificador", "Tipo", "Visível", "Obrig. p/ ganhar", "Obrig. p/ perder", ""],
           fields.map((f) => ({ cells: [h(f.name), `<code>${h(f.identifier)}</code>`,
             f.customField ? `<span class="pill green">Personalizado</span>` : `<span class="pill grey">Nativo</span>`,
-            f.required ? "Sim" : "Não",
-            f.wonMandatory ? "Sim" : "—", f.lostMandatory ? "Sim" : "—"] }))),
+            f.customField ? (f.visible ? "Sim" : "Não") : "Sim",
+            f.wonMandatory ? "Sim" : "—", f.lostMandatory ? "Sim" : "—",
+            f.customField ? `<button class="btn btn-default btn-xs" data-edit-field="${f.id}">Editar</button>` : ""] }))),
         { actions: `<button class="btn btn-main btn-xs" id="newField">Novo campo</button>` })}
 
       ${panel("Etapa do lead (funil)", `
@@ -5617,6 +5665,15 @@ PAGES.ajustes = {
         } catch (e) { toast(e.message, "err"); }
       });
     });
+    view.querySelectorAll("[data-edit-reason]").forEach((b) => {
+      b.onclick = () => promptOne("Editar motivo de perda", "Motivo", async (v) => {
+        await api(`/api/flow/lost-reasons/${b.dataset.editReason}`, { method: "PATCH", body: { name: v } });
+        toast("Motivo atualizado.", "ok"); go("ajustes");
+      }, "Salvar", b.dataset.nome);
+    });
+    view.querySelectorAll("[data-edit-field]").forEach((b) => {
+      b.onclick = () => openCampoForm(fields.find((f) => String(f.id) === b.dataset.editField));
+    });
     document.getElementById("newReason").onclick = () => promptOne("Novo motivo de perda", "Motivo", async (v) => {
       await api("/api/flow/lost-reasons", { method: "POST", body: { name: v } });
       state.lostReasons = await api("/api/flow/lost-reasons");
@@ -5701,10 +5758,10 @@ PAGES.ajustes = {
   },
 };
 
-function promptOne(title, label, onOk, okLabel = "Salvar") {
+function promptOne(title, label, onOk, okLabel = "Salvar", valor = "") {
   const m = modal({
     title,
-    body: `<div class="field"><label for="promptVal">${h(label)}</label><input class="form-control" id="promptVal"></div>`,
+    body: `<div class="field"><label for="promptVal">${h(label)}</label><input class="form-control" id="promptVal" value="${h(valor)}"></div>`,
     footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
              <button class="btn btn-main btn-sm" data-ok>${h(okLabel)}</button>`,
   });

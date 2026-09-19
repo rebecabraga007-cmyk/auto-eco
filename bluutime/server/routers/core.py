@@ -568,6 +568,22 @@ def create_lost_reason(payload: dict = Body(...), db: Session = Depends(get_db))
     return {"id": r.id, "name": r.name}
 
 
+@router.patch("/flow/lost-reasons/{rid}")
+def update_lost_reason(rid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Renomear em vez de apagar e recriar: o motivo já está apontado por
+    leads perdidos, e recriar perderia esse vínculo."""
+    perm.ator(db).exigir("gestor", "editar motivo de perda")
+    r = db.get(LostReason, rid)
+    if not r:
+        raise HTTPException(404, "Motivo não encontrado.")
+    nome = (payload.get("name") or "").strip()
+    if not nome:
+        raise HTTPException(400, "Nome obrigatório.")
+    r.name = nome
+    db.commit()
+    return {"id": r.id, "name": r.name}
+
+
 @router.delete("/flow/lost-reasons/{rid}")
 def delete_lost_reason(rid: int, db: Session = Depends(get_db)):
     perm.ator(db).exigir("gestor", "excluir motivo de perda")
@@ -594,11 +610,28 @@ def lead_fields(db: Session = Depends(get_db)):
 
 @router.patch("/flow/new-lead-fields/{fid}")
 def update_field(fid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
-    """Hoje só as opções — é o que a etapa do lead precisa para existir."""
+    """Nome, visibilidade, ordem, obrigatoriedade e opções.
+
+    O identificador NÃO muda: é a chave usada em `LeadFieldValue` e nas merge
+    tags dos modelos — renomear quebraria o valor já gravado em cada lead.
+    """
     perm.ator(db).exigir("gestor", "editar campo personalizado")
     f = db.get(CustomField, fid)
     if not f:
         raise HTTPException(404, "Campo não encontrado.")
+    if "name" in payload:
+        nome = (payload["name"] or "").strip()
+        if not nome:
+            raise HTTPException(400, "Nome do campo é obrigatório.")
+        f.name = nome
+    if "visible" in payload:
+        f.visible = bool(payload["visible"])
+    if "index" in payload:
+        f.index = int(payload["index"] or 0)
+    if "wonMandatory" in payload:
+        f.won_mandatory = bool(payload["wonMandatory"])
+    if "lostMandatory" in payload:
+        f.lost_mandatory = bool(payload["lostMandatory"])
     if "options" in payload:
         valor = payload["options"]
         linhas = valor if isinstance(valor, list) else str(valor).splitlines()
