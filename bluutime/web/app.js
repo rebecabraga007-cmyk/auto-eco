@@ -2319,7 +2319,12 @@ PAGES["lista-ligacoes"] = {
 PAGES.extrato = {
   area: "Ligações", title: "Extrato",
   async render() {
-    const res = await api(`/api/dialer/calls/statements${filtrosQS()}`);
+    // O detalhamento por ligação sai da própria lista — o extrato do original
+    // mostra os dois: o agregado por pessoa e a linha a linha que o explica.
+    const [res, detalhe] = await Promise.all([
+      api(`/api/dialer/calls/statements${filtrosQS()}`),
+      api(`/api/dialer/calls${filtrosQS({ limit: 200 })}`).catch(() => ({ data: [] })),
+    ]);
     const rows = res.data.map((r) => ({ cells: [
       r.user ? h(r.user.name) : "—", r.calls, r.minutes, fmtMoney(r.cost)] }));
     view.innerHTML = `
@@ -2330,7 +2335,20 @@ PAGES.extrato = {
         { value: fmtMoney(res.meta.pricePerMinute), label: "Preço por minuto" },
         { value: res.data.length, label: "Usuários com consumo", tone: "info" },
       ])}
-      ${panel("Consumo por usuário", table(["Usuário", "Ligações", "Minutos", "Custo"], rows))}`;
+      ${panel("Consumo por usuário", table(["Usuário", "Ligações", "Minutos", "Custo"], rows))}
+      ${panel(`Detalhamento por ligação${detalhe.data.length >= 200 ? " (200 mais recentes)" : ""}`,
+        table(["Data", "Usuário", "Destino", "Tipo", "Situação", "Duração", "Custo"],
+          detalhe.data.map((c) => ({ cells: [
+            fmtDateTime(c.originStarted),
+            c.user ? h(c.user.name) : "—",
+            h(c.receiverPhone || "—"),
+            c.receiverType === "MOBILE" ? "Celular" : "Fixo",
+            c.status === "CONNECTED" ? `<span class="pill green">Conectada</span>`
+              : `<span class="pill red">Não conectada</span>`,
+            fmtDuration(c.receiverConnectedDuration),
+            fmtMoney(c.receiverPrice),
+          ] })), { scroll: true, empty: "Nenhuma ligação no período." }),
+        { subtitle: `Tarifa de ${fmtMoney(res.meta.pricePerMinute)} por minuto, cobrada só sobre o tempo conectado.` })}`;
     ligarPeriodo(() => go("extrato"));
   },
 };
@@ -2660,9 +2678,10 @@ PAGES["feedback-oportunidade"] = {
   area: "Estatísticas", title: "Feedback de oportunidade",
   async render() {
     const modo = state.feedbackAba || "pendentes";
-    const [pendentes, stats] = await Promise.all([
+    const [pendentes, stats, respondidos] = await Promise.all([
       api("/api/flow/deal-feedbacks?status=pending"),
       api("/api/flow/statistics/deal-feedbacks"),
+      api("/api/flow/deal-feedbacks?status=filled").catch(() => []),
     ]);
 
     view.innerHTML = `
@@ -2700,7 +2719,34 @@ PAGES["feedback-oportunidade"] = {
               <div class="progress-bar progress-bar--primary" style="width:${t.simPercentual}%"></div>
             </div>
             <span class="text-muted text-size-small">Sim: ${t.sim} · Não: ${t.nao} (${t.simPercentual}%)</span>
-          </div>`).join("") : emptyState("Nenhuma resposta ainda."))}`;
+          </div>`).join("") : emptyState("Nenhuma resposta ainda."))}
+        ${panel(`Feedbacks respondidos (${respondidos.length})`,
+          table(["Lead", "Empresa", "Vendedor", "Reunião", "Qualificação", "Respondido em", ""],
+            respondidos.map((f) => ({ cells: [
+              f.leadId ? `<a data-lead="${f.leadId}">${h(f.leadName)}</a>` : h(f.leadName),
+              h(f.company || "—"), f.user ? h(f.user.name) : "—",
+              f.meetingHappened === true ? `<span class="pill green">Aconteceu</span>`
+                : f.meetingHappened === false ? `<span class="pill red">Não aconteceu</span>`
+                : `<span class="pill grey">—</span>`,
+              Object.entries(f.qualification || {}).map(([t, v]) =>
+                `<span class="pill ${v ? "green" : "grey"}">${h(t)}</span>`).join(" ") || "—",
+              fmtDate(f.filledAt),
+              f.notes ? `<button class="btn btn-default btn-xs" data-fbnota="${f.id}">Observações</button>` : "",
+            ] })), { scroll: true, empty: "Nenhum feedback respondido ainda." }),
+          { subtitle: "O que o vendedor respondeu sobre cada oportunidade — antes só o total aparecia." })}`;
+
+      body.querySelectorAll("[data-lead]").forEach((a) => {
+        a.onclick = () => go(`lead/${a.dataset.lead}`);
+      });
+      body.querySelectorAll("[data-fbnota]").forEach((b) => {
+        b.onclick = () => {
+          const f = respondidos.find((x) => String(x.id) === b.dataset.fbnota);
+          const mm = modal({ title: `Observações — ${f.leadName}`,
+            body: `<div style="white-space:pre-wrap">${h(f.notes)}</div>`,
+            footer: `<button class="btn btn-default btn-sm" data-close-obs>Fechar</button>` });
+          mm.root.querySelector("[data-close-obs]").onclick = mm.close;
+        };
+      });
     }
   },
 };
