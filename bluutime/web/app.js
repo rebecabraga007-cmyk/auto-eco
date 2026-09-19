@@ -452,6 +452,40 @@ PAGES.dashboard = {
         </div>
       </div>
 
+      ${(() => {
+        // Os três indicadores que o original tem como cartões próprios:
+        // atividades, leads e conversão, cada um contra a sua meta.
+        const ind = g.indicadores;
+        if (!ind) return "";
+        const a = ind.atividades;
+        const noRitmo = a.feitas >= a.esperadoAteHoje;
+        return `<div class="ranking-title">Indicadores do mês</div>
+        <div class="kpi-row" style="grid-template-columns:repeat(3,1fr)">
+          <div class="kpi">
+            <div class="number">${a.feitas}</div>
+            <div class="caption">Atividades realizadas
+              <span class="pill ${noRitmo ? "green" : "red"}">${noRitmo ? "no ritmo" : "abaixo"}</span></div>
+            <div class="text-muted text-size-small mt-10">
+              Meta do mês ${a.meta} · esperado até hoje ${a.esperadoAteHoje}<br>
+              ${a.mediaDiaria}/dia útil${a.atrasadas ? ` · <span class="text-muted">${a.atrasadas} fora do prazo</span>` : ""}</div>
+          </div>
+          <div class="kpi">
+            <div class="number">${ind.leads.finalizados}</div>
+            <div class="caption">Leads finalizados</div>
+            <div class="text-muted text-size-small mt-10">
+              ${ind.leads.prospectando} prospectando · ${ind.leads.aguardando} aguardando início</div>
+          </div>
+          <div class="kpi">
+            <div class="number">${g.actual.conversion}%</div>
+            <div class="caption">Conversão
+              <span class="pill ${g.actual.conversion >= Math.round(g.goal.conversionRate * 100) ? "green" : "amber"}">
+                meta ${Math.round(g.goal.conversionRate * 100)}%</span></div>
+            <div class="text-muted text-size-small mt-10">
+              ${g.actual.won} ganhos de ${g.actual.won + g.actual.lost} finalizados</div>
+          </div>
+        </div>`;
+      })()}
+
       <div class="ranking-title">Ranking de SDRs · ${pct}% da meta</div>
       ${panel("Desempenho no mês", ranking)}
 

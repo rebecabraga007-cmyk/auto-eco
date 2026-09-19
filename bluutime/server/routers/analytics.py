@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session
 
 from .. import perm, serial
 from ..db import get_db
-from ..models import (Cadence, Call, Client, Goal, Lead, LeadActivity, LeadBase,
-                      LostReason, Team, User)
+from ..models import (Cadence, Call, Client, Company, Goal, Lead, LeadActivity,
+                      LeadBase, LostReason, Team, User)
 
 router = APIRouter(prefix="/api")
 
@@ -102,8 +102,19 @@ def goal_progress(ref: str, db: Session = Depends(get_db)):
     gap = (len(won) - expected) / expected * 100 if expected else 0
     total = len(won) + len(lost)
 
+    # Dias úteis do mês pelo calendário da empresa — dividir por 30 daria uma
+    # média diária que nenhum SDR reconhece como a dele.
+    empresa = db.query(Company).first()
+    uteis_cfg = {int(x) for x in (empresa.working_days if empresa else "1,2,3,4,5").split(",") if x.strip()}
+    uteis_total = sum(1 for i in range(days_in_month)
+                      if (start + timedelta(days=i)).isoweekday() in uteis_cfg)
+    uteis_ate_hoje = sum(1 for i in range(days_in_month)
+                         if (start + timedelta(days=i)).date() <= today.date()
+                         and (start + timedelta(days=i)).isoweekday() in uteis_cfg)
+
     ranking = []
-    for u in db.query(User).filter(User.active).all():
+    ativos = db.query(User).filter(User.active).all()
+    for u in ativos:
         uwon = [l for l in won if l.sdr_id == u.id]
         ulost = [l for l in lost if l.sdr_id == u.id]
         ucalls = db.query(Call).filter(Call.user_id == u.id,
@@ -111,12 +122,40 @@ def goal_progress(ref: str, db: Session = Depends(get_db)):
         udone = db.query(func.count(LeadActivity.id)).filter(
             LeadActivity.user_id == u.id, LeadActivity.status == "DONE",
             LeadActivity.done_at.between(start, end)).scalar()
+        # Atrasadas: feitas depois da hora marcada. É o que o indicador de
+        # atividades do original mostra ao lado do volume — volume alto com
+        # tudo atrasado não é a mesma coisa que volume alto no prazo.
+        uatrasadas = db.query(func.count(LeadActivity.id)).filter(
+            LeadActivity.user_id == u.id, LeadActivity.status == "DONE",
+            LeadActivity.done_at.between(start, end),
+            LeadActivity.done_at > LeadActivity.scheduled_at + timedelta(hours=1)).scalar()
+        meta_u = (u.daily_goal or 0) * uteis_total
         ranking.append({"user": serial.user_min(u), "won": len(uwon), "lost": len(ulost),
-                        "activities": udone, "calls": len(ucalls),
+                        "activities": udone, "late": uatrasadas,
+                        "activityGoal": meta_u,
+                        "activityPercent": round(udone / meta_u * 100, 1) if meta_u else 0,
+                        "calls": len(ucalls),
                         "meaningful": sum(1 for c in ucalls if c.output == "MEANINGFUL"),
                         "conversion": round(len(uwon) / (len(uwon) + len(ulost)) * 100, 1)
                         if (uwon or ulost) else 0})
     ranking.sort(key=lambda r: r["won"], reverse=True)
+
+    # Indicadores que o original mostra como cartões próprios.
+    ativ_feitas = sum(r["activities"] for r in ranking)
+    ativ_meta = sum(r["activityGoal"] for r in ranking)
+    ativ_esperada = round(ativ_meta * uteis_ate_hoje / uteis_total) if uteis_total else 0
+    por_situacao = dict(db.query(Lead.status, func.count(Lead.id)).group_by(Lead.status).all())
+    indicadores = {
+        "atividades": {"feitas": ativ_feitas, "meta": ativ_meta,
+                       "esperadoAteHoje": ativ_esperada,
+                       "atrasadas": sum(r["late"] for r in ranking),
+                       "mediaDiaria": round(ativ_feitas / uteis_ate_hoje, 1) if uteis_ate_hoje else 0,
+                       "percentual": round(ativ_feitas / ativ_meta * 100, 1) if ativ_meta else 0},
+        "leads": {"prospectando": por_situacao.get("EXECUTING", 0) + por_situacao.get("ON_EXTRA_ACTIVITY", 0),
+                  "aguardando": por_situacao.get("WAITING", 0),
+                  "finalizados": len(won) + len(lost)},
+        "diasUteis": {"total": uteis_total, "ateHoje": uteis_ate_hoje},
+    }
 
     reasons = Counter()
     for l in lost:
@@ -134,6 +173,7 @@ def goal_progress(ref: str, db: Session = Depends(get_db)):
         "actual": {"won": len(won), "lost": len(lost),
                    "conversion": round(len(won) / total * 100, 1) if total else 0},
         "expectedByNow": expected, "gapPercent": round(gap, 1),
+        "indicadores": indicadores,
         "series": series, "ranking": ranking,
         "lostReasons": [{"name": k, "count": v} for k, v in reasons.most_common()],
         "byClient": [{"client": k, **v} for k, v in sorted(by_client.items())],
@@ -312,7 +352,6 @@ def response_time(since: str | None = None, until: str | None = None,
 
 
 def _company_goal_hours(db: Session) -> int:
-    from ..models import Company
     c = db.query(Company).first()
     return getattr(c, "response_time_goal_hours", 24) or 24
 
