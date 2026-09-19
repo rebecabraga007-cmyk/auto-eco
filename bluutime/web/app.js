@@ -956,6 +956,10 @@ PAGES.leads = {
         <input class="form-control" id="lCampoVal" placeholder="Valor" aria-label="Valor do campo"
           value="${h(f.field_value || "")}"${f.field_id ? "" : " disabled"}>` : ""}
         <span class="spacer"></span>
+        <select class="form-control input-sm" id="lPorPagina" aria-label="Itens por página">
+          ${[10, 25, 50, 100].map((n) => `<option value="${n}"${Number(f.limit || 50) === n ? " selected" : ""}>${n}/página</option>`).join("")}
+        </select>
+        <a class="btn btn-default btn-xs" id="lExport" href="/api/flow/leads/export?${qs}">Exportar</a>
         <button class="btn btn-default btn-xs" id="bulkBtn">Ações em massa</button>
         <button class="btn btn-main btn-xs" id="newLead">Novo lead</button>
       </div>
@@ -1011,6 +1015,9 @@ function bindLeadFilters(f) {
     let t2;
     val.oninput = () => { clearTimeout(t2); t2 = setTimeout(() => set("field_value", val.value), 350); };
   }
+
+  const porPagina = document.getElementById("lPorPagina");
+  if (porPagina) porPagina.onchange = () => set("limit", porPagina.value);
 }
 
 function selectedLeadIds() {

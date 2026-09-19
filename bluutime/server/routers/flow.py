@@ -8,6 +8,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, UploadFile, 
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from fastapi.responses import StreamingResponse
+
 from ..db import get_db
 from ..models import (Activity, Cadence, CadenceStep, CadenceUser, Call, Client,
                       Company, CustomField, FitscoreRule, Lead, LeadActivity,
@@ -398,6 +400,18 @@ def _fitscore_bulk(db: Session, lead_ids: list[int]) -> dict[int, int]:
     return out
 
 
+def _csv(nome: str, cabecalho: list[str], linhas: list[list]) -> StreamingResponse:
+    buf = io.StringIO()
+    escritor = csv.writer(buf, delimiter=";")
+    escritor.writerow(cabecalho)
+    escritor.writerows(linhas)
+    buf.seek(0)
+    # utf-8-sig porque o Excel pt-BR abre utf-8 puro com acento quebrado.
+    return StreamingResponse(iter([buf.getvalue().encode("utf-8-sig")]),
+                             media_type="text/csv",
+                             headers={"Content-Disposition": f'attachment; filename="{nome}"'})
+
+
 def _campo_etapa(db: Session) -> CustomField | None:
     """O campo personalizado eleito como etapa do lead, se houver.
 
@@ -506,6 +520,36 @@ def set_lead_stage(lid: int, payload: dict = Body(...), db: Session = Depends(ge
         db.add(LeadFieldValue(lead_id=lid, field_id=campo.id, value=etapa))
     db.commit()
     return {"ok": True, "stage": etapa}
+
+
+@router.get("/leads/export")
+def export_leads(status: str | None = None, cadence_id: int | None = None,
+                 client_id: int | None = None, sdr_id: int | None = None,
+                 lead_base_id: int | None = None, q: str | None = None,
+                 stage: str | None = None, field_id: int | None = None,
+                 field_op: str = "EQUALS", field_value: str | None = None,
+                 db: Session = Depends(get_db)):
+    """Exporta a LISTA FILTRADA, não a base inteira.
+
+    Já existia um relatório `leads` que despeja tudo; o que faltava — e é o
+    que o botão Exportar da lista do original faz — é levar embora exatamente
+    o recorte que está na tela. Exportar 20 mil linhas quando a pessoa filtrou
+    30 não é a mesma funcionalidade.
+    """
+    resultado = list_leads(status=status, cadence_id=cadence_id, client_id=client_id,
+                           sdr_id=sdr_id, lead_base_id=lead_base_id, q=q, stage=stage,
+                           field_id=field_id, field_op=field_op, field_value=field_value,
+                           page=1, limit=20000, db=db)
+    linhas = [[l["id"], l["name"], l["company"], l["cnpj"], l["email"], l["phone"],
+               l["city"], l["state"], l["status"],
+               (l["cadence"] or {}).get("name", ""), (l["client"] or {}).get("name", ""),
+               (l["sdr"] or {}).get("name", ""), (l["leadBase"] or {}).get("name", ""),
+               l["fitscore"], (l["createdAt"] or "")[:10]]
+              for l in resultado["data"]]
+    return _csv(f"leads-{datetime.utcnow():%Y%m%d}.csv",
+                ["ID", "Nome", "Empresa", "CNPJ", "E-mail", "Telefone", "Cidade", "UF",
+                 "Situação", "Cadência", "Cliente", "SDR", "Base", "Fit score", "Criado em"],
+                linhas)
 
 
 @router.get("/leads/{lid}")
