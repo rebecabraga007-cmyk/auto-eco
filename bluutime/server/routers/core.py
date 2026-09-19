@@ -362,6 +362,7 @@ def flow_config(db: Session = Depends(get_db)):
             "blacklist": [d for d in c.blacklist_domains.splitlines() if d.strip()],
             "workingDays": [int(x) for x in c.working_days.split(",") if x.strip()],
             "leadStageFieldId": c.lead_stage_field_id,
+            "responseTimeGoalHours": c.response_time_goal_hours,
             "usersGoals": [{"userId": u.id, "dailyGoal": u.daily_goal} for u in users]}
 
 
@@ -379,6 +380,8 @@ def update_flow_config(payload: dict = Body(...), db: Session = Depends(get_db))
         c.regular_user_can_import = bool(payload["regularUserCanImportLeadList"])
     if "smartQueueEnabled" in payload:
         c.smart_queue_enabled = bool(payload["smartQueueEnabled"])
+    if "responseTimeGoalHours" in payload:
+        c.response_time_goal_hours = max(1, int(payload["responseTimeGoalHours"] or 24))
     if "leadStageFieldId" in payload:
         # Vazio desliga o funil por etapa; o valor tem que ser um campo que existe.
         fid = payload["leadStageFieldId"]

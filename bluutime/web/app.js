@@ -2224,7 +2224,8 @@ PAGES.estatisticas = {
     const clientId = state.statClient || "";
     const abas = `<ul class="nav nav-tabs">
       ${[["geral", "Visão geral"], ["cadencias", "Distribuição nas cadências"],
-         ["conversao", "Conversão por passo"], ["motivos", "Motivos de perda"]].map(([k, v]) =>
+         ["conversao", "Conversão por passo"], ["motivos", "Motivos de perda"],
+         ["resposta", "Tempo de resposta"]].map(([k, v]) =>
         `<li${aba === k ? ' class="active"' : ""}><a data-estaba="${k}">${v}</a></li>`).join("")}
     </ul>`;
     const barra = `<div class="toolbar">
@@ -2304,6 +2305,26 @@ PAGES.estatisticas = {
       const sm = document.getElementById("smPor");
       if (sm) sm.onchange = () => { state.estMotivoPor = sm.value; go("estatisticas"); };
       return;
+    }
+
+    if (aba === "resposta") {
+      const r = await api(`/api/flow/statistics/response-time${filtrosQS()}`);
+      view.innerHTML = `${barra}${abas}<div class="mt-10">
+        ${kpis([
+          { value: `${r.percentual}%`, label: `Abordados em até ${r.metaHoras}h`, tone: "success" },
+          { value: `${r.mediaHoras}h`, label: "Tempo médio até a 1ª abordagem", tone: "info" },
+          { value: r.abordados, label: "Leads abordados" },
+          { value: r.naoAbordados, label: "Ainda sem abordagem", tone: "danger" },
+        ])}
+        ${panel("Por SDR",
+          table(["SDR", "Abordados", "No prazo", "% no prazo", "Média"],
+            r.ranking.map((u) => ({ cells: [h(u.label), u.abordados, u.dentro,
+              `<span class="pill ${u.percentual >= 70 ? "green" : u.percentual >= 40 ? "amber" : "red"}">${u.percentual}%</span>`,
+              `${u.mediaHoras}h`] })),
+            { empty: "Nenhuma abordagem no período." }),
+          { subtitle: `Conta o tempo entre o lead entrar e a primeira atividade realizada. Leads ainda não abordados ficam de fora da média — senão ignorar lead melhoraria o número.` })}
+      </div>`;
+      return ligar();
     }
 
     const s = await api(`/api/flow/statistics/summary${filtrosQS({ client_id: clientId })}`);
@@ -4853,6 +4874,9 @@ PAGES.ajustes = {
               <option value="">Nenhum — funil desligado</option>
               ${camposPersonalizados.map((f) => `<option value="${f.id}"${String(cfg.leadStageFieldId) === String(f.id) ? " selected" : ""}>${h(f.name)}</option>`).join("")}
             </select></div>
+          <div class="field"><label for="cfgRespMeta">Meta de tempo de resposta (horas)</label>
+            <input class="form-control" type="number" min="1" id="cfgRespMeta" value="${cfg.responseTimeGoalHours || 24}">
+            <span class="help-block">Entre o lead entrar e a primeira abordagem. Vale na aba Tempo de resposta das estatísticas.</span></div>
           <div class="field"><label for="cfgEtapaOpcoes">Etapas, uma por linha</label>
             <textarea class="form-control" id="cfgEtapaOpcoes" rows="4" placeholder="Conexão&#10;Qualificação&#10;Reunião marcada">${h((camposPersonalizados.find((f) => String(f.id) === String(cfg.leadStageFieldId)) || {}).options?.join("\n") || "")}</textarea></div>
         </div>
@@ -4959,7 +4983,10 @@ PAGES.ajustes = {
       btn.disabled = true;
       try {
         const fid = document.getElementById("cfgEtapaCampo").value;
-        await api("/api/flow/configuration", { method: "PATCH", body: { leadStageFieldId: fid || null } });
+        await api("/api/flow/configuration", { method: "PATCH", body: {
+          leadStageFieldId: fid || null,
+          responseTimeGoalHours: Number(document.getElementById("cfgRespMeta").value) || 24,
+        } });
         if (fid) {
           await api(`/api/flow/new-lead-fields/${fid}`, { method: "PATCH",
             body: { options: document.getElementById("cfgEtapaOpcoes").value.split("\n") } });

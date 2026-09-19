@@ -248,6 +248,75 @@ def cadence_steps(cadence_id: int, since: str | None = None, until: str | None =
             "passos": passos}
 
 
+@router.get("/flow/statistics/response-time")
+def response_time(since: str | None = None, until: str | None = None,
+                  team_id: int | None = None, db: Session = Depends(get_db)):
+    """Quanto tempo entre o lead chegar e a primeira abordagem.
+
+    Mede só quem JÁ foi abordado. Lead que ninguém tocou ainda não tem tempo
+    de resposta — misturar os dois faria a média melhorar quanto mais gente
+    fosse ignorada, que é exatamente o contrário do que a métrica serve.
+    """
+    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
+    end = datetime.fromisoformat(until) if until else datetime.utcnow()
+    start = datetime.fromisoformat(since) if since else end - timedelta(days=30)
+    meta_horas = _company_goal_hours(db)
+
+    q = db.query(Lead).filter(Lead.created_at.between(start, end))
+    do_time = usuarios_do_time(db, team_id)
+    if do_time is not None:
+        q = q.filter(Lead.sdr_id.in_(do_time))
+    leads = q.all()
+
+    primeiras = dict(
+        db.query(LeadActivity.lead_id, func.min(LeadActivity.done_at))
+        .filter(LeadActivity.status == "DONE",
+                LeadActivity.lead_id.in_([l.id for l in leads] or [0]))
+        .group_by(LeadActivity.lead_id).all())
+
+    por_usuario: dict = {}
+    horas_todas: list[float] = []
+    dentro = 0
+    for l in leads:
+        primeira = primeiras.get(l.id)
+        if not primeira or not l.created_at:
+            continue
+        horas = (primeira - l.created_at).total_seconds() / 3600
+        if horas < 0:
+            continue
+        horas_todas.append(horas)
+        no_prazo = horas <= meta_horas
+        dentro += 1 if no_prazo else 0
+        nome = l.sdr.name if l.sdr else "Sem SDR"
+        linha = por_usuario.setdefault(nome, {"label": nome, "abordados": 0,
+                                              "dentro": 0, "horas": []})
+        linha["abordados"] += 1
+        linha["dentro"] += 1 if no_prazo else 0
+        linha["horas"].append(horas)
+
+    ranking = []
+    for linha in por_usuario.values():
+        ranking.append({"label": linha["label"], "abordados": linha["abordados"],
+                        "dentro": linha["dentro"],
+                        "percentual": round(linha["dentro"] / linha["abordados"] * 100, 1),
+                        "mediaHoras": round(sum(linha["horas"]) / len(linha["horas"]), 1)})
+    ranking.sort(key=lambda r: r["percentual"], reverse=True)
+
+    abordados = len(horas_todas)
+    return {"metaHoras": meta_horas, "novosLeads": len(leads), "abordados": abordados,
+            "naoAbordados": len(leads) - abordados,
+            "dentroDaMeta": dentro,
+            "percentual": round(dentro / abordados * 100, 1) if abordados else 0.0,
+            "mediaHoras": round(sum(horas_todas) / abordados, 1) if abordados else 0.0,
+            "ranking": ranking}
+
+
+def _company_goal_hours(db: Session) -> int:
+    from ..models import Company
+    c = db.query(Company).first()
+    return getattr(c, "response_time_goal_hours", 24) or 24
+
+
 @router.get("/flow/statistics/lost-reasons")
 def lost_reasons_breakdown(since: str | None = None, until: str | None = None,
                            by: str = "reason", team_id: int | None = None,
