@@ -426,6 +426,8 @@ def list_leads(status: str | None = None, cadence_id: int | None = None,
                client_id: int | None = None, sdr_id: int | None = None,
                lead_base_id: int | None = None, q: str | None = None,
                stage: str | None = None,
+               field_id: int | None = None, field_op: str = "EQUALS",
+               field_value: str | None = None,
                page: int = 1, limit: int = Query(50, le=500),
                db: Session = Depends(get_db)):
     # SDR vê só a própria carteira; gestor e admin veem tudo. Antes disso,
@@ -451,6 +453,13 @@ def list_leads(status: str | None = None, cadence_id: int | None = None,
         like = f"%{q}%"
         query = query.filter(or_(Lead.name.ilike(like), Lead.company.ilike(like),
                                  Lead.email.ilike(like), Lead.cnpj.ilike(like)))
+    # Filtro por campo personalizado — o `mt-custom-filter` do original, que a
+    # lista de Leads reusa. Mesmo vocabulário das regras de fitscore.
+    if field_id and field_value:
+        alvo = db.query(LeadFieldValue.lead_id).filter(LeadFieldValue.field_id == field_id)
+        alvo = (alvo.filter(LeadFieldValue.value.ilike(f"%{field_value}%"))
+                if field_op == "LIKE" else alvo.filter(LeadFieldValue.value == field_value))
+        query = query.filter(Lead.id.in_(alvo))
     total = query.count()
     rows = (query.order_by(Lead.id.desc())
             .offset((page - 1) * limit).limit(limit).all())

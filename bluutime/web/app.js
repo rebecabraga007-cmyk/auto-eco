@@ -872,6 +872,12 @@ PAGES.leads = {
     const f = state.leadFilter || { page: 1, limit: 50 };
     const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v));
     const res = await api(`/api/flow/leads?${qs}`);
+    // Os campos personalizados alimentam o filtro; carrega uma vez e guarda.
+    if (!state.leadFields) {
+      state.leadFields = (await api("/api/flow/new-lead-fields").catch(() => []))
+        .filter((c) => c.customField);
+    }
+    const campos = state.leadFields || [];
     const rows = res.data.map((l) => ({ cells: [
       `<input type="checkbox" class="lead-check" value="${l.id}">`,
       `<a data-open-lead="${l.id}"><strong>${h(l.name)}</strong></a><br>
@@ -904,6 +910,17 @@ PAGES.leads = {
         <select class="form-control" id="lClient">${options(state.clients, f.client_id, { blank: "Todos os clientes" })}</select>
         <select class="form-control" id="lCad">${options(state.cadences, f.cadence_id, { blank: "Todas as cadências" })}</select>
         <select class="form-control" id="lSdr">${options(state.users, f.sdr_id, { blank: "Todos os SDRs" })}</select>
+        ${campos.length ? `
+        <select class="form-control" id="lCampo" aria-label="Campo personalizado">
+          <option value="">Campo personalizado…</option>
+          ${campos.map((c) => `<option value="${c.id}"${String(f.field_id) === String(c.id) ? " selected" : ""}>${h(c.name)}</option>`).join("")}
+        </select>
+        <select class="form-control" id="lCampoOp" aria-label="Critério"${f.field_id ? "" : " disabled"}>
+          <option value="EQUALS"${f.field_op === "EQUALS" ? " selected" : ""}>Igual a</option>
+          <option value="LIKE"${f.field_op === "LIKE" ? " selected" : ""}>Contém</option>
+        </select>
+        <input class="form-control" id="lCampoVal" placeholder="Valor" aria-label="Valor do campo"
+          value="${h(f.field_value || "")}"${f.field_id ? "" : " disabled"}>` : ""}
         <span class="spacer"></span>
         <button class="btn btn-default btn-xs" id="bulkBtn">Ações em massa</button>
         <button class="btn btn-main btn-xs" id="newLead">Novo lead</button>
@@ -946,6 +963,20 @@ function bindLeadFilters(f) {
   document.getElementById("lClient").onchange = (e) => set("client_id", e.target.value);
   document.getElementById("lCad").onchange = (e) => set("cadence_id", e.target.value);
   document.getElementById("lSdr").onchange = (e) => set("sdr_id", e.target.value);
+
+  const campo = document.getElementById("lCampo");
+  if (campo) {
+    // Trocar de campo zera o valor: manter "gold" ao passar de Porte para
+    // Origem devolveria uma lista vazia sem explicar por quê.
+    campo.onchange = () => {
+      state.leadFilter = { ...f, field_id: campo.value, field_value: "", page: 1 };
+      go("leads");
+    };
+    document.getElementById("lCampoOp").onchange = (e) => set("field_op", e.target.value);
+    const val = document.getElementById("lCampoVal");
+    let t2;
+    val.oninput = () => { clearTimeout(t2); t2 = setTimeout(() => set("field_value", val.value), 350); };
+  }
 }
 
 function selectedLeadIds() {
