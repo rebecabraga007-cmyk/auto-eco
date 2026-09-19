@@ -7,7 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Call, Company, Lead, User
+from ..models import Call, Company, Lead, Team, User
 from .. import perm, serial
 from .analytics import usuarios_do_time
 
@@ -53,6 +53,110 @@ def _range(since: str | None, until: str | None) -> tuple[datetime, datetime]:
     end = datetime.fromisoformat(until) if until else datetime.utcnow()
     start = datetime.fromisoformat(since) if since else end.replace(day=1, hour=0, minute=0)
     return start, end + timedelta(days=1) if until else end
+
+
+def _escopo(db: Session, q, team_id: int | None, user_id: int | None):
+    """Recorte por time e por pessoa, na ordem que o original oferece."""
+    do_time = usuarios_do_time(db, team_id)
+    if do_time is not None:
+        q = q.filter(Call.user_id.in_(do_time))
+    if user_id:
+        q = q.filter(Call.user_id == user_id)
+    return q
+
+
+def _etapas(db: Session, inicio, fim, team_id, user_id) -> dict:
+    base = _escopo(db, db.query(Call).filter(Call.started_at.between(inicio, fim)),
+                   team_id, user_id)
+    total = base.count()
+    conectadas = base.filter(Call.status == "CONNECTED").count()
+    significativas = base.filter(Call.status == "CONNECTED",
+                                 Call.output == "MEANINGFUL").count()
+    return {"total": total, "conectadas": conectadas, "significativas": significativas}
+
+
+def _variacao(agora: int, antes: int) -> dict:
+    """Quanto mudou em relação ao período anterior.
+
+    Sem base de comparação (o período anterior foi zero) não existe variação
+    percentual — devolver 100% ali seria inventar um crescimento que ninguém
+    pode conferir, então o percentual vem nulo e a tela mostra o absoluto.
+    """
+    return {"diferenca": agora - antes,
+            "percentual": round((agora - antes) / antes * 100, 1) if antes else None}
+
+
+@router.get("/calls/statistics/funnel")
+def funnel(since: str | None = None, until: str | None = None,
+           team_id: int | None = None, user_id: int | None = None,
+           db: Session = Depends(get_db)):
+    """Realizadas → conectadas → significativas, contra o período anterior.
+
+    O "anterior" é a janela de mesmo tamanho imediatamente antes: comparar um
+    mês com a semana passada diria qualquer coisa.
+    """
+    inicio, fim = _range(since, until)
+    duracao = fim - inicio
+    atual = _etapas(db, inicio, fim, team_id, user_id)
+    anterior = _etapas(db, inicio - duracao, inicio, team_id, user_id)
+    pct = lambda parte, todo: round(parte / todo * 100, 1) if todo else 0.0  # noqa: E731
+    return {
+        "atual": atual, "anterior": anterior,
+        "periodoAnterior": {"since": (inicio - duracao).date().isoformat(),
+                            "until": inicio.date().isoformat()},
+        "taxas": {"conexao": pct(atual["conectadas"], atual["total"]),
+                  "significancia": pct(atual["significativas"], atual["conectadas"])},
+        "comparacao": {k: _variacao(atual[k], anterior[k]) for k in atual},
+    }
+
+
+@router.get("/calls/statistics/grouped")
+def grouped(since: str | None = None, until: str | None = None,
+            by: str = "user", db: Session = Depends(get_db)):
+    """Volume de ligações por usuário ou por time."""
+    inicio, fim = _range(since, until)
+    linhas = (db.query(Call.user_id, Call.status, func.count(Call.id))
+              .filter(Call.started_at.between(inicio, fim))
+              .group_by(Call.user_id, Call.status).all())
+    usuarios = {u.id: u for u in db.query(User).all()}
+    times = {t.id: t.name for t in db.query(Team).all()}
+
+    acumulado: dict = {}
+    for uid, status, n in linhas:
+        u = usuarios.get(uid)
+        if by == "team":
+            chave = u.team_id if u and u.team_id else 0
+            rotulo = times.get(chave, "Sem time")
+        else:
+            chave = uid or 0
+            rotulo = u.name if u else "Sem usuário"
+        linha = acumulado.setdefault(chave, {"label": rotulo, "total": 0, "conectadas": 0})
+        linha["total"] += n
+        if status == "CONNECTED":
+            linha["conectadas"] += n
+    dados = sorted(acumulado.values(), key=lambda r: r["total"], reverse=True)
+    return {"by": by, "data": dados}
+
+
+@router.get("/calls/statistics/history")
+def history(since: str | None = None, until: str | None = None,
+            interval: str = "day", team_id: int | None = None,
+            status: str | None = None, db: Session = Depends(get_db)):
+    """Série temporal de ligações por dia, semana ou mês."""
+    inicio, fim = _range(since, until)
+    q = _escopo(db, db.query(Call).filter(Call.started_at.between(inicio, fim)),
+                team_id, None)
+    if status:
+        q = q.filter(Call.status == status)
+    formato = {"day": "%Y-%m-%d", "week": "%Y-W%W", "month": "%Y-%m"}.get(interval, "%Y-%m-%d")
+    contagem: dict = {}
+    for c in q.all():
+        chave = c.started_at.strftime(formato)
+        linha = contagem.setdefault(chave, {"label": chave, "total": 0, "conectadas": 0})
+        linha["total"] += 1
+        if c.status == "CONNECTED":
+            linha["conectadas"] += 1
+    return {"interval": interval, "data": [contagem[k] for k in sorted(contagem)]}
 
 
 @router.get("/calls")

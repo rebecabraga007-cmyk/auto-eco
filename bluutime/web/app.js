@@ -1950,6 +1950,100 @@ PAGES.ligacoes = {
   },
 };
 
+/* ── estatísticas de ligação ──────────────────────────────────────────────
+   Funil, volume e histórico: três telas que o Meetime tem em
+   /statistics/dialer e que aqui não existiam (a auditoria deu 5%, 0% e 10%).
+   Todas saem da mesma tabela de ligações, então vivem em abas. */
+
+function variacaoSelo(v) {
+  if (!v) return "";
+  // Sem período anterior não há percentual — mostra só o absoluto em vez de
+  // fingir um crescimento que ninguém consegue conferir.
+  if (v.percentual === null) {
+    return v.diferenca ? `<span class="pill grey">${v.diferenca > 0 ? "+" : ""}${v.diferenca}</span>` : "";
+  }
+  const sobe = v.percentual >= 0;
+  return `<span class="pill ${sobe ? "green" : "red"}" title="${v.diferenca > 0 ? "+" : ""}${v.diferenca} contra o período anterior">
+    ${sobe ? "▲" : "▼"} ${Math.abs(v.percentual)}%</span>`;
+}
+
+PAGES["estatisticas-ligacoes"] = {
+  area: "Estatísticas", title: "Ligações",
+  async render() {
+    const aba = state.estLigAba || "funil";
+    const qs = filtrosQS();
+
+    const abas = `<ul class="nav nav-tabs">
+      ${[["funil", "Funil"], ["volume", "Volume"], ["historico", "Histórico"]].map(([k, v]) =>
+        `<li${aba === k ? ' class="active"' : ""}><a data-estlig="${k}">${v}</a></li>`).join("")}
+    </ul>`;
+
+    let corpo = "";
+    if (aba === "funil") {
+      const f = await api(`/api/dialer/calls/statistics/funnel${qs}`);
+      const etapa = (rot, valor, chave, sub) => `
+        <div class="kpi">
+          <div class="number">${valor}</div>
+          <div class="caption">${rot} ${variacaoSelo(f.comparacao[chave])}</div>
+          ${sub ? `<div class="text-muted text-size-small mt-10">${sub}</div>` : ""}
+        </div>`;
+      corpo = `
+        <div class="kpi-row" style="grid-template-columns:repeat(3,1fr)">
+          ${etapa("Realizadas", f.atual.total, "total", "")}
+          ${etapa("Conectadas", f.atual.conectadas, "conectadas", `${f.taxas.conexao}% das realizadas`)}
+          ${etapa("Significativas", f.atual.significativas, "significativas", `${f.taxas.significancia}% das conectadas`)}
+        </div>
+        ${panel("Funil", bars([
+          { label: "Realizadas", value: f.atual.total, tone: "info" },
+          { label: "Conectadas", value: f.atual.conectadas, tone: "success" },
+          { label: "Significativas", value: f.atual.significativas, tone: "success" },
+        ]), { subtitle: `Comparado com ${fmtDate(f.periodoAnterior.since)} a ${fmtDate(f.periodoAnterior.until)}` })}`;
+    } else if (aba === "volume") {
+      const por = state.estLigPor || "user";
+      const g = await api(`/api/dialer/calls/statistics/grouped${filtrosQS({ by: por })}`);
+      corpo = `
+        <div class="toolbar">
+          <select class="form-control input-sm" id="elPor">
+            <option value="user"${por === "user" ? " selected" : ""}>Por usuário</option>
+            <option value="team"${por === "team" ? " selected" : ""}>Por time</option>
+          </select>
+        </div>
+        ${panel("Como está o volume de ligações",
+          table(["Quem", "Ligações", "Conectadas", "Conexão"],
+            g.data.map((r) => ({ cells: [h(r.label), r.total, r.conectadas,
+              `${r.total ? Math.round(r.conectadas / r.total * 100) : 0}%`] })),
+            { empty: "Nenhuma ligação no período." }))}`;
+    } else {
+      const intv = state.estLigIntervalo || "day";
+      const hst = await api(`/api/dialer/calls/statistics/history${filtrosQS({ interval: intv })}`);
+      corpo = `
+        <div class="toolbar">
+          <select class="form-control input-sm" id="elIntv">
+            <option value="day"${intv === "day" ? " selected" : ""}>Por dia</option>
+            <option value="week"${intv === "week" ? " selected" : ""}>Por semana</option>
+            <option value="month"${intv === "month" ? " selected" : ""}>Por mês</option>
+          </select>
+        </div>
+        ${panel("Ligações ao longo do tempo",
+          bars(hst.data.map((r) => ({ label: r.label, value: r.total, tone: "info" }))))}
+        ${panel("Conectadas ao longo do tempo",
+          bars(hst.data.map((r) => ({ label: r.label, value: r.conectadas, tone: "success" }))))}`;
+    }
+
+    view.innerHTML = `<div class="toolbar">${periodoControle()}${timeControle()}</div>${abas}
+      <div class="mt-10">${corpo}</div>`;
+
+    ligarPeriodo(() => go("estatisticas-ligacoes"));
+    view.querySelectorAll("[data-estlig]").forEach((a) => {
+      a.onclick = () => { state.estLigAba = a.dataset.estlig; go("estatisticas-ligacoes"); };
+    });
+    const por = document.getElementById("elPor");
+    if (por) por.onchange = () => { state.estLigPor = por.value; go("estatisticas-ligacoes"); };
+    const intv = document.getElementById("elIntv");
+    if (intv) intv.onchange = () => { state.estLigIntervalo = intv.value; go("estatisticas-ligacoes"); };
+  },
+};
+
 PAGES["lista-ligacoes"] = {
   area: "Ligações", title: "Lista de Ligações",
   async render() {
