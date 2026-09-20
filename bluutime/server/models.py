@@ -77,7 +77,8 @@ class Company(Base):
     voip_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     phone_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     default_call_type: Mapped[str] = mapped_column(String(10), default="VOIP")  # VOIP | PHONE
-    caller_ids: Mapped[str] = mapped_column(Text, default="")  # um número por linha
+    caller_ids: Mapped[str] = mapped_column(Text, default="")  # "numero|rótulo" por linha
+    default_caller_id: Mapped[str] = mapped_column(String(20), default="")
 
     # Permissões — o que um SDR (não gestor/admin) pode fazer além da própria
     # carteira. `regular_user_can_import` já existia (Ajustes) e é a mesma

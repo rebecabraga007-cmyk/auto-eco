@@ -1173,7 +1173,8 @@ function openExecuteModal(act, fila = null) {
     .replace(/\{\{company\}\}/g, act.lead.company);
 
   const script = act.activity ? merge(act.activity.instruction) : "";
-  const callerIds = (state.dialerConfig && state.dialerConfig.callerIds) || [];
+  const callerIds = (state.dialerConfig && state.dialerConfig.callerIdList)
+    || ((state.dialerConfig && state.dialerConfig.callerIds) || []).map((n) => ({ number: n, label: "" }));
   const callBlock = act.type === "CALL" ? `
     <div class="field-row">
       <div class="field"><label for="callOutput">Resultado da ligação</label>
@@ -1187,7 +1188,7 @@ function openExecuteModal(act, fila = null) {
         <input class="form-control" type="number" min="0" id="callDuration" value="0"></div>
       ${callerIds.length ? `<div class="field"><label for="callOrigin">Número de origem</label>
         <select class="form-control" id="callOrigin">
-          ${callerIds.map((n) => `<option value="${h(n)}">${h(n)}</option>`).join("")}
+          ${callerIds.map((n) => `<option value="${h(n.number)}"${n.default ? " selected" : ""}>${h(n.number)}${n.label ? ` — ${h(n.label)}` : ""}</option>`).join("")}
         </select></div>` : ""}
     </div>` : "";
 
@@ -2744,19 +2745,71 @@ function variacaoSelo(v) {
     ${sobe ? "▲" : "▼"} ${Math.abs(v.percentual)}%</span>`;
 }
 
+const CALL_STATUS_LABEL = {
+  CONNECTED: "Conectada", NOT_PERFORMED: "Não realizada",
+  NOT_ANSWERED: "Não atendida", BUSY: "Ocupado", FAILED: "Falhou",
+};
+const CALL_OUTPUT_LABEL = {
+  MEANINGFUL: "Significativa", NOT_MEANINGFUL: "Não significativa",
+  NO_CONTACT: "Sem contato", SEM_CLASSIFICACAO: "Sem classificação",
+};
+
+/** Linha acumulada de ligações — o `cumulative` do original. */
+function grafLinha(serie, campo, cor, rotulo) {
+  if (!serie.length) return emptyState("Sem ligações no período.");
+  const W = 760, H = 240, padL = 42, padB = 26;
+  const max = Math.max(1, ...serie.map((s) => s[campo]));
+  const x = (i) => padL + (i * (W - padL - 10)) / Math.max(1, serie.length - 1);
+  const y = (v) => H - padB - (v / max) * (H - padB - 14);
+  const pts = serie.map((s, i) => `${x(i)},${y(s[campo])}`).join(" ");
+  const grid = [...new Set([0, Math.round(max / 2), max])].map((v) => `
+    <line x1="${padL}" y1="${y(v)}" x2="${W - 10}" y2="${y(v)}" stroke="#eee"/>
+    <text x="6" y="${y(v) + 4}" font-size="11" fill="#999">${v}</text>`).join("");
+  return `<div class="fb-chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${h(rotulo)}">
+      ${grid}
+      <polygon points="${padL},${y(0)} ${pts} ${x(serie.length - 1)},${y(0)}" fill="${cor}22"/>
+      <polyline points="${pts}" fill="none" stroke="${cor}" stroke-width="3"/>
+      <text x="${padL}" y="${H - 6}" font-size="11" fill="#999">${fbDiaLegivel(serie[0].data)}</text>
+      <text x="${W - 70}" y="${H - 6}" font-size="11" fill="#999">${fbDiaLegivel(serie[serie.length - 1].data)}</text>
+    </svg></div>`;
+}
+
 PAGES["estatisticas-ligacoes"] = {
   area: "Estatísticas", title: "Ligações",
   async render() {
-    const aba = state.estLigAba || "funil";
+    const aba = state.estLigAba || "geral";
     const qs = filtrosQS();
 
     const abas = `<ul class="nav nav-tabs">
-      ${[["funil", "Funil"], ["volume", "Volume"], ["historico", "Histórico"]].map(([k, v]) =>
-        `<li${aba === k ? ' class="active"' : ""}><a data-estlig="${k}">${v}</a></li>`).join("")}
+      ${[["geral", "Visão geral"], ["funil", "Funil"], ["detalhamento", "Detalhamento"],
+         ["volume", "Volume"], ["historico", "Histórico"], ["horario", "Horário ideal"]]
+        .map(([k, v]) => `<li${aba === k ? ' class="active"' : ""}><a data-estlig="${k}">${v}</a></li>`).join("")}
     </ul>`;
 
     let corpo = "";
-    if (aba === "funil") {
+    if (aba === "geral") {
+      const [f, d] = await Promise.all([
+        api(`/api/dialer/calls/statistics/funnel${qs}`),
+        api(`/api/dialer/calls/statistics/distribution${qs}`),
+      ]);
+      corpo = `
+        ${kpis([
+          { value: f.atual.total, label: "Realizadas", tone: "info" },
+          { value: f.atual.conectadas, label: "Conectadas", tone: "success" },
+          { value: f.atual.significativas, label: "Significativas", tone: "success" },
+          { value: `${f.taxas.conexao}%`, label: "Taxa de conexão" },
+        ])}
+        <div class="two-col mt-10">
+          ${panel("Distribuição por status", bars(d.status.map((r) => ({
+            label: CALL_STATUS_LABEL[r.chave] || r.chave, value: r.total,
+            tone: r.chave === "CONNECTED" ? "success" : "warning" }))),
+            { subtitle: "O que aconteceu com cada tentativa" })}
+          ${panel("Resultado das conectadas", bars(d.resultado.map((r) => ({
+            label: CALL_OUTPUT_LABEL[r.chave] || r.chave, value: r.total,
+            tone: r.chave === "MEANINGFUL" ? "success" : "info" }))),
+            { subtitle: "Como o SDR classificou a conversa" })}
+        </div>`;
+    } else if (aba === "funil") {
       const f = await api(`/api/dialer/calls/statistics/funnel${qs}`);
       const etapa = (rot, valor, chave, sub) => `
         <div class="kpi">
@@ -2775,6 +2828,26 @@ PAGES["estatisticas-ligacoes"] = {
           { label: "Conectadas", value: f.atual.conectadas, tone: "success" },
           { label: "Significativas", value: f.atual.significativas, tone: "success" },
         ]), { subtitle: `Comparado com ${fmtDate(f.periodoAnterior.since)} a ${fmtDate(f.periodoAnterior.until)}` })}`;
+    } else if (aba === "detalhamento") {
+      const st = state.estLigStatus || "";
+      const c = await api(`/api/dialer/calls/statistics/cumulative${filtrosQS(st ? { status: st } : {})}`);
+      const ultimo = c.data[c.data.length - 1] || { total: 0, conectadas: 0, significativas: 0 };
+      corpo = `
+        <div class="toolbar">
+          <select class="form-control input-sm" id="elStatus">
+            <option value="">Todas as ligações</option>
+            ${Object.entries(CALL_STATUS_LABEL).map(([k, v]) =>
+              `<option value="${k}"${st === k ? " selected" : ""}>${v}</option>`).join("")}
+          </select>
+        </div>
+        ${kpis([
+          { value: ultimo.total, label: "Acumulado no período", tone: "info" },
+          { value: ultimo.conectadas, label: "Conectadas", tone: "success" },
+          { value: ultimo.significativas, label: "Significativas", tone: "success" },
+        ])}
+        ${panel("Realizadas (acumulado)", grafLinha(c.data, "total", "#2196f3", "Ligações acumuladas"),
+          { subtitle: "A série diária diz se hoje foi bom; a acumulada diz se o período está no ritmo" })}
+        ${panel("Conectadas (acumulado)", grafLinha(c.data, "conectadas", "#00c850", "Conectadas acumuladas"))}`;
     } else if (aba === "volume") {
       const por = state.estLigPor || "user";
       const g = await api(`/api/dialer/calls/statistics/grouped${filtrosQS({ by: por })}`);
@@ -2789,6 +2862,24 @@ PAGES["estatisticas-ligacoes"] = {
           table(["Quem", "Ligações", "Conectadas", "Conexão"],
             g.data.map((r) => ({ cells: [h(r.label), r.total, r.conectadas,
               `${r.total ? Math.round(r.conectadas / r.total * 100) : 0}%`] })),
+            { empty: "Nenhuma ligação no período." }))}`;
+    } else if (aba === "horario") {
+      const b = await api(`/api/dialer/calls/statistics/best-hour${qs}`);
+      const comVolume = b.data.filter((r) => r.total);
+      corpo = `
+        ${b.melhorHora === null ? "" : `<div class="alert alert-info alert-styled-left">
+          A melhor hora para ligar é às <strong>${b.melhorHora}h</strong>:
+          a maior taxa de conexão entre as horas com volume que sustente a conta
+          (${b.melhorHoraLigacoes} ligações naquela hora, de ${b.total} no período).
+          Horas com menos de ${b.volumeMinimo} ligações ficam de fora da escolha.</div>`}
+        ${panel("Taxa de conexão por hora",
+          bars(comVolume.map((r) => ({ label: `${r.hora}h`, value: r.conexao,
+            tone: r.hora === b.melhorHora ? "success" : "info" }))),
+          { subtitle: "Percentual de ligações que conectaram, hora a hora (horário local)" })}
+        ${panel("Volume por hora",
+          table(["Hora", "Ligações", "Conectadas", "Significativas", "Conexão"],
+            comVolume.map((r) => ({ cells: [`${r.hora}h`, r.total, r.conectadas,
+              r.significativas, `${r.conexao}%`] })),
             { empty: "Nenhuma ligação no período." }))}`;
     } else {
       const intv = state.estLigIntervalo || "day";
@@ -2818,6 +2909,8 @@ PAGES["estatisticas-ligacoes"] = {
     if (por) por.onchange = () => { state.estLigPor = por.value; go("estatisticas-ligacoes"); };
     const intv = document.getElementById("elIntv");
     if (intv) intv.onchange = () => { state.estLigIntervalo = intv.value; go("estatisticas-ligacoes"); };
+    const st = document.getElementById("elStatus");
+    if (st) st.onchange = () => { state.estLigStatus = st.value; go("estatisticas-ligacoes"); };
   },
 };
 
@@ -2939,25 +3032,109 @@ PAGES["dialer-ajustes"] = {
   area: "Ligações", title: "Ajustes",
   async render() {
     const cfg = await api("/api/dialer/configuration");
+    state.dialerConfig = cfg;
+    const aba = state.dialerAba || "geral";
     view.innerHTML = `
-      ${panel("Tipo de chamada", `
-        <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
-          <label><input type="checkbox" id="dcVoip"${cfg.voipEnabled ? " checked" : ""}> VOIP habilitado</label>
-          <label><input type="checkbox" id="dcPhone"${cfg.phoneEnabled ? " checked" : ""}> Telefone habilitado</label>
+      <ul class="nav nav-tabs">
+        ${[["geral", "Geral"], ["numeros", "Números"], ["gravacoes", "Gravações"]].map(([k, t]) =>
+          `<li${aba === k ? ' class="active"' : ""}><a data-dcaba="${k}">${t}</a></li>`).join("")}
+      </ul>
+      <div id="dcBody" class="mt-10"></div>`;
+    view.querySelectorAll("[data-dcaba]").forEach((a) => {
+      a.onclick = () => { state.dialerAba = a.dataset.dcaba; go("dialer-ajustes"); };
+    });
+    const body = document.getElementById("dcBody");
+
+    if (aba === "gravacoes") {
+      // Honestidade: não há gravação porque não há telefonia. A tela existe
+      // para dizer isso e para não inventar um botão que não grava nada.
+      body.innerHTML = panel("Gravação de ligações", `
+        <div class="alert alert-info alert-styled-left">
+          O Bluutime não grava ligações: a gravação nasce na operadora, e o
+          discador ainda não está ligado à Zenvia — falta um DID comprado e
+          saldo na conta.
         </div>
-        <div class="field"><label class="text-muted text-size-small">Tipo padrão</label>
-          <select class="form-control input-sm" id="dcDefault" style="max-width:200px">
-            <option value="VOIP"${cfg.defaultType === "VOIP" ? " selected" : ""}>VOIP</option>
-            <option value="PHONE"${cfg.defaultType === "PHONE" ? " selected" : ""}>Telefone</option>
-          </select></div>`)}
-      ${panel("Números de origem (Caller ID)", `
-        <div class="field"><label class="text-muted text-size-small">Um número por linha
-          <span class="text-grey">— aparece pro SDR escolher de onde a ligação saiu, ao concluir a atividade</span></label>
-          <textarea class="form-control" id="dcCallerIds" rows="4" placeholder="+5547999998888">${h(cfg.callerIds.join("\n"))}</textarea></div>
+        <p class="text-muted text-size-small">
+          Quando a telefonia entrar, é aqui que ficam quem pode ouvir, quem pode
+          apagar e por quanto tempo o áudio é guardado.</p>`);
+      return;
+    }
+
+    if (aba === "numeros") {
+      const lista = cfg.callerIdList || [];
+      body.innerHTML = panel("Números de origem (bina)",
+        `${lista.length ? `<table class="table table-striped">
+          <thead><tr><th>Número</th><th>Rótulo</th><th style="width:110px">Padrão</th><th style="width:90px"></th></tr></thead>
+          <tbody>${lista.map((n, i) => `<tr data-i="${i}">
+            <td><input class="form-control input-sm" data-num value="${h(n.number)}"></td>
+            <td><input class="form-control input-sm" data-lab value="${h(n.label)}" placeholder="Comercial, Suporte…"></td>
+            <td><label><input type="radio" name="dcPadrao" data-def${n.default ? " checked" : ""}> padrão</label></td>
+            <td><button class="btn btn-default btn-xs" data-remove="${i}">Remover</button></td>
+          </tr>`).join("")}</tbody></table>`
+          : emptyState("Nenhum número cadastrado — o SDR não tem de onde escolher a bina.")}
         <div class="toolbar mt-10" style="border:0;padding:0;background:none">
+          <button class="btn btn-default btn-xs" id="dcAdd">Adicionar número</button>
           <span class="spacer"></span>
-          <button class="btn btn-main btn-sm" id="dcSalvar">Salvar</button>
-        </div>`)}`;
+          <button class="btn btn-main btn-sm" id="dcSalvarNums">Salvar</button>
+        </div>
+        <p class="text-muted text-size-small mt-10">
+          Aceita com ou sem o código do país: 47 99999-8888 vira +5547999998888.
+          O número marcado como padrão é o que aparece escolhido para o SDR.</p>`);
+
+      const ler = () => [...body.querySelectorAll("tbody tr")].map((tr) => ({
+        number: tr.querySelector("[data-num]").value.trim(),
+        label: tr.querySelector("[data-lab]").value.trim(),
+        default: tr.querySelector("[data-def]").checked,
+      })).filter((n) => n.number);
+      const gravar = async (linhas, mensagem) => {
+        try {
+          state.dialerConfig = await api("/api/dialer/configuration",
+            { method: "PATCH", body: { callerIdList: linhas } });
+          toast(mensagem, "ok");
+          go("dialer-ajustes");
+        } catch (e) { toast(e.message, "err"); }
+      };
+      body.querySelectorAll("[data-remove]").forEach((b) => {
+        b.onclick = () => {
+          const i = Number(b.dataset.remove);
+          const linhas = ler().filter((_, idx) => idx !== i);
+          confirmDialog("Remover número",
+            `O número ${lista[i].number} sai da lista de binas.`, () => gravar(linhas, "Número removido."));
+        };
+      });
+      document.getElementById("dcAdd").onclick = () => {
+        const tbody = body.querySelector("tbody");
+        if (!tbody) return promptOne("Novo número", "Número com DDD",
+          (v) => gravar([{ number: v, label: "", default: true }], "Número adicionado."), "Adicionar");
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td><input class="form-control input-sm" data-num value=""></td>
+          <td><input class="form-control input-sm" data-lab value="" placeholder="Comercial, Suporte…"></td>
+          <td><label><input type="radio" name="dcPadrao" data-def> padrão</label></td>
+          <td><button class="btn btn-default btn-xs" disabled>Remover</button></td>`;
+        tbody.appendChild(tr);
+        tr.querySelector("[data-num]").focus();
+      };
+      document.getElementById("dcSalvarNums").onclick = (e) => {
+        e.currentTarget.disabled = true;
+        gravar(ler(), "Números salvos.").finally(() => { e.currentTarget.disabled = false; });
+      };
+      return;
+    }
+
+    body.innerHTML = panel("Tipo de chamada", `
+      <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
+        <label><input type="checkbox" id="dcVoip"${cfg.voipEnabled ? " checked" : ""}> VOIP habilitado</label>
+        <label><input type="checkbox" id="dcPhone"${cfg.phoneEnabled ? " checked" : ""}> Telefone habilitado</label>
+      </div>
+      <div class="field"><label class="text-muted text-size-small">Tipo padrão</label>
+        <select class="form-control input-sm" id="dcDefault" style="max-width:200px">
+          <option value="VOIP"${cfg.defaultType === "VOIP" ? " selected" : ""}>VOIP</option>
+          <option value="PHONE"${cfg.defaultType === "PHONE" ? " selected" : ""}>Telefone</option>
+        </select></div>
+      <div class="toolbar mt-10" style="border:0;padding:0;background:none">
+        <span class="spacer"></span>
+        <button class="btn btn-main btn-sm" id="dcSalvar">Salvar</button>
+      </div>`);
 
     document.getElementById("dcSalvar").onclick = async (e) => {
       const btn = e.currentTarget;
@@ -2967,7 +3144,6 @@ PAGES["dialer-ajustes"] = {
           voipEnabled: document.getElementById("dcVoip").checked,
           phoneEnabled: document.getElementById("dcPhone").checked,
           defaultType: document.getElementById("dcDefault").value,
-          callerIds: document.getElementById("dcCallerIds").value.split("\n").map((s) => s.trim()).filter(Boolean),
         } });
         toast("Configurações salvas.", "ok");
         go("dialer-ajustes");
@@ -2976,7 +3152,6 @@ PAGES["dialer-ajustes"] = {
   },
 };
 
-/* ── WhatsApp ────────────────────────────────────────────────────────── */
 PAGES.whatsapp = {
   area: "WhatsApp", title: "Conversas",
   async render() {

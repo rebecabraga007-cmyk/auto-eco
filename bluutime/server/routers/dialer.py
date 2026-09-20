@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Call, CallFeedback, Company, Lead, Team, User
-from .. import perm, serial
+from .. import agenda, perm, serial
 from .analytics import usuarios_do_time
 
 router = APIRouter(prefix="/api/dialer")
@@ -26,12 +26,52 @@ def _company(db: Session) -> Company:
     return c
 
 
+def _normaliza_numero(bruto: str) -> str:
+    """Aceita o que o gestor digitar e devolve só dígitos com + na frente.
+
+    O Meetime valida o formato na linha; aqui a validação também protege a
+    ligação, porque este número vai como bina para a operadora.
+    """
+    limpo = "".join(ch for ch in str(bruto) if ch.isdigit() or ch == "+")
+    digitos = limpo.lstrip("+")
+    if not digitos.isdigit() or not 10 <= len(digitos) <= 15:
+        raise HTTPException(400, f"Número inválido: {bruto}. Use DDD + número, "
+                                 "com ou sem o código do país.")
+    # Dez ou onze dígitos é número brasileiro sem país; o 55 entra para que a
+    # lista não misture dois formatos.
+    if len(digitos) in (10, 11):
+        digitos = "55" + digitos
+    return "+" + digitos
+
+
+def _caller_ids(c) -> list[dict]:
+    """Cada linha é `numero|rótulo`; linhas antigas, sem rótulo, seguem valendo."""
+    saida = []
+    for linha in c.caller_ids.splitlines():
+        if not linha.strip():
+            continue
+        numero, _, rotulo = linha.partition("|")
+        numero = numero.strip()
+        saida.append({"number": numero, "label": rotulo.strip(),
+                      "default": numero == (c.default_caller_id or "")})
+    # Sem padrão marcado, o primeiro é o padrão: alguém tem que ser, e é o
+    # que o SDR vê pré-selecionado.
+    if saida and not any(n["default"] for n in saida):
+        saida[0]["default"] = True
+    return saida
+
+
 @router.get("/configuration")
 def dialer_configuration(db: Session = Depends(get_db)):
     c = _company(db)
+    lista = _caller_ids(c)
     return {"voipEnabled": c.voip_enabled, "phoneEnabled": c.phone_enabled,
             "defaultType": c.default_call_type,
-            "callerIds": [n for n in c.caller_ids.splitlines() if n.strip()]}
+            # `callerIds` continua sendo a lista de strings que o resto da
+            # tela já consumia; `callerIdList` é a versão com rótulo e padrão.
+            "callerIds": [n["number"] for n in lista],
+            "callerIdList": lista,
+            "defaultCallerId": next((n["number"] for n in lista if n["default"]), "")}
 
 
 @router.patch("/configuration")
@@ -46,8 +86,24 @@ def update_dialer_configuration(payload: dict = Body(...), db: Session = Depends
         c.phone_enabled = bool(payload["phoneEnabled"])
     if "defaultType" in payload and payload["defaultType"] in ("VOIP", "PHONE"):
         c.default_call_type = payload["defaultType"]
-    if "callerIds" in payload:
-        c.caller_ids = "\n".join(str(n).strip() for n in payload["callerIds"] if str(n).strip())
+    if "callerIdList" in payload:
+        linhas, vistos, padrao = [], set(), ""
+        for item in payload["callerIdList"]:
+            if isinstance(item, str):
+                item = {"number": item}
+            numero = _normaliza_numero(item.get("number", ""))
+            if numero in vistos:
+                raise HTTPException(400, f"Número repetido na lista: {numero}.")
+            vistos.add(numero)
+            rotulo = (item.get("label") or "").strip().replace("|", " ")
+            linhas.append(f"{numero}|{rotulo}" if rotulo else numero)
+            if item.get("default"):
+                padrao = numero
+        c.caller_ids = chr(10).join(linhas)
+        c.default_caller_id = padrao or (linhas[0].split("|")[0] if linhas else "")
+    elif "callerIds" in payload:
+        c.caller_ids = chr(10).join(_normaliza_numero(n) for n in payload["callerIds"]
+                                    if str(n).strip())
     db.commit()
     return dialer_configuration(db)
 
@@ -295,6 +351,109 @@ def history(since: str | None = None, until: str | None = None,
         if c.status == "CONNECTED":
             linha["conectadas"] += 1
     return {"interval": interval, "data": [contagem[k] for k in sorted(contagem)]}
+
+
+@router.get("/calls/statistics/distribution")
+def distribution(since: str | None = None, until: str | None = None,
+                 team_id: int | None = None, user_id: int | None = None,
+                 db: Session = Depends(get_db)):
+    """Distribuição por status e por resultado — a rosca da visão geral.
+
+    O funil responde quantas conectaram; isto responde o que aconteceu com as
+    que não conectaram, que é onde mora o problema de lista ruim.
+    """
+    inicio, fim = _range(since, until)
+    q = _escopo(db, db.query(Call).filter(Call.started_at.between(inicio, fim)),
+                team_id, user_id)
+    linhas = q.all()
+    por_status: dict[str, int] = {}
+    por_resultado: dict[str, int] = {}
+    for c in linhas:
+        por_status[c.status or "—"] = por_status.get(c.status or "—", 0) + 1
+        if c.status == "CONNECTED":
+            por_resultado[c.output or "SEM_CLASSIFICACAO"] = \
+                por_resultado.get(c.output or "SEM_CLASSIFICACAO", 0) + 1
+    return {"total": len(linhas),
+            "status": [{"chave": k, "total": v} for k, v in
+                       sorted(por_status.items(), key=lambda kv: -kv[1])],
+            "resultado": [{"chave": k, "total": v} for k, v in
+                          sorted(por_resultado.items(), key=lambda kv: -kv[1])]}
+
+
+@router.get("/calls/statistics/cumulative")
+def cumulative(since: str | None = None, until: str | None = None,
+               team_id: int | None = None, status: str | None = None,
+               db: Session = Depends(get_db)):
+    """Acumulado dia a dia — o `cumulative` do original.
+
+    A série diária diz se hoje foi bom; a acumulada diz se o mês está no
+    ritmo, que é a pergunta de quem acompanha meta.
+    """
+    inicio, fim = _range(since, until)
+    q = _escopo(db, db.query(Call).filter(Call.started_at.between(inicio, fim)),
+                team_id, None)
+    if status:
+        q = q.filter(Call.status == status)
+    por_dia: dict[str, dict] = {}
+    for c in q.all():
+        chave = c.started_at.strftime("%Y-%m-%d")
+        linha = por_dia.setdefault(chave, {"data": chave, "total": 0, "conectadas": 0,
+                                           "significativas": 0})
+        linha["total"] += 1
+        if c.status == "CONNECTED":
+            linha["conectadas"] += 1
+        if c.output == "MEANINGFUL":
+            linha["significativas"] += 1
+    # Dias sem ligação entram zerados: sem eles a linha do acumulado dá saltos
+    # que somem com os fins de semana e enganam a leitura do ritmo.
+    serie, acc = [], {"total": 0, "conectadas": 0, "significativas": 0}
+    dia = inicio.date()
+    ultimo = min(fim.date(), datetime.utcnow().date())
+    while dia <= ultimo:
+        chave = dia.isoformat()
+        d = por_dia.get(chave, {"total": 0, "conectadas": 0, "significativas": 0})
+        for k in acc:
+            acc[k] += d[k]
+        serie.append({"data": chave, **{f"dia{k.capitalize()}": d[k] for k in acc},
+                      **{k: acc[k] for k in acc}})
+        dia += timedelta(days=1)
+    return {"data": serie}
+
+
+@router.get("/calls/statistics/best-hour")
+def best_hour(since: str | None = None, until: str | None = None,
+              team_id: int | None = None, user_id: int | None = None,
+              db: Session = Depends(get_db)):
+    """Taxa de conexão por hora do dia — o "horário ideal" do original.
+
+    Sai das ligações que já aconteceram, não de palpite: a hora com mais
+    conexão é a que merece a fila de amanhã.
+    """
+    inicio, fim = _range(since, until)
+    q = _escopo(db, db.query(Call).filter(Call.started_at.between(inicio, fim)),
+                team_id, user_id)
+    horas = {h: {"hora": h, "total": 0, "conectadas": 0, "significativas": 0}
+             for h in range(24)}
+    for c in q.all():
+        # `started_at` é UTC; a leitura é de quem liga, então vai para o fuso
+        # local — senão o pico das 9h aparece às 12h.
+        h = agenda.to_local(c.started_at).hour
+        horas[h]["total"] += 1
+        if c.status == "CONNECTED":
+            horas[h]["conectadas"] += 1
+        if c.output == "MEANINGFUL":
+            horas[h]["significativas"] += 1
+    linhas = [{**v, "conexao": round(100 * v["conectadas"] / v["total"]) if v["total"] else 0}
+              for v in horas.values()]
+    total = sum(l["total"] for l in linhas)
+    # Hora com cinco ligações e 100% de conexão não é a melhor hora, é ruído.
+    # O corte exige volume mínimo antes de a hora poder ser eleita.
+    minimo = max(10, round(total * 0.02))
+    candidatas = [l for l in linhas if l["total"] >= minimo]
+    melhor = max(candidatas, key=lambda l: (l["conexao"], l["total"]), default=None)
+    return {"data": linhas, "melhorHora": melhor["hora"] if melhor else None,
+            "melhorHoraLigacoes": melhor["total"] if melhor else 0,
+            "volumeMinimo": minimo, "total": total}
 
 
 @router.get("/calls")
