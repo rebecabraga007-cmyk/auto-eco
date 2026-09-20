@@ -2046,6 +2046,7 @@ PAGES.lead = {
         const lista = await api("/api/whatsapp/conversations");
         const minhas = lista.filter((c) => c.lead && c.lead.id === l.id);
         if (!minhas.length) {
+          if (!document.getElementById("leadConversas")) return;
           box.innerHTML = `<p class="text-muted">Nenhuma conversa com este lead.</p>
             ${l.phone ? `<button class="btn btn-default btn-sm" data-abrir-wa>Abrir conversa no WhatsApp</button>` : ""}`;
           const abrir = box.querySelector("[data-abrir-wa]");
@@ -2059,13 +2060,17 @@ PAGES.lead = {
           return;
         }
         const c = await api(`/api/whatsapp/conversations/${minhas[0].id}?limit=40`);
-        box.innerHTML = `
+        // Reconsulta depois do await: sair da aba durante a busca desmonta a
+        // caixa, e escrever nela estoura no console sem quebrar nada visível.
+        const caixa = document.getElementById("leadConversas");
+        if (!caixa) return;
+        caixa.innerHTML = `
           <div class="wa-thread" style="max-height:420px">${c.messages.map((msg) => `
             <div class="bubble ${msg.direction === "OUT" ? "out" : "in"}">${h(msg.body)}
               <time>${fmtDateTime(msg.sentAt)}</time></div>`).join("")
             || `<div class="text-muted" style="text-align:center">Sem mensagens.</div>`}</div>
           <button class="btn btn-default btn-sm mt-10" data-ir-wa>Abrir em Conversas</button>`;
-        box.querySelector("[data-ir-wa]").onclick = () => {
+        caixa.querySelector("[data-ir-wa]").onclick = () => {
           state.waActive = minhas[0].id;
           go("whatsapp");
         };
