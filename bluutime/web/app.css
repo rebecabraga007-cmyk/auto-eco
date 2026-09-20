@@ -1958,3 +1958,69 @@ tr.linha-padrao > td { background: rgba(0, 0, 0, .03); }
 
 /* Resultado da ligação no painel: ícone e rótulo na cor do resultado. */
 .razao { white-space: nowrap; font-size: 12.5px; }
+
+/* ── Estatísticas > Atividades ─────────────────────────────────────────
+   Cabeçalho com o universo do período à esquerda e os anéis de completude
+   à direita, e a tabela em que cada linha abre o detalhe do vendedor. */
+.ativ-cabecalho { display: grid; grid-template-columns: minmax(220px, 1fr) 2fr; gap: 24px;
+  align-items: center; padding: 20px 24px; margin-bottom: 16px; background: var(--panel);
+  border: 1px solid var(--line-soft); border-radius: 3px; }
+.ativ-universo { border-right: 1px solid var(--line-soft); padding-right: 24px; }
+.ativ-universo .numero { font-size: 34px; font-weight: 400; line-height: 1; color: var(--text); }
+.ativ-universo .rotulo { margin-top: 4px; font-size: 10.5px; letter-spacing: .5px; color: var(--muted); }
+.ativ-desfecho { display: flex; gap: 18px; margin-top: 14px; font-size: 15px; }
+.ativ-desfecho a { cursor: pointer; text-decoration: underline; }
+.ativ-desfecho small { font-size: 12px; }
+.ativ-desfecho .perda { color: var(--red); }
+.ativ-desfecho .ganho { color: var(--ok); }
+.ativ-aneis { display: flex; justify-content: space-around; flex-wrap: wrap; gap: 12px; }
+.ativ-aneis .anel { text-align: center; }
+.ativ-aneis .medidor svg { width: 74px; height: 74px; }
+
+.ativ-user { display: flex; align-items: center; gap: 10px; }
+.ativ-user .avatar { width: 30px; height: 30px; flex: 0 0 auto; display: flex;
+  align-items: center; justify-content: center; font-size: 11px; border-radius: 50%;
+  background: var(--avatar-bg); color: var(--blu); }
+.ativ-num { cursor: pointer; }
+.ativ-num.azul { color: var(--link); }
+.ativ-num.verde { color: var(--ok); }
+.ativ-num.vermelho { color: var(--red); }
+.ativ-abre { border: 0; background: none; font-size: 15px; color: var(--muted); cursor: pointer; }
+tr.aberta > td { background: var(--creme); border-bottom: 0; }
+tr.ativ-detalhe-linha > td { background: var(--creme); padding: 0 !important; }
+.ativ-detalhe-wrap { padding: 4px 20px 20px; }
+.ativ-detalhe { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.ativ-detalhe h6 { margin: 0 0 10px; font-size: 13px; font-weight: 500; color: var(--text); }
+.ativ-lista { margin: 0; padding: 0; list-style: none; font-size: 12.5px; color: var(--muted); }
+.ativ-lista li { display: flex; gap: 8px; padding: 3px 0; }
+.ativ-lista li span { color: var(--muted); }
+.ativ-lista b { color: var(--text); font-weight: 500; }
+/* Quartis: faixas encadeadas, largura proporcional ao percentual. */
+.quartis { display: flex; gap: 2px; margin-top: 8px; }
+/* A faixa cresce com o percentual, mas nunca fica menor que o rótulo: com
+   100/0/0/0 os três zeros sumiam e sobrava um "0 0 0" solto. */
+.quartis div { flex-basis: auto; min-width: max-content; padding: 6px 8px; font-size: 11px;
+  text-align: center; color: var(--text); background: var(--line-soft); border-radius: 2px;
+  white-space: nowrap; }
+/* Progresso por atividade: barra empilhada finalizado/ignorado/pendente. */
+.prog-linha { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.prog-ico { width: 16px; font-size: 13px; color: var(--muted); text-align: center; }
+.prog-barra { flex: 1; display: flex; height: 16px; background: var(--line-soft); border-radius: 2px;
+  overflow: hidden; }
+.prog-barra span { display: flex; align-items: center; justify-content: center;
+  font-size: 10px; color: #fff; }
+.prog-barra .fin { background: var(--ok); }
+.prog-barra .ign { background: var(--warn); }
+.prog-barra .pen { background: #c7c7c7; color: var(--text); }
+.prog-linha b { min-width: 34px; font-size: 12px; font-weight: 400; color: var(--muted); }
+.prog-legenda { display: flex; gap: 16px; justify-content: flex-end; margin-top: 10px;
+  font-size: 11.5px; color: var(--muted); }
+.prog-legenda i { display: inline-block; width: 8px; height: 8px; margin-right: 5px;
+  border-radius: 50%; }
+.prog-legenda .fin { background: var(--ok); }
+.prog-legenda .ign { background: var(--warn); }
+.prog-legenda .pen { background: #c7c7c7; }
+@media (max-width: 1100px) {
+  .ativ-cabecalho, .ativ-detalhe { grid-template-columns: 1fr; }
+  .ativ-universo { border-right: 0; padding-right: 0; }
+}

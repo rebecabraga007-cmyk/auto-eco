@@ -138,7 +138,8 @@ function table(headers, rows, opts = {}) {
     <table class="table table-striped table-hover">
       ${opts.noHead ? "" : `<thead><tr>${headers.map((x) => (x && x.html !== undefined
         ? `<th${x.attrs || ""}>${x.html}</th>` : `<th>${x}</th>`)).join("")}</tr></thead>`}
-      <tbody>${rows.map((r) => `<tr${r.attrs || ""}>${r.cells.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody>
+      <tbody>${rows.map((r) => `<tr${r.attrs || ""}>${r.cells.map((c) => (c && c.html !== undefined
+        ? `<td${c.attrs || ""}>${c.html}</td>` : `<td>${c}</td>`)).join("")}</tr>`).join("")}</tbody>
     </table></div>`;
 }
 
@@ -4757,8 +4758,10 @@ PAGES.estatisticas = {
                 .map((c) => ({ label: `${c.name} (${c.porSituacao.WON}/${c.total})`,
                                value: c.conversao, tone: "success" }))),
               { subtitle: "Percentual de ganhos sobre o total de leads que passaram pela cadência." })}
+        ${painelOrigem(co.originsBy || { base: co.origins || [] })}
       </div>`;
       ligar();
+      ligarPainelOrigem(co.originsBy || { base: co.origins || [] });
       view.querySelectorAll("[data-cadsub]").forEach((a) => {
         a.onclick = () => { state.estCadSub = a.dataset.cadsub; go(`estatisticas/${aba}`); };
       });
@@ -4949,36 +4952,144 @@ PAGES.estatisticas = {
       return ligar();
     }
 
-    const s = await api(`/api/flow/statistics/summary${filtrosQS({ client_id: clientId })}`);
-    const cadRows = s.cadences.map((c) => ({ cells: [
-      h(c.name), c.client ? h(c.client.name) : "—",
-      `<span class="pill">${h(PRIORITY_LABEL[c.priority])}</span>`,
-      c.total, c.won, `${c.conversion}%`] }));
+    // ── Estatísticas > Atividades ──────────────────────────────────────
+    // Cabeçalho com o universo do período, quatro anéis de completude por
+    // tipo, e uma linha por vendedor que ABRE mostrando o detalhe. Era um
+    // apanhado de KPIs e gráficos de barra que não deixava descer ao
+    // vendedor — e é exatamente descer que essa tela existe para fazer.
+    const at = await api(`/api/flow/statistics/activities${filtrosQS()}`);
+    const ICONE_TIPO = { SEARCH: "⌕", SOCIAL_POINT: "❝", E_MAIL: "✉", CALL: "☎" };
+    const aberto = state.estAtivAberto || null;
+
+    const detalhe = (r) => {
+      const d = r.detalhe;
+      const linha = (ico, texto) => `<li><span>${ico}</span>${texto}</li>`;
+      const min = (seg) => seg >= 60 ? `${Math.round(seg / 60)} min` : `${seg} seg`;
+      const maiorTipo = Math.max(1, ...d.porTipo.map((t) => t.finalizado + t.ignorado + t.pendente));
+      return `<div class="ativ-detalhe">
+        <div>
+          <h6>Geral</h6>
+          <ul class="ativ-lista">
+            ${linha("◔", `Novos leads: <b>${d.novosLeads}</b>`)}
+            ${linha("◷", `Resposta inbound: <b>${d.respostaInbound == null ? "-" : `${d.respostaInbound}h`}</b>`)}
+            ${linha("☑", `Leads que realizaram a primeira atividade: <b>${d.primeiraAtividade}</b>`)}
+            ${linha("☎", d.ligacoesTotal
+              ? `Ligações Significativas: <b>${d.ligacoesSignificativas}</b> (${d.ligacoesSignificativasPct}%)`
+                + `${d.duracaoMediaSegundos ? ` e duram em média <b>${min(d.duracaoMediaSegundos)}</b>` : ""}`
+              : `Ligações Significativas: <b>-</b>`)}
+            ${linha("◈", `Atividades extras: <b>${d.extras}</b> (${d.extrasFinalizadas} finalizadas)`)}
+          </ul>
+          <h6 class="mt-20">Leads Finalizados (${d.finalizados})</h6>
+          <ul class="ativ-lista">
+            ${linha("▾", d.finalizados
+              ? `Perdidos: <b>${d.perdidosPct}%</b>${d.diasAtePerda != null
+                  ? ` com média de <b>${d.diasAtePerda} dias</b> em prospecção` : ""}`
+              : `Perdidos: <b>-</b>`)}
+            ${linha("▴", r.ganhos
+              ? `Ganhos: <b>${r.ganhos}</b>${d.diasAteGanho != null
+                  ? ` com média de <b>${d.diasAteGanho} dias</b> em prospecção` : ""}`
+              : `Ganhos: <b>-</b>`)}
+          </ul>
+          ${d.quartis.length ? `
+            <h6 class="mt-20">Distribuição dos leads em prospecção
+              (${d.quartis.reduce((n, q) => n + q.leads, 0)})</h6>
+            <div class="quartis">
+              ${d.quartis.map((q) => `<div style="flex-grow:${Math.max(1, q.pct)}"
+                title="${q.leads} lead${q.leads === 1 ? "" : "s"}">Quartil ${q.quartil}: ${q.pct}%</div>`).join("")}
+            </div>` : ""}
+        </div>
+        <div>
+          <h6>Progresso por atividade</h6>
+          ${d.porTipo.length ? d.porTipo.map((t) => {
+            const tot = t.finalizado + t.ignorado + t.pendente;
+            const faixa = (n, cls) => n ? `<span class="${cls}" style="width:${n / maiorTipo * 100}%"
+              title="${n}">${n >= tot * 0.12 ? n : ""}</span>` : "";
+            return `<div class="prog-linha">
+              <span class="prog-ico" title="${h(TYPE_LABEL[t.tipo] || t.tipo)}">${ICONE_TIPO[t.tipo] || "•"}</span>
+              <div class="prog-barra">
+                ${faixa(t.finalizado, "fin")}${faixa(t.ignorado, "ign")}${faixa(t.pendente, "pen")}
+              </div>
+              <b>${tot}</b>
+            </div>`;
+          }).join("") : `<p class="text-muted">Nenhuma atividade no período.</p>`}
+          <div class="prog-legenda">
+            <span><i class="fin"></i>Finalizado</span>
+            <span><i class="ign"></i>Ignorado</span>
+            <span><i class="pen"></i>Pendente</span>
+          </div>
+        </div>
+      </div>`;
+    };
 
     alvo.innerHTML = `
-      ${kpis([
-        { value: s.activities.total, label: "Atividades realizadas" },
-        { value: `${s.activities.latePercent}%`, label: "Fora do prazo", tone: "danger" },
-        { value: s.outcomes.won, label: "Oportunidades", tone: "success" },
-        { value: `${s.outcomes.conversion}%`, label: "Conversão", tone: "info" },
-      ])}
-      <div class="two-col mt-10">
-        ${panel("Atividades por tipo", bars(s.activities.byType.map((t) => ({
-          label: TYPE_LABEL[t.type] || t.type, value: t.count,
-          tone: t.type === "CALL" ? "warning" : t.type === "E_MAIL" ? "info" : "success" }))))}
-        ${panel("Funil de leads", bars(s.funnel.map((f) => ({
-          label: (STATUS_LABEL[f.status] || [f.status])[0], value: f.count,
-          tone: f.status === "WON" ? "success" : f.status === "LOST" ? "warning" : "info" }))))}
+      <div class="ativ-cabecalho">
+        <div class="ativ-universo">
+          <div class="numero">${at.leadsComAtividade.toLocaleString("pt-BR")}</div>
+          <div class="rotulo">LEADS COM ATIVIDADES NO PERÍODO</div>
+          <div class="ativ-desfecho">
+            <a data-drill-desfecho="LOST" class="perda">${at.perdidos} perdas <small>(${at.perdidosPct}%)</small></a>
+            <a data-drill-desfecho="WON" class="ganho">${at.ganhos} ganhos <small>(${at.ganhosPct}%)</small></a>
+          </div>
+        </div>
+        <div class="ativ-aneis">
+          ${at.completude.map((c) => `
+            <div class="anel" title="${c.feitas} de ${c.total} ${h(TYPE_LABEL[c.tipo] || c.tipo)}">
+              ${medidor("", c.pct, "var(--green)").replace(/<text[^>]*>[^<]*<\/text>/,
+                `<text x="55" y="63" text-anchor="middle" font-size="22" fill="var(--muted)">${ICONE_TIPO[c.tipo] || "•"}</text>`)}
+              <div class="text-muted text-size-small">${c.pct}% completado</div>
+            </div>`).join("")}
+        </div>
       </div>
-      <div class="two-col">
-        ${panel("Motivos de perda", bars(s.lostReasons.slice(0, 8).map((r) => ({ label: r.name, value: r.count, tone: "warning" }))))}
-        ${painelOrigem(s.originsBy || { base: s.origins })}
-      </div>
-      ${panel("Conversão por cadência",
-        table(["Cadência", "Cliente", "Prioridade", "Leads", "Ganhos", "Conversão"], cadRows))}`;
+      ${table(["Usuário", "Leads", "Atividades", `<span title="Porcentagem das atividades realizadas dentro do prazo">On time*</span>`,
+               "Perdidos", "Ganhos", ""],
+        at.data.map((r) => ({
+          attrs: ` data-ativ-linha="${r.user.id}"${aberto === r.user.id ? ' class="aberta"' : ""}`,
+          cells: [
+            `<div class="ativ-user"><span class="avatar">${h(r.user.initials || "?")}</span>
+              <div><strong>${h(r.user.name)}</strong>
+                ${r.cadencia ? `<small class="text-muted display-block">${h(r.cadencia)}</small>` : ""}</div></div>`,
+            r.leads,
+            `${r.atividadesFeitas} de ${r.atividadesTotal}`,
+            `<a class="ativ-num azul">${r.onTime}%</a>`,
+            `<a class="ativ-num vermelho" data-drill-user="${r.user.id}" data-st="LOST">${r.perdidos}</a>`,
+            `<a class="ativ-num verde" data-drill-user="${r.user.id}" data-st="WON">${r.ganhos}</a>`,
+            `<button class="ativ-abre" data-ativ-abre="${r.user.id}"
+               aria-expanded="${aberto === r.user.id}">${aberto === r.user.id ? "⌃" : "⌄"}</button>`,
+          ],
+        })).flatMap((linha, i) => {
+          const r = at.data[i];
+          if (aberto !== r.user.id) return [linha];
+          // A linha de detalhe é uma <tr> própria com colspan: dentro da
+          // mesma <tr> ela quebraria o alinhamento de todas as colunas.
+          return [linha, { attrs: ' class="ativ-detalhe-linha"',
+                           cells: [{ attrs: ' colspan="7"',
+                                     html: `<div class="ativ-detalhe-wrap">${detalhe(r)}</div>` }] }];
+        }),
+        { scroll: true, empty: "Nenhuma atividade no período.",
+          emptyHint: "Ajuste o período ou a cadência no filtro ao lado." })}`;
 
     ligar();
-    ligarPainelOrigem(s.originsBy || { base: s.origins });
+    alvo.querySelectorAll("[data-ativ-abre]").forEach((b) => {
+      b.onclick = () => {
+        const id = Number(b.dataset.ativAbre);
+        state.estAtivAberto = state.estAtivAberto === id ? null : id;
+        go("estatisticas/geral");
+      };
+    });
+    alvo.querySelectorAll("[data-drill-user]").forEach((a) => {
+      a.onclick = () => {
+        state.leadFilter = { page: 1, limit: 50, sdr_id: a.dataset.drillUser, status: a.dataset.st };
+        go("leads");
+      };
+    });
+    alvo.querySelectorAll("[data-drill-desfecho]").forEach((a) => {
+      a.onclick = () => {
+        state.leadFilter = { page: 1, limit: 50, status: a.dataset.drillDesfecho };
+        go("leads");
+      };
+    });
+    return;
+
   },
 };
 

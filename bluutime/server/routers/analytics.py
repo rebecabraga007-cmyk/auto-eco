@@ -7,13 +7,14 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from .. import perm, serial
 from ..db import get_db
-from ..models import (Cadence, Call, Client, Company, Delivery, Goal, Lead,
-                      LeadActivity, LeadBase, LostReason, Team, Template, User)
+from ..models import (Cadence, CadenceStep, Call, Client, Company, Delivery,
+                      Goal, Lead, LeadActivity, LeadBase, LostReason, Team,
+                      Template, User)
 
 router = APIRouter(prefix="/api")
 
@@ -393,6 +394,215 @@ def email_statistics(since: str | None = None, until: str | None = None,
                    "taxaClique": round(len(clicados) / total * 100, 1) if total else 0.0},
         "porModelo": linhas,
     }
+
+
+@router.get("/flow/statistics/activities")
+def statistics_activities(since: str | None = None, until: str | None = None,
+                          team_id: str | None = None, user_id: str | None = None,
+                          cadence_id: str | None = None, db: Session = Depends(get_db)):
+    """A tela "Atividades" das Estatísticas de Prospecção.
+
+    Uma linha por vendedor, com o detalhe que o original abre ao expandir a
+    linha: de onde vieram os leads, quanto do trabalho foi executado, o que
+    virou ganho ou perda e onde a base está parada dentro da cadência.
+
+    Tudo sai do mesmo recorte de período — inclusive o cabeçalho, que conta
+    LEADS COM ATIVIDADE no período, não leads existentes. São coisas
+    diferentes: uma base parada tem muitos leads e nenhuma atividade.
+    """
+    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
+    end = serial.instante(until) or datetime.utcnow()
+    start = serial.instante(since) or end - timedelta(days=30)
+    do_time = usuarios_do_time(db, team_id)
+    usuarios_filtro = ids_de(user_id)
+    cadencias = ids_de(cadence_id)
+
+    atividades = db.query(LeadActivity).filter(
+        or_(LeadActivity.done_at.between(start, end),
+            LeadActivity.scheduled_at.between(start, end)))
+    if cadencias:
+        atividades = atividades.join(Lead, LeadActivity.lead_id == Lead.id) \
+            .filter(Lead.cadence_id.in_(cadencias))
+    todas = atividades.all()
+
+    usuarios = db.query(User).filter(User.active)
+    if do_time is not None:
+        usuarios = usuarios.filter(User.id.in_(do_time))
+    if usuarios_filtro:
+        usuarios = usuarios.filter(User.id.in_(usuarios_filtro))
+    usuarios = usuarios.all()
+    ids_usuarios = {u.id for u in usuarios}
+
+    por_usuario = defaultdict(list)
+    for a in todas:
+        if a.user_id in ids_usuarios:
+            por_usuario[a.user_id].append(a)
+
+    linhas = []
+    for u in usuarios:
+        minhas = por_usuario.get(u.id, [])
+        feitas = [a for a in minhas if a.status == "DONE"]
+        ignoradas = [a for a in minhas if a.status == "SKIPPED"]
+        pendentes = [a for a in minhas if a.status == "PENDING"]
+        # "No prazo" é sobre o que foi FEITO: uma atividade pendente ainda
+        # pode ser feita no prazo, e contá-la como atraso pune quem tem o dia
+        # pela frente.
+        no_prazo = sum(1 for a in feitas
+                       if a.done_at and a.done_at <= a.scheduled_at + timedelta(hours=1))
+        leads_ids = {a.lead_id for a in minhas}
+
+        base = db.query(Lead).filter(Lead.sdr_id == u.id)
+        if cadencias:
+            base = base.filter(Lead.cadence_id.in_(cadencias))
+        ganhos = base.filter(Lead.won_at.between(start, end)).all()
+        perdidos = base.filter(Lead.lost_at.between(start, end)).all()
+        novos = base.filter(Lead.created_at.between(start, end)).count()
+        inbound_novos = base.filter(Lead.created_at.between(start, end),
+                                    Lead.inbound.is_(True)).all()
+
+        chamadas = db.query(Call).filter(Call.user_id == u.id,
+                                         Call.started_at.between(start, end)).all()
+        signif = [c for c in chamadas if c.output == "MEANINGFUL"]
+        dur_media = round(sum(c.duration or 0 for c in signif) / len(signif)) if signif else 0
+
+        extras = [a for a in minhas if a.cadence_step_id is None]
+        primeira = _leads_com_primeira_atividade(db, u.id, start, end, cadencias)
+
+        def _dias(leads, campo):
+            vals = [(getattr(l, campo) - l.created_at).days for l in leads
+                    if getattr(l, campo) and l.created_at]
+            return round(sum(vals) / len(vals)) if vals else None
+
+        por_tipo = {}
+        for a in minhas:
+            d = por_tipo.setdefault(a.type, {"finalizado": 0, "ignorado": 0, "pendente": 0})
+            d["finalizado" if a.status == "DONE"
+              else "ignorado" if a.status == "SKIPPED" else "pendente"] += 1
+
+        linhas.append({
+            "user": serial.user_min(u),
+            "cadencia": _cadencia_predominante(db, u.id, cadencias),
+            "leads": len(leads_ids),
+            "atividadesFeitas": len(feitas), "atividadesTotal": len(minhas),
+            "onTime": round(no_prazo / len(feitas) * 100) if feitas else 0,
+            "ganhos": len(ganhos), "perdidos": len(perdidos),
+            "detalhe": {
+                "novosLeads": novos,
+                "respostaInbound": _resposta_inbound(db, inbound_novos),
+                "primeiraAtividade": primeira,
+                "ligacoesSignificativas": len(signif),
+                "ligacoesTotal": len(chamadas),
+                "ligacoesSignificativasPct": round(len(signif) / len(chamadas) * 100) if chamadas else 0,
+                "duracaoMediaSegundos": dur_media,
+                "extras": len(extras),
+                "extrasFinalizadas": sum(1 for a in extras if a.status == "DONE"),
+                "finalizados": len(ganhos) + len(perdidos),
+                "perdidosPct": round(len(perdidos) / max(1, len(ganhos) + len(perdidos)) * 100),
+                "diasAtePerda": _dias(perdidos, "lost_at"),
+                "diasAteGanho": _dias(ganhos, "won_at"),
+                "quartis": _quartis_prospeccao(db, u.id, cadencias),
+                "porTipo": [{"tipo": k, **v} for k, v in sorted(por_tipo.items())],
+                "ignoradas": len(ignoradas), "pendentes": len(pendentes),
+            },
+        })
+    linhas.sort(key=lambda r: -r["leads"])
+
+    # Cabeçalho: o universo de leads tocados no período, e quanto de cada
+    # tipo de atividade saiu do papel.
+    leads_periodo = {a.lead_id for a in todas}
+    ganhos_tot = sum(r["ganhos"] for r in linhas)
+    perdidos_tot = sum(r["perdidos"] for r in linhas)
+    fechados = ganhos_tot + perdidos_tot
+    completude = []
+    for tipo in ("SEARCH", "SOCIAL_POINT", "E_MAIL", "CALL"):
+        doc = [a for a in todas if a.type == tipo]
+        feito = sum(1 for a in doc if a.status == "DONE")
+        completude.append({"tipo": tipo, "total": len(doc), "feitas": feito,
+                           "pct": round(feito / len(doc) * 100) if doc else 0})
+    return {"leadsComAtividade": len(leads_periodo),
+            "ganhos": ganhos_tot, "perdidos": perdidos_tot,
+            "ganhosPct": round(ganhos_tot / fechados * 100) if fechados else 0,
+            "perdidosPct": round(perdidos_tot / fechados * 100) if fechados else 0,
+            "completude": completude, "data": linhas}
+
+
+def _cadencia_predominante(db: Session, uid: int, cadencias):
+    """A cadência em que o vendedor mais tem lead — é o que o original mostra
+    embaixo do nome, como "GTF (outbound)"."""
+    q = db.query(Cadence.name, Cadence.focus, func.count(Lead.id)) \
+        .join(Lead, Lead.cadence_id == Cadence.id).filter(Lead.sdr_id == uid)
+    if cadencias:
+        q = q.filter(Cadence.id.in_(cadencias))
+    linha = q.group_by(Cadence.id).order_by(func.count(Lead.id).desc()).first()
+    if not linha:
+        return ""
+    nome, foco, _ = linha
+    return "%s (%s)" % (nome, (foco or "").lower()) if foco else nome
+
+
+def _leads_com_primeira_atividade(db: Session, uid: int, start, end, cadencias) -> int:
+    """Leads cuja PRIMEIRA atividade concluída caiu no período.
+
+    Não é "leads com atividade": é quantos saíram do zero. Um lead tocado
+    pela décima vez não conta aqui.
+    """
+    q = db.query(LeadActivity.lead_id, func.min(LeadActivity.done_at).label("primeira")) \
+        .join(Lead, LeadActivity.lead_id == Lead.id) \
+        .filter(Lead.sdr_id == uid, LeadActivity.status == "DONE",
+                LeadActivity.done_at.isnot(None))
+    if cadencias:
+        q = q.filter(Lead.cadence_id.in_(cadencias))
+    return sum(1 for _, primeira in q.group_by(LeadActivity.lead_id).all()
+               if primeira and start <= primeira <= end)
+
+
+def _resposta_inbound(db: Session, leads):
+    """Horas médias entre o lead inbound chegar e a primeira tentativa.
+
+    Só faz sentido para inbound: no outbound quem escolhe a hora somos nós.
+    Sem lead inbound no período devolve None, e a tela mostra "-".
+    """
+    if not leads:
+        return None
+    horas = []
+    for l in leads:
+        primeira = (db.query(func.min(LeadActivity.done_at))
+                    .filter(LeadActivity.lead_id == l.id,
+                            LeadActivity.status == "DONE").scalar())
+        if primeira and l.created_at:
+            horas.append((primeira - l.created_at).total_seconds() / 3600)
+    return round(sum(horas) / len(horas), 1) if horas else None
+
+
+def _quartis_prospeccao(db: Session, uid: int, cadencias):
+    """Onde a base em prospecção está dentro da cadência, em quatro faixas.
+
+    Diz se o time está preso no começo — muito lead no quartil 1 é cadência
+    que não anda, não é base pequena.
+    """
+    q = db.query(Lead).filter(Lead.sdr_id == uid,
+                              Lead.status.in_(["EXECUTING", "ON_EXTRA_ACTIVITY"]))
+    if cadencias:
+        q = q.filter(Lead.cadence_id.in_(cadencias))
+    leads = q.all()
+    if not leads:
+        return []
+    passos_por_cadencia = dict(
+        db.query(CadenceStep.cadence_id, func.count(CadenceStep.id))
+        .group_by(CadenceStep.cadence_id).all())
+    faixas = [0, 0, 0, 0]
+    for l in leads:
+        total = passos_por_cadencia.get(l.cadence_id) or 0
+        if not total:
+            continue
+        feitas = (db.query(func.count(LeadActivity.id))
+                  .filter(LeadActivity.lead_id == l.id,
+                          LeadActivity.status.in_(["DONE", "SKIPPED"])).scalar())
+        frac = min(0.999, feitas / total)
+        faixas[int(frac * 4)] += 1
+    soma = sum(faixas) or 1
+    return [{"quartil": i + 1, "leads": n, "pct": round(n / soma * 100)}
+            for i, n in enumerate(faixas)]
 
 
 @router.get("/flow/statistics/performance")
