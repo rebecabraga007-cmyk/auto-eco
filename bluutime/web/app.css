@@ -39,54 +39,66 @@
 }
 
 :root {
-  /* [FIX 2] navbar real: #3c3c3c !important (cinza neutro, não esverdeado) */
-  --nav: #3c3c3c;
-  --nav-hover: rgba(0, 0, 0, .1);
+  /* ══ Paleta BLU ══════════════════════════════════════════════════════
+     A estrutura, o espaçamento e a tipografia continuam sendo os do
+     Meetime; o que muda aqui é só a cor. O azul-noite #12385C e seus
+     vizinhos vêm do design system do CapiBLU (lupa-empresas/frontend/
+     capiblu.css), para que as duas ferramentas pareçam a mesma casa.
+
+     O verde do Meetime cumpria DOIS papéis — marca (botão, aba ativa,
+     logo) e semântica (ganho, sucesso). Só o primeiro vira azul: pintar
+     "Ganho" de azul e "Perdido" de vermelho tiraria o par que se lê de
+     relance. O verde semântico passa a ser o #2F6B4F da BLU, mais surdo
+     que o verde Material. */
+  --blu: #12385C;         /* azul-noite da marca */
+  --blu-dark: #0F2E4A;    /* hover de botão, barra de navegação */
+  --blu-mid: #1B5480;     /* realce mais claro: aba ativa, foco */
+  --blu-soft: #EAF0F5;    /* fundo de seleção e de alerta informativo */
+
+  --nav: var(--blu-dark);
+  --nav-hover: rgba(255, 255, 255, .08);
   --body: #f5f5f5;
   --panel: #fff;
-  /* [FIX 10] .btn-default/.table-striped real: #fcfcfc */
   --panel-2: #fcfcfc;
   --text: #333;
   --muted: #777;
   --line: #ddd;
   --line-soft: #eee;
 
-  /* [FIX 3] o original tem DOIS verdes com papéis separados:
-     #00c850 → botão, aba ativa, indicador
-     #4caf50 → label e badge (verde Material) */
-  --green: #00c850;
-  --green-label: #4caf50;
-  --blue: #2196f3;
-  --red: #f44336;
-  --orange: #ff5722;
-  --cyan: #00bcd4;
+  /* Cor de marca: era o par de verdes do Meetime, agora o par de azuis. */
+  --green: var(--blu);         /* botão principal, indicador, aba ativa */
+  --green-label: var(--blu-mid); /* label, badge e barra de progresso */
+  --blue: var(--blu-mid);
+  --red: #9A3324;              /* vermelho da BLU, mais terroso */
+  --orange: #A85A2C;           /* terracota da BLU no lugar do laranja */
+  --cyan: #1B5480;
 
-  /* ── Extensões pós-Meetime (dossiê, funil, WhatsApp, etc.) ──────────────
-     Sem equivalente direto no app original — usam as mesmas cores que a
-     Meetime já tinha nesses elementos (avatar, blue-dot, round-icon,
-     alert-info/success/warning) antes de qualquer tema próprio. */
-  --link-dark: #1565c0;  /* a:hover, .pill.blue */
-  --dot-blue: #2196f3;   /* .blue-dot — sem equivalente no original; usa o azul da casa */
-  --link: #1e88e5;       /* link, .btn-primary, .tool-card code */
-  --avatar-bg: #e8f4ea;  /* .avatar — fundo de avatar da Meetime (.avatar--good-fit) */
-  --icon-bg: #f7f7fc;    /* .round-icon */
-  --info-bg: #e3f2fd;    /* fundo de .alert-info/.pill.blue */
-  --info-line: #b3e5fc;  /* borda de .alert-info */
+  --link-dark: var(--blu-dark);
+  --dot-blue: var(--blu-mid);
+  --link: var(--blu-mid);
+  --avatar-bg: var(--blu-soft);
+  --icon-bg: #f7f8fa;
+  --info-bg: var(--blu-soft);
+  --info-line: #C7D8E6;
 
-  --creme: #f7f7f7;      /* .wa-thread */
-  --creme: #f5f5f5;    /* hover de superfície clara, .pill.grey */
-  --creme-3: #f8f8f8;    /* hover de linha de tabela */
-  --preto: #111;         /* ilustração do WhatsApp vazio */
+  --creme: #f5f5f5;
+  --creme-3: #f8f8f8;
+  --preto: #111;
 
-  --ok: #2e7d32;
-  --ok-bg: #e8f5e9;
-  --ok-line: #c4e6c7;
-  --warn: #ef6c00;
-  --warn-bg: #fff3e0;
-  --warn-line: #ffdfad;
-  --red-bg: #ffeceb;
-  --red-line: #f4c1bb;
+  /* Semântica: verde = ganho, vermelho = perda, âmbar = atenção. Tons da
+     BLU, não os do Material. */
+  --ok: #2F6B4F;
+  --ok-bg: #EAF1EC;
+  --ok-line: #C6DACF;
+  --warn: #8C6A16;
+  --warn-bg: #F7F1E1;
+  --warn-line: #E6D9B0;
+  --red-bg: #F7ECE9;
+  --red-line: #E3C4BD;
+  /* Verde do "ganho" onde antes havia #00a443 / #4caf50 cravados. */
+  --ganho: #2F6B4F;
 }
+
 
 * { box-sizing: border-box; }
 body {
@@ -1241,7 +1253,7 @@ body.app-loading .page-container { opacity: .35; }
 .pull-right { float: right; }
 .text-bold { font-weight: 700; }
 .text-regular { font-weight: 400; }
-.text-success { color: #43a047; }
+.text-success { color: var(--ok); }
 
 /* Alerta de aviso — faltava o tom âmbar para veredito negativo. */
 .alert-warning {
@@ -1863,10 +1875,23 @@ tr.linha-padrao > td { background: rgba(0, 0, 0, .03); }
 .queue-secao span { padding: 1px 6px; font-size: 11px; font-weight: 400; color: #fff;
   background: #888; border-radius: 10px; }
 
-/* Resumo acima da linha do tempo do lead: três contagens do que aconteceu. */
-.resumo-timeline { display: flex; gap: 22px; flex-wrap: wrap; margin: 0 0 14px;
-  font-size: 12.5px; color: var(--muted); }
-.resumo-timeline strong { margin-right: 4px; font-size: 15px; font-weight: 500; color: var(--text); }
+/* Os três contadores do topo da barra lateral do lead, como no original:
+   número grande em cima, rótulo em caixa alta embaixo. */
+.resumo-lead { display: flex; justify-content: space-around; padding: 18px 10px; margin-bottom: 14px;
+  background: var(--panel); border: 1px solid var(--line-soft); border-radius: 3px; }
+.resumo-lead div { display: flex; flex-direction: column; align-items: center; }
+.resumo-lead strong { font-size: 20px; font-weight: 400; color: var(--text); }
+.resumo-lead span { margin-top: 2px; font-size: 10px; letter-spacing: .4px; color: var(--muted); }
+
+/* Filtro de tipo da linha do tempo: fileira de ícones com "TUDO" na frente. */
+.filtro-tipos { display: flex; align-items: center; gap: 4px; margin-bottom: 12px;
+  border-bottom: 1px solid var(--line-soft); }
+.filtro-tipos a { padding: 8px 12px; font-size: 15px; line-height: 1; color: var(--muted);
+  cursor: pointer; border-bottom: 2px solid transparent; }
+.filtro-tipos a:first-child { font-size: 11px; letter-spacing: .5px; }
+.filtro-tipos a:hover { color: var(--text); }
+.filtro-tipos a.ativa { color: var(--link); border-bottom-color: var(--link); }
+.filtro-tipos .spacer { margin-left: auto; }
 
 /* Estimativa de esforço do modal de metas. */
 .esforco { margin: 14px 0; padding: 12px 14px; font-size: 12.5px;

@@ -526,14 +526,14 @@ PAGES.dashboard = {
       api(`/api/flow/goals/${ref}/calculate-effort`).catch(() => null),
     ]);
     const pct = g.goal.opportunities ? Math.round((g.actual.won / g.goal.opportunities) * 100) : 0;
-    const gapTone = g.gapPercent < 0 ? "#f44336" : "#00a443";
+    const gapTone = g.gapPercent < 0 ? "var(--red)" : "var(--ganho)";
 
     const chart = renderGoalChart(g.series, g.goal.opportunities);
     const ranking = table(
       ["SDR", "Ganhos", "Perdidos", "Conversão", "Atividades", "Ligações", "Significativas"],
       g.ranking.map((r) => ({ cells: [
-        `<strong>${h(r.user.name)}</strong>`, `<span style="color:#00a443">${r.won}</span>`,
-        `<span style="color:#f44336">${r.lost}</span>`, `${r.conversion}%`,
+        `<strong>${h(r.user.name)}</strong>`, `<span style="color:var(--ganho)">${r.won}</span>`,
+        `<span style="color:var(--red)">${r.lost}</span>`, `${r.conversion}%`,
         r.activities, r.calls, r.meaningful] })),
       { empty: "Nenhum SDR com movimento no mês." });
 
@@ -575,7 +575,7 @@ PAGES.dashboard = {
           <div class="goal-info-row">
             <div class="round-icon">◎</div>
             <div>Meta de oportunidades<br>${g.goal.definida
-              ? `<strong style="color:#00a443">${g.goal.opportunities}</strong>`
+              ? `<strong style="color:var(--ganho)">${g.goal.opportunities}</strong>`
               : `<span class="pill amber">sem meta definida</span>
                  ${nivelPeloMenos("gestor") ? `<a id="definirMeta" style="cursor:pointer;text-decoration:underline">definir</a>` : ""}
                  <span class="text-muted text-size-small">— o gráfico usa ${g.goal.opportunities} como referência</span>`}
@@ -739,7 +739,7 @@ function renderGoalChart(series, target) {
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Oportunidades no mês contra a meta">
     ${grid}${area}
     ${line(series.map((s, i) => `${x(i)},${y(s.target)}`).join(" "), "#ededed", 3)}
-    ${areaPts ? line(areaPts, "#00c850", 3) : ""}
+    ${areaPts ? line(areaPts, "var(--green)", 3) : ""}
     <text x="${padL}" y="${H - 6}" font-size="11" fill="#999">${fmtDate(series[0]?.date)}</text>
     <text x="${W - 70}" y="${H - 6}" font-size="11" fill="#999">${fmtDate(series[series.length - 1]?.date)}</text>
   </svg>`;
@@ -1029,8 +1029,8 @@ PAGES.painel = {
           <span class="text-muted">${fmtDateTime(r.lastActivity.doneAt)}</span>` : `<span class="text-muted">—</span>`}</td>
         <td>${drill(r.user.id, "EXECUTING", r.leads.prospecting)}</td>
         <td>${drill(r.user.id, "WAITING", r.leads.available)}</td>
-        <td>${drill(r.user.id, "WON", r.leads.won, "#00a443")}</td>
-        <td>${drill(r.user.id, "LOST", r.leads.lost, "#f44336")}</td>
+        <td>${drill(r.user.id, "WON", r.leads.won, "var(--ganho)")}</td>
+        <td>${drill(r.user.id, "LOST", r.leads.lost, "var(--red)")}</td>
         <td><span style="color:#1e88e5">${r.activities.pending}</span></td>
         <td>${r.activities.late ? `<span class="pill red">${r.activities.late}</span>` : "0"}</td>
         <td>${r.activities.done}</td>
@@ -1056,9 +1056,9 @@ PAGES.painel = {
         ${linhas.length ? `<div class="table-responsive"><table class="table table-striped table-hover">
           <thead>
             <tr>
-              <th colspan="2" style="border-bottom:2px solid #00c850">TIME</th>
-              <th colspan="4" style="border-bottom:2px solid #00c850">LEADS</th>
-              <th colspan="9" style="border-bottom:2px solid #00c850">ATIVIDADES</th>
+              <th colspan="2" style="border-bottom:2px solid var(--green)">TIME</th>
+              <th colspan="4" style="border-bottom:2px solid var(--green)">LEADS</th>
+              <th colspan="9" style="border-bottom:2px solid var(--green)">ATIVIDADES</th>
             </tr>
             <tr>
               ${th("nome", "Usuário")}<th>Última atividade</th>
@@ -1169,7 +1169,7 @@ PAGES.execucao = {
           ${a.extra ? `<span class="pill amber ml-5">Extra</span>` : ""}
           <br>
           <span class="text-size-small text-muted">
-            ${a.late ? `<span style="color:#f44336">Atrasada</span> · ` : ""}agendada ${fmtDateTime(a.scheduledAt)}
+            ${a.late ? `<span style="color:var(--red)">Atrasada</span> · ` : ""}agendada ${fmtDateTime(a.scheduledAt)}
             · melhor contato ${a.lead.bestHour}h
             ${a.lead.cadence ? ` · ${h(a.lead.cadence.name)} (${h(PRIORITY_LABEL[a.lead.cadence.priority])})` : ""}
             · ${h(passoRotulo(a))}
@@ -2065,10 +2065,10 @@ function passoTimeline(a) {
       <strong class="ml-5">${h(a.subject || a.to || "—")}</strong><br>
       <span class="text-muted text-size-small">${fmtDateTime(a.createdAt)}
         ${a.to ? ` · ${h(a.to)}` : ""}
-        ${a.openedAt ? ` · <span style="color:#00a443">aberto ${fmtDateTime(a.openedAt)}${
+        ${a.openedAt ? ` · <span style="color:var(--ganho)">aberto ${fmtDateTime(a.openedAt)}${
           a.openCount > 1 ? ` (${a.openCount}×)` : ""}</span>` : ""}
-        ${a.clickedAt ? ` · <span style="color:#00a443">clicou ${fmtDateTime(a.clickedAt)}</span>` : ""}</span>
-      ${a.error ? `<div class="text-size-small mt-10" style="color:#f44336">${h(a.error)}</div>` : ""}
+        ${a.clickedAt ? ` · <span style="color:var(--ganho)">clicou ${fmtDateTime(a.clickedAt)}</span>` : ""}</span>
+      ${a.error ? `<div class="text-size-small mt-10" style="color:var(--red)">${h(a.error)}</div>` : ""}
     </div>`;
   }
   return `<div class="timeline-item">
@@ -2091,23 +2091,23 @@ function passoTimeline(a) {
   </div>`;
 }
 
-/** Resumo do histórico: o que de fato aconteceu com este lead.
+/** Os três contadores do topo da barra lateral do lead.
  *
- * O original põe estes três acima da linha do tempo. Sem eles, saber se um
- * lead com 40 eventos foi tocado ou só agendado exigia contar na mão. */
-function resumoTimeline(timeline) {
-  const feitas = timeline.filter((a) => a.status === "DONE" && !a.kind).length;
-  const abertos = timeline.filter((a) => a.kind === "DELIVERY" && a.openedAt).length;
-  const conectadas = timeline.filter((a) => a.kind === "CALL" && a.status === "CONNECTED").length;
-  if (!feitas && !abertos && !conectadas) {
-    return `<p class="text-muted text-size-small">Nenhuma atividade realizada.</p>`;
-  }
-  return `<div class="resumo-timeline">
-    <span><strong>${feitas}</strong> Atividades completadas</span>
-    <span><strong>${abertos}</strong> Emails abertos</span>
-    <span><strong>${conectadas}</strong> Ligações conectadas</span>
+ * No Meetime eles ficam acima do bloco "Geral", em caixa alta e com o número
+ * grande — não acima da linha do tempo, que foi onde eu tinha posto antes de
+ * ver a tela funcionando. */
+function resumoTimeline(c) {
+  const n = c || {};
+  return `<div class="resumo-lead">
+    <div><strong>${n.concluidas || 0}</strong><span>COMPLETADO</span></div>
+    <div><strong>${n.emailsAbertos || 0}</strong><span>ABERTO(S)</span></div>
+    <div><strong>${n.conversas || 0}</strong><span>CONVERSA(S)</span></div>
   </div>`;
 }
+
+// Filtro de tipo da linha do tempo: no original é uma fileira de ícones
+// começando por "TUDO", não um <select>.
+const TIPO_ICONE = { SEARCH: "⌕", SOCIAL_POINT: "❝", E_MAIL: "✉", CALL: "☎", MEETING: "▦" };
 
 PAGES.lead = {
   area: "Prospecção", title: "Lead",
@@ -2133,15 +2133,13 @@ PAGES.lead = {
         : a.type === filtro));
 
     const historico = `
-      <div class="toolbar">
-        <select class="form-control" id="ltTipo">
-          <option value="">Todos os tipos</option>
-          ${Object.entries(TYPE_LABEL).map(([k, v]) =>
-            `<option value="${k}"${filtro === k ? " selected" : ""}>${h(v)}</option>`).join("")}
-        </select>
+      <div class="filtro-tipos">
+        <a data-lttipo=""${filtro === "" ? ' class="ativa"' : ""}>TUDO</a>
+        ${Object.entries(TIPO_ICONE).map(([k, ico]) =>
+          `<a data-lttipo="${k}"${filtro === k ? ' class="ativa"' : ""}
+             title="${h(TYPE_LABEL[k] || k)}">${ico}</a>`).join("")}
         <span class="spacer text-muted text-size-small">${passos.length} de ${l.timeline.length} eventos</span>
       </div>
-      ${resumoTimeline(l.timeline)}
       ${l.source || l.channel || l.campaign || l.inbound ? `
         <div class="alert alert-info alert-styled-left text-size-small">
           Origem: ${[l.source && `fonte <strong>${h(l.source)}</strong>`,
@@ -2267,6 +2265,7 @@ PAGES.lead = {
 
       <div class="split">
         <div>
+          ${resumoTimeline(l.contadores)}
           ${panel("Lead", `<table class="table"><tbody>${[
             ["Situação", statusPill(l.status)],
             ["Cadência", l.cadence ? h(l.cadence.name) : "—"],
@@ -2352,8 +2351,9 @@ PAGES.lead = {
         box.innerHTML = `<span class="text-muted text-size-small">${h(e.message)}</span>`;
       }
     })();
-    const tipo = document.getElementById("ltTipo");
-    if (tipo) tipo.onchange = (e) => { state.leadFiltroTipo = e.target.value; go(`lead/${id}`); };
+    view.querySelectorAll("[data-lttipo]").forEach((a) => {
+      a.onclick = () => { state.leadFiltroTipo = a.dataset.lttipo; go(`lead/${id}`); };
+    });
     // Anotação por atividade: o que o SDR escreveu na hora costuma ser
     // telegráfico, e a correção não tinha onde morar.
     view.querySelectorAll("[data-nota-ativ]").forEach((b) => {
@@ -3067,7 +3067,7 @@ PAGES.cadencias = {
         `<a data-drill="${c.id}" data-st="WAITING">${c.overview.waiting}</a>`,
         `<a data-drill="${c.id}" data-st="EXECUTING">${c.overview.executing + c.overview.onExtraActivity}</a>`,
         `<a data-drill="${c.id}" data-st="WON,LOST">${finalizados}</a>`,
-        `<a data-drill="${c.id}" data-st="WON" style="color:#00a443">${c.overview.won} / ${taxa}%</a>`,
+        `<a data-drill="${c.id}" data-st="WON" style="color:var(--ganho)">${c.overview.won} / ${taxa}%</a>`,
         `<button class="kebab" data-edit-cad="${c.id}" title="Editar cadência">⋮</button>`,
       ] };
     });
@@ -3830,8 +3830,8 @@ PAGES.clientes = {
     const rows = list.map((c) => ({ cells: [
       `<span class="dot" style="background:${h(c.color)}"></span><strong>${h(c.name)}</strong>`,
       c.cadences, c.leads,
-      `<span style="color:#00a443">${c.won}</span>`,
-      `<span style="color:#f44336">${c.lost}</span>`,
+      `<span style="color:var(--ganho)">${c.won}</span>`,
+      `<span style="color:var(--red)">${c.lost}</span>`,
       c.won + c.lost ? `${Math.round((c.won / (c.won + c.lost)) * 100)}%` : "—",
       c.active ? `<span class="pill green">Ativo</span>` : `<span class="pill grey">Inativo</span>`,
       `<button class="btn btn-default btn-xs" data-edit-client="${c.id}">Editar</button>
@@ -3867,7 +3867,7 @@ function openClientForm(client) {
     title: c.id ? `Editar ${c.name}` : "Novo cliente",
     body: `<div class="field"><label for="clName">Nome *</label><input class="form-control" id="clName" value="${h(c.name || "")}"></div>
       <div class="field-row">
-        <div class="field"><label for="clColor">Cor</label><input class="form-control" type="color" id="clColor" value="${h(c.color || "#00a443")}"></div>
+        <div class="field"><label for="clColor">Cor</label><input class="form-control" type="color" id="clColor" value="${h(c.color || "var(--ganho)")}"></div>
         <div class="field"><label for="clActive">Situação</label>
           <select class="form-control" id="clActive">
             <option value="true"${c.active !== false ? " selected" : ""}>Ativo</option>
@@ -4131,9 +4131,9 @@ PAGES["estatisticas-ligacoes"] = {
           { value: ultimo.conectadas, label: "Conectadas", tone: "success" },
           { value: ultimo.significativas, label: "Significativas", tone: "success" },
         ])}
-        ${panel("Realizadas (acumulado)", grafLinha(c.data, "total", "#2196f3", "Ligações acumuladas"),
+        ${panel("Realizadas (acumulado)", grafLinha(c.data, "total", "var(--blue)", "Ligações acumuladas"),
           { subtitle: "A série diária diz se hoje foi bom; a acumulada diz se o período está no ritmo" })}
-        ${panel("Conectadas (acumulado)", grafLinha(c.data, "conectadas", "#00c850", "Conectadas acumuladas"))}`;
+        ${panel("Conectadas (acumulado)", grafLinha(c.data, "conectadas", "var(--green)", "Conectadas acumuladas"))}`;
     } else if (aba === "volume") {
       const por = state.estLigPor || "user";
       const noTempo = !!state.estLigTempo;
@@ -4693,8 +4693,8 @@ PAGES.estatisticas = {
             { value: `${dados.resumo.taxaGanhos}%`, label: "Ganhos", tone: "success" },
           ])}
           ${panel("Onde a cadência converte", `<div class="medidores">
-            ${[["Engajados", dados.resumo.taxaEngajados, "#2196f3"],
-               ["Ganhos", dados.resumo.taxaGanhos, "#00c850"],
+            ${[["Engajados", dados.resumo.taxaEngajados, "var(--blue)"],
+               ["Ganhos", dados.resumo.taxaGanhos, "var(--green)"],
                ["Finalizados", dados.resumo.leads
                  ? Math.round((dados.resumo.finalizados / dados.resumo.leads) * 100) : 0, "#777"]]
               .map(([rot, pct, cor]) => medidor(rot, pct, cor)).join("")}
@@ -5071,7 +5071,7 @@ function fbSerieChart(serie) {
     const hr = alt(s.respondidos), hp = alt(s.pendentes);
     const titulo = `${fbDiaLegivel(s.data)} — ${s.respondidos} respondidos, ${s.pendentes} pendentes`;
     return `<g><title>${h(titulo)}</title>
-      <rect x="${x}" y="${H - padB - hr}" width="${barra}" height="${hr}" fill="#00c850"/>
+      <rect x="${x}" y="${H - padB - hr}" width="${barra}" height="${hr}" fill="var(--green)"/>
       <rect x="${x}" y="${H - padB - hr - hp}" width="${barra}" height="${hp}" fill="#ffc107"/></g>`;
   }).join("");
   // Sem altura fixa o SVG estica junto com a largura do painel e as barras
@@ -5081,7 +5081,7 @@ function fbSerieChart(serie) {
       <text x="${padL}" y="${H - 6}" font-size="11" fill="#999">${fbDiaLegivel(serie[0].data)}</text>
       <text x="${W - 70}" y="${H - 6}" font-size="11" fill="#999">${fbDiaLegivel(serie[serie.length - 1].data)}</text>
     </svg></div>
-    <div class="legenda"><span><i style="background:#00c850"></i>Respondidos</span>
+    <div class="legenda"><span><i style="background:var(--green)"></i>Respondidos</span>
       <span><i style="background:#ffc107"></i>Pendentes</span></div>`;
 }
 
@@ -9088,7 +9088,7 @@ PAGES.ajustes = {
     if (bl && blCount) bl.oninput = () => {
       const n = blLinhas().length;
       blCount.innerHTML = !n ? ""
-        : n > 1024 ? `<span style="color:#f44336">${n} domínios — passou do limite de 1024</span>`
+        : n > 1024 ? `<span style="color:var(--red)">${n} domínios — passou do limite de 1024</span>`
         : `${n} domínio${n === 1 ? "" : "s"} adicionado${n === 1 ? "" : "s"}`;
     };
     const blSalvar = document.getElementById("blSalvar");
@@ -9440,7 +9440,7 @@ async function abaConsumo() {
       `${u.consumo_hoje} de ${limite}
        <div style="height:5px;background:#eee;border-radius:3px;margin-top:4px">
          <div style="height:5px;width:${pct}%;border-radius:3px;
-                     background:${pct > 85 ? "#c62828" : "#00a443"}"></div>
+                     background:${pct > 85 ? "#c62828" : "var(--ganho)"}"></div>
        </div>`,
       u.limite_diario_custom != null
         ? `<span class="pill blue">próprio: ${u.limite_diario_custom}</span>`
@@ -10673,7 +10673,7 @@ async function acompanharProgresso() {
 
   const barra = p.percentual != null ? `
     <div style="height:8px;background:#eee;border-radius:4px;margin-top:8px">
-      <div style="height:8px;width:${p.percentual}%;border-radius:4px;background:#00a443;
+      <div style="height:8px;width:${p.percentual}%;border-radius:4px;background:var(--ganho);
                   transition:width .4s"></div>
     </div>
     <div class="text-muted text-size-small mt-10">
