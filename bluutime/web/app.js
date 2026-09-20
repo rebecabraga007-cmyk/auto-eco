@@ -508,12 +508,18 @@ PAGES.dashboard = {
       ${panel("Desempenho no mês", ranking)}
 
       <div class="insights-grid">
-        <div class="panel panel-flat"><div class="panel-heading has-border"><h2 class="panel-title">Motivos de perda</h2></div>
+        <div class="panel panel-flat"><div class="panel-heading has-border">
+          <h2 class="panel-title">Motivos de perda</h2>
+          ${g.lostReasons.length > 6 ? `<div class="heading-elements">
+            <button class="btn btn-default btn-xs" id="motivosMais">Ver mais</button></div>` : ""}</div>
           <div class="panel-body">${bars(g.lostReasons.slice(0, 6).map((r) => ({ label: r.name, value: r.count, tone: "warning" })))}</div></div>
         <div class="panel panel-flat"><div class="panel-heading has-border"><h2 class="panel-title">Resultado por cliente</h2></div>
           <div class="panel-body">${bars(g.byClient.map((c) => ({ label: c.client, value: c.won + c.lost })))}</div></div>
       </div>`;
 
+    const motivosMais = document.getElementById("motivosMais");
+    if (motivosMais) motivosMais.onclick = () => verMaisMotivos(
+      g.lostReasons.map((r) => ({ label: r.name, count: r.count })));
     const editar = document.getElementById("editGoals");
     if (editar) editar.onclick = () => openGoalsModal(ref);
     document.getElementById("mesAnterior").onclick = () => { state.metaMes = mesRef(-1); go("dashboard"); };
@@ -522,6 +528,24 @@ PAGES.dashboard = {
     if (hoje) hoje.onclick = () => { state.metaMes = null; go("dashboard"); };
   },
 };
+
+/** Lista completa de motivos de perda — o "ver mais" do original.
+ *
+ * O gráfico mostra os seis maiores; a cauda é onde moram os motivos que
+ * ninguém lembra de cadastrar direito. */
+function verMaisMotivos(lista) {
+  const total = lista.reduce((n, r) => n + r.count, 0) || 1;
+  const m = modal({
+    wide: true,
+    title: `Motivos de perda (${lista.length})`,
+    body: table(["Motivo", "Leads", "Participação"],
+      [...lista].sort((a, b) => b.count - a.count).map((r) => ({ cells: [
+        h(r.label || r.name), r.count, `${Math.round((r.count / total) * 100)}%`] })),
+      { scroll: true, empty: "Nenhum lead perdido no período." }),
+    footer: `<button class="btn btn-main btn-sm" data-close-motivos>Fechar</button>`,
+  });
+  m.root.querySelector("[data-close-motivos]").onclick = m.close;
+}
 
 function renderGoalChart(series, target) {
   const W = 760, H = 320, padL = 44, padB = 28;
@@ -2222,8 +2246,25 @@ PAGES.cadencias = {
   async render() {
     const f = state.cadFilter || {};
     const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v !== "" && v != null));
-    const list = await api(`/api/flow/cadences?${qs}`);
+    let list = await api(`/api/flow/cadences?${qs}`);
     state.cadences = list;
+    // Ordenação por coluna, como na tabela do original: com 54 cadências,
+    // achar a de pior conversão era leitura linha a linha.
+    const ordC = state.cadOrdem || { campo: "nome", dir: 1 };
+    const valorC = (c) => ({
+      nome: c.name.toLowerCase(), etapas: c.stepsCount, leads: c.overview.total,
+      esperando: c.overview.waiting,
+      executando: c.overview.executing + c.overview.onExtraActivity,
+      ganhos: c.overview.won, perdidos: c.overview.lost,
+      conversao: c.overview.total ? c.overview.won / c.overview.total : -1,
+    }[ordC.campo]);
+    list = [...list].sort((a, b) => {
+      const va = valorC(a), vb = valorC(b);
+      if (va === vb) return a.name.localeCompare(b.name);
+      return (va > vb ? 1 : -1) * ordC.dir;
+    });
+    const thC = (campo, rotulo) => `<th class="ord" data-ordc="${campo}">${h(rotulo)}${
+      ordC.campo === campo ? (ordC.dir === 1 ? " ▲" : " ▼") : ""}</th>`;
     const rows = list.map((c) => ({ cells: [
       `<input type="checkbox" class="cad-check" value="${c.id}" data-on="${c.executing ? 1 : 0}">`,
       `<a data-open-cad="${c.id}"><strong>${h(c.name)}</strong></a>
@@ -2266,8 +2307,11 @@ PAGES.cadencias = {
       </div>
       ${panel(`${list.length} cadências${Object.values(f).some((v) => v) ? " no filtro" : ""}`,
         table([`<input type="checkbox" id="cadTodas" title="Selecionar todas" aria-label="Selecionar todas">`,
-               "Cadência", "Cliente", "Foco", "Prioridade", "Etapas", "Leads",
-               "Esperando", "Em execução", "Ganhos", "Perdidos", "Conversão",
+               thC("nome", "Cadência"), "Cliente", "Foco", "Prioridade",
+               thC("etapas", "Etapas"), thC("leads", "Leads"),
+               thC("esperando", "Esperando"), thC("executando", "Em execução"),
+               thC("ganhos", "Ganhos"), thC("perdidos", "Perdidos"),
+               thC("conversao", "Conversão"),
                "Responsáveis", "Situação", ""], rows, { scroll: true }))}`;
 
     const set = (k, v) => { state.cadFilter = { ...f, [k]: v }; go("cadencias"); };
@@ -2279,6 +2323,13 @@ PAGES.cadencias = {
     document.getElementById("newCad").onclick = () => openCadenceForm();
     const limpar = document.getElementById("cLimpar");
     if (limpar) limpar.onclick = () => { state.cadFilter = {}; go("cadencias"); };
+    view.querySelectorAll("[data-ordc]").forEach((t2) => {
+      t2.onclick = () => {
+        const campo = t2.dataset.ordc;
+        state.cadOrdem = { campo, dir: ordC.campo === campo ? -ordC.dir : (campo === "nome" ? 1 : -1) };
+        go("cadencias");
+      };
+    });
 
     // Pausar e continuar em massa: no fim do trimestre, pausar quinze
     // cadências uma a uma é quinze modais.
@@ -2513,26 +2564,46 @@ PAGES.atividades = {
       a.emailTemplate ? h(a.emailTemplate.subject) : h((a.instruction || "").slice(0, 110) || "—"),
       `<button class="btn btn-default btn-xs" data-edit-act="${a.id}">Editar</button>
        <button class="btn btn-default btn-xs" data-dup-act="${a.id}">Duplicar</button>
+       ${a.emailTemplate ? `<button class="btn btn-default btn-xs" data-test-act="${a.id}"
+          title="Manda o modelo para o seu e-mail">Testar</button>` : ""}
        <button class="btn btn-default btn-xs" data-del-act="${a.id}">Excluir</button>`,
     ] }));
 
     view.innerHTML = `
       <div class="toolbar">
         <input class="form-control grow" id="aq" placeholder="Buscar atividade" value="${h(f.q || "")}">
-        <select class="form-control" id="aType">
-          <option value="">Todos os tipos</option>
-          ${Object.entries(TYPE_LABEL).map(([k, v]) => `<option value="${k}"${f.type === k ? " selected" : ""}>${v}</option>`).join("")}
-        </select>
         <span class="spacer"></span>
         <button class="btn btn-main btn-xs" id="newAct">Nova atividade</button>
       </div>
+      <ul class="nav nav-tabs">
+        ${[["", "Todas"], ...Object.entries(TYPE_LABEL)].map(([k, v]) =>
+          `<li${(f.type || "") === k ? ' class="active"' : ""}><a data-atipo="${k}">${h(v)}</a></li>`).join("")}
+      </ul>
       ${panel(`${list.length} atividades`, table(["Atividade", "Tipo", "Script / assunto", ""], rows, { scroll: true }),
         { subtitle: "Biblioteca reutilizável. Merge tags aceitas: {{firstName}}, {{company}}" })}`;
 
     const set = (k, v) => { state.actFilter = { ...f, [k]: v }; go("atividades"); };
     const q = document.getElementById("aq");
     let t; q.oninput = () => { clearTimeout(t); t = setTimeout(() => set("q", q.value), 350); };
-    document.getElementById("aType").onchange = (e) => set("type", e.target.value);
+    view.querySelectorAll("[data-atipo]").forEach((a) => {
+      a.onclick = () => set("type", a.dataset.atipo);
+    });
+    // Enviar o modelo para o próprio e-mail antes de mandar para lead: o
+    // erro de merge tag aparece no teste, não na cadência.
+    view.querySelectorAll("[data-test-act]").forEach((b) => {
+      b.onclick = () => {
+        const a = list.find((x) => String(x.id) === b.dataset.testAct);
+        promptOne(`Testar "${a.name}"`, "Mandar para qual e-mail?", async (para) => {
+          try {
+            const r = await api("/api/envio/teste", { method: "POST", body: {
+              channel: "EMAIL", to: para,
+              subject: a.emailTemplate.subject,
+              body: (a.emailTemplate.html || "").replace(/<[^>]+>/g, " ") } });
+            toast(r.status === "SENT" ? "Enviado." : `Registrado como ${r.status}.`, "ok");
+          } catch (e) { toast(e.message, "err"); }
+        }, "Enviar", state.me.email);
+      };
+    });
     document.getElementById("newAct").onclick = () => openActivityForm();
     view.querySelectorAll("[data-edit-act]").forEach((b) => {
       b.onclick = () => openActivityForm(list.find((a) => String(a.id) === b.dataset.editAct));
@@ -3115,19 +3186,35 @@ PAGES["estatisticas-ligacoes"] = {
         ${panel("Conectadas (acumulado)", grafLinha(c.data, "conectadas", "#00c850", "Conectadas acumuladas"))}`;
     } else if (aba === "volume") {
       const por = state.estLigPor || "user";
+      const noTempo = !!state.estLigTempo;
       const g = await api(`/api/dialer/calls/statistics/grouped${filtrosQS({ by: por })}`);
+      // As quatro visões do original: por usuário e por time, cada uma com o
+      // total do período ou distribuída no tempo.
+      const serie = noTempo
+        ? await api(`/api/dialer/calls/statistics/history${filtrosQS({ interval: "week" })}`)
+        : null;
       corpo = `
         <div class="toolbar">
           <select class="form-control input-sm" id="elPor">
             <option value="user"${por === "user" ? " selected" : ""}>Por usuário</option>
             <option value="team"${por === "team" ? " selected" : ""}>Por time</option>
           </select>
+          <select class="form-control input-sm" id="elTempo">
+            <option value=""${!noTempo ? " selected" : ""}>Total do período</option>
+            <option value="1"${noTempo ? " selected" : ""}>Distribuído no tempo</option>
+          </select>
         </div>
-        ${panel("Como está o volume de ligações",
-          table(["Quem", "Ligações", "Conectadas", "Conexão"],
-            g.data.map((r) => ({ cells: [h(r.label), r.total, r.conectadas,
-              `${r.total ? Math.round(r.conectadas / r.total * 100) : 0}%`] })),
-            { empty: "Nenhuma ligação no período." }))}`;
+        ${noTempo
+          ? panel(`Volume por semana${por === "team" ? " (time selecionado na barra)" : ""}`,
+              bars((serie.data || []).map((r) => ({ label: r.label, value: r.total, tone: "info" }))),
+              { subtitle: por === "user"
+                  ? "Escolha um usuário na barra para ver só o dele; sem escolha, é o total."
+                  : "Use o filtro de time na barra para recortar." })
+          : panel("Como está o volume de ligações",
+              table(["Quem", "Ligações", "Conectadas", "Conexão"],
+                g.data.map((r) => ({ cells: [h(r.label), r.total, r.conectadas,
+                  `${r.total ? Math.round(r.conectadas / r.total * 100) : 0}%`] })),
+                { empty: "Nenhuma ligação no período." }))}`;
     } else if (aba === "horario") {
       const b = await api(`/api/dialer/calls/statistics/best-hour${qs}`);
       const comVolume = b.data.filter((r) => r.total);
@@ -3148,13 +3235,20 @@ PAGES["estatisticas-ligacoes"] = {
             { empty: "Nenhuma ligação no período." }))}`;
     } else {
       const intv = state.estLigIntervalo || "day";
-      const hst = await api(`/api/dialer/calls/statistics/history${filtrosQS({ interval: intv })}`);
+      const stH = state.estLigStatus || "";
+      const hst = await api(`/api/dialer/calls/statistics/history${
+        filtrosQS(stH ? { interval: intv, status: stH } : { interval: intv })}`);
       corpo = `
         <div class="toolbar">
           <select class="form-control input-sm" id="elIntv">
             <option value="day"${intv === "day" ? " selected" : ""}>Por dia</option>
             <option value="week"${intv === "week" ? " selected" : ""}>Por semana</option>
             <option value="month"${intv === "month" ? " selected" : ""}>Por mês</option>
+          </select>
+          <select class="form-control input-sm" id="elStatus">
+            <option value="">Todas as ligações</option>
+            ${Object.entries(CALL_STATUS_LABEL).map(([k, v]) =>
+              `<option value="${k}"${stH === k ? " selected" : ""}>${v}</option>`).join("")}
           </select>
         </div>
         ${panel("Ligações ao longo do tempo",
@@ -3172,6 +3266,8 @@ PAGES["estatisticas-ligacoes"] = {
     });
     const por = document.getElementById("elPor");
     if (por) por.onchange = () => { state.estLigPor = por.value; go(`estatisticas-ligacoes/${aba}`); };
+    const tempo = document.getElementById("elTempo");
+    if (tempo) tempo.onchange = () => { state.estLigTempo = tempo.value; go(`estatisticas-ligacoes/${aba}`); };
     const intv = document.getElementById("elIntv");
     if (intv) intv.onchange = () => { state.estLigIntervalo = intv.value; go(`estatisticas-ligacoes/${aba}`); };
     const st = document.getElementById("elStatus");
@@ -3637,11 +3733,16 @@ PAGES.estatisticas = {
           </select>
         </div>
         ${panel("Por que os leads são perdidos",
-          bars(lr.data.map((r) => ({ label: r.label, value: r.count, tone: "warning" }))))}
+          bars(lr.data.slice(0, 10).map((r) => ({ label: r.label, value: r.count, tone: "warning" }))),
+          { actions: lr.data.length > 10
+              ? `<button class="btn btn-default btn-xs" id="smMais">Ver todos (${lr.data.length})</button>` : "",
+            subtitle: `${lr.data.reduce((n, r) => n + r.count, 0)} leads perdidos no período` })}
       </div>`;
       ligar();
       const sm = document.getElementById("smPor");
       if (sm) sm.onchange = () => { state.estMotivoPor = sm.value; go(`estatisticas/${aba}`); };
+      const smMais = document.getElementById("smMais");
+      if (smMais) smMais.onclick = () => verMaisMotivos(lr.data);
       return;
     }
 
