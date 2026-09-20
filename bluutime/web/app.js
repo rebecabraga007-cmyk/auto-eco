@@ -3384,7 +3384,6 @@ PAGES.cadencia = {
           <div class="cad-builder">
             <div class="cad-biblioteca">
               <div class="cad-busca">
-                <span>⌕</span>
                 <input class="form-control" id="cadBusca" placeholder="Pesquisar por atividade"
                        value="${h(state.cadBusca || "")}">
               </div>
