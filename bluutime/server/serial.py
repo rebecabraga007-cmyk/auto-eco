@@ -74,6 +74,8 @@ def lead(l, custom=None, fitscore=None):
         "leadBase": {"id": l.lead_base.id, "name": l.lead_base.name} if l.lead_base else None,
         "lostReason": {"id": l.lost_reason.id, "name": l.lost_reason.name} if l.lost_reason else None,
         "wonAt": iso(l.won_at), "lostAt": iso(l.lost_at), "createdAt": iso(l.created_at),
+        "source": l.source, "channel": l.channel, "campaign": l.campaign,
+        "inbound": l.inbound,
         "customFields": custom or {}, "fitscore": fitscore or 0,
     }
 

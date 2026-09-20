@@ -290,6 +290,14 @@ class Lead(Base):
     # Sinais que o CapiBLU calcula e que se perdiam na conversão para lead:
     # o nível de decisão (1 decide sozinho · 2 decide na área · 3 influencia),
     # a categoria do telefone escolhido e se ele tem WhatsApp.
+    # Origem do lead: de onde ele veio, por qual canal e de qual campanha. O
+    # Meetime recebe isso da integração de inbound; aqui é preenchido na
+    # criação ou mapeado na importação, e é o que a tela de origem agrupa.
+    source: Mapped[str] = mapped_column(String(80), default="")
+    channel: Mapped[str] = mapped_column(String(60), default="")
+    campaign: Mapped[str] = mapped_column(String(120), default="")
+    inbound: Mapped[bool] = mapped_column(Boolean, default=False)
+
     decision_level: Mapped[int] = mapped_column(Integer, default=0)
     contact_kind: Mapped[str] = mapped_column(String(20), default="")   # socio | decisor
     phone_kind: Mapped[str] = mapped_column(String(20), default="")     # celular | fixo | antigo

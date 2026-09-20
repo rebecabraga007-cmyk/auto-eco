@@ -687,7 +687,12 @@ async function openGoalsModal(ref) {
  *
  * A origem aqui é a base de onde o lead veio: o Bluutime não guarda fonte,
  * canal e campanha como o Meetime, que os recebe da integração de inbound. */
-function painelOrigem(origins) {
+const ORIGEM_DIM = { base: "Base de importação", source: "Fonte",
+                     channel: "Canal", campaign: "Campanha" };
+
+function painelOrigem(porDim) {
+  const dim = state.origemDim || "base";
+  const origins = (porDim && porDim[dim]) || [];
   const ordem = state.origemOrdem || "total";
   const lista = [...origins].sort((a, b) => ordem === "conversao"
     ? (b.won / Math.max(1, b.total)) - (a.won / Math.max(1, a.total))
@@ -708,8 +713,12 @@ function painelOrigem(origins) {
     <div class="panel panel-flat">
       <div class="panel-heading has-border">
         <div><h2 class="panel-title">Origem dos leads</h2>
-          <div class="text-muted text-size-small">Base de onde o lead veio, com quanto cada uma converte</div></div>
+          <div class="text-muted text-size-small">De onde o lead veio, com quanto cada origem converte</div></div>
         <div class="heading-elements">
+          <select class="form-control input-xs" id="origemDim">
+            ${Object.entries(ORIGEM_DIM).map(([k, v]) =>
+              `<option value="${k}"${dim === k ? " selected" : ""}>${v}</option>`).join("")}
+          </select>
           <select class="form-control input-xs" id="origemOrdem">
             <option value="total"${ordem === "total" ? " selected" : ""}>Por volume</option>
             <option value="conversao"${ordem === "conversao" ? " selected" : ""}>Por conversão</option>
@@ -722,16 +731,20 @@ function painelOrigem(origins) {
     </div>`;
 }
 
-function ligarPainelOrigem(origins) {
+function ligarPainelOrigem(porDim) {
+  const dim = state.origemDim || "base";
+  const origins = (porDim && porDim[dim]) || [];
   const sel = document.getElementById("origemOrdem");
-  if (sel) sel.onchange = () => { state.origemOrdem = sel.value; go("estatisticas"); };
+  if (sel) sel.onchange = () => { state.origemOrdem = sel.value; go("estatisticas/geral"); };
+  const selDim = document.getElementById("origemDim");
+  if (selDim) selDim.onchange = () => { state.origemDim = selDim.value; go("estatisticas/geral"); };
   const mais = document.getElementById("origemMais");
   if (mais) mais.onclick = () => {
     const lista = [...origins].sort((a, b) => b.total - a.total);
     const m = modal({
       wide: true,
-      title: `Origem dos leads (${lista.length})`,
-      body: table(["Origem", "Ganhos", "Perdidos", "Total", "Conversão"],
+      title: `${ORIGEM_DIM[dim]} (${lista.length})`,
+      body: table([ORIGEM_DIM[dim], "Ganhos", "Perdidos", "Total", "Conversão"],
         lista.map((o) => ({ cells: [
           h(o.name), o.won, o.lost, o.total,
           `${o.total ? Math.round((o.won / o.total) * 100) : 0}%`,
@@ -2196,6 +2209,25 @@ function openLeadForm(lead) {
         <div class="field"><label for="fHour">Melhor horário de contato</label>
           <input class="form-control" type="number" min="6" max="22" id="fHour" value="${l.bestHour || 18}"></div>
       </div>
+      <div class="field-row">
+        <div class="field"><label for="fSource">Fonte <span class="text-grey">— de onde veio</span></label>
+          <input class="form-control" id="fSource" list="fonteSugestao" value="${h(l.source || "")}"
+                 placeholder="CapiBLU, indicação, evento…">
+          <datalist id="fonteSugestao">
+            ${["CapiBLU", "Indicação", "Site", "Evento", "Lista comprada", "LinkedIn"]
+              .map((o) => `<option value="${o}">`).join("")}
+          </datalist></div>
+        <div class="field"><label for="fChannel">Canal</label>
+          <input class="form-control" id="fChannel" value="${h(l.channel || "")}" placeholder="Outbound, inbound, parceria…"></div>
+        <div class="field"><label for="fCampaign">Campanha</label>
+          <input class="form-control" id="fCampaign" value="${h(l.campaign || "")}"></div>
+      </div>
+      <div class="toolbar" style="border:0;padding:0 0 10px;background:none;flex-wrap:wrap;gap:16px">
+        <label><input type="checkbox" id="fInbound"${l.inbound ? " checked" : ""}> Lead inbound
+          <span class="text-muted text-size-small">— procurou a BLU, não o contrário</span></label>
+        ${l.id ? "" : `<label><input type="checkbox" id="fStartNow" checked> Começar a cadência agora
+          <span class="text-muted text-size-small">— desmarcado, o lead entra em espera sem atividade agendada</span></label>`}
+      </div>
       <div class="field"><label for="fNotes">Anotações</label><textarea class="form-control" id="fNotes">${h(l.annotations || "")}</textarea></div>
       ${(state.leadFields || []).length ? `<div class="sub-block">
         <h4>Campos personalizados</h4>
@@ -2228,7 +2260,11 @@ function openLeadForm(lead) {
         [...m.root.querySelectorAll("[data-cf]")].map((el) => [el.dataset.cf, el.value])),
       clientId: Number(g("#fClient")) || null, sdrId: Number(g("#fSdr")) || null,
       cadenceId: Number(g("#fCadence")) || null,
+      source: g("#fSource"), channel: g("#fChannel"), campaign: g("#fCampaign"),
+      inbound: m.root.querySelector("#fInbound").checked,
     };
+    const comecar = m.root.querySelector("#fStartNow");
+    if (comecar) body.startNow = comecar.checked;
     if (!body.name) return toast("O nome é obrigatório.", "err");
     const btn = e.currentTarget;
     btn.disabled = true;
@@ -2819,7 +2855,8 @@ function openImportWizard() {
       step(2);
       const fields = [["name", "Nome completo *"], ["firstName", "Primeiro nome"], ["email", "E-mail"],
         ["company", "Empresa"], ["position", "Cargo"], ["phone", "Telefone"], ["cnpj", "CNPJ"],
-        ["city", "Cidade"], ["state", "UF"], ["site", "Site"], ["annotations", "Anotações"]];
+        ["city", "Cidade"], ["state", "UF"], ["site", "Site"], ["annotations", "Anotações"],
+        ["source", "Fonte"], ["channel", "Canal"], ["campaign", "Campanha"]];
       const guess = (label) => preview.columns.find((c) =>
         c.toLowerCase().replace(/[^a-z]/g, "").includes(label.toLowerCase().slice(0, 4))) || "";
       body.innerHTML = `<div class="alert alert-info alert-styled-left">
@@ -3837,13 +3874,13 @@ PAGES.estatisticas = {
       </div>
       <div class="two-col">
         ${panel("Motivos de perda", bars(s.lostReasons.slice(0, 8).map((r) => ({ label: r.name, value: r.count, tone: "warning" }))))}
-        ${painelOrigem(s.origins)}
+        ${painelOrigem(s.originsBy || { base: s.origins })}
       </div>
       ${panel("Conversão por cadência",
         table(["Cadência", "Cliente", "Prioridade", "Leads", "Ganhos", "Conversão"], cadRows))}`;
 
     ligar();
-    ligarPainelOrigem(s.origins);
+    ligarPainelOrigem(s.originsBy || { base: s.origins });
   },
 };
 

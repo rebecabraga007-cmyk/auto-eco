@@ -14,7 +14,7 @@ from ..db import get_db
 from ..models import (Activity, Cadence, CadenceStep, CadenceUser, Call, Client,
                       Company, Conversation, CustomField, Delivery, FitscoreRule,
                       Lead, LeadActivity,
-                      LeadBase, LeadFeedback, LeadFieldValue, LostReason,
+                      LeadBase, LeadFeedback, LeadFieldValue, LostReason, Message,
                       Template, User, ACTIVITY_TYPES, channel_of)
 from .. import agenda, perm, render, serial, webhooks
 
@@ -736,7 +736,11 @@ def create_lead(payload: dict = Body(...), db: Session = Depends(get_db)):
     # Campos personalizados na CRIAÇÃO — antes só o update gravava, então o
     # lead nascia sem etapa, sem porte, sem nada do que o formulário pedia.
     _gravar_campos(db, l.id, payload.get("customFields"))
-    _schedule_cadence(db, l)
+    # "Aguardar" deixa o lead na cadência sem atividade agendada: quem cadastra
+    # em lote à noite não quer a fila de amanhã cheia de gente que ainda vai
+    # ser revisada.
+    if payload.get("startNow", True):
+        _schedule_cadence(db, l)
     _fire_webhooks(db, "LEAD.CREATED", serial.lead(l))
     db.commit()
     return serial.lead(l)
@@ -760,8 +764,39 @@ def _build_lead(db: Session, row: dict, defaults: dict | None = None) -> Lead:
         decision_level=int(d.get("decisionLevel") or 0),
         contact_kind=d.get("contactKind", ""), phone_kind=d.get("phoneKind", ""),
         whatsapp=bool(d.get("whatsapp")), do_not_call=bool(d.get("doNotCall")),
+        source=d.get("source", ""), channel=d.get("channel", ""),
+        campaign=d.get("campaign", ""), inbound=bool(d.get("inbound")),
         status="WAITING",
     )
+
+
+def _apagar_atividades(db: Session, *, lead_ids: list[int] | None = None,
+                       lead_id: int | None = None, apenas_pendentes: bool = False) -> int:
+    """Apaga atividades soltando antes o que aponta para elas.
+
+    `delivery.lead_activity_id` não tem CASCADE, então apagar a atividade
+    direto estourava FOREIGN KEY — e, quando não estourava, deixava a entrega
+    apontando para um id que o SQLite depois reaproveitava em OUTRO lead. Foi
+    o que aconteceu aqui: quatro entregas de agosto acabaram penduradas na
+    atividade de um lead criado meses depois. A entrega interessa mesmo sem a
+    atividade ("por que este lead não recebeu nada?"), então o vínculo é
+    solto, não apagado.
+    """
+    alvo = db.query(LeadActivity)
+    if lead_ids is not None:
+        alvo = alvo.filter(LeadActivity.lead_id.in_(lead_ids or [-1]))
+    if lead_id is not None:
+        alvo = alvo.filter(LeadActivity.lead_id == lead_id)
+    if apenas_pendentes:
+        alvo = alvo.filter(LeadActivity.status == "PENDING")
+    ids = [r[0] for r in alvo.with_entities(LeadActivity.id).all()]
+    if not ids:
+        return 0
+    (db.query(Delivery).filter(Delivery.lead_activity_id.in_(ids))
+     .update({"lead_activity_id": None}, synchronize_session=False))
+    n = (db.query(LeadActivity).filter(LeadActivity.id.in_(ids))
+         .delete(synchronize_session=False))
+    return n
 
 
 def _schedule_cadence(db: Session, lead: Lead) -> int:
@@ -806,7 +841,8 @@ def update_lead(lid: int, payload: dict = Body(...), db: Session = Depends(get_d
               "bestHour": "best_hour", "cadenceId": "cadence_id",
               "leadBaseId": "lead_base_id", "externalReference": "external_reference",
               "decisionLevel": "decision_level", "whatsapp": "whatsapp",
-              "doNotCall": "do_not_call"}
+              "doNotCall": "do_not_call", "source": "source", "channel": "channel",
+              "campaign": "campaign", "inbound": "inbound"}
     # Campo que não existe é erro, não silêncio: antes `cadenceId` não estava no
     # mapa e o PATCH devolvia 200 sem ter mudado nada.
     unknown = set(payload) - set(fields) - {"customFields"}
@@ -858,7 +894,7 @@ def bulk_action(payload: dict = Body(...), db: Session = Depends(get_db)):
         if not db.get(Cadence, cid):
             raise HTTPException(400, "Cadência inválida.")
         for l in leads:
-            db.query(LeadActivity).filter_by(lead_id=l.id, status="PENDING").delete()
+            _apagar_atividades(db, lead_id=l.id, apenas_pendentes=True)
             l.cadence_id = cid
             l.current_step = 0
             l.status = "SWITCHED_CADENCE"
@@ -866,7 +902,7 @@ def bulk_action(payload: dict = Body(...), db: Session = Depends(get_db)):
             _schedule_cadence(db, l)
     elif action == "back_to_waiting":
         for l in leads:
-            db.query(LeadActivity).filter_by(lead_id=l.id, status="PENDING").delete()
+            _apagar_atividades(db, lead_id=l.id, apenas_pendentes=True)
             l.status = "WAITING"
     elif action == "lost":
         reason_id = payload.get("lostReasonId")
@@ -877,8 +913,20 @@ def bulk_action(payload: dict = Body(...), db: Session = Depends(get_db)):
             db.query(LeadActivity).filter_by(lead_id=l.id, status="PENDING").update(
                 {"status": "SKIPPED", "done_at": datetime.utcnow()})
     elif action == "delete":
-        db.query(LeadActivity).filter(LeadActivity.lead_id.in_(ids)).delete(
-            synchronize_session=False)
+        _apagar_atividades(db, lead_ids=ids)
+        # A conversa é conteúdo do lead e vai junto; a ligação fica, sem o
+        # vínculo, porque o extrato tem que continuar batendo com a fatura da
+        # operadora — e `call.lead_id` não tem CASCADE, então sem soltar aqui
+        # o apagar estourava FOREIGN KEY.
+        conversas = [r[0] for r in db.query(Conversation.id)
+                     .filter(Conversation.lead_id.in_(ids)).all()]
+        if conversas:
+            (db.query(Message).filter(Message.conversation_id.in_(conversas))
+             .delete(synchronize_session=False))
+            (db.query(Conversation).filter(Conversation.id.in_(conversas))
+             .delete(synchronize_session=False))
+        (db.query(Call).filter(Call.lead_id.in_(ids))
+         .update({"lead_id": None}, synchronize_session=False))
         db.query(Lead).filter(Lead.id.in_(ids)).delete(synchronize_session=False)
     else:
         raise HTTPException(400, f"Ação desconhecida: {action}")
@@ -905,7 +953,7 @@ def start_lead(lid: int, payload: dict = Body(default={}), db: Session = Depends
         l.sdr_id = payload["sdrId"]
     if not l.cadence_id:
         raise HTTPException(400, "Escolha uma cadência antes de iniciar a execução.")
-    db.query(LeadActivity).filter_by(lead_id=lid, status="PENDING").delete()
+    _apagar_atividades(db, lead_id=lid, apenas_pendentes=True)
     l.current_step = 0
     created = _schedule_cadence(db, l)
     db.commit()

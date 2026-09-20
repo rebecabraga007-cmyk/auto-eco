@@ -534,11 +534,20 @@ def statistics(since: str | None = None, until: str | None = None,
     won, lost = won_q.all(), lost_q.all()
 
     reasons = Counter(l.lost_reason.name if l.lost_reason else "Sem motivo" for l in lost)
-    origins = defaultdict(lambda: {"won": 0, "lost": 0, "total": 0})
-    for l in won + lost:
-        key = l.lead_base.name if l.lead_base else "Sem base"
-        origins[key]["won" if l.status == "WON" else "lost"] += 1
-        origins[key]["total"] += 1
+    # Três recortes de origem: a fonte e o canal, quando o lead trouxe, e a
+    # base de importação como fallback — que é o que existia antes.
+    def _agrupa(chave):
+        saida = defaultdict(lambda: {"won": 0, "lost": 0, "total": 0})
+        for l in won + lost:
+            saida[chave(l)]["won" if l.status == "WON" else "lost"] += 1
+            saida[chave(l)]["total"] += 1
+        return [{"name": k, **v} for k, v in
+                sorted(saida.items(), key=lambda kv: -kv[1]["total"])]
+
+    origins = _agrupa(lambda l: l.lead_base.name if l.lead_base else "Sem base")
+    origins_source = _agrupa(lambda l: l.source or "Sem fonte")
+    origins_channel = _agrupa(lambda l: l.channel or "Sem canal")
+    origins_campaign = _agrupa(lambda l: l.campaign or "Sem campanha")
 
     funnel = []
     for status in ["WAITING", "EXECUTING", "ON_EXTRA_ACTIVITY", "WON", "LOST"]:
@@ -572,8 +581,9 @@ def statistics(since: str | None = None, until: str | None = None,
                      "conversion": round(len(won) / (len(won) + len(lost)) * 100, 1)
                      if (won or lost) else 0},
         "lostReasons": [{"name": k, "count": v} for k, v in reasons.most_common()],
-        "origins": [{"name": k, **v} for k, v in
-                    sorted(origins.items(), key=lambda kv: -kv[1]["total"])],
+        "origins": origins,
+        "originsBy": {"base": origins, "source": origins_source,
+                      "channel": origins_channel, "campaign": origins_campaign},
         "funnel": funnel, "cadences": cadences[:12],
     }
 
