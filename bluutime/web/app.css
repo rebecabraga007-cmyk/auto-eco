@@ -69,7 +69,7 @@
   --dot-blue: #2196f3;   /* .blue-dot — sem equivalente no original; usa o azul da casa */
   --link: #1e88e5;       /* link, .btn-primary, .tool-card code */
   --avatar-bg: #e8f4ea;  /* .avatar — fundo de avatar da Meetime (.avatar--good-fit) */
-  --icon-bg: #f7f7fb;    /* .round-icon */
+  --icon-bg: #f7f7fc;    /* .round-icon */
   --info-bg: #e3f2fd;    /* fundo de .alert-info/.pill.blue */
   --info-line: #b3e5fc;  /* borda de .alert-info */
 
@@ -80,12 +80,12 @@
 
   --ok: #2e7d32;
   --ok-bg: #e8f5e9;
-  --ok-line: #c8e6c9;
+  --ok-line: #c4e6c7;
   --warn: #ef6c00;
   --warn-bg: #fff3e0;
-  --warn-line: #ffe0b2;
+  --warn-line: #ffdfad;
   --red-bg: #ffeceb;
-  --red-line: #f5c6c3;
+  --red-line: #f4c1bb;
 }
 
 * { box-sizing: border-box; }
@@ -216,7 +216,7 @@ a:hover { color: var(--link-dark); text-decoration: none; }
   font-size: 13px;
   line-height: 1.5384616;
 }
-.dropdown-menu li a:hover { background: var(--creme-2); color: #262626; }
+.dropdown-menu li a:hover { background: var(--creme-2); color: #242826; }
 .divider { height: 1px; margin: 6px 0; overflow: hidden; background: var(--line-soft); }
 /* [FIX 2] .navbar-lg .navbar-nav>.dropdown-user img{max-height:32px} */
 .avatar {
@@ -921,7 +921,7 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  color: #8b8b8b;
+  color: #8c8c8c;
   font-size: 38px;
   pointer-events: none;
 }
