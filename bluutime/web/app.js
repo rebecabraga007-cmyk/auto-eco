@@ -7041,6 +7041,12 @@ PAGES["meu-perfil"] = {
           <input class="form-control" id="perfNome" value="${h(me.name)}"></div>
         <div class="field"><label>E-mail</label>
           <input class="form-control" value="${h(me.email)}" disabled></div>
+        <div class="field"><label for="perfRemetente">Remetente das minhas cadências
+          <span class="text-muted text-size-small">— de quem o lead vê o e-mail chegar</span></label>
+          <input class="form-control" id="perfRemetente" value="${h(me.emailFrom || "")}"
+                 placeholder="seunome@capiblu.net">
+          <span class="help-block">Precisa ser do domínio verificado para envio. Em branco, sai
+            com o remetente da empresa. A resposta continua vindo para ${h(me.email)}.</span></div>
         <div class="field"><label>Assinatura de e-mail
           <span class="text-muted text-size-small">— entra no fim de todo e-mail enviado pela cadência</span></label>
           <div class="editor-barra">
@@ -7119,6 +7125,7 @@ PAGES["meu-perfil"] = {
         const atualizado = await api("/api/me", { method: "PATCH", body: {
           name: document.getElementById("perfNome").value.trim(),
           emailSignature: document.getElementById("perfAssinatura").value,
+          emailFrom: document.getElementById("perfRemetente").value.trim(),
         } });
         state.me = { ...state.me, ...atualizado };
         document.getElementById("navUser").textContent = state.me.name;
@@ -7528,10 +7535,17 @@ async function detalheIntegracao(chave, ctx) {
               d.status === "verified" ? `<span class="pill green">verificado</span>`
                 : `<span class="pill amber">${h(d.status)}</span>`,
               h(d.regiao || "—"), h(d.envio || "—"), h(d.criado || "—"),
-              `<button class="btn btn-default btn-xs" data-dns="${h(d.nome)}">Ver DNS</button>`,
+              `<button class="btn btn-default btn-xs" data-dns="${h(d.nome)}">Ver DNS</button>
+               <button class="btn btn-default btn-xs" data-verificar="${h(d.id)}"
+                 title="Pedir ao Resend para checar o DNS de novo">Verificar</button>
+               ${nivelPeloMenos("admin")
+                 ? `<button class="btn btn-default btn-xs" data-remdom="${h(d.id)}"
+                      data-nome="${h(d.nome)}">Remover</button>` : ""}`,
             ] })), { empty: "Nenhum domínio no Resend." })
         : `<div class="alert alert-info alert-styled-left">${h(dom.motivo || "Resend não configurado.")}</div>`,
-        { subtitle: "Lidos do Resend na hora — a tela não guarda cópia" })}`;
+        { subtitle: "Lidos do Resend na hora — a tela não guarda cópia",
+          actions: dom.configurado
+            ? `<button class="btn btn-main btn-xs" id="addDominio">Adicionar domínio</button>` : "" })}`;
     fechar();
     const teste = document.getElementById("emTeste");
     if (teste) teste.onclick = () => promptOne("Enviar e-mail de teste", "Para qual endereço?",
@@ -7541,6 +7555,54 @@ async function detalheIntegracao(chave, ctx) {
           toast(r.status === "SENT" ? "E-mail enviado." : `Registrado como ${r.status}.`, "ok");
         } catch (err) { toast(err.message, "err"); }
       }, "Enviar", state.me.email);
+    const addDom = document.getElementById("addDominio");
+    if (addDom) addDom.onclick = () => {
+      const m = modal({
+        title: "Adicionar domínio de envio",
+        body: `<div class="alert alert-info alert-styled-left">
+            Isto cria o domínio na conta do Resend da BLU. Ele nasce sem verificação:
+            o que volta são os registros de DNS que alguém precisa publicar.
+          </div>
+          <div class="field"><label for="ndNome">Domínio</label>
+            <input class="form-control" id="ndNome" placeholder="suaempresa.com.br"></div>`,
+        footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+                 <button class="btn btn-main btn-sm" data-ok>Adicionar</button>`,
+      });
+      m.root.querySelector("[data-cancel]").onclick = m.close;
+      m.root.querySelector("[data-ok]").onclick = async (ev) => {
+        const nome = m.root.querySelector("#ndNome").value.trim();
+        if (!nome) return toast("Informe o domínio.", "err");
+        ev.currentTarget.disabled = true;
+        try {
+          await api("/api/flow/email/domains", { method: "POST", body: { nome } });
+          m.close();
+          toast("Domínio criado. Publique o DNS e clique em Verificar.", "ok");
+          go("integracoes");
+        } catch (e) { toast(e.message, "err"); ev.currentTarget.disabled = false; }
+      };
+    };
+    view.querySelectorAll("[data-verificar]").forEach((b) => {
+      b.onclick = async () => {
+        b.disabled = true;
+        try {
+          await api(`/api/flow/email/domains/${b.dataset.verificar}/verificar`, { method: "POST", body: {} });
+          // A verificação é assíncrona no Resend: o pedido entra, o estado muda
+          // depois. Recarregar mostra o que ele já sabe.
+          toast("Verificação pedida. O estado atualiza em alguns segundos.", "ok");
+          setTimeout(() => go("integracoes"), 2500);
+        } catch (e) { toast(e.message, "err"); b.disabled = false; }
+      };
+    });
+    view.querySelectorAll("[data-remdom]").forEach((b) => {
+      b.onclick = () => confirmDialog("Remover domínio",
+        `${b.dataset.nome} sai da conta do Resend e todo e-mail por esse domínio para de sair. Não dá para desfazer daqui.`,
+        async () => {
+          try {
+            await api(`/api/flow/email/domains/${b.dataset.remdom}`, { method: "DELETE" });
+            toast("Domínio removido.", "ok"); go("integracoes");
+          } catch (e) { toast(e.message, "err"); }
+        });
+    });
     view.querySelectorAll("[data-dns]").forEach((b) => {
       b.onclick = () => {
         const d = (dom.dominios || []).find((x) => x.nome === b.dataset.dns);

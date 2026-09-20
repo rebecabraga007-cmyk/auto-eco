@@ -86,6 +86,26 @@ def update_me(payload: dict = Body(...), db: Session = Depends(get_db)):
         u.name = name
     if "emailSignature" in payload:
         u.email_signature = payload["emailSignature"] or ""
+    if "emailFrom" in payload:
+        # Endereço fora de domínio verificado é recusado pelo provedor na hora
+        # do envio — melhor barrar aqui, com o motivo, do que descobrir na
+        # primeira cadência que não saiu.
+        novo = (payload["emailFrom"] or "").strip().lower()
+        if novo:
+            if "@" not in novo:
+                raise HTTPException(400, "Endereço inválido.")
+            dominio = novo.split("@")[-1]
+            empresa = _company(db)
+            # O domínio de referência é o do remetente da empresa; quando ela
+            # não definiu um, vale o do relay configurado no ambiente — que é
+            # o único que o provedor aceita de fato.
+            padrao = ((empresa.email_from_address or "")
+                      or os.environ.get("CAPIBLU_SMTP_DE", "")
+                      or os.environ.get("SMTP_FROM", "")).split("@")[-1].strip(" <>")
+            if padrao and dominio != padrao:
+                raise HTTPException(400, f"O domínio precisa ser {padrao} — é o verificado "
+                                         "para envio.")
+        u.email_from = novo
     db.commit()
     return user_full(u)
 
@@ -197,12 +217,11 @@ async def email_domains(db: Session = Depends(get_db)):
     A chave é a mesma senha SMTP — no Resend a senha do relay É a API key.
     """
     perm.ator(db).exigir("gestor", "ver domínios de envio")
-    chave = (os.environ.get("CAPIBLU_SMTP_SENHA") or os.environ.get("RESEND_API_KEY") or "").strip()
+    chave = _chave_resend()
     if not chave.startswith("re_"):
         return {"configurado": False,
                 "motivo": "Sem chave do Resend no ambiente — a tela não tem o que consultar.",
                 "dominios": []}
-    import httpx
     try:
         async with httpx.AsyncClient(timeout=15) as cli:
             r = await cli.get("https://api.resend.com/domains",
@@ -227,6 +246,85 @@ async def email_domains(db: Session = Depends(get_db)):
                         "prioridade": rg.get("priority")}
                        for rg in d.get("records", [])]}
         for d in lista]}
+
+
+def _chave_resend() -> str:
+    """A chave é a mesma senha SMTP — no Resend a senha do relay É a API key."""
+    return (os.environ.get("CAPIBLU_SMTP_SENHA") or os.environ.get("RESEND_API_KEY") or "").strip()
+
+
+@router.post("/flow/email/domains")
+async def criar_dominio(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Cadastra um domínio de envio no Resend.
+
+    Cria recurso na conta do provedor, então é do gestor e vem com o aviso na
+    tela. O domínio nasce sem verificação: o que ele devolve são os registros
+    de DNS que alguém precisa publicar.
+    """
+    perm.ator(db).exigir("gestor", "cadastrar domínio de envio")
+    nome = (payload.get("nome") or "").strip().lower().lstrip("@")
+    if not nome or "." not in nome or " " in nome:
+        raise HTTPException(400, "Informe um domínio válido, como suaempresa.com.br.")
+    chave = _chave_resend()
+    if not chave.startswith("re_"):
+        raise HTTPException(400, "Sem chave do Resend no ambiente.")
+    try:
+        async with httpx.AsyncClient(timeout=20) as cli:
+            r = await cli.post("https://api.resend.com/domains",
+                               headers={"Authorization": f"Bearer {chave}"},
+                               json={"name": nome, "region": payload.get("regiao") or "sa-east-1"})
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"{type(exc).__name__} ao falar com o Resend.")
+    corpo = r.json() if r.content else {}
+    if r.status_code >= 400:
+        raise HTTPException(400, corpo.get("message") or f"Resend recusou (HTTP {r.status_code}).")
+    return {"id": corpo.get("id"), "nome": corpo.get("name"), "status": corpo.get("status"),
+            "registros": corpo.get("records", [])}
+
+
+@router.post("/flow/email/domains/{did}/verificar")
+async def verificar_dominio(did: str, db: Session = Depends(get_db)):
+    """Pede ao Resend para checar o DNS de novo.
+
+    A verificação é assíncrona lá: o retorno diz que o pedido entrou, não que
+    o domínio já está verificado — por isso a tela recarrega a lista depois.
+    """
+    perm.ator(db).exigir("gestor", "verificar domínio de envio")
+    chave = _chave_resend()
+    if not chave.startswith("re_"):
+        raise HTTPException(400, "Sem chave do Resend no ambiente.")
+    try:
+        async with httpx.AsyncClient(timeout=20) as cli:
+            r = await cli.post(f"https://api.resend.com/domains/{did}/verify",
+                               headers={"Authorization": f"Bearer {chave}"})
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"{type(exc).__name__} ao falar com o Resend.")
+    if r.status_code >= 400:
+        raise HTTPException(400, f"Resend recusou (HTTP {r.status_code}).")
+    return {"ok": True}
+
+
+@router.delete("/flow/email/domains/{did}")
+async def remover_dominio(did: str, db: Session = Depends(get_db)):
+    """Remove o domínio da conta do Resend.
+
+    Some de vez, e todo envio por aquele domínio para de sair. Só admin, e a
+    tela confirma antes — é o tipo de botão que não pode ser um clique
+    distraído.
+    """
+    perm.ator(db).exigir("admin", "remover domínio de envio")
+    chave = _chave_resend()
+    if not chave.startswith("re_"):
+        raise HTTPException(400, "Sem chave do Resend no ambiente.")
+    try:
+        async with httpx.AsyncClient(timeout=20) as cli:
+            r = await cli.delete(f"https://api.resend.com/domains/{did}",
+                                 headers={"Authorization": f"Bearer {chave}"})
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"{type(exc).__name__} ao falar com o Resend.")
+    if r.status_code >= 400:
+        raise HTTPException(400, f"Resend recusou (HTTP {r.status_code}).")
+    return {"ok": True}
 
 
 @router.patch("/flow/email/configuration")

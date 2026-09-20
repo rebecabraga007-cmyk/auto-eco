@@ -23,7 +23,8 @@ def user_full(u):
     return {**user_min(u), "roles": u.role_list, "dailyGoal": u.daily_goal,
             "team": {"id": u.team.id, "name": u.team.name} if u.team else None,
             "active": u.active, "online": u.online, "created": iso(u.created_at),
-            "emailSignature": u.email_signature or ""}
+            "emailSignature": u.email_signature or "",
+            "emailFrom": u.email_from or ""}
 
 
 def client(c):

@@ -139,6 +139,10 @@ class User(Base):
     # Perfil pessoal — a assinatura entra de verdade no fim do corpo quando o
     # canal é e-mail (server/routers/envio.py); antes não existia nem o campo.
     email_signature: Mapped[str] = mapped_column(Text, default="")
+    # Remetente próprio: o Meetime conecta a caixa de cada SDR por OAuth. Aqui
+    # o relay é um só, então o que dá para ter de verdade é o endereço de
+    # quem assina — em domínio já verificado, senão o provedor recusa.
+    email_from: Mapped[str] = mapped_column(String(180), default="")
     avatar_url: Mapped[str] = mapped_column(String(300), default="")
     team: Mapped["Team | None"] = relationship(back_populates="users")
 

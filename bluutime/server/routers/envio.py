@@ -234,10 +234,15 @@ async def enviar_atividade(aid: int, payload: dict = Body(default={}),
         empresa = db.query(Company).first()
         # Sorteado antes porque a linha de Delivery só nasce depois do envio.
         token = secrets.token_urlsafe(16)
+        # Remetente do SDR quando ele tem um; senão o da empresa. O lead
+        # responde para quem está falando com ele, não para um alias genérico.
+        de_usuario = (user.email_from or "").strip() if user else ""
         resultado = await channels.send(canal, to=destino, body=corpo, subject=assunto,
                                         reply_to=(user.email if user else ""),
-                                        from_name=(empresa.email_from_name if empresa else ""),
-                                        from_addr=(empresa.email_from_address if empresa else ""),
+                                        from_name=((user.name if de_usuario and user else "")
+                                                   or (empresa.email_from_name if empresa else "")),
+                                        from_addr=(de_usuario
+                                                   or (empresa.email_from_address if empresa else "")),
                                         tracking_token=token)
     else:
         resultado = await channels.send(canal, to=destino, body=corpo, subject=assunto,
