@@ -1804,8 +1804,31 @@ PAGES.lead = {
                     .filter(Boolean).join(" · ") || "—"}${
             l.inbound ? ` · <span class="pill green">inbound</span>` : ""}
         </div>` : ""}
-      ${passos.length ? `<div class="timeline">${passos.map(passoTimeline).join("")}</div>`
-        : emptyState("Nenhum evento no histórico com esse filtro.")}`;
+      ${(() => {
+        if (!passos.length) return emptyState("Nenhum evento no histórico com esse filtro.");
+        const runs = l.prospeccoes || [];
+        if (runs.length < 2) return `<div class="timeline">${passos.map(passoTimeline).join("")}</div>`;
+        // Com mais de uma prospecção, o histórico agrupa por ela — é a única
+        // forma de saber a qual cadência cada atividade pertenceu.
+        const quando = (a) => a.originStarted || a.createdAt || a.doneAt || a.scheduledAt || "";
+        const grupos = runs.map((r, i) => {
+          const fim = r.fim || (runs[i + 1] ? runs[i + 1].inicio : "9999");
+          const doGrupo = passos.filter((a) => quando(a) >= r.inicio && quando(a) < fim);
+          return { ...r, itens: doGrupo };
+        });
+        const soltos = passos.filter((a) => !grupos.some((g) => g.itens.includes(a)));
+        return `${grupos.filter((g) => g.itens.length).map((g) => `
+            <div class="prosp-cabeca">
+              <strong>${h(g.cadencia)}</strong>
+              <span class="text-muted text-size-small">${fmtDate(g.inicio)}${
+                g.fim ? ` até ${fmtDate(g.fim)}` : " · em andamento"} · ${g.itens.length} evento(s)${
+                g.desfecho ? ` · ${h({ WON: "ganho", LOST: "perdido", SWITCHED: "trocou de cadência" }[g.desfecho] || g.desfecho)}` : ""}</span>
+            </div>
+            <div class="timeline">${g.itens.map(passoTimeline).join("")}</div>`).join("")}
+          ${soltos.length ? `<div class="prosp-cabeca"><strong>Fora de prospecção</strong>
+            <span class="text-muted text-size-small">${soltos.length} evento(s)</span></div>
+            <div class="timeline">${soltos.map(passoTimeline).join("")}</div>` : ""}`;
+      })()}`;
 
     // Reunião: o Meetime tem "agendamento" e "registro" como abas separadas.
     // Aqui é uma só, porque a reunião vira uma atividade no histórico e, se já

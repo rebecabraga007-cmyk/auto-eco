@@ -370,6 +370,27 @@ class LeadActivity(Base):
     user: Mapped["User | None"] = relationship()
 
 
+class CadenceRun(Base):
+    """Uma passagem do lead por uma cadência.
+
+    O lead carrega um `cadence_id` só, então trocar de cadência apagava a
+    memória da anterior: a linha do tempo virava uma lista corrida sem dizer
+    qual prospecção era qual. Cada linha aqui é uma prospecção, com começo,
+    fim e por que terminou.
+    """
+    __tablename__ = "cadence_run"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lead_id: Mapped[int] = mapped_column(ForeignKey("lead.id", ondelete="CASCADE"), index=True)
+    cadence_id: Mapped[int | None] = mapped_column(ForeignKey("cadence.id"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime)
+    outcome: Mapped[str] = mapped_column(String(30), default="")   # WON|LOST|SWITCHED|RESTARTED
+    lead: Mapped["Lead"] = relationship()
+    cadence: Mapped["Cadence | None"] = relationship()
+    user: Mapped["User | None"] = relationship()
+
+
 class Call(Base):
     __tablename__ = "call"
     id: Mapped[int] = mapped_column(primary_key=True)

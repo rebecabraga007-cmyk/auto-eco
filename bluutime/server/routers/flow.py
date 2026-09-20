@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from ..db import get_db
 from ..models import (Activity, Cadence, CadenceStep, CadenceUser, Call, Client,
                       Company, Conversation, CustomField, Delivery, FitscoreRule,
-                      Lead, LeadActivity,
+                      CadenceRun, Lead, LeadActivity,
                       LeadBase, LeadFeedback, LeadFieldValue, LostReason, Message,
                       Template, User, ACTIVITY_TYPES, channel_of)
 from .. import agenda, perm, render, serial, webhooks
@@ -737,6 +737,14 @@ def get_lead(lid: int, db: Session = Depends(get_db)):
     linha.sort(key=lambda r: r.get("originStarted") or r.get("createdAt")
                or r.get("doneAt") or r.get("scheduledAt") or "")
     data["timeline"] = linha
+    # Prospecções: cada passagem do lead por uma cadência, para a linha do
+    # tempo agrupar por elas em vez de virar uma lista corrida.
+    data["prospeccoes"] = [
+        {"id": r.id, "cadencia": r.cadence.name if r.cadence else "Sem cadência",
+         "inicio": serial.iso(r.started_at), "fim": serial.iso(r.ended_at),
+         "desfecho": r.outcome, "user": serial.user_min(r.user)}
+        for r in (db.query(CadenceRun).filter(CadenceRun.lead_id == lid)
+                  .order_by(CadenceRun.started_at).all())]
 
     # Contadores da sidebar do original: o que já foi feito, quantos e-mails o
     # lead abriu e se há conversa. Antes a coluna só repetia o cadastro.
@@ -844,6 +852,35 @@ def _apagar_atividades(db: Session, *, lead_ids: list[int] | None = None,
     return n
 
 
+def _abrir_prospeccao(db: Session, lead: Lead, motivo_anterior: str = "SWITCHED") -> None:
+    """Fecha a prospecção aberta (se houver) e abre uma nova.
+
+    É o que dá nome aos grupos da linha do tempo: sem isso, trocar de cadência
+    misturava as atividades das duas na mesma lista.
+    """
+    if not lead.cadence_id:
+        return
+    aberta = (db.query(CadenceRun)
+              .filter(CadenceRun.lead_id == lead.id, CadenceRun.ended_at.is_(None))
+              .order_by(CadenceRun.started_at.desc()).first())
+    if aberta is not None:
+        if aberta.cadence_id == lead.cadence_id:
+            return                     # já é esta cadência: nada a abrir
+        aberta.ended_at = datetime.utcnow()
+        aberta.outcome = motivo_anterior
+    db.add(CadenceRun(lead_id=lead.id, cadence_id=lead.cadence_id,
+                      user_id=lead.sdr_id))
+
+
+def _fechar_prospeccao(db: Session, lead: Lead, desfecho: str) -> None:
+    aberta = (db.query(CadenceRun)
+              .filter(CadenceRun.lead_id == lead.id, CadenceRun.ended_at.is_(None))
+              .order_by(CadenceRun.started_at.desc()).first())
+    if aberta is not None:
+        aberta.ended_at = datetime.utcnow()
+        aberta.outcome = desfecho
+
+
 def _schedule_cadence(db: Session, lead: Lead) -> int:
     """Agenda as atividades da cadência em dias úteis, no fuso da operação.
 
@@ -855,6 +892,7 @@ def _schedule_cadence(db: Session, lead: Lead) -> int:
     cadence = db.get(Cadence, lead.cadence_id)
     if not cadence:
         return 0
+    _abrir_prospeccao(db, lead)
     holidays = agenda.holiday_dates(db)
     start = agenda.now_local().date()
     created = 0
@@ -1343,6 +1381,7 @@ def lead_outcome(lid: int, payload: dict = Body(...), db: Session = Depends(get_
             raise HTTPException(422, "Preencha os campos obrigatórios para marcar como "
                                      f"ganho: {', '.join(faltando)}.")
         lead.status, lead.won_at = "WON", now
+        _fechar_prospeccao(db, lead, "WON")
         company = db.query(Company).first()
         if company and company.deal_feedback_enabled:
             db.add(LeadFeedback(lead_id=lid, user_id=lead.sdr_id))
@@ -1355,6 +1394,7 @@ def lead_outcome(lid: int, payload: dict = Body(...), db: Session = Depends(get_
         if reason_id and not db.get(LostReason, reason_id):
             raise HTTPException(400, "Motivo de perda inválido.")
         lead.status, lead.lost_at, lead.lost_reason_id = "LOST", now, reason_id
+        _fechar_prospeccao(db, lead, "LOST")
     else:
         raise HTTPException(400, "outcome deve ser WON ou LOST.")
     if payload.get("annotations"):
