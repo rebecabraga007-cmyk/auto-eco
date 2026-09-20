@@ -1527,86 +1527,268 @@ function openLostModal(leadId, after) {
 }
 
 /* ── Leads ───────────────────────────────────────────────────────────── */
+/* ── Lista de Leads ──────────────────────────────────────────────────────
+   Refeita contra a captura da tela real: dois cartões (busca e resultado),
+   filtro que aparece sob demanda, e a tabela de quatro colunas com o menu de
+   três pontos por linha. A versão anterior empilhava sete selects numa barra
+   e mostrava onze colunas — era outra tela. */
+const LEAD_STATUS_TAG = {
+  WAITING: "Esperando início", EXECUTING: "Prospectando",
+  ON_EXTRA_ACTIVITY: "Atividade extra", PAUSED_FROM_EXECUTING: "Pausado",
+  WON: "Ganho", LOST: "Perdido", SWITCHED_CADENCE: "Trocou cadência",
+};
+
 PAGES.leads = {
-  area: "Prospecção", title: "Leads",
+  area: "Prospecção", title: "Lista de Leads",
   async render() {
-    const f = state.leadFilter || { page: 1, limit: 50 };
+    const f = state.leadFilter || { page: 1, limit: 25 };
     const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v));
     const res = await api(`/api/flow/leads?${qs}`);
     // Guarda a página para as ações em massa saberem o que foi selecionado
     // sem pedir os leads de novo.
     state.leadsNaTela = res.data;
     const campos = state.leadFields || [];
-    const rows = res.data.map((l) => ({ cells: [
-      `<input type="checkbox" class="lead-check" value="${l.id}">`,
-      `<a data-open-lead="${l.id}"><strong>${h(l.name)}</strong></a><br>
-       <span class="text-muted text-size-small">${h(l.position || "")}</span>`,
-      l.fitscore ? `<span class="pill green" title="Lead scoring">${l.fitscore}</span>` : `<span class="text-muted">—</span>`,
-      `${h(l.company)}<br><span class="text-muted text-size-small">${h(l.cnpj || "")}</span>`,
-      `${h(l.city || "")}${l.state ? `/${h(l.state)}` : ""}`,
-      h(l.phone || "—"),
-      statusPill(l.status),
-      l.cadence ? h(l.cadence.name) : "—",
-      l.client ? `<span class="pill" style="border-color:${h(l.client.color)}">${h(l.client.name)}</span>` : "—",
-      l.sdr ? h(l.sdr.name) : "—",
-      fmtDate(l.createdAt),
-    ] }));
+    const filtroAberto = state.leadFiltroAberto || false;
+    const selecao = state.leadSelecao || false;
+
+    const FILTROS = {
+      status: ["Status", (v) => (LEAD_STATUS_TAG[v] || v)],
+      cadence_id: ["Cadência", (v) => (state.cadences.find((c) => String(c.id) === String(v)) || {}).name || v],
+      sdr_id: ["Responsável", (v) => (state.users.find((u) => String(u.id) === String(v)) || {}).name || v],
+      client_id: ["Cliente", (v) => (state.clients.find((c) => String(c.id) === String(v)) || {}).name || v],
+      field_value: ["Campo", (v) => v],
+      q: ["Busca", (v) => v],
+    };
+    const ativos = Object.keys(FILTROS).filter((k) => f[k]);
+
+    const linha = (l) => `
+      <tr>
+        ${selecao ? `<td><input type="checkbox" class="lead-check" value="${l.id}"></td>` : ""}
+        <td>
+          <div class="lead-linha">
+            <div class="lead-av">${h((l.name || "?").trim().charAt(0).toUpperCase())}</div>
+            <div>
+              <a data-open-lead="${l.id}" class="lead-nome">${h(l.name)}</a>
+              <div class="lead-empresa">${h(l.company || "—")}</div>
+            </div>
+          </div>
+        </td>
+        <td><span class="status-tag ${l.status === "WON" ? "ok" : l.status === "LOST" ? "ruim" : ""}">${
+          h(LEAD_STATUS_TAG[l.status] || l.status)}</span></td>
+        <td>${l.cadence ? h(l.cadence.name) : "—"}</td>
+        <td>${l.sdr ? h(l.sdr.name) : "—"}</td>
+        <td class="text-right">
+          <div class="kebab">
+            <button type="button" class="kebab-btn" data-kebab="${l.id}" title="Ações" aria-label="Ações">⋮</button>
+            <div class="kebab-menu" id="kb-${l.id}" hidden>
+              <a data-k-ver="${l.id}">👁 Ver</a>
+              ${l.status !== "WON" && l.status !== "LOST"
+                ? `<a data-k-ganho="${l.id}">✓ Lead ganho</a>
+                   <a data-k-perdido="${l.id}">✕ Lead perdido</a>`
+                : `<a data-k-reabrir="${l.id}">⟲ Reabrir lead</a>`}
+              <a data-k-editar="${l.id}">✎ Editar</a>
+              ${l.phone ? `<a data-k-ligar="${l.id}">☎ Registrar ligação</a>` : ""}
+            </div>
+          </div>
+        </td>
+      </tr>`;
 
     view.innerHTML = `
-      ${res.stages && res.stages.length ? `<ul class="nav nav-tabs">
-        <li${!f.stage ? ' class="active"' : ""}><a data-stage="">Todas
-          <span class="badge${!f.stage ? " badge-success" : ""}">${res.pagination.totalRowCount}</span></a></li>
-        ${res.stages.map((e) => `<li${f.stage === e.label ? ' class="active"' : ""}>
-          <a data-stage="${h(e.label)}">${h(e.label)}
-            <span class="badge${f.stage === e.label ? " badge-success" : ""}">${e.count}</span></a></li>`).join("")}
-      </ul>` : ""}
-      <div class="toolbar">
-        <input class="form-control grow" id="lq" placeholder="Buscar por nome, empresa, e-mail ou CNPJ" value="${h(f.q || "")}">
-        <select class="form-control" id="lStatus">
-          <option value="">Todas as situações</option>
-          ${Object.entries(STATUS_LABEL).map(([k, v]) => `<option value="${k}"${f.status === k ? " selected" : ""}>${v[0]}</option>`).join("")}
-        </select>
-        <select class="form-control" id="lClient">${options(state.clients, f.client_id, { blank: "Todos os clientes" })}</select>
-        <select class="form-control" id="lCad">${options(state.cadences, f.cadence_id, { blank: "Todas as cadências" })}</select>
-        <select class="form-control" id="lSdr">${options(state.users, f.sdr_id, { blank: "Todos os SDRs" })}</select>
-        ${campos.length ? `
-        <select class="form-control" id="lCampo" aria-label="Campo personalizado">
-          <option value="">Campo personalizado…</option>
-          ${campos.map((c) => `<option value="${c.id}"${String(f.field_id) === String(c.id) ? " selected" : ""}>${h(c.name)}</option>`).join("")}
-        </select>
-        <select class="form-control" id="lCampoOp" aria-label="Critério"${f.field_id ? "" : " disabled"}>
-          <option value="EQUALS"${f.field_op === "EQUALS" ? " selected" : ""}>Igual a</option>
-          <option value="LIKE"${f.field_op === "LIKE" ? " selected" : ""}>Contém</option>
-        </select>
-        <input class="form-control" id="lCampoVal" placeholder="Valor" aria-label="Valor do campo"
-          value="${h(f.field_value || "")}"${f.field_id ? "" : " disabled"}>` : ""}
-        <span class="spacer"></span>
-        <select class="form-control input-sm" id="lPorPagina" aria-label="Itens por página">
-          ${[10, 25, 50, 100].map((n) => `<option value="${n}"${Number(f.limit || 50) === n ? " selected" : ""}>${n}/página</option>`).join("")}
-        </select>
-        <a class="btn btn-default btn-xs" id="lExport" href="/api/flow/leads/export?${qs}">Exportar</a>
-        <button class="btn btn-default btn-xs" id="bulkBtn">Ações em massa</button>
-        <button class="btn btn-main btn-xs" id="newLead">Novo lead</button>
+      <div class="panel panel-flat mt-sheet-card">
+        <div class="panel-body">
+          <div class="leads-topo">
+            <h1 class="leads-titulo">Leads</h1>
+            <div>
+              <button class="btn btn-main" id="newLead">＋ Adicionar</button>
+              <span class="kebab" style="display:inline-block">
+                <button class="btn btn-default" data-kebab="import">🗋 Listas de importação ▾</button>
+                <div class="kebab-menu" id="kb-import" hidden>
+                  <a id="novaLista">＋ Importar nova lista de leads</a>
+                  <a id="verHistorico">⟲ Ver histórico</a>
+                </div>
+              </span>
+            </div>
+          </div>
+
+          <div class="busca-linha">
+            <span class="busca-icone">🔍</span>
+            <input id="lq" placeholder="Buscar lead" value="${h(f.q || "")}">
+          </div>
+
+          <button class="btn btn-default mt-10" id="abrirFiltro">＋ Adicionar Filtro</button>
+
+          ${ativos.length ? `<div class="fb-chips">
+            ${ativos.map((k) => `<span class="fb-chip">${h(FILTROS[k][0])}: <strong>${
+              h(FILTROS[k][1](f[k]))}</strong>
+              <button type="button" data-tirafiltro="${k}" aria-label="Remover filtro">×</button></span>`).join("")}
+            <button type="button" class="btn btn-default btn-xs" id="limparFiltros">Restaurar filtros</button>
+          </div>` : ""}
+
+          ${filtroAberto ? `<div class="filtro-caixa">
+            <div class="filter-row" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">
+              <div><label class="text-muted text-size-small">Status</label>
+                <select class="form-control input-sm" id="lStatus">
+                  <option value="">Todos</option>
+                  ${Object.entries(LEAD_STATUS_TAG).map(([k, v]) =>
+                    `<option value="${k}"${f.status === k ? " selected" : ""}>${v}</option>`).join("")}
+                </select></div>
+              <div><label class="text-muted text-size-small">Cadência</label>
+                <select class="form-control input-sm" id="lCad">${options(state.cadences, f.cadence_id, { blank: "Todas" })}</select></div>
+              <div><label class="text-muted text-size-small">Responsável</label>
+                <select class="form-control input-sm" id="lSdr">${options(state.users, f.sdr_id, { blank: "Todos" })}</select></div>
+              <div><label class="text-muted text-size-small">Cliente</label>
+                <select class="form-control input-sm" id="lClient">${options(state.clients, f.client_id, { blank: "Todos" })}</select></div>
+              ${campos.length ? `
+                <div><label class="text-muted text-size-small">Campo personalizado</label>
+                  <select class="form-control input-sm" id="lCampo">
+                    <option value="">—</option>
+                    ${campos.map((c) => `<option value="${c.id}"${String(f.field_id) === String(c.id) ? " selected" : ""}>${h(c.name)}</option>`).join("")}
+                  </select></div>
+                <div><label class="text-muted text-size-small">Critério</label>
+                  <select class="form-control input-sm" id="lCampoOp"${f.field_id ? "" : " disabled"}>
+                    <option value="EQUALS"${f.field_op === "EQUALS" ? " selected" : ""}>Igual a</option>
+                    <option value="LIKE"${f.field_op === "LIKE" ? " selected" : ""}>Contém</option>
+                  </select></div>
+                <div><label class="text-muted text-size-small">Valor</label>
+                  <input class="form-control input-sm" id="lCampoVal" value="${h(f.field_value || "")}"${f.field_id ? "" : " disabled"}></div>` : ""}
+            </div>
+          </div>` : ""}
+
+          <div class="dica-filtro">
+            <span class="dica-icone">?</span>
+            Filtros relativos à prospecção atual do lead.
+          </div>
+        </div>
       </div>
-      ${panel(`${res.pagination.totalRowCount} leads`,
-        table(["<input type='checkbox' id='checkAll'>", "Lead", "Score", "Empresa", "Cidade", "Telefone",
-               "Situação", "Cadência", "Cliente", "SDR", "Criado"], rows, { scroll: true }),
-        { actions: pager(res.pagination) })}`;
+
+      <div class="panel panel-flat">
+        ${res.stages && res.stages.length ? `<ul class="nav nav-tabs">
+          <li${!f.stage ? ' class="active"' : ""}><a data-stage="">Todas
+            <span class="badge${!f.stage ? " badge-success" : ""}">${res.pagination.totalRowCount}</span></a></li>
+          ${res.stages.map((e) => `<li${f.stage === e.label ? ' class="active"' : ""}>
+            <a data-stage="${h(e.label)}">${h(e.label)}
+              <span class="badge${f.stage === e.label ? " badge-success" : ""}">${e.count}</span></a></li>`).join("")}
+        </ul>` : ""}
+        <div class="panel-body">
+          <div class="leads-resumo">
+            ${res.stages && res.stages.length ? "<div></div>"
+              : `<div class="achados"><i></i>${res.pagination.totalRowCount.toLocaleString("pt-BR")} leads encontrados</div>`}
+            <div class="leads-acoes">
+              <a id="bulkBtn" class="link-acao">Ações em massa ▾</a>
+              <a class="link-acao" id="lExport" href="/api/flow/leads/export?${qs}">Exportar ▾</a>
+              <span class="por-pagina">Itens por página:
+                <select id="lPorPagina" aria-label="Itens por página">
+                  ${[10, 25, 50].map((n) => `<option value="${n}"${Number(f.limit || 25) === n ? " selected" : ""}>${n}</option>`).join("")}
+                </select>
+              </span>
+            </div>
+          </div>
+
+          ${res.data.length ? `<div class="table-responsive"><table class="table table-leads">
+            <thead><tr>
+              ${selecao ? `<th style="width:34px"><input type="checkbox" id="checkAll"></th>` : ""}
+              <th>Lead</th>
+              <th>Status <span class="dica-icone" title="Onde o lead está na prospecção">?</span></th>
+              <th>Cadência atual</th>
+              <th>Responsável atual</th>
+              <th></th>
+            </tr></thead>
+            <tbody>${res.data.map(linha).join("")}</tbody>
+          </table></div>`
+            : `<div class="vazio-registro"><div class="vazio-icone">👥</div>
+                 <h2>Nenhum registro encontrado</h2></div>`}
+
+          <div class="text-right mt-10">${pager(res.pagination)}</div>
+        </div>
+      </div>`;
 
     bindLeadFilters(f);
     view.querySelectorAll("[data-stage]").forEach((a) => {
       a.onclick = () => { state.leadFilter = { ...f, stage: a.dataset.stage, page: 1 }; go("leads"); };
     });
     document.getElementById("newLead").onclick = () => openLeadForm();
-    document.getElementById("bulkBtn").onclick = openBulkModal;
+    document.getElementById("novaLista").onclick = () => openImportWizard();
+    document.getElementById("verHistorico").onclick = () => go("bases");
+    document.getElementById("abrirFiltro").onclick = () => {
+      state.leadFiltroAberto = !filtroAberto;
+      go("leads");
+    };
+    view.querySelectorAll("[data-tirafiltro]").forEach((b) => {
+      b.onclick = () => {
+        const k = b.dataset.tirafiltro;
+        const novo = { ...f, [k]: "", page: 1 };
+        if (k === "field_value") novo.field_id = "";
+        state.leadFilter = novo;
+        go("leads");
+      };
+    });
+    const limpar = document.getElementById("limparFiltros");
+    if (limpar) limpar.onclick = () => { state.leadFilter = { page: 1, limit: f.limit || 25 }; go("leads"); };
+
+    // "Ações em massa" liga o modo de seleção — no original a tabela não tem
+    // caixa nenhuma até você pedir.
+    document.getElementById("bulkBtn").onclick = () => {
+      if (!selecao) { state.leadSelecao = true; return go("leads"); }
+      if (!selectedLeadIds().length) return toast("Marque os leads primeiro.", "err");
+      openBulkModal();
+    };
     const checkAll = document.getElementById("checkAll");
     if (checkAll) checkAll.onchange = (e) =>
       view.querySelectorAll(".lead-check").forEach((c) => { c.checked = e.target.checked; });
+
     view.querySelectorAll("[data-open-lead]").forEach((a) => {
       a.onclick = () => go(`lead/${a.dataset.openLead}`);
     });
     view.querySelectorAll("[data-goto-page]").forEach((b) => {
       b.onclick = () => { state.leadFilter = { ...f, page: Number(b.dataset.gotoPage) }; go("leads"); };
+    });
+
+    // Menu de três pontos por linha, como no original.
+    view.querySelectorAll("[data-kebab]").forEach((b) => {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        const menu = document.getElementById(`kb-${b.dataset.kebab}`);
+        view.querySelectorAll(".kebab-menu").forEach((m2) => { if (m2 !== menu) m2.hidden = true; });
+        menu.hidden = !menu.hidden;
+      };
+    });
+    document.addEventListener("click", () => {
+      view.querySelectorAll(".kebab-menu").forEach((m2) => { m2.hidden = true; });
+    }, { once: true });
+    view.querySelectorAll("[data-k-ver]").forEach((a) => {
+      a.onclick = () => go(`lead/${a.dataset.kVer}`);
+    });
+    view.querySelectorAll("[data-k-editar]").forEach((a) => {
+      a.onclick = () => openLeadForm(res.data.find((l) => String(l.id) === a.dataset.kEditar));
+    });
+    view.querySelectorAll("[data-k-ligar]").forEach((a) => {
+      a.onclick = () => openRegistrarLigacao(
+        res.data.find((l) => String(l.id) === a.dataset.kLigar), () => go("leads"));
+    });
+    view.querySelectorAll("[data-k-ganho]").forEach((a) => {
+      a.onclick = () => confirmDialog("Lead ganho",
+        "O lead sai da cadência e as atividades pendentes são descartadas.", async () => {
+          try {
+            await api(`/api/flow/execution/leads/${a.dataset.kGanho}/outcome`,
+              { method: "POST", body: { outcome: "WON" } });
+            toast("Lead marcado como ganho.", "ok"); go("leads");
+          } catch (e) { toast(e.message, "err"); }
+        });
+    });
+    view.querySelectorAll("[data-k-perdido]").forEach((a) => {
+      a.onclick = () => openLostModal(Number(a.dataset.kPerdido), () => go("leads"));
+    });
+    // Reabrir: o lead fechado volta para espera e pode entrar em cadência de
+    // novo. É a ação que o original oferece no lugar de ganho/perdido.
+    view.querySelectorAll("[data-k-reabrir]").forEach((a) => {
+      a.onclick = () => confirmDialog("Reabrir lead",
+        "O lead volta para espera, sem o desfecho anterior. O histórico fica.", async () => {
+          try {
+            await api("/api/flow/leads/bulk", { method: "POST",
+              body: { leadIds: [Number(a.dataset.kReabrir)], action: "back_to_waiting" } });
+            toast("Lead reaberto.", "ok"); go("leads");
+          } catch (e) { toast(e.message, "err"); }
+        });
     });
   },
 };
@@ -1622,10 +1804,16 @@ function bindLeadFilters(f) {
   const q = document.getElementById("lq");
   let timer;
   q.oninput = () => { clearTimeout(timer); timer = setTimeout(() => set("q", q.value), 350); };
-  document.getElementById("lStatus").onchange = (e) => set("status", e.target.value);
-  document.getElementById("lClient").onchange = (e) => set("client_id", e.target.value);
-  document.getElementById("lCad").onchange = (e) => set("cadence_id", e.target.value);
-  document.getElementById("lSdr").onchange = (e) => set("sdr_id", e.target.value);
+  // Os selects de filtro só existem com a caixa de filtro aberta — no
+  // original ela também nasce fechada, atrás do "Adicionar Filtro".
+  const liga = (id, chave) => {
+    const el = document.getElementById(id);
+    if (el) el.onchange = (e) => set(chave, e.target.value);
+  };
+  liga("lStatus", "status");
+  liga("lClient", "client_id");
+  liga("lCad", "cadence_id");
+  liga("lSdr", "sdr_id");
 
   const campo = document.getElementById("lCampo");
   if (campo) {

@@ -1610,3 +1610,95 @@ th.ord:hover { color: var(--text); }
   padding-bottom: 6px;
   border-bottom: 2px solid var(--green-label);
 }
+
+/* ── Lista de Leads, refeita contra a captura da tela real ───────────── */
+.mt-sheet-card { margin-bottom: 20px; }
+.leads-topo { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.leads-titulo { margin: 0 0 4px; font-size: 26px; font-weight: 400; color: #242826; }
+.busca-linha { position: relative; margin-top: 18px; }
+.busca-linha .busca-icone { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 13px; }
+.busca-linha input {
+  width: 100%;
+  height: 44px;
+  padding: 7px 14px 7px 38px;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+.busca-linha input:focus { outline: none; border-color: var(--green-label); background: var(--panel); }
+.filtro-caixa { margin-top: 12px; padding: 14px; background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 3px; }
+.dica-filtro { display: flex; align-items: center; gap: 8px; margin-top: 16px; font-size: 12.5px; color: var(--muted); }
+.dica-icone {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px solid var(--line-2, var(--line));
+  border-radius: 50%;
+}
+.leads-resumo { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+.achados { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; }
+.achados i { width: 8px; height: 8px; background: var(--green); border-radius: 50%; }
+.leads-acoes { display: flex; align-items: center; gap: 18px; font-size: 13px; }
+.link-acao { color: var(--link); cursor: pointer; }
+.link-acao:hover { text-decoration: underline; }
+.por-pagina { color: var(--muted); }
+.por-pagina select { height: 26px; padding: 0 4px; font-size: 13px; color: var(--text); background: none; border: 0; cursor: pointer; }
+.table-leads > thead > tr > th { font-size: 13px; font-weight: 500; color: var(--muted); text-transform: none; letter-spacing: 0; }
+.table-leads > tbody > tr > td { vertical-align: middle; }
+.lead-linha { display: flex; align-items: center; gap: 12px; }
+.lead-av {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  line-height: 34px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--creme-2);
+  border-radius: 50%;
+}
+.lead-nome { display: block; font-weight: 600; color: var(--text); text-transform: uppercase; font-size: 12.5px; cursor: pointer; }
+.lead-nome:hover { color: var(--link); }
+.lead-empresa { font-size: 12px; color: var(--muted); }
+.status-tag {
+  display: inline-block;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .1px;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--creme-2);
+  border-radius: 2px;
+}
+.status-tag.ok { color: #1b5e20; background: var(--ok-bg); }
+.status-tag.ruim { color: #b71c1c; background: var(--red-bg); }
+.kebab { position: relative; display: inline-block; }
+.kebab-btn { padding: 2px 8px; font-size: 17px; line-height: 1; color: var(--muted); background: none; border: 0; cursor: pointer; border-radius: 3px; }
+.kebab-btn:hover { background: var(--creme-2); color: var(--text); }
+.kebab-menu {
+  position: absolute;
+  z-index: 40;
+  right: 0;
+  top: calc(100% + 2px);
+  min-width: 190px;
+  padding: 6px 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .12);
+  text-align: left;
+}
+.kebab-menu a { display: block; padding: 9px 16px; font-size: 13px; color: var(--text); cursor: pointer; }
+.kebab-menu a:hover { background: var(--creme-2); }
+
+/* Estado vazio da lista, como o do original. */
+.vazio-registro { padding: 70px 0 40px; text-align: center; opacity: .22; }
+.vazio-icone { font-size: 54px; line-height: 1; }
+.vazio-registro h2 { margin: 12px 0 0; font-size: 22px; font-weight: 400; }
