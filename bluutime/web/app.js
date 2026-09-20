@@ -2,6 +2,7 @@
 
 /* ── infra ───────────────────────────────────────────────────────────── */
 const view = document.getElementById("view");
+
 const state = { me: null, clients: [], users: [], cadences: [], lostReasons: [], page: "dashboard" };
 
 async function api(path, options = {}) {
@@ -439,9 +440,24 @@ function go(name) {
   });
   view.innerHTML = LOADING;
   location.hash = name;
+  /* Cada navegação recebe uma senha. Render é assíncrono: ao trocar de aba,
+     a tela nova pode terminar ANTES da anterior, e aí a anterior escreve por
+     cima — dava a impressão de que "Visão Geral" e "Funil" estavam trocadas,
+     porque a Visão Geral busca três endpoints e o Funil busca um. Quem
+     termina fora da vez não desenha, e o `catch` também cala. */
+  const senha = (go.senha = (go.senha || 0) + 1);
   Promise.resolve(page.render(...args)).catch((e) => {
+    if (senha !== go.senha) return;
     view.innerHTML = panel("Erro", `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`);
   });
+}
+
+/** Verdadeiro enquanto esta navegação ainda é a atual.
+ *
+ * Quem escreve em `view` depois de um `await` deve conferir — é o único jeito
+ * de uma resposta atrasada não sobrescrever a tela que o usuário já pediu. */
+function naVez(senha) {
+  return senha === go.senha;
 }
 
 document.addEventListener("click", (e) => {
@@ -4246,6 +4262,7 @@ function grafLinha(serie, campo, cor, rotulo) {
 PAGES["estatisticas-ligacoes"] = {
   area: "Estatísticas", title: "Ligações",
   async render(abaUrl) {
+    const senha = go.senha;
     const aba = abaUrl || state.estLigAba || "geral";
     state.estLigAba = aba;
     const qs = filtrosQS();
@@ -4395,6 +4412,9 @@ PAGES["estatisticas-ligacoes"] = {
           bars(hst.data.map((r) => ({ label: r.label, value: r.conectadas, tone: "success" }))))}`;
     }
 
+    // A resposta pode chegar depois de a pessoa já ter trocado de aba: quem
+    // volta fora da vez não desenha, senão sobrescreve a tela pedida.
+    if (!naVez(senha)) return;
     view.innerHTML = `
       <div class="est-layout">
         <aside class="est-filtros">
@@ -4819,6 +4839,7 @@ PAGES.estatisticas = {
   // sem isso não dava para mandar link de uma visão nem voltar pelo botão do
   // navegador — toda aba era a mesma URL.
   async render(abaUrl) {
+    const senha = go.senha;
     const aba = abaUrl || state.estAba || "geral";
     state.estAba = aba;
     const clientId = state.statClient || "";
@@ -4881,7 +4902,7 @@ PAGES.estatisticas = {
       // está agora, e quanto cada cadência converte.
       const sub = state.estCadSub || "distribuicao";
       const lista = [...co.data];
-      alvo.innerHTML = `${barra}${abas}<div class="mt-10">
+      if (naVez(senha)) alvo.innerHTML = `${barra}${abas}<div class="mt-10">
         <ul class="nav nav-tabs nav-tabs-sub">
           ${[["distribuicao", "Distribuição"], ["conversao", "Taxa de conversão"]].map(([k, v]) =>
             `<li${sub === k ? ' class="active"' : ""}><a data-cadsub="${k}">${v}</a></li>`).join("")}
@@ -4916,7 +4937,7 @@ PAGES.estatisticas = {
     if (aba === "conversao") {
       const cid = state.estCadencia || (state.cadences[0] && state.cadences[0].id);
       const dados = cid ? await api(`/api/flow/statistics/cadence-steps/${cid}${filtrosQS()}`).catch(() => null) : null;
-      alvo.innerHTML = `${barra}${abas}<div class="mt-10">
+      if (naVez(senha)) alvo.innerHTML = `${barra}${abas}<div class="mt-10">
         <div class="toolbar">
           <select class="form-control" id="scCad">${options(state.cadences, cid)}</select>
           <span class="spacer text-muted text-size-small">
@@ -4952,7 +4973,7 @@ PAGES.estatisticas = {
     if (aba === "motivos") {
       const por = state.estMotivoPor || "reason";
       const lr = await api(`/api/flow/statistics/lost-reasons${filtrosQS({ by: por })}`);
-      alvo.innerHTML = `${barra}${abas}<div class="mt-10">
+      if (naVez(senha)) alvo.innerHTML = `${barra}${abas}<div class="mt-10">
         <ul class="nav nav-tabs nav-tabs-sub">
           ${[["reason", "Por motivo"], ["user", "Por usuário"], ["team", "Por time"], ["cadence", "Por cadência"]]
             .map(([k, v]) => `<li${por === k ? ' class="active"' : ""}><a data-smpor="${k}">${v}</a></li>`).join("")}
@@ -4975,7 +4996,7 @@ PAGES.estatisticas = {
     if (aba === "email") {
       const e = await api(`/api/flow/statistics/email${periodoQS()}`);
       const r = e.resumo;
-      alvo.innerHTML = `${barra}${abas}<div class="mt-10">
+      if (naVez(senha)) alvo.innerHTML = `${barra}${abas}<div class="mt-10">
         ${!e.rastreioLigado ? `<div class="alert alert-info alert-styled-left">
           Rastreio de abertura e clique <strong>desligado</strong>. Envio e falha já são
           contados; abertura e clique só passam a contar depois de ligar
@@ -5025,7 +5046,7 @@ PAGES.estatisticas = {
       const d = await api(`/api/flow/statistics/performance${filtrosQS()}`);
       const somaTipo = (chave) => d.performances.reduce((n, p) => n + p[chave], 0);
       const outras = Object.entries(d.geral.outrasSituacoes || {});
-      alvo.innerHTML = `${barra}${abas}<div class="mt-10">
+      if (naVez(senha)) alvo.innerHTML = `${barra}${abas}<div class="mt-10">
         <div class="two-col">
           ${panel("", `<div class="ganhos-cartao">
             <h1>${d.geral.ganhos}</h1>
@@ -5079,7 +5100,7 @@ PAGES.estatisticas = {
 
     if (aba === "resposta") {
       const r = await api(`/api/flow/statistics/response-time${filtrosQS()}`);
-      alvo.innerHTML = `${barra}${abas}<div class="mt-10">
+      if (naVez(senha)) alvo.innerHTML = `${barra}${abas}<div class="mt-10">
         ${kpis([
           { value: `${r.percentual}%`, label: `Abordados em até ${r.metaHoras}h`, tone: "success" },
           { value: `${r.mediaHoras}h`, label: "Tempo médio até a 1ª abordagem", tone: "info" },
@@ -5166,7 +5187,7 @@ PAGES.estatisticas = {
       </div>`;
     };
 
-    alvo.innerHTML = `
+    if (naVez(senha)) alvo.innerHTML = `
       <div class="ativ-cabecalho">
         <div class="ativ-universo">
           <div class="numero">${at.leadsComAtividade.toLocaleString("pt-BR")}</div>
