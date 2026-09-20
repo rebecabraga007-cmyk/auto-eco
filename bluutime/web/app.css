@@ -1223,7 +1223,25 @@ body.app-loading .page-container { opacity: .35; }
 /* ── Componentes acrescentados na adaptação do CapiBLU ──────────────────
    Todos no desenho legado: retangular, denso, borda seca, 10px caixa-alta. */
 
-.input-sm { height: 32px; padding: 5px 9px; font-size: 12px; }
+/* Tamanhos de campo e utilitários de espaço, com os valores do original.
+   Estes já apareciam no HTML e não tinham regra nenhuma: o `.input-xs` de
+   um <select> ficava com a altura cheia do .form-control. */
+.input-sm { height: 34px; padding: 6px 11px; font-size: 12px; line-height: 1.6666667; border-radius: 2px; }
+.input-xs { height: 32px; padding: 5px 10px; font-size: 12px; line-height: 1.6666667; border-radius: 2px; }
+.mt-5 { margin-top: 5px; }
+.mt-15 { margin-top: 15px; }
+.mt-20 { margin-top: 20px; }
+.mt-25 { margin-top: 25px; }
+.mt-30 { margin-top: 30px; }
+.mb-5 { margin-bottom: 5px; }
+.mb-10 { margin-bottom: 10px; }
+.mb-15 { margin-bottom: 15px; }
+.p-20 { padding: 20px; }
+.no-margin { margin: 0; }
+.pull-right { float: right; }
+.text-bold { font-weight: 700; }
+.text-regular { font-weight: 400; }
+.text-success { color: #43a047; }
 
 /* Alerta de aviso — faltava o tom âmbar para veredito negativo. */
 .alert-warning {
@@ -1828,3 +1846,11 @@ tr.linha-padrao > td { background: rgba(0, 0, 0, .03); }
 .radio-custom { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; cursor: pointer; }
 .radio-custom input { margin: 0; }
 .radio-custom span { font-size: 13px; }
+
+/* Seções dentro de um painel (o `.content-group` do original): título
+   normal com a explicação embaixo, e cabeçalho dobrável para as listas. */
+.secao { margin: 0 0 10px; font-size: 15px; font-weight: 400; color: var(--text); }
+.secao small { display: block; margin-top: 3px; font-size: 12.5px; color: var(--muted); }
+.secao-dobra { display: flex; align-items: center; gap: 6px; margin: 18px 0 6px;
+  font-size: 13px; font-weight: 400; color: var(--text); cursor: pointer; }
+.secao-dobra span { font-size: 10px; color: var(--muted); }

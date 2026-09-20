@@ -3361,6 +3361,15 @@ function openActivityForm(act) {
 }
 
 /* ── Bases de leads ──────────────────────────────────────────────────── */
+const BASE_STATUS = {
+  COMPLETED: ["Completado", "green", ""],
+  PROCESSING: ["Processando", "amber", "Os leads dessa importação ainda estão sendo processados"],
+  QUEUED_FOR_PROCESSING: ["Na fila", "amber", "Os leads dessa importação ainda estão sendo processados"],
+  DELETING: ["Deletando", "amber", "Os leads dessa importação estão sendo deletados"],
+  FAILED: ["Falhou", "red", "A importação não terminou — refaça o envio do arquivo"],
+  DRAFT: ["Rascunho", "grey", "O arquivo subiu mas o mapeamento não foi concluído"],
+};
+
 PAGES.bases = {
   area: "Prospecção", title: "Bases de leads",
   async render() {
@@ -3373,7 +3382,10 @@ PAGES.bases = {
       (b.discardedSample || []).length
         ? `<a data-descartes="${b.id}">${b.discardedLeads}</a>`
         : b.discardedLeads,
-      `<span class="pill ${b.status === "COMPLETED" ? "green" : b.status === "FAILED" ? "red" : "amber"}">${h(b.status)}</span>`,
+      (() => {
+        const [rotulo, tom, dica] = BASE_STATUS[b.status] || [b.status, "grey", ""];
+        return `<span class="pill ${tom}"${dica ? ` title="${h(dica)}"` : ""}>${h(rotulo)}</span>`;
+      })(),
       b.createdBy ? h(b.createdBy.name) : "—",
       fmtDate(b.created),
       `${b.status === "DRAFT"
@@ -3392,9 +3404,14 @@ PAGES.bases = {
         <button class="btn btn-default btn-xs" id="importCsv">Importar CSV</button>
         <button class="btn btn-main btn-xs" data-page="capiblu-empresas">Montar no CapiBLU</button>
       </div>
-      ${panel("Bases de leads",
-        table(["Base", "Origem", "Cliente", "Leads", "Descartados", "Situação", "Criada por", "Data", ""], rows, { scroll: true }),
-        { subtitle: "Base vinda do CapiBLU guarda a consulta que a gerou — dá para reexecutar" })}`;
+      ${panel("Histórico de importação de leads",
+        table(["Base", "Origem", "Cliente", "Leads",
+               `<span title="Motivos: - Lead já em prospecção; - Campos obrigatórios não preenchidos; - E-mail duplicado ou inválido.">Leads descartados</span>`,
+               "Situação", "Importado por", "Data de criação", ""], rows,
+              { scroll: true, empty: "Você ainda não importou nenhuma base de leads",
+                emptyHint: "Use o botão Importar CSV acima para iniciar importação." }),
+        { subtitle: "Base vinda do CapiBLU guarda a consulta que a gerou — dá para reexecutar",
+          actions: `<a class="link-acao" data-page="leads">‹ Voltar para a lista de leads</a>` })}`;
 
     document.getElementById("importCsv").onclick = () => openImportWizard();
     // Importação interrompida: o arquivo ficou no servidor, então dá para
@@ -8213,12 +8230,6 @@ PAGES.ajustes = {
           <a data-cfgaba="${k}">${rot}</a></li>`).join("")}
       </ul>
       ${panel("Configurações gerais", `
-        <div class="filter-row" style="grid-template-columns:1fr">
-          <div><label class="text-muted text-size-small">Dias úteis <span class="text-grey">— a fila não agenda fora deles</span></label>
-            <div class="chip-grid" id="cfgDias">
-              ${DIAS_SEMANA.map(([v, t]) => `<button type="button" class="chip${cfg.workingDays.includes(v) ? " active" : ""}" data-v="${v}">${t}</button>`).join("")}
-            </div></div>
-        </div>
         <div class="toolbar" style="border:0;padding:8px 0;background:none;flex-wrap:wrap;gap:14px">
           <label><input type="checkbox" id="cfgABS"${cfg.accountBasedSalesEnabled ? " checked" : ""}>
             Vendas por conta <span class="text-muted text-size-small">— mesmo domínio de e-mail cai sempre com o mesmo vendedor</span></label>
@@ -8436,11 +8447,28 @@ PAGES.ajustes = {
                    data-nome="${h(x.name || x.date)}">Remover</button>`] })),
           { empty: "Nenhum." });
         return panel("Calendário de trabalho", `
-          <h4 class="mt-10">Próximos (${proximos.length})</h4>${linhas(proximos)}
-          <h4 class="mt-10">Já passaram (${passados.length})</h4>${linhas(passados.slice(0, 12))}`,
-          { subtitle: `Dias úteis: ${cfg.workingDays.map((v) => DIAS_SEMANA.find(([d]) => d === v)[1]).join(", ")}. `
-                      + "A fila não agenda atividade fora deles.",
-            actions: `<button class="btn btn-main btn-xs" id="newHoliday">Adicionar feriado</button>` });
+          <h3 class="secao">Dias úteis da semana
+            <small>Defina os dias da semana em que as atividades de cadência podem ser programadas
+              automaticamente.</small></h3>
+          <div class="chip-grid" id="cfgDias">
+            ${DIAS_SEMANA.map(([v, t]) => `<button type="button" class="chip${cfg.workingDays.includes(v) ? " active" : ""}" data-v="${v}"
+              title="${cfg.workingDays.length === 1 && cfg.workingDays.includes(v)
+                ? "Deve haver pelo menos um dia útil selecionado" : t}">${t}</button>`).join("")}
+          </div>
+          <h3 class="secao mt-20">Feriados
+            <small>Cadastre feriados para que atividades agendadas nesses dias sejam automaticamente
+              reagendadas para o próximo dia útil.</small></h3>
+          <h5 class="secao-dobra" data-dobra="feriadosProximos">Próximos feriados
+            <span>${state.feriadosProximos === false ? "▸" : "▾"}</span></h5>
+          ${state.feriadosProximos === false ? "" : (proximos.length
+            ? linhas(proximos)
+            : `<p class="text-muted text-center" style="padding:20px">Nenhum feriado cadastrado.</p>`)}
+          <h5 class="secao-dobra" data-dobra="feriadosPassados">Feriados passados
+            <span>${state.feriadosPassados ? "▾" : "▸"}</span></h5>
+          ${state.feriadosPassados ? (passados.length
+            ? linhas(passados.slice(0, 12))
+            : `<p class="text-muted text-center" style="padding:20px">Nenhum feriado passado.</p>`) : ""}`,
+          { actions: `<button class="btn btn-main btn-xs" id="newHoliday">Adicionar feriado</button>` });
       })()}
 
       ${panel("E-mail — remetente", `
@@ -8566,8 +8594,24 @@ PAGES.ajustes = {
 
     document.getElementById("cfgDias").onclick = (e) => {
       const b = e.target.closest(".chip"); if (!b) return;
+      // Sem dia útil nenhum a fila não agenda nada: o original trava o
+      // último marcado em vez de deixar desmarcar e descobrir depois.
+      const marcados = view.querySelectorAll("#cfgDias .chip.active").length;
+      if (b.classList.contains("active") && marcados === 1) {
+        return toast("Deve haver pelo menos um dia útil selecionado.", "err");
+      }
       b.classList.toggle("active");
     };
+    // As duas listas de feriado dobram, como no original — a de passados
+    // nasce fechada porque não é dela que alguém precisa ao abrir a tela.
+    view.querySelectorAll("[data-dobra]").forEach((cab) => {
+      cab.onclick = () => {
+        const chave = cab.dataset.dobra;
+        state[chave] = chave === "feriadosProximos"
+          ? state[chave] === false : !state[chave];
+        go("ajustes");
+      };
+    });
     document.getElementById("cfgSalvar").onclick = async (e) => {
       const btn = e.currentTarget;
       const dias = [...view.querySelectorAll("#cfgDias .chip.active")].map((b) => Number(b.dataset.v));
