@@ -569,12 +569,21 @@ PAGES.dashboard = {
             <div class="text-muted text-size-small mt-10">
               Meta do mês ${a.meta} · esperado até hoje ${a.esperadoAteHoje}<br>
               ${a.mediaDiaria}/dia útil${a.atrasadas ? ` · <span class="text-muted">${a.atrasadas} fora do prazo</span>` : ""}</div>
+            ${g.ranking.length ? `<div class="mini-rank">
+              ${[...g.ranking].sort((x, y) => y.activities - x.activities).slice(0, 3).map((r) => `
+                <div><span>${h(r.user.name)}</span><b>${r.activities}</b></div>`).join("")}
+            </div>` : ""}
           </div>
           <div class="kpi">
             <div class="number">${ind.leads.finalizados}</div>
-            <div class="caption">Leads finalizados</div>
+            <div class="caption">Leads finalizados
+              ${esforco && esforco.leadsNeeded
+                ? `<span class="pill ${ind.leads.finalizados >= esforco.leadsNeeded ? "green" : "amber"}">
+                     meta ${esforco.leadsNeeded}</span>` : ""}</div>
             <div class="text-muted text-size-small mt-10">
-              ${ind.leads.prospectando} prospectando · ${ind.leads.aguardando} aguardando início</div>
+              ${ind.leads.prospectando} prospectando · ${ind.leads.aguardando} aguardando início
+              ${esforco && esforco.leadsNeeded ? `<br>a meta de oportunidades exige
+                ${esforco.leadsNeeded} leads finalizados na conversão alvo` : ""}</div>
           </div>
           <div class="kpi">
             <div class="number">${g.actual.conversion}%</div>
@@ -582,7 +591,10 @@ PAGES.dashboard = {
               <span class="pill ${g.actual.conversion >= Math.round(g.goal.conversionRate * 100) ? "green" : "amber"}">
                 meta ${Math.round(g.goal.conversionRate * 100)}%</span></div>
             <div class="text-muted text-size-small mt-10">
-              ${g.actual.won} ganhos de ${g.actual.won + g.actual.lost} finalizados</div>
+              ${g.actual.won} ganhos de ${g.actual.won + g.actual.lost} finalizados<br>
+              ${g.ranking.length
+                ? `média de ${(g.actual.won / g.ranking.length).toFixed(1)} oportunidade(s) por vendedor`
+                : "sem vendedor com movimento"}</div>
           </div>
         </div>`;
       })()}
@@ -4205,13 +4217,38 @@ PAGES.estatisticas = {
           { value: r.falhas + r.bloqueados, label: "Falhas e bloqueios", tone: "danger" },
         ])}
         ${panel("Por modelo de mensagem",
-          table(["Modelo", "Enviados", "Abertos", "Abertura", "Clicados", "Clique"],
+          table(["Modelo", "Enviados", "Abertos", "Abertura", "Clicados", "Clique", ""],
             e.porModelo.map((m) => ({ cells: [h(m.modelo), m.enviados, m.abertos,
-              `${m.taxaAbertura}%`, m.clicados, `${m.taxaClique}%`] })),
+              `${m.taxaAbertura}%`, m.clicados, `${m.taxaClique}%`,
+              `<button class="btn btn-default btn-xs" data-previa="${h(m.modelo)}">Prévia</button>`] })),
             { empty: "Nenhum e-mail enviado no período." }),
           { subtitle: "Falha aqui é recusa do provedor no envio. Bounce que chega depois só apareceria com webhook do Resend — não está contado." })}
       </div>`;
-      return ligar();
+      ligar();
+      // Prévia do template, como no original: o número por modelo não diz nada
+      // sem lembrar o que o modelo escreve.
+      view.querySelectorAll("[data-previa]").forEach((b) => {
+        b.onclick = async () => {
+          const m = modal({ wide: true, title: `Modelo — ${b.dataset.previa}`, body: LOADING,
+            footer: `<button class="btn btn-main btn-sm" data-close-previa>Fechar</button>` });
+          m.root.querySelector("[data-close-previa]").onclick = m.close;
+          try {
+            const modelos = await api("/api/flow/templates");
+            const t = (modelos.data || modelos).find((x) => x.name === b.dataset.previa
+              || x.subject === b.dataset.previa);
+            m.root.querySelector(".modal-body").innerHTML = t
+              ? `<div class="info-linha"><span>Assunto</span><strong>${h(t.subject || "—")}</strong></div>
+                 <div class="json-box" style="max-height:320px;white-space:pre-wrap">${
+                   h((t.html || t.body || "").replace(/<[^>]+>/g, " ").trim() || "Sem corpo.")}</div>`
+              : `<p class="text-muted">Este modelo não está mais cadastrado — o número acima é do
+                 histórico de envio, que fica mesmo depois de apagar o modelo.</p>`;
+          } catch (err) {
+            m.root.querySelector(".modal-body").innerHTML =
+              `<div class="alert alert-danger alert-styled-left">${h(err.message)}</div>`;
+          }
+        };
+      });
+      return;
     }
 
     if (aba === "desempenho") {
@@ -4222,6 +4259,13 @@ PAGES.estatisticas = {
           { value: d.geral.ganhos, label: "Leads ganhos", tone: "success" },
           { value: d.performances.length, label: "Vendedores no período", tone: "info" },
         ])}
+        ${panel("Execução por tipo de atividade",
+          bars([["Ligações", d.performances.reduce((n, p) => n + p.ligacoes, 0), "warning"],
+                ["E-mails", d.performances.reduce((n, p) => n + p.emails, 0), "info"],
+                ["Pesquisas", d.performances.reduce((n, p) => n + p.pesquisas, 0), "success"],
+                ["Social", d.performances.reduce((n, p) => n + p.social, 0), "success"]]
+               .map(([label, value, tone]) => ({ label, value, tone }))),
+          { subtitle: "O total do time por canal — a tabela abaixo abre por pessoa" })}
         ${panel("Qual a eficiência dos vendedores",
           table(["Vendedor", "Atividades", "Execução geral", "Ligações", "Significativas", "Pesquisas", "Social", "E-mails", "Ganhos"],
             d.performances.map((p) => ({ cells: [
@@ -4315,12 +4359,44 @@ PAGES.relatorios = {
               <div class="text-muted text-size-small mt-10">
                 Período: ${since ? fmtDate(since) : "início"} a ${until ? fmtDate(until) : "hoje"}
               </div>
-              <a class="btn btn-main btn-xs mt-10" href="/api/reports/${h(r.key)}${periodoQS()}">Baixar CSV</a>
+              <button class="btn btn-main btn-xs mt-10" data-gerar="${h(r.key)}" data-nome="${h(r.name)}">Gerar relatório</button>
             </div>` : ""}
           </div>`).join("")}
       </div>
       <p class="text-muted text-size-small mt-10">CSV com ponto-e-vírgula, compatível com Excel pt-BR.</p>`;
     ligarFiltros(() => go("relatorios"));
+    // O original confirma o período antes de gerar: o arquivo sai grande e
+    // baixar o mês errado custa a espera inteira de novo.
+    view.querySelectorAll("[data-gerar]").forEach((b) => {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        const { since: s0, until: u0 } = periodoDatas();
+        const m = modal({
+          title: `Gerar "${b.dataset.nome}"`,
+          body: `<div class="field-row">
+              <div class="field"><label for="rpDe">De</label>
+                <input class="form-control" type="date" id="rpDe" value="${h(s0 || "")}"></div>
+              <div class="field"><label for="rpAte">Até</label>
+                <input class="form-control" type="date" id="rpAte" value="${h(u0 || "")}"></div>
+            </div>
+            <p class="text-muted text-size-small">CSV com ponto-e-vírgula, compatível com Excel pt-BR.
+              O relatório de Leads ignora o período: ele é a base inteira.</p>`,
+          footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+                   <button class="btn btn-main btn-sm" data-ok>Baixar</button>`,
+        });
+        m.root.querySelector("[data-cancel]").onclick = m.close;
+        m.root.querySelector("[data-ok]").onclick = () => {
+          const de = m.root.querySelector("#rpDe").value;
+          const ate = m.root.querySelector("#rpAte").value;
+          if (de && ate && de > ate) return toast("A data inicial é depois da final.", "err");
+          const qs = new URLSearchParams();
+          if (de) qs.set("since", de);
+          if (ate) qs.set("until", ate);
+          window.location.href = `/api/reports/${b.dataset.gerar}?${qs}`;
+          m.close();
+        };
+      };
+    });
     view.querySelectorAll("[data-rel]").forEach((c) => {
       c.onclick = () => {
         state.relatorioAberto = state.relatorioAberto === c.dataset.rel ? "" : c.dataset.rel;
@@ -4531,6 +4607,23 @@ PAGES["feedback-oportunidade"] = {
       return;
     }
 
+    // Ordenação por coluna, como na lista do original.
+    const ord = state.fbOrdem || { campo: "", dir: -1 };
+    if (ord.campo) {
+      const valor = (x) => ({
+        lead: (x.leadName || "").toLowerCase(),
+        empresa: (x.company || "").toLowerCase(),
+        cadencia: ((x.cadence || {}).name || "").toLowerCase(),
+        vendedor: ((x.user || {}).name || "").toLowerCase(),
+        ganho: x.createdAt || "", respondido: x.filledAt || "", reuniao: x.meetingAt || "",
+      }[ord.campo]);
+      lista.items.sort((a, b) => {
+        const va = valor(a), vb = valor(b);
+        return va === vb ? 0 : (va > vb ? 1 : -1) * ord.dir;
+      });
+    }
+    const thFb = (campo, rotulo) => `<span class="ord" data-fbord="${campo}" style="cursor:pointer">${rotulo}${
+      ord.campo === campo ? (ord.dir === 1 ? " ▲" : " ▼") : ""}</span>`;
     const check = (id) => gestor ? `<input type="checkbox" class="fb-check" value="${id}">` : "";
     const cabecalho = gestor
       ? [`<input type="checkbox" id="fbTodos" title="Selecionar todos" aria-label="Selecionar todos">`]
@@ -4540,7 +4633,9 @@ PAGES["feedback-oportunidade"] = {
       body.innerHTML = `
         <p class="text-muted text-size-small">${lista.total} pendente${lista.total === 1 ? "" : "s"}${
           f.q || Object.keys(FB_ROTULO).some((k) => f[k]) ? " no recorte atual" : ""}.</p>
-        ${table([...cabecalho, "Lead", "Empresa", "Cadência", "Dono do lead", "Vendedor", "Ganho em", ""],
+        ${table([...cabecalho, thFb("lead", "Lead"), thFb("empresa", "Empresa"),
+                 thFb("cadencia", "Cadência"), "Dono do lead", thFb("vendedor", "Vendedor"),
+                 thFb("ganho", "Ganho em"), ""],
           lista.items.map((x) => ({ cells: [
             ...(gestor ? [check(x.id)] : []),
             `<a data-lead="${x.leadId}">${h(x.leadName)}</a>`,
@@ -4555,8 +4650,9 @@ PAGES["feedback-oportunidade"] = {
       body.innerHTML = `
         <p class="text-muted text-size-small">${lista.total} respondido${lista.total === 1 ? "" : "s"}${
           f.q || Object.keys(FB_ROTULO).some((k) => f[k]) ? " no recorte atual" : ""}.</p>
-        ${table([...cabecalho, "Lead", "Empresa", "Cadência", "Vendedor", "Resultado", "Reunião em",
-                 "Qualificação", "Respondido em", ""],
+        ${table([...cabecalho, thFb("lead", "Lead"), thFb("empresa", "Empresa"),
+                 thFb("cadencia", "Cadência"), thFb("vendedor", "Vendedor"), "Resultado",
+                 thFb("reuniao", "Reunião em"), "Qualificação", thFb("respondido", "Respondido em"), ""],
           lista.items.map((x) => ({ cells: [
             ...(gestor ? [check(x.id)] : []),
             `<a data-lead="${x.leadId}">${h(x.leadName)}</a>`,
@@ -4575,6 +4671,14 @@ PAGES["feedback-oportunidade"] = {
         ${panel("Feedbacks ao longo do tempo", fbSerieChart(stats.serie))}`;
     }
 
+    body.querySelectorAll("[data-fbord]").forEach((t) => {
+      t.onclick = () => {
+        const campo = t.dataset.fbord;
+        const atual = state.fbOrdem || { campo: "", dir: -1 };
+        state.fbOrdem = { campo, dir: atual.campo === campo ? -atual.dir : -1 };
+        go(`feedback-oportunidade/${modo}`);
+      };
+    });
     body.querySelectorAll("[data-lead]").forEach((a) => {
       a.onclick = () => go(`lead/${a.dataset.lead}`);
     });
@@ -6881,9 +6985,12 @@ PAGES["meu-perfil"] = {
             ${me.avatarUrl ? `<img src="${h(me.avatarUrl)}" alt="" style="width:100%;height:100%;object-fit:cover">`
                            : h(me.initials || "?")}
           </div>
-          <div class="mt-10"><label class="btn btn-default btn-xs" style="cursor:pointer">
-            Trocar foto<input type="file" id="avatarInput" accept="image/*" hidden></label>
-            <span class="text-muted text-size-small ml-5">JPG/PNG, até 4MB</span></div>
+          <label class="dropzone mt-10" id="avatarDrop" style="padding:14px">
+            <input type="file" id="avatarInput" accept="image/*" hidden>
+            <div class="text-size-small"><strong>Arraste uma foto aqui</strong> ou clique para escolher</div>
+            <div class="text-muted text-size-small" id="avatarInfo">JPG ou PNG, até 4 MB</div>
+            <div class="barra-progresso" id="avatarBarra" hidden><span></span></div>
+          </label>
         </div>
         <div class="field"><label for="perfNome">Nome</label>
           <input class="form-control" id="perfNome" value="${h(me.name)}"></div>
@@ -6891,23 +6998,75 @@ PAGES["meu-perfil"] = {
           <input class="form-control" value="${h(me.email)}" disabled></div>
         <div class="field"><label>Assinatura de e-mail
           <span class="text-muted text-size-small">— entra no fim de todo e-mail enviado pela cadência</span></label>
-          <textarea class="form-control" id="perfAssinatura" rows="4">${h(me.emailSignature || "")}</textarea></div>
+          <div class="editor-barra">
+            ${[["b", "<b>", "</b>", "negrito"], ["i", "<i>", "</i>", "itálico"],
+               ["a", '<a href="">', "</a>", "link"], ["br", "<br>", "", "quebra de linha"]]
+              .map(([k, ab, fe, t]) => `<button type="button" class="btn btn-default btn-xs"
+                data-fmt="${k}" data-ab="${h(ab)}" data-fe="${h(fe)}" title="${t}">${k === "br" ? "↵" : k}</button>`).join("")}
+            <span class="text-muted text-size-small">HTML simples — o que entra aqui vai no rodapé do e-mail</span>
+          </div>
+          <textarea class="form-control" id="perfAssinatura" rows="4">${h(me.emailSignature || "")}</textarea>
+          <div class="assinatura-previa" id="assinaturaPrevia"></div></div>
         <div class="toolbar mt-10" style="border:0;padding:0;background:none">
           <span class="spacer"></span>
           <button class="btn btn-main btn-sm" id="perfSalvar">Atualizar dados</button>
         </div>`)}`;
 
-    document.getElementById("avatarInput").onchange = async (e) => {
-      const file = e.target.files[0];
+    const avatarInfo = document.getElementById("avatarInfo");
+    const avatarBarra = document.getElementById("avatarBarra");
+    const mandarFoto = async (file) => {
       if (!file) return;
+      if (!/^image\//.test(file.type)) return toast("Só imagem (JPG ou PNG).", "err");
+      if (file.size > 4 * 1024 * 1024) {
+        return toast(`A foto tem ${(file.size / 1048576).toFixed(1)} MB; o limite é 4 MB.`, "err");
+      }
+      avatarInfo.textContent = `Enviando ${file.name}…`;
+      avatarBarra.hidden = false;
       try {
         const atualizado = await apiUpload("/api/me/avatar", file);
         state.me = { ...state.me, ...atualizado };
         renderNavAvatar();
         toast("Foto atualizada.", "ok");
         go("meu-perfil");
-      } catch (err) { toast(err.message, "err"); }
+      } catch (err) {
+        avatarBarra.hidden = true;
+        avatarInfo.textContent = "JPG ou PNG, até 4 MB";
+        toast(err.message, "err");
+      }
     };
+    document.getElementById("avatarInput").onchange = (e) => mandarFoto(e.target.files[0]);
+    const zona = document.getElementById("avatarDrop");
+    if (zona) {
+      ["dragenter", "dragover"].forEach((ev) => zona.addEventListener(ev, (e) => {
+        e.preventDefault(); zona.classList.add("sobre");
+      }));
+      ["dragleave", "drop"].forEach((ev) => zona.addEventListener(ev, (e) => {
+        e.preventDefault(); zona.classList.remove("sobre");
+      }));
+      zona.addEventListener("drop", (e) => mandarFoto(e.dataTransfer.files[0]));
+    }
+    // Editor mínimo: envolve a seleção na marcação e mostra como vai ficar.
+    const assinatura = document.getElementById("perfAssinatura");
+    const previa = document.getElementById("assinaturaPrevia");
+    const pintarPrevia = () => {
+      previa.innerHTML = assinatura.value
+        ? `<span class="text-muted text-size-small">Prévia:</span><div>${assinatura.value}</div>`
+        : "";
+    };
+    view.querySelectorAll("[data-fmt]").forEach((b) => {
+      b.onclick = () => {
+        const ini = assinatura.selectionStart, fim = assinatura.selectionEnd;
+        const meio = assinatura.value.slice(ini, fim);
+        assinatura.value = assinatura.value.slice(0, ini) + b.dataset.ab + meio
+          + b.dataset.fe + assinatura.value.slice(fim);
+        assinatura.focus();
+        assinatura.selectionStart = assinatura.selectionEnd = ini + b.dataset.ab.length + meio.length;
+        pintarPrevia();
+      };
+    });
+    assinatura.oninput = pintarPrevia;
+    pintarPrevia();
+
     document.getElementById("perfSalvar").onclick = async (e) => {
       const btn = e.currentTarget;
       btn.disabled = true;
@@ -7417,7 +7576,10 @@ async function detalheIntegracao(chave, ctx) {
       { scroll: true, empty: "Nenhum webhook." })
       + (souAdmin ? "" : `<div class="alert alert-info alert-styled-left mt-10">
            Só administradores gerenciam webhooks.</div>`),
-      { actions: souAdmin ? `<button class="btn btn-main btn-xs" id="newHook">Novo webhook</button>` : "" })}`;
+      { subtitle: "O corpo do evento é o mesmo JSON que a API devolve para o objeto — lead em LEAD.*, atividade em ACTIVITY.DONE",
+        actions: souAdmin
+          ? `<a class="btn btn-default btn-xs" href="/docs#/default" target="_blank" rel="noopener">Ver o formato na API</a>
+             <button class="btn btn-main btn-xs" id="newHook">Novo webhook</button>` : "" })}`;
   fechar();
   // O PATCH existia no backend desde sempre, mas não havia botão: um webhook
   // com destino fora do ar só podia ser removido, nunca pausado.

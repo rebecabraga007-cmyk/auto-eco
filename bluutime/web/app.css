@@ -1585,3 +1585,17 @@ th.ord:hover { color: var(--text); }
   transition: opacity .12s;
 }
 .qual-barra:hover .qual-pop { opacity: 1; }
+
+/* Mini-ranking dentro do cartão de indicadores. */
+.mini-rank { margin-top: 10px; border-top: 1px solid var(--line-soft); padding-top: 8px; }
+.mini-rank div { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; }
+.mini-rank b { font-weight: 600; }
+
+/* Barra de progresso do upload e editor da assinatura. */
+.barra-progresso { height: 4px; margin-top: 8px; background: var(--line-soft); border-radius: 2px; overflow: hidden; }
+.barra-progresso span { display: block; height: 100%; width: 40%; background: var(--green); animation: anda 1.1s infinite; }
+@keyframes anda { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+.editor-barra { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-bottom: 6px; }
+.editor-barra .btn { min-width: 26px; font-style: normal; }
+.assinatura-previa { margin-top: 8px; padding: 8px 10px; background: var(--panel-2); border: 1px dashed var(--line); border-radius: 3px; font-size: 12.5px; }
+.assinatura-previa:empty { display: none; }
