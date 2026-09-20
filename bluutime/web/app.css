@@ -1807,3 +1807,24 @@ tr.linha-padrao > td { background: rgba(0, 0, 0, .03); }
   line-height: 1; color: var(--text); text-align: center; background: #fcfcfc;
   border: 1px solid var(--line); border-left: 0; border-radius: 0 2px 2px 0; }
 .display-block { display: block; }
+
+/* Cartão de "Leads Ganhos" da aba Desempenho: o número enorme com as outras
+   situações embaixo, como no original. */
+.ganhos-cartao { text-align: center; padding: 10px 0; }
+.ganhos-cartao h1 { margin: 0; font-size: 64px; font-weight: 300; line-height: 1; color: var(--text); }
+.ganhos-cartao .rotulo { margin-top: 4px; font-size: 20px; color: var(--muted); }
+.outras-situacoes { display: flex; justify-content: center; flex-wrap: wrap;
+  gap: 18px; margin-top: 22px; }
+.outras-situacoes div { display: flex; flex-direction: column; align-items: center; }
+.outras-situacoes strong { font-size: 15px; font-weight: 500; color: var(--text); }
+.outras-situacoes span { font-size: 11px; color: var(--muted); }
+/* Célula com vários números pequenos lado a lado, cada um com o seu ícone. */
+.celula-icones { display: flex; gap: 14px; justify-content: center; }
+.celula-icones span { display: flex; flex-direction: column; align-items: center;
+  font-size: 12.5px; color: var(--text); }
+.celula-icones i { font-style: normal; font-size: 13px; color: var(--muted); }
+
+/* Rádio com rótulo ao lado, do "Tipo de arquivo" do original. */
+.radio-custom { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; cursor: pointer; }
+.radio-custom input { margin: 0; }
+.radio-custom span { font-size: 13px; }

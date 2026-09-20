@@ -427,8 +427,20 @@ def performance(since: str | None = None, until: str | None = None,
         significativas = sum(1 for c in chamadas if c.output == "MEANINGFUL")
         ganhos = db.query(func.count(Lead.id)).filter(
             Lead.sdr_id == u.id, Lead.won_at.between(start, end)).scalar()
+        # Engajamento de e-mail: abertura e clique sobre o que REALMENTE saiu.
+        # Entrega simulada ou com erro não conta no denominador — senão o
+        # envio desligado derrubaria a taxa de todo mundo para zero.
+        entregas = db.query(Delivery).filter(
+            Delivery.user_id == u.id, Delivery.channel == "EMAIL",
+            Delivery.status == "SENT",
+            Delivery.created_at.between(start, end)).all()
+        abertos = sum(1 for d in entregas if d.opened_at)
+        clicados = sum(1 for d in entregas if d.clicked_at)
         linhas.append({
             "user": serial.user_min(u),
+            "entregues": len(entregas),
+            "taxaAbertura": round(abertos / len(entregas) * 100, 1) if entregas else 0.0,
+            "taxaClique": round(clicados / len(entregas) * 100, 1) if entregas else 0.0,
             "atividades": len(feitas), "atribuidas": atribuidas,
             "execucao": round(len(feitas) / atribuidas * 100, 1) if atribuidas else 0.0,
             "ligacoes": len(chamadas), "significativas": significativas,
@@ -640,6 +652,68 @@ def _csv_response(name: str, header: list[str], rows: list[list]) -> StreamingRe
     return StreamingResponse(iter([buf.getvalue().encode("utf-8-sig")]),
                              media_type="text/csv",
                              headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+def _xlsx_response(name: str, header: list[str], rows: list[list]) -> StreamingResponse:
+    """Mesma tabela em .xlsx, para quem vai abrir no Excel.
+
+    O CSV com ponto-e-vírgula abre certo aqui, mas quem manda a planilha para
+    fora não controla a máquina do outro lado — e lá o separador pode ser
+    outro. O .xlsx não tem essa ambiguidade.
+    """
+    from openpyxl import Workbook                        # noqa: PLC0415
+
+    wb = Workbook()
+    aba = wb.active
+    aba.title = "Dados"
+    aba.append(header)
+    for linha in rows:
+        aba.append(linha)
+    for i, titulo in enumerate(header, start=1):
+        largura = max([len(str(titulo))] + [len(str(l[i - 1])) for l in rows[:200]] or [0])
+        aba.column_dimensions[aba.cell(row=1, column=i).column_letter].width = min(48, largura + 2)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+def _tabela_response(nome: str, formato: str, header: list[str], rows: list[list]):
+    """Entrega a tabela no formato pedido — é o "Tipo de arquivo" do original."""
+    if (formato or "").upper() == "XLSX":
+        return _xlsx_response(f"{nome}.xlsx", header, rows)
+    return _csv_response(f"{nome}.csv", header, rows)
+
+
+# Cada aba de Estatísticas vira uma tabela exportável. A chave é a mesma da
+# aba na tela, para que o botão não precise saber de onde os dados vêm.
+def _tabela_desempenho(d: dict) -> tuple[list[str], list[list]]:
+    return (["Vendedor", "Atividades realizadas", "Atribuídas", "Execução geral (%)",
+             "Ligações", "Significativas", "Significativas (%)", "Pesquisas",
+             "Social points", "E-mails enviados", "E-mails entregues",
+             "Abertura (%)", "Clique (%)", "Leads ganhos"],
+            [[r["user"]["name"], r["atividades"], r["atribuidas"], r["execucao"],
+              r["ligacoes"], r["significativas"], r["taxaSignificativa"],
+              r["pesquisas"], r["social"], r["emails"], r["entregues"],
+              r["taxaAbertura"], r["taxaClique"], r["ganhos"]] for r in d["performances"]])
+
+
+@router.get("/flow/statistics/performance/export")
+def export_performance(formato: str = "CSV", since: str | None = None,
+                       until: str | None = None, team_id: str | None = None,
+                       db: Session = Depends(get_db)):
+    """O "Exportar tabela" do original, nesta aba.
+
+    Lá o arquivo chega por e-mail porque a geração é assíncrona; aqui a
+    tabela é pequena e sai na hora — trocar um download imediato por um
+    e-mail que pode demorar seria piorar de propósito.
+    """
+    d = performance(since=since, until=until, team_id=team_id, db=db)
+    header, rows = _tabela_desempenho(d)
+    return _tabela_response(f"desempenho-{datetime.utcnow():%Y%m%d}", formato, header, rows)
 
 
 @router.get("/reports")

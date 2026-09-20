@@ -109,12 +109,14 @@ const LOADING = `<div class="panel panel-flat"><div class="panel-body">
   <span class="spinner"></span> <span class="text-muted ml-5">Carregando…</span></div></div>`;
 
 function panel(title, body, { actions = "", subtitle = "" } = {}) {
+  // Painel sem título não ganha a faixa vazia do cabeçalho: no original o
+  // cartão de "Leads Ganhos" começa direto no corpo.
   return `<div class="panel panel-flat">
-    <div class="panel-heading has-border">
+    ${title || actions || subtitle ? `<div class="panel-heading has-border">
       <div><h2 class="panel-title">${h(title)}</h2>
       ${subtitle ? `<div class="text-muted text-size-small">${h(subtitle)}</div>` : ""}</div>
       <div class="heading-elements">${actions}</div>
-    </div>
+    </div>` : ""}
     <div class="panel-body">${body}</div>
   </div>`;
 }
@@ -192,6 +194,35 @@ function periodoDatas(p = state.periodo || { tipo: "30d" }) {
 /** Query string dos filtros da tela: período, time e o que ela quiser juntar.
  *  Período e time andam sempre juntos — são as mesmas telas —, então vale um
  *  helper só em vez de cada chamada lembrar de somar os dois. */
+/** "Exportar tabela": o popover das telas de Estatísticas do original.
+ *
+ * Lá o arquivo chega por e-mail porque a geração é assíncrona; aqui a
+ * tabela é pequena e o download sai na hora. O que copiamos é a escolha do
+ * formato, que é o que muda o resultado para quem vai abrir no Excel.
+ */
+function abrirExportarTabela(rota) {
+  const m = modal({
+    title: "Exportar tabela",
+    body: `<div class="field">
+        <div class="text-semibold mb-10">Tipo de arquivo:</div>
+        <label class="radio-custom"><input type="radio" name="expFmt" value="CSV" checked>
+          <span>Texto separado por vírgula (.csv)</span></label>
+        <label class="radio-custom"><input type="radio" name="expFmt" value="XLSX">
+          <span>Excel (.xlsx)</span></label>
+      </div>
+      <small class="text-muted">O arquivo respeita os filtros que estão na tela.</small>`,
+    footer: `<button class="btn btn-default btn-sm" data-cancel>cancelar</button>
+             <button class="btn btn-main btn-sm" data-ok>Baixar</button>`,
+  });
+  m.root.querySelector("[data-cancel]").onclick = m.close;
+  m.root.querySelector("[data-ok]").onclick = () => {
+    const fmt = m.root.querySelector("[name=expFmt]:checked").value;
+    const sep = rota.includes("?") ? "&" : "?";
+    window.location.href = `${rota}${sep}formato=${fmt}`;
+    m.close();
+  };
+}
+
 function filtrosQS(extra = {}) {
   const { since, until } = periodoDatas();
   const qs = new URLSearchParams();
@@ -4580,32 +4611,58 @@ PAGES.estatisticas = {
 
     if (aba === "desempenho") {
       const d = await api(`/api/flow/statistics/performance${filtrosQS()}`);
+      const somaTipo = (chave) => d.performances.reduce((n, p) => n + p[chave], 0);
+      const outras = Object.entries(d.geral.outrasSituacoes || {});
       view.innerHTML = `${barra}${abas}<div class="mt-10">
-        ${kpis([
-          { value: d.geral.atividades, label: "Atividades realizadas" },
-          { value: d.geral.ganhos, label: "Leads ganhos", tone: "success" },
-          { value: d.performances.length, label: "Vendedores no período", tone: "info" },
-        ])}
-        ${panel("Execução por tipo de atividade",
-          bars([["Ligações", d.performances.reduce((n, p) => n + p.ligacoes, 0), "warning"],
-                ["E-mails", d.performances.reduce((n, p) => n + p.emails, 0), "info"],
-                ["Pesquisas", d.performances.reduce((n, p) => n + p.pesquisas, 0), "success"],
-                ["Social", d.performances.reduce((n, p) => n + p.social, 0), "success"]]
-               .map(([label, value, tone]) => ({ label, value, tone }))),
-          { subtitle: "O total do time por canal — a tabela abaixo abre por pessoa" })}
-        ${panel("Qual a eficiência dos vendedores",
-          table(["Vendedor", "Atividades", "Execução geral", "Ligações", "Significativas", "Pesquisas", "Social", "E-mails", "Ganhos"],
+        <div class="two-col">
+          ${panel("", `<div class="ganhos-cartao">
+            <h1>${d.geral.ganhos}</h1>
+            <div class="rotulo">${d.geral.ganhos === 1 ? "Lead Ganho" : "Leads Ganhos"}</div>
+            <div class="outras-situacoes">
+              ${outras.map(([k, n]) => `<div title="${h((STATUS_LABEL[k] || [k])[0])}">
+                <strong>${n}</strong>
+                <span>${h((STATUS_LABEL[k] || [k])[0])}</span></div>`).join("")}
+            </div>
+          </div>`)}
+          ${panel("Execução Geral",
+            bars([["Ligações", somaTipo("ligacoes"), "warning"],
+                  ["E-mails", somaTipo("emails"), "info"],
+                  ["Pesquisas", somaTipo("pesquisas"), "success"],
+                  ["Social", somaTipo("social"), "success"]]
+                 .map(([label, value, tone]) => ({ label, value, tone }))),
+            { subtitle: "* Atividades ignoradas não contam como executadas." })}
+        </div>
+        ${panel("Qual a eficiência dos vendedores?",
+          table(["Vendedor", "Atividades Realizadas", "Engajamento de E-mails",
+                 `<span title="Porcentagem de ligações significativas entre todas ligações realizadas pelo vendedor.">Ligações Significativas</span>`,
+                 "Leads Ganhos"],
             d.performances.map((p) => ({ cells: [
-              h(p.user.name), p.atividades,
-              `<span class="pill ${p.execucao >= 80 ? "green" : p.execucao >= 50 ? "amber" : "red"}">${p.execucao}%</span>`,
-              p.ligacoes,
-              `${p.significativas}${p.ligacoes ? ` <span class="text-muted text-size-small">(${p.taxaSignificativa}%)</span>` : ""}`,
-              p.pesquisas, p.social, p.emails,
-              `<strong>${p.ganhos}</strong>`] })),
-            { scroll: true, empty: "Nenhuma atividade no período." }),
-          { subtitle: "Execução geral é realizadas sobre atribuídas — atividade ignorada conta no total e não como executada. Abertura e clique de e-mail entram quando o rastreio estiver ligado." })}
+              h(p.user.name),
+              `<div class="celula-icones">
+                 <span title="Pesquisas executadas."><i>⌕</i>${p.pesquisas}</span>
+                 <span title="Social points executados."><i>❝</i>${p.social}</span>
+                 <span title="E-mails enviados."><i>✉</i>${p.emails}</span>
+                 <span title="Ligações realizadas."><i>☎</i>${p.ligacoes}</span>
+               </div>
+               <div class="text-muted text-size-small">execução geral
+                 <span class="pill ${p.execucao >= 80 ? "green" : p.execucao >= 50 ? "amber" : "red"}">${p.execucao}%</span></div>`,
+              p.entregues
+                ? `<div class="celula-icones">
+                     <span title="E-mails abertos por leads."><i>✉</i>${p.taxaAbertura}%</span>
+                     <span title="Links clicados pelos leads."><i>⇱</i>${p.taxaClique}%</span>
+                   </div>`
+                : `<span class="text-muted text-size-small" title="Nenhum e-mail saiu de verdade no período">—</span>`,
+              `${p.taxaSignificativa}% <span class="text-muted text-size-small">(${p.significativas}/${p.ligacoes})</span>`,
+              `<strong title="${p.ganhos} de ${p.ganhos + (p.perdidos || 0)} leads foram ganhos">${p.ganhos}</strong>`,
+            ] })),
+            { scroll: true, empty: "Não há dados de execução para os filtros selecionados." }),
+          { subtitle: "Execução geral é realizadas sobre atribuídas — atividade ignorada conta no total e não como executada. Abertura e clique só contam e-mail que saiu de verdade.",
+            actions: `<button class="btn btn-default btn-xs" id="expDesempenho">Exportar tabela</button>` })}
       </div>`;
-      return ligar();
+      ligar();
+      document.getElementById("expDesempenho").onclick = () =>
+        abrirExportarTabela(`/api/flow/statistics/performance/export${filtrosQS()}`);
+      return;
     }
 
     if (aba === "resposta") {
