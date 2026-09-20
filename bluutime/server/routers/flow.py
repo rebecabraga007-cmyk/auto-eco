@@ -477,7 +477,7 @@ def etapas_do_funil(db: Session, campo: CustomField | None) -> list[dict]:
 
 
 @router.get("/leads")
-def list_leads(status: str | None = None, cadence_id: int | None = None,
+def list_leads(status: str | None = None, cadence_id: str | None = None,
                client_id: int | None = None, sdr_id: int | None = None,
                lead_base_id: int | None = None, q: str | None = None,
                stage: str | None = None,
@@ -497,7 +497,11 @@ def list_leads(status: str | None = None, cadence_id: int | None = None,
     if status:
         query = query.filter(Lead.status.in_(status.split(",")))
     if cadence_id:
-        query = query.filter(Lead.cadence_id == cadence_id)
+        # Aceita "3" e "3,7": a tela de Cadências manda a seleção inteira
+        # quando alguém clica em "Visualizar leads".
+        ids = [int(x) for x in str(cadence_id).split(",") if x.strip().isdigit()]
+        if ids:
+            query = query.filter(Lead.cadence_id.in_(ids))
     if client_id:
         query = query.filter(Lead.client_id == client_id)
     if sdr_id:

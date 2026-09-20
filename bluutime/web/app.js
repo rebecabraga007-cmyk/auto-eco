@@ -120,7 +120,7 @@ function panel(title, body, { actions = "", subtitle = "" } = {}) {
 }
 
 function table(headers, rows, opts = {}) {
-  if (!rows.length) return emptyState(opts.empty || "Nada por aqui ainda.");
+  if (!rows.length) return emptyState(opts.empty || "Nada por aqui ainda.", opts.emptyHint);
   return `<div class="table-responsive${opts.scroll ? " table-scroll" : ""}">
     <table class="table table-striped table-hover">
       ${opts.noHead ? "" : `<thead><tr>${headers.map((x) => `<th>${x}</th>`).join("")}</tr></thead>`}
@@ -128,7 +128,8 @@ function table(headers, rows, opts = {}) {
     </table></div>`;
 }
 
-const emptyState = (msg) => `<div class="empty-state"><div class="big">◌</div>${h(msg)}</div>`;
+const emptyState = (msg, dica) => `<div class="empty-state"><div class="big">◌</div>
+  <h5>${h(msg)}</h5>${dica ? `<p class="text-muted">${h(dica)}</p>` : ""}</div>`;
 
 function kpis(items) {
   return `<div class="kpi-row">${items.map((i) => `
@@ -2841,6 +2842,19 @@ PAGES.cadencias = {
     const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v !== "" && v != null));
     let list = await api(`/api/flow/cadences?${qs}`);
     state.cadences = list;
+    // As abas por foco mostram a contagem de cada tipo, então precisam do
+    // universo sem filtro — filtrar e contar o resultado daria sempre o
+    // número da aba ativa em todas as outras.
+    const filtrado = Object.values(f).some((v) => v);
+    const [universo, atividades] = await Promise.all([
+      filtrado ? api("/api/flow/cadences") : Promise.resolve(list),
+      api("/api/flow/activities?limit=1").catch(() => []),
+    ]);
+    const totalSemFiltro = universo.length;
+    const porFoco = universo.reduce((m, c) => ({ ...m, [c.cadenceFocus]: (m[c.cadenceFocus] || 0) + 1 }), {});
+    // Cadência sem atividade cadastrada não executa nada: o original barra a
+    // criação e explica para onde ir, em vez de deixar montar uma vazia.
+    const semAtividades = !(atividades.items || atividades).length;
     // Ordenação por coluna, como na tabela do original: com 54 cadências,
     // achar a de pior conversão era leitura linha a linha.
     const ordC = state.cadOrdem || { campo: "nome", dir: 1 };
@@ -2882,25 +2896,46 @@ PAGES.cadencias = {
     ] }));
 
     view.innerHTML = `
+      <h1 class="page-title">Cadências
+        <small class="page-description">Defina e visualize os dados das cadências utilizadas para
+          aumentar as chances de contato com os leads</small></h1>
       <div class="toolbar">
-        <input class="form-control grow" id="cq" placeholder="Buscar cadência" value="${h(f.q || "")}">
+        <input class="form-control grow" id="cq" placeholder="Pesquisar por nome" value="${h(f.q || "")}">
         <select class="form-control" id="cClient">${options(state.clients, f.client_id, { blank: "Todos os clientes" })}</select>
-        <select class="form-control" id="cFocus">
-          <option value="">Todos os focos</option>
-          ${Object.entries(FOCUS_LABEL).map(([k, v]) => `<option value="${k}"${f.focus === k ? " selected" : ""}>${v}</option>`).join("")}
-        </select>
         <select class="form-control" id="cPrio">
           <option value="">Todas as prioridades</option>
           ${Object.entries(PRIORITY_LABEL).map(([k, v]) => `<option value="${k}"${f.priority === k ? " selected" : ""}>${v}</option>`).join("")}
         </select>
-        ${Object.values(f).some((v) => v)
-          ? `<button class="btn btn-default btn-xs" id="cLimpar">Limpar filtros</button>` : ""}
-        <span class="spacer"></span>
-        <button class="btn btn-default btn-xs" id="cadPausar" disabled>Pausar</button>
-        <button class="btn btn-default btn-xs" id="cadSeguir" disabled>Continuar</button>
-        <button class="btn btn-main btn-xs" id="newCad">Criar cadência</button>
       </div>
-      ${panel(`${list.length} cadências${Object.values(f).some((v) => v) ? " no filtro" : ""}`,
+      <div class="shown-cadences">
+        <span class="green-bullet"></span>
+        ${filtrado
+          ? `<b>${list.length}</b> de <b>${totalSemFiltro}</b> cadências.
+             <a class="filter-clear" id="cLimpar">Limpar filtros</a>`
+          : `<b>${list.length}</b> cadências exibidas.`}
+      </div>
+      <ul class="nav nav-tabs nav-tabs-bottom">
+        ${[["", "Todas", totalSemFiltro]].concat(Object.entries(FOCUS_LABEL)
+            .map(([k, v]) => [k, v, porFoco[k] || 0]))
+          .map(([k, rotulo, n]) => `<li${(f.focus || "") === k ? ' class="active"' : ""}>
+            <a data-cfoco="${k}">${h(rotulo)}
+              <span class="badge position-right ${(f.focus || "") === k ? "badge-success" : "bg-grey"}">${n}</span></a></li>`).join("")}
+        <li class="pull-right acoes-cadencia">
+          <button class="btn btn-default btn-xs" id="cadVerLeads" disabled
+            title="Selecione ao menos uma cadência para habilitar o botão.">Visualizar leads</button>
+          <button class="btn btn-default btn-xs" id="cadPausar" disabled>Pausar execuções</button>
+          <button class="btn btn-default btn-xs" id="cadSeguir" disabled>Continuar execuções</button>
+          <button class="btn btn-main btn-xs" id="newCad"${semAtividades ? " disabled" : ""}>Criar cadência</button>
+        </li>
+      </ul>
+      ${semAtividades ? `<div class="sem-atividades">
+        <h4><span class="text-semibold">Ooops!</span></h4>
+        <h6>Parece que você ainda <span class="text-semibold">não criou atividades</span> para serem
+          utilizadas nas cadências.<br>Ir para a
+          <a data-page="atividades">página de atividades</a>.</h6>
+      </div>` : ""}
+      <div class="text-right cad-contador" id="cadContador">Nenhuma cadência selecionada</div>
+      ${panel(`${list.length} cadências${filtrado ? " no filtro" : ""}`,
         table([`<input type="checkbox" id="cadTodas" title="Selecionar todas" aria-label="Selecionar todas">`,
                thC("nome", "Cadência"), "Cliente", "Foco", "Prioridade",
                thC("etapas", "Etapas"), thC("leads", "Leads"),
@@ -2913,8 +2948,12 @@ PAGES.cadencias = {
     const q = document.getElementById("cq");
     let t; q.oninput = () => { clearTimeout(t); t = setTimeout(() => set("q", q.value), 350); };
     document.getElementById("cClient").onchange = (e) => set("client_id", e.target.value);
-    document.getElementById("cFocus").onchange = (e) => set("focus", e.target.value);
     document.getElementById("cPrio").onchange = (e) => set("priority", e.target.value);
+    // O foco virou aba, como no original: era um <select> a mais na barra,
+    // e ali ele não mostrava quantas cadências tem cada tipo.
+    view.querySelectorAll("[data-cfoco]").forEach((a) => {
+      a.onclick = () => set("focus", a.dataset.cfoco);
+    });
     document.getElementById("newCad").onclick = () => openCadenceForm();
     const limpar = document.getElementById("cLimpar");
     if (limpar) limpar.onclick = () => { state.cadFilter = {}; go("cadencias"); };
@@ -2942,11 +2981,21 @@ PAGES.cadencias = {
     // Trocar de tela antes da lista chegar deixa estes dois nulos: a render é
     // assíncrona e o `view` já foi reescrito por outra página.
     if (!pausar || !seguir) return;
+    const verLeads = document.getElementById("cadVerLeads");
+    const contador = document.getElementById("cadContador");
     const sincronizar = () => {
       const n = marcadas().length;
-      pausar.disabled = seguir.disabled = !n;
-      pausar.textContent = n ? `Pausar (${n})` : "Pausar";
-      seguir.textContent = n ? `Continuar (${n})` : "Continuar";
+      pausar.disabled = seguir.disabled = verLeads.disabled = !n;
+      pausar.textContent = n ? `Pausar execuções (${n})` : "Pausar execuções";
+      seguir.textContent = n ? `Continuar execuções (${n})` : "Continuar execuções";
+      contador.textContent = !n ? "Nenhuma cadência selecionada"
+        : `${n} cadência${n === 1 ? "" : "s"} selecionada${n === 1 ? "" : "s"}`;
+    };
+    // "Visualizar leads" leva à lista já recortada nas cadências marcadas —
+    // é o atalho que o original põe ao lado do seletor.
+    verLeads.onclick = () => {
+      state.leadFilter = { page: 1, limit: 50, cadence_id: marcadas().join(",") };
+      go("leads");
     };
     view.querySelectorAll(".cad-check").forEach((c) => { c.onchange = sincronizar; });
     const todas = document.getElementById("cadTodas");
@@ -3394,17 +3443,25 @@ function openImportWizard(rascunho) {
     body: `<div class="wizard-steps"><span class="active" data-s="1">1. Arquivo</span>
       <span data-s="2">2. Campos</span><span data-s="3">3. Execução</span></div>
       <div id="wizBody">
-        <label class="dropzone" id="wizDrop">
+        <label class="dropzone file-selection" id="wizDrop">
           <input type="file" id="wizFile" accept=".csv,.txt" hidden>
-          <div class="dz-icon">⇪</div>
-          <div><strong>Arraste o arquivo aqui</strong> ou clique para escolher</div>
-          <div class="text-muted text-size-small" id="wizArquivo">CSV ou TXT, até 10 MB</div>
+          <span class="select-text">Selecione ou arraste o arquivo para fazer upload</span>
+          <span class="select-warning">⚠ Importante: Seu arquivo de lista deve estar no formato
+            <b>UTF-8</b> <a id="wizSaibaMais">Saiba mais.</a></span>
+          <span class="btn btn-success btn-sm btn-select-file">Selecionar arquivo</span>
+          <span class="file-spec" id="wizArquivo">Extensões suportadas: .csv e .txt.
+            Tamanho máximo: 10MB</span>
+          <span class="file-erro" id="wizErro"></span>
         </label>
-        <ul class="text-muted text-size-small" style="padding-left:18px;margin:10px 0 0">
-          <li>A primeira linha precisa conter os nomes das colunas.</li>
-          <li>Salve em UTF-8. Arquivo em ANSI/Latin-1 chega com "José" virando "JosÃ©",
-              e o nome fica assim no lead.</li>
-        </ul>
+        <div class="como-funciona" id="wizAjuda" hidden>
+          <p>Salvar em UTF-8 é o que evita o acento quebrado: um arquivo em ANSI/Latin-1 chega
+            com "José" virando "JosÃ©", e o nome fica assim no lead para sempre.</p>
+          <p>No Excel: <span class="text-semibold">Arquivo → Salvar como → CSV UTF-8
+            (delimitado por vírgulas)</span>. No Google Planilhas todo download de CSV já sai
+            em UTF-8.</p>
+          <p>A primeira linha precisa conter os nomes das colunas — é dela que sai o mapeamento
+            do passo 2.</p>
+        </div>
       </div>`,
     footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
              <button class="btn btn-main btn-sm" data-next>Continuar</button>`,
@@ -3431,19 +3488,28 @@ function openImportWizard(rascunho) {
   const drop = m.root.querySelector("#wizDrop");
   const campoArquivo = m.root.querySelector("#wizFile");
   const rotulo = m.root.querySelector("#wizArquivo");
+  const erro = m.root.querySelector("#wizErro");
   const aceitar = (file) => {
+    erro.textContent = "";
     if (!file) return false;
     if (!/\.(csv|txt)$/i.test(file.name)) {
-      toast("Só CSV ou TXT.", "err");
+      erro.textContent = "*Apenas arquivos .CSV são permitidos.";
       return false;
     }
     if (file.size > LIMITE) {
-      toast(`O arquivo tem ${(file.size / 1048576).toFixed(1)} MB; o limite é 10 MB. `
-            + "Divida em partes.", "err");
+      erro.textContent = `*Tamanho máximo permitido: 10MB — o arquivo tem `
+        + `${(file.size / 1048576).toFixed(1)} MB. Divida em partes.`;
       return false;
     }
     rotulo.innerHTML = `<strong>${h(file.name)}</strong> · ${(file.size / 1024).toFixed(0)} KB`;
     return true;
+  };
+  const ajuda = m.root.querySelector("#wizAjuda");
+  const saibaMais = m.root.querySelector("#wizSaibaMais");
+  if (saibaMais) saibaMais.onclick = (e) => {
+    // Dentro do <label>: sem isto o clique no link abre o seletor de arquivo.
+    e.preventDefault(); e.stopPropagation();
+    ajuda.hidden = !ajuda.hidden;
   };
   if (drop) {
     campoArquivo.onchange = () => { if (!aceitar(campoArquivo.files[0])) campoArquivo.value = ""; };
@@ -3470,7 +3536,7 @@ function openImportWizard(rascunho) {
       const fd = new FormData();
       fd.append("file", file);
       next.disabled = true;
-      next.innerHTML = `<span class="spinner"></span> lendo o arquivo…`;
+      next.innerHTML = `<span class="spinner"></span> Processando arquivo`;
       try {
         const res = await fetch("/api/flow/lead-bases/preview", { method: "POST", body: fd, credentials: "same-origin" });
         preview = await res.json();
@@ -4710,6 +4776,28 @@ function fbValorLegivel(chave, valor, f) {
   return valor;
 }
 
+function fbCabecalho(modo, total, f) {
+  const filtrado = Object.keys(FB_ROTULO).some((k) => f[k]) || f.q;
+  const periodo = f.data_de || f.data_ate
+    ? `(${f.data_de ? fmtDate(f.data_de) : "início"} - ${f.data_ate ? fmtDate(f.data_ate) : "hoje"})` : "";
+  const legenda = modo === "pendentes"
+    ? (filtrado ? "Filtros:" : "Exibindo todos os feedbacks sem resposta")
+    : (periodo ? `Respondidos em: <span>${periodo}</span>` : "Filtros:");
+  return `<div class="filter-heading">
+    <div class="infos">
+      <div class="info-count">
+        <div class="info">${modo === "pendentes" ? "Feedbacks não respondidos" : "Feedbacks respondidos"}</div>
+        <div class="count">${total}</div>
+      </div>
+      <div class="dot-separator"></div>
+      <div class="info-filter">
+        <div class="fixed-date-filter">${legenda}</div>
+        ${fbChips(f)}
+      </div>
+    </div>
+  </div>`;
+}
+
 function fbChips(f) {
   const ativos = Object.keys(FB_ROTULO).filter((k) => f[k]);
   if (!ativos.length) return "";
@@ -4795,7 +4883,6 @@ PAGES["feedback-oportunidade"] = {
         ${gestor && modo !== "qualificacao"
           ? `<button class="btn btn-danger btn-xs" id="fbExcluir" disabled>Excluir selecionados</button>` : ""}
       </div>
-      ${fbChips(f)}
       <ul class="nav nav-tabs">
         ${abas.map(([id, rotulo, n]) => `<li${modo === id ? ' class="active"' : ""}>
           <a data-fbmodo="${id}">${rotulo} <span class="badge${modo === id ? " badge-success" : " bg-grey-400"}">${n}</span></a></li>`).join("")}
@@ -4892,8 +4979,7 @@ PAGES["feedback-oportunidade"] = {
 
     if (modo === "pendentes") {
       body.innerHTML = `
-        <p class="text-muted text-size-small">${lista.total} pendente${lista.total === 1 ? "" : "s"}${
-          f.q || Object.keys(FB_ROTULO).some((k) => f[k]) ? " no recorte atual" : ""}.</p>
+        ${fbCabecalho("pendentes", lista.total, f)}
         ${table([...cabecalho, thFb("lead", "Lead"), thFb("empresa", "Empresa"),
                  thFb("cadencia", "Cadência"), "Dono do lead", thFb("vendedor", "Vendedor"),
                  thFb("ganho", "Ganho em"), ""],
@@ -4905,12 +4991,12 @@ PAGES["feedback-oportunidade"] = {
             fmtDate(x.createdAt),
             `<button class="btn btn-main btn-xs" data-responder="${x.id}">Responder</button>
              <button class="btn btn-default btn-xs" data-fbinfo="${x.id}" title="Informações">i</button>`,
-          ] })), { empty: f.q ? "Nenhum pendente com esse texto." : "Nenhum feedback pendente — tudo respondido." })}
+          ] })), { empty: "Nenhum feedback encontrado",
+             emptyHint: "Tente alterar as informações selecionadas no filtro." })}
         <div class="text-right mt-10">${pager({ page: lista.page, totalPageCount })}</div>`;
     } else {
       body.innerHTML = `
-        <p class="text-muted text-size-small">${lista.total} respondido${lista.total === 1 ? "" : "s"}${
-          f.q || Object.keys(FB_ROTULO).some((k) => f[k]) ? " no recorte atual" : ""}.</p>
+        ${fbCabecalho("respondidos", lista.total, f)}
         ${table([...cabecalho, thFb("lead", "Lead"), thFb("empresa", "Empresa"),
                  thFb("cadencia", "Cadência"), thFb("vendedor", "Vendedor"), "Resultado",
                  thFb("reuniao", "Reunião em"), "Qualificação", thFb("respondido", "Respondido em"), ""],
@@ -4927,7 +5013,8 @@ PAGES["feedback-oportunidade"] = {
               `<span class="pill ${v ? "green" : "grey"}">${h(t)}</span>`).join(" ") || "—",
             fmtDate(x.filledAt),
             `<button class="btn btn-default btn-xs" data-fbinfo="${x.id}" title="Informações">i</button>`,
-          ] })), { scroll: true, empty: "Nenhum feedback respondido no recorte." })}
+          ] })), { scroll: true, empty: "Nenhum feedback encontrado",
+             emptyHint: "Tente alterar as informações selecionadas no filtro." })}
         <div class="text-right mt-10">${pager({ page: lista.page, totalPageCount })}</div>
         ${panel("Feedbacks ao longo do tempo", fbSerieChart(stats.serie))}`;
     }
@@ -8185,27 +8272,47 @@ PAGES.ajustes = {
             ? "Some os pontos das regras que baterem — dá pra priorizar lead por características dele, não só por atraso."
             : "Crie um campo personalizado abaixo antes de montar uma regra de pontuação." })}
 
-      ${panel("Feedback de oportunidade", `
-        <div class="alert alert-info alert-styled-left">
-          Quando um lead vira ganho, o vendedor responsável recebe uma pendência pra dizer se a reunião aconteceu
-          e qualificar o lead pelas perguntas abaixo. Acompanhe as respostas em
-          <a data-page="feedback-oportunidade">Estatísticas &gt; Feedback de oportunidade</a>.
+      ${panel("Feedback de Oportunidade", `
+        <div class="como-funciona">
+          <h6>Como funciona?</h6>
+          <p>Ao ativar a funcionalidade, o vendedor responsável pela oportunidade receberá um link
+            para preencher o feedback do lead ganho no Bluutime, a ser respondido depois da
+            realização ou não da reunião. Você pode acompanhar todas as respostas em
+            <a data-page="feedback-oportunidade" class="text-italic">Estatísticas &gt; Feedback de
+            Oportunidade</a>.</p>
+          <p>Acompanhe a qualidade das oportunidades geradas pela prospecção, métricas de
+            realizações de reuniões e oportunidades aceitas pelos vendedores. Ao ativar as
+            automações do feedback de oportunidade, leads que não comparecerem à reunião podem ser
+            inseridos automaticamente em uma nova cadência para reagendamento.</p>
         </div>
-        <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
+        <div class="opcao-switch">
           <label><input type="checkbox" id="dfEnabled"${feedbackCfg.dealFeedbackEnabled ? " checked" : ""}>
-            Ativar feedback de oportunidade</label>
+            <span><h5>Ativar funcionalidade</h5>
+              <small class="text-muted">Ao ativar, o vendedor responsável pela oportunidade receberá
+                um link para preencher o feedback do lead ganho no Bluutime.</small></span></label>
         </div>
         <div class="field"><label class="text-muted text-size-small">Perguntas de qualificação — uma por linha</label>
           <textarea class="form-control" id="dfTags" rows="4"
             placeholder="Possui orçamento para contratar a solução?">${h(feedbackCfg.qualificationTags.join("\n"))}</textarea></div>
-        <div class="field"><label class="text-muted text-size-small">Automação — cadência para quem respondeu "não tive reunião"</label>
-          <select class="form-control input-sm" id="dfCadencia">
-            <option value="">Nenhuma — não reencaminha</option>
+        <h6 class="titulo-secao">automações</h6>
+        <div class="opcao-switch">
+          <label><input type="checkbox" id="dfAutomacao"${feedbackCfg.automationCadenceId ? " checked" : ""}>
+            <span><h5>Inserir automaticamente leads com resultado de "Não tive uma reunião" em uma
+              nova cadência</h5>
+              <small class="text-muted">Utilize uma cadência específica para buscar um novo
+                agendamento para os leads marcados como "Não tive uma reunião"</small></span></label>
+        </div>
+        <div class="panel-select" id="dfAutomacaoBox"${feedbackCfg.automationCadenceId ? "" : " hidden"}>
+          <div class="text-semibold"><span class="text-danger">*&nbsp;</span>Cadência destino:</div>
+          <select class="form-control input-sm" id="dfCadencia" style="max-width:320px">
+            <option value="">Selecione uma cadência</option>
             ${state.cadences.map((c) => `<option value="${c.id}"${feedbackCfg.automationCadenceId === c.id ? " selected" : ""}>${h(c.name)}</option>`).join("")}
-          </select></div>
-        <div class="toolbar mt-10" style="border:0;padding:0;background:none">
-          <span class="spacer"></span>
-          <button class="btn btn-main btn-sm" id="dfSalvar">Salvar</button>
+          </select>
+          <div class="help-block">O usuário responsável pelo lead será mantido quando também for um
+            participante da cadência destino. Caso contrário, um novo responsável será atribuído.</div>
+        </div>
+        <div class="text-right mt-10">
+          <button class="btn btn-main btn-sm" id="dfSalvar">Salvar preferências</button>
         </div>`)}
 
       ${(() => {
@@ -8358,16 +8465,24 @@ PAGES.ajustes = {
         go("ajustes");
       } catch (err) { toast(err.message, "err"); btn.disabled = false; }
     };
+    // A automação é um interruptor separado da cadência destino, como no
+    // original: ligada sem cadência escolhida, o botão não deixa passar —
+    // gravar assim desligaria a automação sem avisar ninguém.
+    const dfAut = document.getElementById("dfAutomacao");
+    const dfBox = document.getElementById("dfAutomacaoBox");
+    if (dfAut && dfBox) dfAut.onchange = () => { dfBox.hidden = !dfAut.checked; };
     document.getElementById("dfSalvar").onclick = async (e) => {
       const btn = e.currentTarget;
+      const cadDestino = Number(document.getElementById("dfCadencia").value) || null;
+      if (dfAut.checked && !cadDestino) return toast("Selecione uma cadência destino.", "err");
       btn.disabled = true;
       try {
         await api("/api/flow/deal-feedback/configuration", { method: "PATCH", body: {
           dealFeedbackEnabled: document.getElementById("dfEnabled").checked,
           qualificationTags: document.getElementById("dfTags").value.split("\n").map((s) => s.trim()).filter(Boolean),
-          automationCadenceId: Number(document.getElementById("dfCadencia").value) || null,
+          automationCadenceId: dfAut.checked ? cadDestino : null,
         } });
-        toast("Configurações salvas.", "ok");
+        toast("Preferências salvas.", "ok");
         go("ajustes");
       } catch (err) { toast(err.message, "err"); btn.disabled = false; }
     };

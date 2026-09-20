@@ -1120,6 +1120,22 @@ body.app-loading .page-container { opacity: .35; }
 
 .empty-state { text-align: center; padding: 52px 20px; color: #999; }
 .empty-state .big { font-size: 34px; margin-bottom: 10px; color: #ccc; }
+.empty-state h5 { margin: 0; font-size: 14px; font-weight: 500; color: var(--text); }
+.empty-state p { margin: 4px 0 0; font-size: 12.5px; }
+
+/* Cabeçalho das listas de feedback, na forma do original: a contagem grande
+   à esquerda, um ponto separando, e o recorte em vigor escrito ao lado. */
+.filter-heading { display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+.filter-heading .infos { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.filter-heading .info-count { display: flex; align-items: baseline; gap: 6px; }
+.filter-heading .info { font-size: 14px; font-weight: 500; color: var(--text); }
+.filter-heading .count { font-size: 20px; font-weight: 500; color: var(--green-label); }
+.filter-heading .dot-separator { width: 4px; height: 4px; border-radius: 50%; background: var(--line); }
+.filter-heading .info-filter { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 12.5px; color: var(--muted); }
+.filter-heading .fixed-date-filter span { color: var(--text); }
+.filter-heading .fb-chips { margin: 0; }
 
 .modal-backdrop-x {
   position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.45);
@@ -1501,6 +1517,17 @@ th.ord:hover { color: var(--text); }
 .dropzone:hover, .dropzone.sobre { border-color: var(--green-label); background: var(--avatar-bg); }
 .dropzone .dz-icon { font-size: 26px; color: var(--muted); margin-bottom: 6px; }
 
+/* Caixa de upload do passo 1 da importação, na ordem do original: chamada,
+   aviso do UTF-8, botão, especificação e — só quando há — o motivo da recusa.
+   O CSS destas classes não veio na captura; o que existe é a estrutura. */
+.file-selection { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 34px 18px; }
+.file-selection .select-text { font-size: 15px; font-weight: 500; color: var(--text); }
+.file-selection .select-warning { font-size: 12px; color: var(--warn); }
+.file-selection .select-warning a { text-decoration: underline; cursor: pointer; }
+.file-selection .btn-select-file { pointer-events: none; }
+.file-selection .file-spec { font-size: 11.5px; color: var(--muted); }
+.file-selection .file-erro:not(:empty) { font-size: 12px; color: var(--red); }
+
 /* Medidores circulares da aba Conversão. */
 .medidores { display: flex; flex-wrap: wrap; gap: 24px; justify-content: center; }
 .medidor { width: 130px; text-align: center; }
@@ -1736,3 +1763,35 @@ th.ord:hover { color: var(--text); }
 .btn-acao[disabled] { opacity: .4; cursor: default; }
 .btn-acao-cinza { color: var(--muted); }
 tr.linha-padrao > td { background: rgba(0, 0, 0, .03); }
+
+/* Interruptor com título e explicação ao lado (o `.checkbox-switchery` com
+   `.position-right .content-group` do original), e o bloco cinza que só
+   aparece quando a automação está ligada. */
+.opcao-switch { margin: 14px 0; }
+.opcao-switch label { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.opcao-switch input { margin-top: 3px; flex: 0 0 auto; }
+.opcao-switch h5 { margin: 0; font-size: 13px; font-weight: 500; color: var(--text); }
+.opcao-switch small { display: block; margin-top: 2px; font-size: 12px; }
+.titulo-secao { margin: 20px 0 0; font-size: 12px; font-weight: 400; color: var(--muted); }
+.panel-select { padding: 20px; margin-top: 4px; background: var(--creme); border-radius: 3px; }
+.panel-select .text-semibold { margin-bottom: 6px; font-size: 12.5px; }
+.panel-select .help-block { margin-top: 8px; }
+.text-danger { color: var(--red); }
+
+/* Cabeçalho da tela de Cadências: título com descrição, a contagem com o
+   ponto verde e as abas por foco com os botões de ação à direita. */
+.page-title { margin: 0 0 16px; font-size: 20px; font-weight: 400; color: var(--text); }
+.page-title .page-description { display: block; margin-top: 4px; font-size: 12.5px; color: var(--muted); }
+.shown-cadences { display: flex; align-items: center; gap: 8px; margin: 14px 0;
+  font-size: 12.5px; color: var(--muted); }
+.shown-cadences b { color: var(--text); }
+.green-bullet { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex: 0 0 auto; }
+.filter-clear { cursor: pointer; text-decoration: underline; }
+.nav-tabs .acoes-cadencia { margin-left: auto; display: flex; align-items: center;
+  gap: 6px; padding: 4px 0; border: 0; }
+.nav-tabs .acoes-cadencia button { position: static; }
+.cad-contador { margin: 16px 5px; font-size: 12.5px; color: var(--muted); }
+.sem-atividades { padding: 20px; text-align: center; background: #fafafa; border-radius: 3px; }
+.sem-atividades h4 { margin: 0 0 6px; font-size: 16px; font-weight: 400; }
+.sem-atividades h6 { margin: 0; font-size: 13px; font-weight: 400; color: var(--muted); }
+.sem-atividades a { cursor: pointer; text-decoration: underline; }
