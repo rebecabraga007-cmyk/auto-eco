@@ -1862,3 +1862,8 @@ tr.linha-padrao > td { background: rgba(0, 0, 0, .03); }
   border-top: 1px solid var(--line); }
 .queue-secao span { padding: 1px 6px; font-size: 11px; font-weight: 400; color: #fff;
   background: #888; border-radius: 10px; }
+
+/* Resumo acima da linha do tempo do lead: três contagens do que aconteceu. */
+.resumo-timeline { display: flex; gap: 22px; flex-wrap: wrap; margin: 0 0 14px;
+  font-size: 12.5px; color: var(--muted); }
+.resumo-timeline strong { margin-right: 4px; font-size: 15px; font-weight: 500; color: var(--text); }

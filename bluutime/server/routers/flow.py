@@ -1283,8 +1283,7 @@ def queue(sdr_id: int | None = None, client_id: int | None = None,
         row["score"] = serial.queue_score(a, now)
         row["tentativas"] = tentativas.get(a.lead_id, 0)
         passo = passos.get(a.cadence_step_id)
-        row["extra"] = a.cadence_step_id is None
-        row["passo"] = ({"id": passo.id, "dia": passo.day, "ordem": passo.order_in_day}
+        row["passo"] =({"id": passo.id, "dia": passo.day, "ordem": passo.order_in_day}
                         if passo else None)
         out.append(row)
     late = sum(1 for a in items if a.scheduled_at < now)

@@ -110,6 +110,9 @@ def lead_activity(la, overdue_ref=None):
         "channel": channel_of(la.type, la.social_network),
         "status": la.status, "scheduledAt": iso(la.scheduled_at), "doneAt": iso(la.done_at),
         "notes": la.notes, "late": late,
+        # Atividade sem passo de cadência é, por construção, extra — a fila e
+        # a linha do tempo marcam isso, e antes só a fila sabia.
+        "extra": la.cadence_step_id is None,
         "activity": activity(la.activity), "user": user_min(la.user),
         "lead": {"id": la.lead.id, "name": la.lead.name, "company": la.lead.company,
                  "phone": la.lead.phone, "email": la.lead.email,

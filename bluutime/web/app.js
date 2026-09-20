@@ -933,7 +933,21 @@ PAGES.painel = {
       return (va > vb ? 1 : -1) * ord.dir;
     });
 
-    const th = (campo, rotulo) => `<th class="ord" data-ord="${campo}" title="Ordenar por ${h(rotulo)}">
+    // As explicações são as do original: cada número tem uma definição que
+    // não dá para adivinhar pelo rótulo — "No prazo", em especial, é uma
+    // porcentagem relativa ao último check-in, não ao total do mês.
+    const AJUDA_COLUNA = {
+      prospectando: "Número de leads que possuem atividades no período",
+      disponiveis: "Leads que foram recebidos por este vendedor no período",
+      ganhos: "Número de leads ganhos no período",
+      perdidos: "Número de leads perdidos no período",
+      realizadas: "Progresso das atividades finalizadas para o período",
+      prazo: "Porcentagem das atividades que estão dentro do prazo (relativo ao último check-in)",
+      ignoradas: "Atividade ignorada conta como atribuída e não como executada",
+      conectadas: "Ligações significativas realizadas durante a prospecção",
+    };
+    const th = (campo, rotulo) => `<th class="ord" data-ord="${campo}" title="${
+      h(AJUDA_COLUNA[campo] || `Ordenar por ${rotulo}`)}">
       ${h(rotulo)}${ord.campo === campo ? (ord.dir === 1 ? " ▲" : " ▼") : ""}</th>`;
     const drill = (uid, status, valor, cor) => valor
       ? `<a data-drill="${uid}" data-status="${status}"${cor ? ` style="color:${cor}"` : ""}>${valor}</a>`
@@ -988,12 +1002,16 @@ PAGES.painel = {
               ${th("pendentes", "Pendentes")}${th("atrasadas", "Atrasadas")}
               ${th("realizadas", "Realizadas")}${th("prazo", "No prazo")}
               ${th("ignoradas", "Ignoradas")}
-              <th>Ligação</th><th>E-mail</th><th>Pesquisa</th><th>Social</th>
+              <th title="Ligações realizadas">Ligação</th>
+              <th title="E-mails enviados">E-mail</th>
+              <th title="Pesquisas executadas">Pesquisa</th>
+              <th title="Social points executados">Social</th>
               ${th("conectadas", "Conectadas")}
             </tr>
           </thead>
           <tbody>${corpo}</tbody>
-        </table></div>` : emptyState("Nenhum usuário com atividade neste filtro.")}
+        </table></div>` : emptyState("Nenhuma atividade planejada para o período",
+          "Nenhum lead em prospecção com este filtro.")}
       </div></div>`;
 
     ligarFiltros(() => go("painel"));
@@ -1990,13 +2008,37 @@ function passoTimeline(a) {
     <span class="pill ${a.status === "DONE" ? "green" : a.status === "SKIPPED" ? "grey" : a.late ? "red" : "blue"}">
       ${h(TYPE_LABEL[a.type] || a.type)}</span>
     <strong class="ml-5">${h(a.activity ? a.activity.name : "")}</strong>
+    ${a.extra ? `<span class="text-muted text-size-small ml-5">(Atividade extra)</span>` : ""}
+    ${a.status === "SKIPPED" ? `<span class="pill grey ml-5">Ignorado</span>` : ""}
     ${a.status !== "PENDING" ? `<button class="btn btn-default btn-xs ml-5" data-nota-ativ="${a.id}"
-      data-nota="${h(a.notes || "")}" title="Editar anotação">✎</button>` : ""}<br>
+      data-nota="${h(a.notes || "")}"
+      title="${a.notes ? "Editar anotação da atividade" : "Adicionar anotação"}">✎</button>` : ""}<br>
     <span class="text-muted text-size-small">
-      ${a.status === "PENDING" ? `agendada ${fmtDateTime(a.scheduledAt)}${a.late ? " · atrasada" : ""}`
-        : `${a.status === "DONE" ? "realizada" : "ignorada"} ${fmtDateTime(a.doneAt)}`}
+      ${a.status === "PENDING" ? `Agendado para ${fmtDateTime(a.scheduledAt)}${a.late ? " · atrasada" : ""}`
+        : `${a.status === "DONE" ? "realizada" : "ignorada"} ${
+            // Atividade ignorada pelo sistema não tem `doneAt`: cai na data
+            // em que estava prevista, que é a informação que importa.
+            a.doneAt ? fmtDateTime(a.doneAt) : `— prevista para ${fmtDateTime(a.scheduledAt)}`}`}
       ${a.user ? ` · ${h(a.user.name)}` : ""}</span>
     ${a.notes ? `<div class="text-size-small mt-10">${h(a.notes)}</div>` : ""}
+  </div>`;
+}
+
+/** Resumo do histórico: o que de fato aconteceu com este lead.
+ *
+ * O original põe estes três acima da linha do tempo. Sem eles, saber se um
+ * lead com 40 eventos foi tocado ou só agendado exigia contar na mão. */
+function resumoTimeline(timeline) {
+  const feitas = timeline.filter((a) => a.status === "DONE" && !a.kind).length;
+  const abertos = timeline.filter((a) => a.kind === "DELIVERY" && a.openedAt).length;
+  const conectadas = timeline.filter((a) => a.kind === "CALL" && a.status === "CONNECTED").length;
+  if (!feitas && !abertos && !conectadas) {
+    return `<p class="text-muted text-size-small">Nenhuma atividade realizada.</p>`;
+  }
+  return `<div class="resumo-timeline">
+    <span><strong>${feitas}</strong> Atividades completadas</span>
+    <span><strong>${abertos}</strong> Emails abertos</span>
+    <span><strong>${conectadas}</strong> Ligações conectadas</span>
   </div>`;
 }
 
@@ -2032,6 +2074,7 @@ PAGES.lead = {
         </select>
         <span class="spacer text-muted text-size-small">${passos.length} de ${l.timeline.length} eventos</span>
       </div>
+      ${resumoTimeline(l.timeline)}
       ${l.source || l.channel || l.campaign || l.inbound ? `
         <div class="alert alert-info alert-styled-left text-size-small">
           Origem: ${[l.source && `fonte <strong>${h(l.source)}</strong>`,
@@ -2041,7 +2084,8 @@ PAGES.lead = {
             l.inbound ? ` · <span class="pill green">inbound</span>` : ""}
         </div>` : ""}
       ${(() => {
-        if (!passos.length) return emptyState("Nenhum evento no histórico com esse filtro.");
+        if (!passos.length) return emptyState("Nenhuma atividade realizada",
+          "Nenhum evento no histórico com esse filtro.");
         const runs = l.prospeccoes || [];
         if (runs.length < 2) return `<div class="timeline">${passos.map(passoTimeline).join("")}</div>`;
         // Com mais de uma prospecção, o histórico agrupa por ela — é a única
