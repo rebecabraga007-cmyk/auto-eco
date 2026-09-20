@@ -7785,7 +7785,7 @@ PAGES.usuarios = {
 
     body.innerHTML = `
       <div class="toolbar">
-        <input class="form-control grow" id="uQ" placeholder="Buscar por nome ou e-mail…" value="${h(f.q || "")}">
+        <input class="form-control grow" id="uQ" placeholder="Buscar por nome ou email" value="${h(f.q || "")}">
         <select class="form-control" id="uTime">${options(teams, f.team_id, { blank: "Todos os times" })}</select>
         <select class="form-control" id="uPapel">
           <option value="">Todos os papéis</option>
@@ -7807,8 +7807,9 @@ PAGES.usuarios = {
         Inativar alguém tira o assento da conta no próximo ciclo.</div>` : ""}
       ${panel(`Usuários (${p.totalRowCount})`,
         table(["Usuário", "Papéis", "Time", "Meta diária", "Login", "Leads", "Situação", ""], rows,
-          { scroll: true, empty: f.q ? "Ninguém com esse nome ou e-mail." : "Nenhum usuário." }),
-        { actions: pager(p) })}`;
+          { scroll: true, empty: f.q ? "Ninguém com esse nome ou email." : "Nenhum usuário." }),
+        { subtitle: "Gerenciar usuários e permissões de acesso",
+          actions: pager(p) })}`;
 
     const setFilter = (key, value) => {
       state.userFilter = { ...f, [key]: value, page: 1 };
@@ -7853,10 +7854,14 @@ function openUserForm(user) {
   const u = user || {};
   const ROLES = ["ADMINISTRATOR", "MANAGER", "SDR", "SALESMAN"];
   const m = modal({
-    title: u.id ? `Editar ${u.name}` : "Novo usuário",
+    title: u.id ? `Editar ${u.name}` : "Adicionar usuário",
     body: `<div class="field"><label for="uName">Nome *</label><input class="form-control" id="uName" value="${h(u.name || "")}"></div>
       <div class="field"><label for="uEmail">E-mail *</label>
-        <input class="form-control" id="uEmail" value="${h(u.email || "")}"${u.id ? " disabled" : ""}></div>
+        <input class="form-control" id="uEmail" value="${h(u.email || "")}"
+               placeholder="usuario@email.com"${u.id ? " disabled" : ""}></div>
+      <div class="field"><label for="uTeam">Time</label>
+        <select class="form-control" id="uTeam">${options(state.teams || [],
+          (u.team || {}).id || "", { blank: "Nenhum agrupamento" })}</select></div>
       <div class="field"><label for="uRoles">Papéis</label>
         <select class="form-control" id="uRoles" multiple size="4">
           ${ROLES.map((r) => `<option value="${r}"${(u.roles || []).includes(r) ? " selected" : ""}>${r}</option>`).join("")}
@@ -7906,6 +7911,8 @@ function openUserForm(user) {
       roles: [...m.root.querySelector("#uRoles").selectedOptions].map((o) => o.value),
       dailyGoal: Number(m.root.querySelector("#uGoal").value),
       active: m.root.querySelector("#uActive").value === "true",
+      // Vazio é "Nenhum agrupamento": manda null para tirar do time, não "".
+      teamId: Number(m.root.querySelector("#uTeam").value) || null,
     };
     if (!body.name) return toast("O nome é obrigatório.", "err");
     if (!u.id) {
