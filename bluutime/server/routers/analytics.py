@@ -26,13 +26,21 @@ def _month_range(ref: str | None) -> tuple[datetime, datetime]:
 
 
 @router.get("/flow/control-panel")
-def control_panel(client_id: int | None = None, db: Session = Depends(get_db)):
-    """Painel de controle diário: uma linha por SDR, como no Meetime.
+def control_panel(client_id: int | None = None, since: str | None = None,
+                  until: str | None = None, db: Session = Depends(get_db)):
+    """Painel de controle: uma linha por SDR, como no Meetime.
 
-    É a visão do gestor — dado de todo o time, não só do próprio SDR."""
+    É a visão do gestor — dado de todo o time, não só do próprio SDR. O
+    recorte padrão é o dia, mas aceita período: sem isso não havia como
+    olhar a semana fechada, que é quando o padrão de cada um aparece.
+    """
     perm.ator(db).exigir("gestor", "ver o painel de controle")
     now = datetime.utcnow()
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if since:
+        day_start = datetime.fromisoformat(since[:10])
+    fim = (datetime.fromisoformat(until[:10]) + timedelta(days=1)
+           if until else now + timedelta(days=1))
     rows = []
     for u in db.query(User).filter(User.active).order_by(User.name).all():
         leads = db.query(Lead).filter(Lead.sdr_id == u.id)
@@ -47,13 +55,15 @@ def control_panel(client_id: int | None = None, db: Session = Depends(get_db)):
         pending = acts.filter(LeadActivity.status == "PENDING").count()
         late = acts.filter(LeadActivity.status == "PENDING",
                            LeadActivity.scheduled_at < now).count()
-        today = acts.filter(LeadActivity.done_at >= day_start).all()
+        today = acts.filter(LeadActivity.done_at >= day_start,
+                            LeadActivity.done_at < fim).all()
         done = [a for a in today if a.status == "DONE"]
         skipped = [a for a in today if a.status == "SKIPPED"]
         by_type = Counter(a.type for a in done)
 
         calls_today = db.query(Call).filter(Call.user_id == u.id,
-                                            Call.started_at >= day_start).all()
+                                            Call.started_at >= day_start,
+                                            Call.started_at < fim).all()
         last = (db.query(LeadActivity).filter(LeadActivity.user_id == u.id,
                                               LeadActivity.done_at.isnot(None))
                 .order_by(LeadActivity.done_at.desc()).first())
@@ -63,7 +73,12 @@ def control_panel(client_id: int | None = None, db: Session = Depends(get_db)):
             "leads": {"prospecting": by_status.get("EXECUTING", 0) + by_status.get("ON_EXTRA_ACTIVITY", 0),
                       "available": by_status.get("WAITING", 0),
                       "won": by_status.get("WON", 0), "lost": by_status.get("LOST", 0)},
+            # "No prazo" usa a mesma tolerância de uma hora do resto do
+            # sistema: atividade feita às 9h05 de uma agendada para as 9h não
+            # é atraso, é a vida.
             "activities": {"pending": pending, "late": late, "done": len(done),
+                           "onTime": sum(1 for a in done
+                                         if a.done_at <= a.scheduled_at + timedelta(hours=1)),
                            "skipped": len(skipped),
                            "call": by_type.get("CALL", 0), "email": by_type.get("E_MAIL", 0),
                            "search": by_type.get("SEARCH", 0),
@@ -73,7 +88,8 @@ def control_panel(client_id: int | None = None, db: Session = Depends(get_db)):
                       "dropped": sum(1 for c in calls_today
                                      if c.status == "CONNECTED" and c.duration <= 10)},
         })
-    return {"data": rows, "meta": {"generatedAt": serial.iso(now)}}
+    return {"data": rows, "meta": {"generatedAt": serial.iso(now),
+                                   "since": serial.iso(day_start), "until": serial.iso(fim)}}
 
 
 @router.get("/flow/goals/{ref}/progress")

@@ -1460,3 +1460,7 @@ tr.row-detail > td { padding: 0 16px 16px !important; border-top: 0 !important; 
 .origem-linha { margin-bottom: 12px; }
 .origem-topo { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 3px; font-size: 12.5px; }
 .qual-barra > span { display: block; height: 100%; }
+
+/* Painel de controle: cabeçalho ordenável. */
+th.ord { cursor: pointer; user-select: none; }
+th.ord:hover { color: var(--text); }

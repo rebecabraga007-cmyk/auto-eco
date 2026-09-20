@@ -723,58 +723,115 @@ PAGES.painel = {
   area: "Prospecção", title: "Painel de controle",
   async render() {
     const clientId = state.filterClient || "";
-    const res = await api(`/api/flow/control-panel${clientId ? `?client_id=${clientId}` : ""}`);
-    const rows = res.data.map((r) => ({ cells: [
-      `<div class="media-left"><div class="lead-avatar-dot ${r.online ? "success" : ""}">${h(r.user.initials)}</div></div>
-       <div class="media-body"><strong>${h(r.user.name)}</strong><br>
-       <span class="text-muted">${r.online ? "Online" : "Offline"}</span></div>`,
-      r.lastActivity ? `${TYPE_LABEL[r.lastActivity.type] || r.lastActivity.type}<br>
-        <span class="text-muted">${fmtDateTime(r.lastActivity.doneAt)}</span>` : `<span class="text-muted">—</span>`,
-      r.leads.prospecting, r.leads.available,
-      `<span style="color:#00a443">${r.leads.won}</span>`,
-      `<span style="color:#f44336">${r.leads.lost}</span>`,
-      `<span style="color:#1e88e5">${r.activities.pending}</span>`,
-      r.activities.late ? `<span class="pill red">${r.activities.late}</span>` : "0",
-      r.activities.done, r.activities.skipped,
-      r.activities.call, r.activities.email, r.activities.search, r.activities.social,
-      `${r.calls.connected}/${r.calls.total}`,
-    ] }));
+    const { since, until } = periodoDatas();
+    const qs = new URLSearchParams();
+    if (clientId) qs.set("client_id", clientId);
+    if (since) qs.set("since", since);
+    if (until) qs.set("until", until);
+    const res = await api(`/api/flow/control-panel?${qs}`);
+
+    // Ordenação por coluna: o original ordena por seis delas, e sem isso
+    // achar quem está atrasado numa equipe de trinta é leitura linha a linha.
+    const ord = state.painelOrdem || { campo: "nome", dir: 1 };
+    const valor = (r, campo) => ({
+      nome: r.user.name.toLowerCase(),
+      prospectando: r.leads.prospecting, disponiveis: r.leads.available,
+      ganhos: r.leads.won, perdidos: r.leads.lost,
+      pendentes: r.activities.pending, atrasadas: r.activities.late,
+      realizadas: r.activities.done, ignoradas: r.activities.skipped,
+      prazo: r.activities.done ? r.activities.onTime / r.activities.done : -1,
+      conectadas: r.calls.connected,
+    }[campo]);
+    const linhas = [...res.data].sort((a, b) => {
+      const va = valor(a, ord.campo), vb = valor(b, ord.campo);
+      if (va === vb) return a.user.name.localeCompare(b.user.name);
+      return (va > vb ? 1 : -1) * ord.dir;
+    });
+
+    const th = (campo, rotulo) => `<th class="ord" data-ord="${campo}" title="Ordenar por ${h(rotulo)}">
+      ${h(rotulo)}${ord.campo === campo ? (ord.dir === 1 ? " ▲" : " ▼") : ""}</th>`;
+    const drill = (uid, status, valor, cor) => valor
+      ? `<a data-drill="${uid}" data-status="${status}"${cor ? ` style="color:${cor}"` : ""}>${valor}</a>`
+      : `<span class="text-muted">0</span>`;
+
+    const corpo = linhas.map((r) => {
+      const prazo = r.activities.done
+        ? Math.round((r.activities.onTime / r.activities.done) * 100) : null;
+      return `<tr>
+        <td><div class="media-left"><div class="lead-avatar-dot ${r.online ? "success" : ""}">${h(r.user.initials)}</div></div>
+          <div class="media-body"><strong>${h(r.user.name)}</strong><br>
+          <span class="text-muted">${r.online ? "Online" : "Offline"}</span></div></td>
+        <td>${r.lastActivity ? `${TYPE_LABEL[r.lastActivity.type] || r.lastActivity.type}<br>
+          <span class="text-muted">${fmtDateTime(r.lastActivity.doneAt)}</span>` : `<span class="text-muted">—</span>`}</td>
+        <td>${drill(r.user.id, "EXECUTING", r.leads.prospecting)}</td>
+        <td>${drill(r.user.id, "WAITING", r.leads.available)}</td>
+        <td>${drill(r.user.id, "WON", r.leads.won, "#00a443")}</td>
+        <td>${drill(r.user.id, "LOST", r.leads.lost, "#f44336")}</td>
+        <td><span style="color:#1e88e5">${r.activities.pending}</span></td>
+        <td>${r.activities.late ? `<span class="pill red">${r.activities.late}</span>` : "0"}</td>
+        <td>${r.activities.done}</td>
+        <td>${prazo === null ? "—" : `<span class="pill ${prazo >= 80 ? "green" : prazo >= 50 ? "amber" : "red"}">${prazo}%</span>`}</td>
+        <td>${r.activities.skipped}</td>
+        <td>${r.activities.call}</td><td>${r.activities.email}</td>
+        <td>${r.activities.search}</td><td>${r.activities.social}</td>
+        <td>${r.calls.connected}/${r.calls.total}</td>
+      </tr>`;
+    }).join("");
 
     view.innerHTML = `<div class="meetime-page-wide">
       <div class="toolbar">
+        ${periodoControle()}
         <select class="form-control" id="fClient">${options(state.clients, clientId, { blank: "Todos os clientes" })}</select>
         <span class="spacer text-muted text-size-small">Atualizado ${fmtDateTime(res.meta.generatedAt)}</span>
         <button class="btn btn-default btn-xs" id="refresh">Atualizar</button>
       </div>
       <div class="mt-sheet">
-        <div class="sheet-title">Painel de controle diário</div>
-        <div class="sheet-subtitle">Monitore as atividades da equipe e mantenha o controle do desempenho do dia.</div>
-        ${rows.length ? `<div class="table-responsive"><table class="table table-striped table-hover">
+        <div class="sheet-title">Painel de controle</div>
+        <div class="sheet-subtitle">Monitore as atividades da equipe e mantenha o controle do desempenho.
+          Clique nos números de lead para abrir a lista daquele SDR.</div>
+        ${linhas.length ? `<div class="table-responsive"><table class="table table-striped table-hover">
           <thead>
             <tr>
               <th colspan="2" style="border-bottom:2px solid #00c850">TIME</th>
               <th colspan="4" style="border-bottom:2px solid #00c850">LEADS</th>
-              <th colspan="8" style="border-bottom:2px solid #00c850">ATIVIDADES</th>
+              <th colspan="9" style="border-bottom:2px solid #00c850">ATIVIDADES</th>
             </tr>
             <tr>
-              <th>Usuário</th><th>Última atividade</th>
-              <th>Prospectando</th><th>Disponíveis</th><th>Ganhos</th><th>Perdidos</th>
-              <th>Pendentes</th><th>Atrasadas</th><th>Realizadas</th><th>Ignoradas</th>
-              <th>Ligação</th><th>E-mail</th><th>Pesquisa</th><th>Social</th><th>Conectadas</th>
+              ${th("nome", "Usuário")}<th>Última atividade</th>
+              ${th("prospectando", "Prospectando")}${th("disponiveis", "Disponíveis")}
+              ${th("ganhos", "Ganhos")}${th("perdidos", "Perdidos")}
+              ${th("pendentes", "Pendentes")}${th("atrasadas", "Atrasadas")}
+              ${th("realizadas", "Realizadas")}${th("prazo", "No prazo")}
+              ${th("ignoradas", "Ignoradas")}
+              <th>Ligação</th><th>E-mail</th><th>Pesquisa</th><th>Social</th>
+              ${th("conectadas", "Conectadas")}
             </tr>
           </thead>
-          <tbody>${rows.map((r) => `<tr>${r.cells.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody>
+          <tbody>${corpo}</tbody>
         </table></div>` : emptyState("Nenhum usuário com atividade neste filtro.")}
       </div></div>`;
 
+    ligarPeriodo(() => go("painel"));
     document.getElementById("fClient").onchange = (e) => {
       state.filterClient = e.target.value; go("painel");
     };
     document.getElementById("refresh").onclick = () => go("painel");
+    view.querySelectorAll("[data-ord]").forEach((t) => {
+      t.onclick = () => {
+        const campo = t.dataset.ord;
+        state.painelOrdem = { campo, dir: ord.campo === campo ? -ord.dir : (campo === "nome" ? 1 : -1) };
+        go("painel");
+      };
+    });
+    view.querySelectorAll("[data-drill]").forEach((a) => {
+      a.onclick = () => {
+        state.leadFilter = { page: 1, limit: 50, sdr_id: a.dataset.drill, status: a.dataset.status };
+        go("leads");
+      };
+    });
   },
 };
 
-/* ── Execução: a fila priorizada ─────────────────────────────────────── */
 /* ── Execução ────────────────────────────────────────────────────────────
    O original abre com um check-in ("iniciar atividades") e executa uma
    atividade por vez, com um menu de preferências do lado. A fila aqui
@@ -2712,6 +2769,8 @@ PAGES.ligacoes = {
         <span><b>${fmtDuration(o.totalDurationInSeconds)}</b>Tempo total</span>
         <span><b>${o.averageDailyCallsPerRep}</b>Ligações/SDR/dia</span>
       </div>`)}
+      ${panel("Ligações de hoje", `<div id="hojeBox">${LOADING}</div>`,
+        { subtitle: "O painel operacional do original: o que já foi discado hoje, com detalhe e nova tentativa" })}
       ${panel(`Derrubadas (${listaDerrubadas.length})`, listaDerrubadas.length
         ? table(["Quando", "SDR", "Lead", "Empresa", "Número", "Duração"],
             listaDerrubadas.slice(0, 60).map((c) => ({ cells: [
@@ -2725,8 +2784,65 @@ PAGES.ligacoes = {
         : emptyState("Nenhuma ligação derrubada no período."),
         { subtitle: "Atendeu e desligou em até 10 segundos — sinal de abordagem, não de linha." })}`;
     ligarPeriodo(() => go("ligacoes"));
+    carregarLigacoesDeHoje();
   },
 };
+
+/** Tabela operacional do painel: o que foi discado hoje.
+ *
+ * O `panel.html` do Meetime tem o softphone de um lado e esta tabela do
+ * outro. O softphone depende de telefonia; a tabela não, e era ela que dava
+ * ao SDR a noção do próprio dia. */
+async function carregarLigacoesDeHoje() {
+  const caixa = document.getElementById("hojeBox");
+  if (!caixa) return;
+  const pagina = state.hojePagina || 1;
+  const hoje = todayISO();
+  let r;
+  try {
+    r = await api(`/api/dialer/calls?since=${hoje}&until=${hoje}&page=${pagina}&limit=15`);
+  } catch (e) {
+    caixa.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
+    return;
+  }
+  const p = r.pagination || { page: 1, totalPageCount: 1, totalRowCount: r.data.length };
+  caixa.innerHTML = `
+    <p class="text-muted text-size-small">${p.totalRowCount} ${p.totalRowCount === 1 ? "ligação" : "ligações"} hoje.</p>
+    ${table(["Hora", "Lead", "Empresa", "Número", "Status", "Resultado", "Duração", ""],
+      r.data.map((c) => ({ cells: [
+        fmtDateTime(c.originStarted).split(", ")[1] || fmtDateTime(c.originStarted),
+        c.flowLeadId ? `<a data-hoje-lead="${c.flowLeadId}">${h(c.flowLeadName || "—")}</a>`
+                     : h(c.flowLeadName || "—"),
+        h(c.flowLeadCompany || "—"), h(c.receiverPhone || "—"),
+        `<span class="pill ${c.status === "CONNECTED" ? "green" : "grey"}">${h(CALL_STATUS_LABEL[c.status] || c.status)}</span>`,
+        h(CALL_OUTPUT_LABEL[c.output] || c.output || "—"),
+        fmtDuration(c.receiverConnectedDuration || 0),
+        `<button class="btn btn-default btn-xs" data-hoje-det="${c.id}">Detalhes</button>
+         ${c.flowLeadId ? `<button class="btn btn-default btn-xs" data-hoje-rep="${c.flowLeadId}"
+            title="Registrar nova tentativa para este lead">Nova tentativa</button>` : ""}`,
+      ] })), { scroll: true, empty: "Nenhuma ligação registrada hoje." })}
+    <div class="text-right mt-10">${pager(p)}</div>`;
+
+  caixa.querySelectorAll("[data-hoje-lead]").forEach((a) => {
+    a.onclick = () => go(`lead/${a.dataset.hojeLead}`);
+  });
+  caixa.querySelectorAll("[data-hoje-det]").forEach((b) => {
+    b.onclick = () => openDetalheLigacao(Number(b.dataset.hojeDet));
+  });
+  caixa.querySelectorAll("[data-hoje-rep]").forEach((b) => {
+    b.onclick = async () => {
+      // "Repetir" no original disca de novo. Sem telefonia, a nova tentativa
+      // é registrada à mão — o que muda é não precisar procurar o lead.
+      try {
+        const lead = await api(`/api/flow/leads/${b.dataset.hojeRep}`);
+        openRegistrarLigacao(lead.lead || lead, () => carregarLigacoesDeHoje());
+      } catch (e) { toast(e.message, "err"); }
+    };
+  });
+  caixa.querySelectorAll("[data-goto-page]").forEach((b) => {
+    b.onclick = () => { state.hojePagina = Number(b.dataset.gotoPage); carregarLigacoesDeHoje(); };
+  });
+}
 
 /* ── estatísticas de ligação ──────────────────────────────────────────────
    Funil, volume e histórico: três telas que o Meetime tem em
