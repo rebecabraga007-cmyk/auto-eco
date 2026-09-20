@@ -125,7 +125,8 @@ function table(headers, rows, opts = {}) {
   if (!rows.length) return emptyState(opts.empty || "Nada por aqui ainda.", opts.emptyHint);
   return `<div class="table-responsive${opts.scroll ? " table-scroll" : ""}">
     <table class="table table-striped table-hover">
-      ${opts.noHead ? "" : `<thead><tr>${headers.map((x) => `<th>${x}</th>`).join("")}</tr></thead>`}
+      ${opts.noHead ? "" : `<thead><tr>${headers.map((x) => (x && x.html !== undefined
+        ? `<th${x.attrs || ""}>${x.html}</th>` : `<th>${x}</th>`)).join("")}</tr></thead>`}
       <tbody>${rows.map((r) => `<tr${r.attrs || ""}>${r.cells.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody>
     </table></div>`;
 }
@@ -162,6 +163,13 @@ const TYPE_LABEL = { CALL: "Ligação", E_MAIL: "E-mail", SEARCH: "Pesquisa",
                      SOCIAL_POINT: "Ponto social", MEETING: "Reunião" };
 const PRIORITY_LABEL = { VERY_HIGH: "Muito alta", HIGH: "Alta", MEDIUM: "Média", LOW: "Baixa" };
 const FOCUS_LABEL = { OUTBOUND: "Outbound", INBOUND: "Inbound", ACTIVE_INBOUND: "Inbound ativo", OTHER: "Outro" };
+// Prioridade na tabela de cadências é seta colorida, não texto — é assim no
+// original, e a coluna cabe em 70px em vez de 120.
+const PRIORIDADE_SETA = { VERY_HIGH: "↑", HIGH: "↑", MEDIUM: "→", LOW: "↓" };
+const PRIORIDADE_TOM = { VERY_HIGH: "red", HIGH: "amber", MEDIUM: "grey", LOW: "grey" };
+const PRIORIDADE_PESO = { VERY_HIGH: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
+// As duas abas da tela de Cadências: cadência normal e e-mail automático.
+const CADENCE_TIPOS = [["STANDARD", "Padrão"], ["AUTOMATIC_EMAIL", "E-mail Automático"]];
 
 const options = (list, selected, { valueKey = "id", labelKey = "name", blank = "" } = {}) =>
   (blank ? `<option value="">${h(blank)}</option>` : "") +
@@ -553,6 +561,13 @@ PAGES.dashboard = {
         </div>
       </div>
       ${painelEsforco}
+      ${!g.goal.definida && nivelPeloMenos("gestor") && state.convitemeta !== false ? `
+        <div class="alert alert-info alert-styled-left convite-meta">
+          <button type="button" class="convite-fechar" id="metaAgoraNao" title="Agora não">×</button>
+          Você sabia que definir uma meta pode aumentar em até <strong>25% o desempenho</strong> do
+          seu time? Que tal definir a sua meta agora mesmo?
+          <button class="btn btn-main btn-xs ml-5" id="definirMetaConvite">Definir meta</button>
+        </div>` : ""}
       <div class="goal-card">
         <div>
           <div class="goal-number">${g.actual.won}</div>
@@ -649,6 +664,15 @@ PAGES.dashboard = {
       g.lostReasons.map((r) => ({ label: r.name, count: r.count })));
     const editar = document.getElementById("editGoals");
     if (editar) editar.onclick = () => openGoalsModal(ref);
+    const convite = document.getElementById("definirMetaConvite");
+    if (convite) convite.onclick = () => openGoalsModal(ref);
+    const agoraNao = document.getElementById("metaAgoraNao");
+    // "Agora não" some com o convite pelo resto da sessão — insistir a cada
+    // recarregamento é o que faz esse tipo de aviso virar ruído.
+    if (agoraNao) agoraNao.onclick = () => {
+      state.convitemeta = false;
+      agoraNao.closest(".convite-meta").remove();
+    };
     const definir = document.getElementById("definirMeta");
     if (definir) definir.onclick = () => openGoalsModal(ref);
     ligarMulti("metaCad", (ids) => { state.metaFiltro = { ...fm, cadence_id: ids }; go("dashboard"); });
@@ -1232,20 +1256,22 @@ PAGES.execucao = {
         <button class="btn btn-default btn-xs" id="prefs" title="Preferências da execução">⚙ Preferências</button>
         <button class="btn btn-default btn-xs" id="refresh">Atualizar</button>
       </div>
-      ${geral ? panel("Meu dia", `
+      ${geral ? panel("Meu progresso hoje", `
         <div class="split" style="grid-template-columns:1fr auto;align-items:center">
           <div>
             <div style="font-size:15px">
               Você está prospectando <strong>${geral.prospectando}</strong> leads
-              ${geral.disponiveis ? `· <strong>${geral.disponiveis}</strong> em espera para começar` : ""}
+              ${geral.disponiveis ? `· <strong>${geral.disponiveis}</strong> leads disponíveis para serem iniciados` : ""}
             </div>
             <div class="bar mt-10" style="height:22px">
               <span style="width:${Math.min(100, geral.hoje.percentual)}%;background:${geral.bateuMeta ? "var(--green)" : "var(--blue)"}"></span>
             </div>
             <div class="text-muted text-size-small mt-10">
-              ${geral.hoje.feitas} de ${geral.hoje.meta || "—"} atividades hoje
+              Objetivo diário (${geral.hoje.meta || "—"}): ${geral.hoje.feitas} atividades hoje
               ${geral.hoje.meta ? ` · ${geral.hoje.percentual}%` : " (sem meta definida)"}
               ${geral.hoje.ignoradas ? ` · ${geral.hoje.ignoradas} ignoradas` : ""}
+              ${geral.hoje.meta && !geral.bateuMeta
+                ? `<br>Finalize atividades para atingir o seu objetivo diário.` : ""}
             </div>
           </div>
           <div style="text-align:center;min-width:150px">
@@ -1254,7 +1280,7 @@ PAGES.execucao = {
                  <div class="pill green">Meta batida</div>`
               : `<div class="round-icon" style="margin:0 auto">${Math.round(geral.hoje.percentual)}%</div>`}
             ${items.length ? `<button class="btn btn-main btn-sm mt-10" id="iniciar">▶ Iniciar atividades</button>` : ""}
-            ${geral.disponiveis ? `<button class="btn btn-default btn-sm mt-10" id="puxarLeads">Ver leads em espera</button>` : ""}
+            ${geral.disponiveis ? `<button class="btn btn-default btn-sm mt-10" id="puxarLeads">Iniciar novos leads</button>` : ""}
           </div>
         </div>`) : ""}
       ${kpis([
@@ -2971,19 +2997,29 @@ PAGES.cadencias = {
   area: "Prospecção", title: "Cadências",
   async render() {
     const f = state.cadFilter || {};
-    const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v !== "" && v != null));
+    // `situacao` e `type` são da tela: o primeiro vira o `executing` que a
+    // API entende, o segundo é a aba e recorta aqui mesmo.
+    const qs = new URLSearchParams(Object.entries(f)
+      .filter(([k, v]) => v !== "" && v != null && k !== "situacao" && k !== "type"));
+    if (f.situacao) qs.set("executing", f.situacao === "ativa" ? "true" : "false");
     let list = await api(`/api/flow/cadences?${qs}`);
     state.cadences = list;
-    // As abas por foco mostram a contagem de cada tipo, então precisam do
-    // universo sem filtro — filtrar e contar o resultado daria sempre o
-    // número da aba ativa em todas as outras.
-    const filtrado = Object.values(f).some((v) => v);
+    // As abas contam por TIPO de cadência, então precisam do universo sem
+    // filtro — filtrar e contar o resultado daria sempre o número da aba
+    // ativa nas duas.
+    const filtrado = Object.keys(f).some((k) => k !== "type" && f[k]);
     const [universo, atividades] = await Promise.all([
-      filtrado ? api("/api/flow/cadences") : Promise.resolve(list),
+      api("/api/flow/cadences"),
       api("/api/flow/activities?limit=1").catch(() => []),
     ]);
-    const totalSemFiltro = universo.length;
-    const porFoco = universo.reduce((m, c) => ({ ...m, [c.cadenceFocus]: (m[c.cadenceFocus] || 0) + 1 }), {});
+    const totalSemFiltro = universo.filter((c) => (c.type || "STANDARD") === (f.type || "STANDARD")).length;
+    const porTipo = universo.reduce((m, c) => {
+      const t = c.type || "STANDARD";
+      return { ...m, [t]: (m[t] || 0) + 1 };
+    }, {});
+    // A aba é do tipo, não um filtro qualquer: o servidor não recorta por
+    // ele, então o corte é aqui.
+    list = list.filter((c) => (c.type || "STANDARD") === (f.type || "STANDARD"));
     // Cadência sem atividade cadastrada não executa nada: o original barra a
     // criação e explica para onde ir, em vez de deixar montar uma vazia.
     const semAtividades = !(atividades.items || atividades).length;
@@ -2994,7 +3030,10 @@ PAGES.cadencias = {
       nome: c.name.toLowerCase(), etapas: c.stepsCount, leads: c.overview.total,
       esperando: c.overview.waiting,
       executando: c.overview.executing + c.overview.onExtraActivity,
+      finalizados: c.overview.won + c.overview.lost,
       ganhos: c.overview.won, perdidos: c.overview.lost,
+      foco: FOCUS_LABEL[c.cadenceFocus] || "",
+      prioridade: PRIORIDADE_PESO[c.priority] || 0,
       conversao: c.overview.total ? c.overview.won / c.overview.total : -1,
     }[ordC.campo]);
     list = [...list].sort((a, b) => {
@@ -3002,42 +3041,57 @@ PAGES.cadencias = {
       if (va === vb) return a.name.localeCompare(b.name);
       return (va > vb ? 1 : -1) * ordC.dir;
     });
-    const thC = (campo, rotulo) => `<th class="ord" data-ordc="${campo}">${h(rotulo)}${
-      ordC.campo === campo ? (ordC.dir === 1 ? " ▲" : " ▼") : ""}</th>`;
-    const rows = list.map((c) => ({ cells: [
-      `<input type="checkbox" class="cad-check" value="${c.id}" data-on="${c.executing ? 1 : 0}">`,
-      `<a data-open-cad="${c.id}"><strong>${h(c.name)}</strong></a>
-       ${c.overview.errosEntrega ? `<span class="pill red ml-5" data-erro-cad="${c.id}"
-          title="Entregas bloqueadas ou com falha nos leads desta cadência">⚠ ${c.overview.errosEntrega}</span>` : ""}
-       ${c.description ? `<br><span class="text-muted text-size-small">${h(c.description)}</span>` : ""}`,
-      c.client ? `<span class="pill" style="border-color:${h(c.client.color)}">${h(c.client.name)}</span>` : "—",
-      `<span class="pill">${h(FOCUS_LABEL[c.cadenceFocus] || c.cadenceFocus)}</span>`,
-      `<span class="pill ${c.priority === "VERY_HIGH" ? "red" : c.priority === "HIGH" ? "amber" : "grey"}">${h(PRIORITY_LABEL[c.priority])}</span>`,
-      c.stepsCount,
-      // Clicar no número leva para a lista já filtrada — o overview do
-      // original é porta de entrada, não só contagem.
-      `<a data-drill="${c.id}" data-st="">${c.overview.total}</a>`,
-      `<a data-drill="${c.id}" data-st="WAITING">${c.overview.waiting}</a>`,
-      `<a data-drill="${c.id}" data-st="EXECUTING">${c.overview.executing + c.overview.onExtraActivity}</a>`,
-      `<a data-drill="${c.id}" data-st="WON" style="color:#00a443">${c.overview.won}</a>`,
-      `<a data-drill="${c.id}" data-st="LOST" style="color:#f44336">${c.overview.lost}</a>`,
-      c.overview.total ? `${Math.round((c.overview.won / c.overview.total) * 100)}%` : "—",
-      c.users.map((u) => h(u.name)).join(", ") || "—",
-      c.executing ? `<span class="pill green">Ativa</span>` : `<span class="pill grey">Pausada</span>`,
-      `<button class="btn btn-default btn-xs" data-edit-cad="${c.id}">Editar</button>`,
-    ] }));
+    const thC = (campo, rotulo) => ({
+      attrs: ` class="ord" data-ordc="${campo}"`,
+      html: `${h(rotulo)}${ordC.campo === campo ? (ordC.dir === 1 ? " ▲" : " ▼") : ""}`,
+    });
+    const rows = list.map((c) => {
+      const finalizados = c.overview.won + c.overview.lost;
+      const taxa = c.overview.total ? Math.round((c.overview.won / c.overview.total) * 100) : 0;
+      return { cells: [
+        `<input type="checkbox" class="cad-check" value="${c.id}" data-on="${c.executing ? 1 : 0}">`,
+        // No original a prioridade é uma seta colorida, não um texto: a
+        // coluna fica estreita e a urgência se lê de relance.
+        `<span class="seta-prio ${PRIORIDADE_TOM[c.priority] || "grey"}"
+               title="${h(PRIORITY_LABEL[c.priority] || "")}">${PRIORIDADE_SETA[c.priority] || "→"}</span>`,
+        `<a data-open-cad="${c.id}"><strong>${h(c.name)}</strong></a>
+         ${c.executing ? "" : `<span class="pill grey ml-5">Pausada</span>`}
+         ${c.overview.errosEntrega ? `<span class="pill red ml-5" data-erro-cad="${c.id}"
+            title="Entregas bloqueadas ou com falha nos leads desta cadência">⚠ ${c.overview.errosEntrega}</span>` : ""}
+         ${c.client ? `<span class="pill ml-5" style="border-color:${h(c.client.color)}">${h(c.client.name)}</span>` : ""}
+         ${c.description ? `<br><span class="text-muted text-size-small">${h(c.description)}</span>` : ""}`,
+        `<span class="pill">${h(FOCUS_LABEL[c.cadenceFocus] || c.cadenceFocus)}</span>`,
+        // Clicar no número leva para a lista já filtrada — o overview do
+        // original é porta de entrada, não só contagem.
+        `<a data-drill="${c.id}" data-st="">${c.overview.total}</a>`,
+        `<a data-drill="${c.id}" data-st="WAITING">${c.overview.waiting}</a>`,
+        `<a data-drill="${c.id}" data-st="EXECUTING">${c.overview.executing + c.overview.onExtraActivity}</a>`,
+        `<a data-drill="${c.id}" data-st="WON,LOST">${finalizados}</a>`,
+        `<a data-drill="${c.id}" data-st="WON" style="color:#00a443">${c.overview.won} / ${taxa}%</a>`,
+        `<button class="kebab" data-edit-cad="${c.id}" title="Editar cadência">⋮</button>`,
+      ] };
+    });
 
     view.innerHTML = `
       <h1 class="page-title">Cadências
         <small class="page-description">Defina e visualize os dados das cadências utilizadas para
           aumentar as chances de contato com os leads</small></h1>
-      <div class="toolbar">
-        <input class="form-control grow" id="cq" placeholder="Pesquisar por nome" value="${h(f.q || "")}">
-        <select class="form-control" id="cClient">${options(state.clients, f.client_id, { blank: "Todos os clientes" })}</select>
-        <select class="form-control" id="cPrio">
-          <option value="">Todas as prioridades</option>
+      <div class="toolbar barra-filtro">
+        <span class="text-muted">Filtro:</span>
+        <select class="form-control input-xs" id="cSituacao">
+          ${[["", "Status"], ["ativa", "Ativas"], ["pausada", "Pausadas"]].map(([v, r]) =>
+            `<option value="${v}"${(f.situacao || "") === v ? " selected" : ""}>${r}</option>`).join("")}
+        </select>
+        <select class="form-control input-xs" id="cPrio">
+          <option value="">Prioridade</option>
           ${Object.entries(PRIORITY_LABEL).map(([k, v]) => `<option value="${k}"${f.priority === k ? " selected" : ""}>${v}</option>`).join("")}
         </select>
+        <select class="form-control input-xs" id="cFoco">
+          <option value="">Foco</option>
+          ${Object.entries(FOCUS_LABEL).map(([k, v]) => `<option value="${k}"${f.focus === k ? " selected" : ""}>${v}</option>`).join("")}
+        </select>
+        <select class="form-control input-xs" id="cClient">${options(state.clients, f.client_id, { blank: "Participantes" })}</select>
+        <input class="form-control grow" id="cq" placeholder="Pesquisar por nome" value="${h(f.q || "")}">
       </div>
       <div class="shown-cadences">
         <span class="green-bullet"></span>
@@ -3047,17 +3101,16 @@ PAGES.cadencias = {
           : `<b>${list.length}</b> cadências exibidas.`}
       </div>
       <ul class="nav nav-tabs nav-tabs-bottom">
-        ${[["", "Todas", totalSemFiltro]].concat(Object.entries(FOCUS_LABEL)
-            .map(([k, v]) => [k, v, porFoco[k] || 0]))
-          .map(([k, rotulo, n]) => `<li${(f.focus || "") === k ? ' class="active"' : ""}>
-            <a data-cfoco="${k}">${h(rotulo)}
-              <span class="badge position-right ${(f.focus || "") === k ? "badge-success" : "bg-grey"}">${n}</span></a></li>`).join("")}
+        ${CADENCE_TIPOS.map(([k, rotulo]) => `<li${(f.type || "STANDARD") === k ? ' class="active"' : ""}>
+          <a data-ctipo="${k}">${h(rotulo)}
+            <span class="badge position-right ${(f.type || "STANDARD") === k ? "badge-success" : "bg-grey"}">${porTipo[k] || 0}</span></a></li>`).join("")}
         <li class="pull-right acoes-cadencia">
           <button class="btn btn-default btn-xs" id="cadVerLeads" disabled
             title="Selecione ao menos uma cadência para habilitar o botão.">Visualizar leads</button>
           <button class="btn btn-default btn-xs" id="cadPausar" disabled>Pausar execuções</button>
           <button class="btn btn-default btn-xs" id="cadSeguir" disabled>Continuar execuções</button>
-          <button class="btn btn-main btn-xs" id="newCad"${semAtividades ? " disabled" : ""}>Criar cadência</button>
+          <button class="btn btn-main btn-xs" id="newCad"${semAtividades ? " disabled" : ""}>${
+            (f.type || "STANDARD") === "AUTOMATIC_EMAIL" ? "Criar e-mail automático" : "Criar cadência"}</button>
         </li>
       </ul>
       ${semAtividades ? `<div class="sem-atividades">
@@ -3067,28 +3120,32 @@ PAGES.cadencias = {
           <a data-page="atividades">página de atividades</a>.</h6>
       </div>` : ""}
       <div class="text-right cad-contador" id="cadContador">Nenhuma cadência selecionada</div>
-      ${panel(`${list.length} cadências${filtrado ? " no filtro" : ""}`,
-        table([`<input type="checkbox" id="cadTodas" title="Selecionar todas" aria-label="Selecionar todas">`,
-               thC("nome", "Cadência"), "Cliente", "Foco", "Prioridade",
-               thC("etapas", "Etapas"), thC("leads", "Leads"),
-               thC("esperando", "Esperando"), thC("executando", "Em execução"),
-               thC("ganhos", "Ganhos"), thC("perdidos", "Perdidos"),
-               thC("conversao", "Conversão"),
-               "Responsáveis", "Situação", ""], rows, { scroll: true }))}`;
+      ${panel("", table([`<input type="checkbox" id="cadTodas" title="Selecionar todas" aria-label="Selecionar todas">`,
+               thC("prioridade", "Prioridade"), thC("nome", "Nome da Cadência"),
+               thC("foco", "Foco"), thC("leads", "Total"),
+               thC("esperando", "Esperando Início"), thC("executando", "Execução"),
+               thC("finalizados", "Finalizados"), thC("ganhos", "Ganhos"), "Info"],
+              rows, { scroll: true,
+                      empty: filtrado ? "Nenhuma cadência com esse filtro."
+                                      : "Nenhuma cadência cadastrada." }))}`;
 
     const set = (k, v) => { state.cadFilter = { ...f, [k]: v }; go("cadencias"); };
     const q = document.getElementById("cq");
     let t; q.oninput = () => { clearTimeout(t); t = setTimeout(() => set("q", q.value), 350); };
     document.getElementById("cClient").onchange = (e) => set("client_id", e.target.value);
     document.getElementById("cPrio").onchange = (e) => set("priority", e.target.value);
-    // O foco virou aba, como no original: era um <select> a mais na barra,
-    // e ali ele não mostrava quantas cadências tem cada tipo.
-    view.querySelectorAll("[data-cfoco]").forEach((a) => {
-      a.onclick = () => set("focus", a.dataset.cfoco);
+    document.getElementById("cFoco").onchange = (e) => set("focus", e.target.value);
+    document.getElementById("cSituacao").onchange = (e) => set("situacao", e.target.value);
+    // A aba é o TIPO da cadência — padrão ou e-mail automático —, e não o
+    // foco: no original o foco é mais um dos filtros da barra de cima.
+    view.querySelectorAll("[data-ctipo]").forEach((a) => {
+      a.onclick = () => set("type", a.dataset.ctipo);
     });
     document.getElementById("newCad").onclick = () => openCadenceForm();
     const limpar = document.getElementById("cLimpar");
-    if (limpar) limpar.onclick = () => { state.cadFilter = {}; go("cadencias"); };
+    // Limpar filtro não troca de aba: quem está em "E-mail Automático"
+    // continua lá.
+    if (limpar) limpar.onclick = () => { state.cadFilter = { type: f.type || "STANDARD" }; go("cadencias"); };
     view.querySelectorAll("[data-erro-cad]").forEach((b) => {
       b.style.cursor = "pointer";
       b.onclick = (e) => {
@@ -4563,7 +4620,7 @@ PAGES.estatisticas = {
     state.estAba = aba;
     const clientId = state.statClient || "";
     const abas = `<ul class="nav nav-tabs">
-      ${[["geral", "Visão geral"], ["cadencias", "Distribuição nas cadências"],
+      ${[["geral", "Visão geral"], ["cadencias", "Distribuição dos Leads nas Cadências"],
          ["conversao", "Conversão por passo"], ["desempenho", "Desempenho"],
          ["email", "E-mail"], ["motivos", "Motivos de perda"],
          ["resposta", "Tempo de resposta"]].map(([k, v]) =>
@@ -5036,11 +5093,30 @@ PAGES["feedback-oportunidade"] = {
     const f = fbFiltro();
     const status = modo === "respondidos" ? "filled" : "pending";
     const gestor = nivelPeloMenos("gestor");
-    const [lista, stats] = await Promise.all([
+    const [lista, stats, cfgFb] = await Promise.all([
       modo === "qualificacao" ? Promise.resolve({ items: [], total: 0, page: 1, perPage: 25 })
         : api(`/api/flow/deal-feedbacks?${fbQS(f, { status })}`),
       api(`/api/flow/statistics/deal-feedbacks?${fbQS({ ...f, page: "", per_page: "", tag: "", tag_value: "", q: "" })}`),
+      api("/api/flow/deal-feedback/configuration").catch(() => ({ dealFeedbackEnabled: true })),
     ]);
+    // Funcionalidade desligada: a tela vazia não explicava por que estava
+    // vazia, e quem chegava aqui achava que ninguém tinha respondido nada.
+    if (!cfgFb.dealFeedbackEnabled) {
+      view.innerHTML = panel("Feedback de Oportunidade", `
+        <div class="como-funciona">
+          <p>Colete o retorno do vendedor sobre as oportunidades que a prospecção gera. Veja alguns
+            dos benefícios e casos de uso:</p>
+          <p>• Tenha retorno sobre a realização das reuniões;</p>
+          <p>• Acompanhe a qualidade das oportunidades geradas;</p>
+          <p>• Automatize o reagendamento de oportunidades que não comparecem à reunião (no-show).</p>
+        </div>
+        ${gestor
+          ? `<button class="btn btn-main btn-sm" id="fbAtivar">Ir para ativação</button>`
+          : `<p class="text-muted">Fale com o seu gestor para ativar a funcionalidade.</p>`}`);
+      const ativar = document.getElementById("fbAtivar");
+      if (ativar) ativar.onclick = () => { state.ajustesAba = "resultado"; go("ajustes"); };
+      return;
+    }
     const totalPageCount = Math.max(1, Math.ceil(lista.total / (lista.perPage || 25)));
 
     const abas = [["pendentes", "Pendentes", stats.pending],
@@ -8340,7 +8416,9 @@ PAGES.ajustes = {
       ${panel("Configurações gerais", `
         <div class="toolbar" style="border:0;padding:8px 0;background:none;flex-wrap:wrap;gap:14px">
           <label><input type="checkbox" id="cfgABS"${cfg.accountBasedSalesEnabled ? " checked" : ""}>
-            Vendas por conta <span class="text-muted text-size-small">— mesmo domínio de e-mail cai sempre com o mesmo vendedor</span></label>
+            Vendas Baseadas em Contas <span class="text-muted text-size-small">— habilitar
+            distribuição de leads por empresa: mesmo domínio de e-mail cai sempre com o mesmo
+            vendedor</span></label>
         </div>
         <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
           <label><input type="checkbox" id="cfgFila"${cfg.smartQueueEnabled ? " checked" : ""}>
