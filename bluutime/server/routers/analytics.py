@@ -68,9 +68,21 @@ def control_panel(client_id: int | None = None, since: str | None = None,
         last = (db.query(LeadActivity).filter(LeadActivity.user_id == u.id,
                                               LeadActivity.done_at.isnot(None))
                 .order_by(LeadActivity.done_at.desc()).first())
+        # "Atividade Atual" do original: o que está na mão da pessoa agora —
+        # a pendente mais antiga que já venceu. Não temos "em execução" de
+        # verdade (isso exigiria o SDR abrir e fechar a atividade no sistema),
+        # e a mais antiga vencida é a que ele deveria estar fazendo.
+        atual = (db.query(LeadActivity)
+                 .filter(LeadActivity.user_id == u.id,
+                         LeadActivity.status == "PENDING",
+                         LeadActivity.scheduled_at <= now)
+                 .order_by(LeadActivity.scheduled_at).first())
         rows.append({
             "user": serial.user_min(u), "online": u.online, "dailyGoal": u.daily_goal,
             "lastActivity": serial.lead_activity(last, now) if last else None,
+            "currentActivity": serial.lead_activity(atual, now) if atual else None,
+            # Há quanto tempo essa atividade está esperando, em segundos.
+            "currentSince": int((now - atual.scheduled_at).total_seconds()) if atual else None,
             "leads": {"prospecting": by_status.get("EXECUTING", 0) + by_status.get("ON_EXTRA_ACTIVITY", 0),
                       "available": by_status.get("WAITING", 0),
                       "won": by_status.get("WON", 0), "lost": by_status.get("LOST", 0)},

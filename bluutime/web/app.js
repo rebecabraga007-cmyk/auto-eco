@@ -1088,8 +1088,17 @@ PAGES.painel = {
         <td><div class="media-left"><div class="lead-avatar-dot ${r.online ? "success" : ""}">${h(r.user.initials)}</div></div>
           <div class="media-body"><strong>${h(r.user.name)}</strong><br>
           <span class="text-muted">${r.online ? "Online" : "Offline"}</span></div></td>
-        <td>${r.lastActivity ? `${TYPE_LABEL[r.lastActivity.type] || r.lastActivity.type}<br>
-          <span class="text-muted">${fmtDateTime(r.lastActivity.doneAt)}</span>` : `<span class="text-muted">—</span>`}</td>
+        <td>${r.currentActivity
+          ? `<strong>${h(TYPE_LABEL[r.currentActivity.type] || r.currentActivity.type)}</strong><br>
+             <span class="text-muted text-size-small">${h((r.currentActivity.lead || {}).name || "")}</span>`
+          : `<span class="text-muted text-size-small">Última atividade</span><br>
+             <span class="text-muted">${r.lastActivity
+               ? h(TYPE_LABEL[r.lastActivity.type] || r.lastActivity.type)
+                 + " · " + fmtDateTime(r.lastActivity.doneAt)
+               : "-"}</span>`}</td>
+        <td>${r.currentSince == null ? `<span class="text-muted">—</span>`
+          : `<span class="pill ${r.currentSince > 7200 ? "red" : r.currentSince > 1800 ? "amber" : "grey"}"
+                   title="Aguardando desde ${fmtDateTime(r.currentActivity.scheduledAt)}">${fmtDuracaoLonga(r.currentSince)}</span>`}</td>
         <td>${drill(r.user.id, "EXECUTING", r.leads.prospecting)}</td>
         <td>${drill(r.user.id, "WAITING", r.leads.available)}</td>
         <td>${drill(r.user.id, "WON", r.leads.won, "var(--ganho)")}</td>
@@ -1109,22 +1118,28 @@ PAGES.painel = {
       <div class="toolbar">
         ${periodoControle()}
         <select class="form-control" id="fClient">${options(state.clients, clientId, { blank: "Todos os clientes" })}</select>
-        <span class="spacer text-muted text-size-small">Atualizado ${fmtDateTime(res.meta.generatedAt)}</span>
+        <span class="spacer"></span>
         <button class="btn btn-default btn-xs" id="refresh">Atualizar</button>
       </div>
       <div class="mt-sheet">
-        <div class="sheet-title">Painel de controle</div>
-        <div class="sheet-subtitle">Monitore as atividades da equipe e mantenha o controle do desempenho.
-          Clique nos números de lead para abrir a lista daquele SDR.</div>
+        <div class="sheet-title">Painel de controle diário</div>
+        <div class="sheet-subtitle">Monitore as atividades da sua equipe e mantenha o controle do
+          desempenho diário. Clique nos números de lead para abrir a lista daquele SDR.</div>
+        <div class="painel-meta">
+          <span class="green-bullet"></span>${linhas.length} usuário${linhas.length === 1 ? "" : "s"}
+          <small>Última atualização às ${(fmtDateTime(res.meta.generatedAt).split(", ")[1] || "").slice(0, 5)}</small>
+        </div>
         ${linhas.length ? `<div class="table-responsive"><table class="table table-striped table-hover">
           <thead>
             <tr>
-              <th colspan="2" style="border-bottom:2px solid var(--green)">TIME</th>
+              <th colspan="3" style="border-bottom:2px solid var(--green)">TIME</th>
               <th colspan="4" style="border-bottom:2px solid var(--green)">LEADS</th>
               <th colspan="9" style="border-bottom:2px solid var(--green)">ATIVIDADES</th>
             </tr>
             <tr>
-              ${th("nome", "Usuário")}<th>Última atividade</th>
+              ${th("nome", "Usuários")}
+              <th title="A atividade vencida mais antiga — é a que deveria estar sendo feita agora">Atividade Atual</th>
+              <th title="Há quanto tempo essa atividade está esperando">Duração</th>
               ${th("prospectando", "Prospectando")}${th("disponiveis", "Disponíveis")}
               ${th("ganhos", "Ganhos")}${th("perdidos", "Perdidos")}
               ${th("pendentes", "Pendentes")}${th("atrasadas", "Atrasadas")}
