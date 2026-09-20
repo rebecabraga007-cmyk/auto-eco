@@ -60,6 +60,9 @@ class Company(Base):
     # Meta de tempo de resposta: quantas horas entre o lead chegar e a
     # primeira abordagem. 24h é o padrão que o próprio Meetime sugere.
     response_time_goal_hours: Mapped[int] = mapped_column(Integer, default=24)
+    # Liga/desliga o lead scoring inteiro. Desligado, todo lead pontua 0 e a
+    # coluna some da lista — é o que o toggle do original faz.
+    fitscore_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     regular_user_can_import: Mapped[bool] = mapped_column(Boolean, default=False)
     smart_queue_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     working_days: Mapped[str] = mapped_column(String(20), default="1,2,3,4,5")  # 1=segunda .. 7=domingo

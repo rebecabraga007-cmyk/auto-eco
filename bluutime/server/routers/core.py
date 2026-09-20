@@ -1,7 +1,7 @@
 """Conta, empresa, usuários, times, clientes e ajustes."""
 import asyncio
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
@@ -573,6 +573,7 @@ def flow_config(db: Session = Depends(get_db)):
             "workingDays": [int(x) for x in c.working_days.split(",") if x.strip()],
             "leadStageFieldId": c.lead_stage_field_id,
             "responseTimeGoalHours": c.response_time_goal_hours,
+            "fitscoreEnabled": c.fitscore_enabled,
             "usersGoals": [{"userId": u.id, "dailyGoal": u.daily_goal} for u in users]}
 
 
@@ -590,6 +591,8 @@ def update_flow_config(payload: dict = Body(...), db: Session = Depends(get_db))
         c.regular_user_can_import = bool(payload["regularUserCanImportLeadList"])
     if "smartQueueEnabled" in payload:
         c.smart_queue_enabled = bool(payload["smartQueueEnabled"])
+    if "fitscoreEnabled" in payload:
+        c.fitscore_enabled = bool(payload["fitscoreEnabled"])
     if "responseTimeGoalHours" in payload:
         c.response_time_goal_hours = max(1, int(payload["responseTimeGoalHours"] or 24))
     if "leadStageFieldId" in payload:
@@ -789,15 +792,65 @@ def holidays(db: Session = Depends(get_db)):
 
 @router.post("/flow/configuration/holidays")
 def add_holiday(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Um feriado, ou um intervalo deles.
+
+    Recesso de fim de ano é uma semana inteira; cadastrar dia a dia era seis
+    cliques e uma chance de esquecer um.
+    """
     perm.ator(db).exigir("gestor", "cadastrar feriado")
     try:
         day = date.fromisoformat(payload["date"])
     except (KeyError, ValueError):
         raise HTTPException(400, "Data inválida (use AAAA-MM-DD).")
-    h = Holiday(day=day, name=payload.get("name", ""))
-    db.add(h)
+    fim = day
+    if payload.get("endDate"):
+        try:
+            fim = date.fromisoformat(payload["endDate"])
+        except ValueError:
+            raise HTTPException(400, "Data final inválida (use AAAA-MM-DD).")
+        if fim < day:
+            raise HTTPException(400, "A data final é anterior à inicial.")
+        if (fim - day).days > 60:
+            raise HTTPException(400, "Intervalo longo demais (máximo 60 dias).")
+    nome = (payload.get("name") or "").strip()
+    criados = []
+    existentes = {h.day for h in db.query(Holiday).filter(Holiday.day.between(day, fim)).all()}
+    atual = day
+    while atual <= fim:
+        if atual not in existentes:      # repetir o mesmo dia não adiciona nada
+            h = Holiday(day=atual, name=nome)
+            db.add(h)
+            criados.append(h)
+        atual += timedelta(days=1)
+    db.commit()
+    return [{"id": h.id, "date": h.day.isoformat(), "name": h.name} for h in criados]
+
+
+@router.patch("/flow/configuration/holidays/{hid}")
+def update_holiday(hid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "editar feriado")
+    h = db.get(Holiday, hid)
+    if not h:
+        raise HTTPException(404, "Feriado não encontrado.")
+    if "name" in payload:
+        h.name = (payload["name"] or "").strip()
+    if payload.get("date"):
+        try:
+            h.day = date.fromisoformat(payload["date"])
+        except ValueError:
+            raise HTTPException(400, "Data inválida (use AAAA-MM-DD).")
     db.commit()
     return {"id": h.id, "date": h.day.isoformat(), "name": h.name}
+
+
+@router.delete("/flow/configuration/holidays/{hid}")
+def delete_holiday(hid: int, db: Session = Depends(get_db)):
+    perm.ator(db).exigir("gestor", "remover feriado")
+    h = db.get(Holiday, hid)
+    if h:
+        db.delete(h)
+        db.commit()
+    return {"ok": True}
 
 
 # ── Integrações, webhooks, financeiro ──

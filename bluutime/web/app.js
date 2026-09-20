@@ -6677,11 +6677,16 @@ PAGES.ajustes = {
           <button class="btn btn-main btn-sm" id="cfgSalvar">Salvar configurações</button>
         </div>`)}
 
-      ${panel("Metas diárias", table(["Usuário", "Atividades por dia"],
+      ${panel("Metas diárias", table(["Usuário", "Atividades por dia", ""],
         cfg.usersGoals.map((g) => {
           const u = state.users.find((x) => x.id === g.userId);
-          return { cells: [h(u ? u.name : g.userId), g.dailyGoal] };
-        })), { subtitle: `Padrão da empresa: ${cfg.defaultDailyGoal} atividades/dia` })}
+          return { cells: [h(u ? u.name : g.userId),
+            `<input class="form-control input-sm" type="number" min="0" style="max-width:110px"
+                    data-meta-user="${g.userId}" value="${g.dailyGoal}">`,
+            `<button class="btn btn-default btn-xs" data-meta-padrao="${g.userId}"
+                     title="Voltar ao padrão da empresa">Usar padrão</button>`] };
+        })), { subtitle: `Padrão da empresa: ${cfg.defaultDailyGoal} atividades/dia. A meta individual manda no "Meu dia" da Execução.`,
+               actions: `<button class="btn btn-main btn-xs" id="metasSalvar">Salvar metas</button>` })}
 
       ${panel("Permissões", `
         <div class="alert alert-info alert-styled-left">
@@ -6743,6 +6748,14 @@ PAGES.ajustes = {
         <button class="btn btn-main btn-sm" id="cfgEtapaSalvar">Salvar etapas</button>`)}
 
       ${panel("Lead scoring (fitscore)", `
+        <div class="toolbar" style="border:0;padding:0 0 10px;background:none;flex-wrap:wrap;gap:14px">
+          <label><input type="checkbox" id="fitLigado"${cfg.fitscoreEnabled ? " checked" : ""}>
+            Usar lead scoring</label>
+          <span class="text-muted text-size-small">Desligado, todo lead pontua zero e a fila volta
+            a ordenar só por atraso e prioridade da cadência.</span>
+          <span class="spacer"></span>
+          <button class="btn btn-default btn-xs" id="fitLigadoSalvar">Salvar</button>
+        </div>
         ${table(["Campo", "Condição", "Valor", "Pontos", ""], fitscore.map((r) => ({ cells: [
           h(r.fieldName || "—"), r.expressionType === "LIKE" ? "Contém" : "Igual a",
           h(r.targetValue), r.score,
@@ -6790,11 +6803,27 @@ PAGES.ajustes = {
           <button class="btn btn-main btn-sm" id="dfSalvar">Salvar</button>
         </div>`)}
 
-      ${panel("Calendário de trabalho",
-        table(["Feriado", "Data"], holidays.map((x) => ({ cells: [h(x.name || "—"), fmtDate(x.date)] }))),
-        { subtitle: `Dias úteis: ${cfg.workingDays.map((v) => DIAS_SEMANA.find(([d]) => d === v)[1]).join(", ")}. `
-                    + "A fila não agenda atividade fora deles.",
-          actions: `<button class="btn btn-main btn-xs" id="newHoliday">Adicionar feriado</button>` })}
+      ${(() => {
+        // Feriado que já passou não some, mas também não mistura com o que
+        // vem: o original separa os dois, e é a lista de cima que importa
+        // para quem está agendando.
+        const hojeISO = todayISO();
+        const proximos = holidays.filter((x) => x.date >= hojeISO);
+        const passados = holidays.filter((x) => x.date < hojeISO).reverse();
+        const linhas = (lista) => table(["Feriado", "Data", ""], lista.map((x) => ({ cells: [
+          h(x.name || "—"), fmtDate(x.date),
+          `<button class="btn btn-default btn-xs" data-edit-holiday="${x.id}"
+                   data-nome="${h(x.name || "")}" data-data="${h(x.date)}">Editar</button>
+           <button class="btn btn-default btn-xs" data-del-holiday="${x.id}"
+                   data-nome="${h(x.name || x.date)}">Remover</button>`] })),
+          { empty: "Nenhum." });
+        return panel("Calendário de trabalho", `
+          <h4 class="mt-10">Próximos (${proximos.length})</h4>${linhas(proximos)}
+          <h4 class="mt-10">Já passaram (${passados.length})</h4>${linhas(passados.slice(0, 12))}`,
+          { subtitle: `Dias úteis: ${cfg.workingDays.map((v) => DIAS_SEMANA.find(([d]) => d === v)[1]).join(", ")}. `
+                      + "A fila não agenda atividade fora deles.",
+            actions: `<button class="btn btn-main btn-xs" id="newHoliday">Adicionar feriado</button>` });
+      })()}
 
       ${panel("E-mail — remetente", `
         <div class="alert alert-info alert-styled-left">
@@ -7020,29 +7049,93 @@ PAGES.ajustes = {
         toast("Regra adicionada.", "ok"); go("ajustes");
       } catch (e) { toast(e.message, "err"); }
     };
-    document.getElementById("newHoliday").onclick = () => {
-      const m = modal({
-        title: "Adicionar feriado",
-        body: `<div class="field"><label for="hDate">Data</label><input class="form-control" type="date" id="hDate"></div>
-          <div class="field"><label for="hName">Descrição</label><input class="form-control" id="hName"></div>`,
-        footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
-                 <button class="btn btn-main btn-sm" data-save>Adicionar</button>`,
+    document.getElementById("newHoliday").onclick = () => abrirFeriado();
+    view.querySelectorAll("[data-edit-holiday]").forEach((b) => {
+      b.onclick = () => abrirFeriado({ id: b.dataset.editHoliday, name: b.dataset.nome, date: b.dataset.data });
+    });
+    view.querySelectorAll("[data-del-holiday]").forEach((b) => {
+      b.onclick = () => confirmDialog("Remover feriado",
+        `Remover "${b.dataset.nome}"? A fila volta a agendar atividade nesse dia.`, async () => {
+          try {
+            await api(`/api/flow/configuration/holidays/${b.dataset.delHoliday}`, { method: "DELETE" });
+            toast("Feriado removido.", "ok"); go("ajustes");
+          } catch (e) { toast(e.message, "err"); }
+        });
+    });
+
+    // Metas diárias: a tabela era só leitura, então mudar a meta de alguém
+    // exigia abrir o cadastro do usuário em outra tela.
+    const metasSalvar = document.getElementById("metasSalvar");
+    if (metasSalvar) metasSalvar.onclick = async (ev) => {
+      const bt = ev.currentTarget;
+      bt.disabled = true;
+      const campos = [...view.querySelectorAll("[data-meta-user]")];
+      const mudados = campos.filter((i) => {
+        const atual = (cfg.usersGoals.find((g) => String(g.userId) === i.dataset.metaUser) || {}).dailyGoal;
+        return String(atual) !== i.value;
       });
-      m.root.querySelector("[data-cancel]").onclick = m.close;
-      m.root.querySelector("[data-save]").onclick = async () => {
-        const data = m.root.querySelector("#hDate").value;
-        const nome = m.root.querySelector("#hName").value.trim();
-        if (!data || !nome) return toast("Data e descrição são obrigatórias.", "err");
-        try {
-          await api("/api/flow/configuration/holidays", { method: "POST", body: {
-            date: data,
-            name: nome } });
-          m.close(); toast("Feriado adicionado.", "ok"); go("ajustes");
-        } catch (e) { toast(e.message, "err"); }
+      try {
+        for (const i of mudados) {
+          await api(`/api/users/${i.dataset.metaUser}`, { method: "PATCH",
+            body: { dailyGoal: Number(i.value) || 0 } });
+        }
+        toast(mudados.length ? `${mudados.length} meta(s) atualizada(s).` : "Nada mudou.", "ok");
+        if (mudados.length) go("ajustes");
+      } catch (e) { toast(e.message, "err"); }
+      bt.disabled = false;
+    };
+    view.querySelectorAll("[data-meta-padrao]").forEach((b) => {
+      b.onclick = () => {
+        const campo = view.querySelector(`[data-meta-user="${b.dataset.metaPadrao}"]`);
+        if (campo) campo.value = cfg.defaultDailyGoal;
       };
+    });
+
+    const fitLigadoSalvar = document.getElementById("fitLigadoSalvar");
+    if (fitLigadoSalvar) fitLigadoSalvar.onclick = async (ev) => {
+      ev.currentTarget.disabled = true;
+      try {
+        await api("/api/flow/configuration", { method: "PATCH", body: {
+          fitscoreEnabled: document.getElementById("fitLigado").checked } });
+        toast("Lead scoring atualizado.", "ok"); go("ajustes");
+      } catch (e) { toast(e.message, "err"); ev.currentTarget.disabled = false; }
     };
   },
 };
+
+/** Feriado: um dia ou um intervalo. Recesso de fim de ano é uma semana. */
+function abrirFeriado(feriado) {
+  const f = feriado || {};
+  const m = modal({
+    title: f.id ? "Editar feriado" : "Adicionar feriado",
+    body: `<div class="field"><label for="hDate">${f.id ? "Data" : "De"}</label>
+        <input class="form-control" type="date" id="hDate" value="${h(f.date || "")}"></div>
+      ${f.id ? "" : `<div class="field"><label for="hDateFim">Até <span class="text-grey">(opcional)</span></label>
+        <input class="form-control" type="date" id="hDateFim"></div>`}
+      <div class="field"><label for="hName">Descrição</label>
+        <input class="form-control" id="hName" value="${h(f.name || "")}"></div>`,
+    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+             <button class="btn btn-main btn-sm" data-save>${f.id ? "Salvar" : "Adicionar"}</button>`,
+  });
+  m.root.querySelector("[data-cancel]").onclick = m.close;
+  m.root.querySelector("[data-save]").onclick = async () => {
+    const data = m.root.querySelector("#hDate").value;
+    const nome = m.root.querySelector("#hName").value.trim();
+    if (!data || !nome) return toast("Data e descrição são obrigatórias.", "err");
+    const fim = f.id ? "" : m.root.querySelector("#hDateFim").value;
+    try {
+      if (f.id) {
+        await api(`/api/flow/configuration/holidays/${f.id}`, { method: "PATCH",
+          body: { date: data, name: nome } });
+      } else {
+        const r = await api("/api/flow/configuration/holidays", { method: "POST",
+          body: { date: data, name: nome, endDate: fim || undefined } });
+        if (Array.isArray(r) && r.length > 1) toast(`${r.length} dias cadastrados.`, "ok");
+      }
+      m.close(); toast("Calendário atualizado.", "ok"); go("ajustes");
+    } catch (e) { toast(e.message, "err"); }
+  };
+}
 
 function promptOne(title, label, onOk, okLabel = "Salvar", valor = "") {
   const m = modal({

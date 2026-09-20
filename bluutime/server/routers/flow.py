@@ -373,11 +373,18 @@ def _campos_faltando(db: Session, lead_id: int, campo_obrigatorio: str) -> list[
     return [c.name for c in campos if not (valores.get(c.identifier) or "").strip()]
 
 
+def _fitscore_ligado(db: Session) -> bool:
+    empresa = db.query(Company).first()
+    return bool(empresa.fitscore_enabled) if empresa else True
+
+
 def _fitscore(db: Session, custom: dict) -> int:
     """Soma os pontos das regras de fitscore que baterem no lead.
 
     LIKE é "contém" (case-insensitive); EQUALS é igual exato. `custom` já vem
     indexado por identifier (mesmo formato de `_custom_values`)."""
+    if not _fitscore_ligado(db):
+        return 0
     total = 0
     regras = (db.query(FitscoreRule, CustomField.identifier)
               .join(CustomField, FitscoreRule.field_id == CustomField.id).all())
@@ -393,7 +400,7 @@ def _fitscore(db: Session, custom: dict) -> int:
 def _fitscore_bulk(db: Session, lead_ids: list[int]) -> dict[int, int]:
     """Mesma conta que `_fitscore`, mas pra uma página inteira de leads de
     uma vez — sem isso, a lista faria uma consulta de regras por linha."""
-    if not lead_ids:
+    if not lead_ids or not _fitscore_ligado(db):
         return {}
     regras = (db.query(FitscoreRule, CustomField.identifier)
               .join(CustomField, FitscoreRule.field_id == CustomField.id).all())
