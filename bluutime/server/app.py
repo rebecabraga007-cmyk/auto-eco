@@ -11,7 +11,7 @@ import asyncio
 import os
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import CAPIBLU_BACKEND, WEB, capiblu_on_path
@@ -157,7 +157,20 @@ async def run_tick(request: Request):
 
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(WEB, "index.html"))
+    """Serve o index carimbando `app.js`/`app.css` com a data do arquivo.
+
+    O HTML pedia `app.js?v=1` fixo: como a chave de cache é a URL inteira, o
+    navegador de quem já tinha aberto o Bluutime continuava rodando a versão
+    antiga depois de cada deploy, sem jeito de forçar pelo lado do servidor.
+    """
+    html = open(os.path.join(WEB, "index.html"), encoding="utf-8").read()
+    for arquivo in ("app.js", "app.css"):
+        try:
+            carimbo = int(os.path.getmtime(os.path.join(WEB, arquivo)))
+        except OSError:
+            continue
+        html = html.replace(f"{arquivo}?v=1", f"{arquivo}?v={carimbo}")
+    return HTMLResponse(html, headers={"Cache-Control": "no-store, must-revalidate"})
 
 
 app.mount("/", StaticFiles(directory=WEB, html=True), name="web")

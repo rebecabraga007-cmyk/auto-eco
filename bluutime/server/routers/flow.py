@@ -1026,7 +1026,10 @@ def delete_base(bid: int, com_leads: bool = False, db: Session = Depends(get_db)
 @router.get("/execution/queue")
 def queue(sdr_id: int | None = None, client_id: int | None = None,
           cadence_id: int | None = None, type: str | None = None,
-          limit: int = Query(60, le=300), db: Session = Depends(get_db)):
+          q: str | None = None, field_id: int | None = None,
+          field_op: str = "EQUALS", field_value: str | None = None,
+          escopo: str = "todas", limit: int = Query(60, le=300),
+          db: Session = Depends(get_db)):
     """Fila priorizada. Ordena por atraso × prioridade × janela de melhor contato —
     em vez da ordem cronológica pura do Meetime."""
     now = datetime.utcnow()
@@ -1043,16 +1046,50 @@ def queue(sdr_id: int | None = None, client_id: int | None = None,
         query = query.filter(Lead.cadence_id == cadence_id)
     if type:
         query = query.filter(LeadActivity.type == type)
+    if q:
+        like = f"%{q.strip()}%"
+        query = query.filter(or_(Lead.name.ilike(like), Lead.company.ilike(like),
+                                 Lead.email.ilike(like), Lead.phone.ilike(like)))
+    # Mesmo filtro de campo personalizado da lista de Leads: quem separa a
+    # fila por segmento ou origem não precisa sair da tela de execução.
+    if field_id and field_value:
+        alvo = db.query(LeadFieldValue.lead_id).filter(LeadFieldValue.field_id == field_id)
+        alvo = (alvo.filter(LeadFieldValue.value.ilike(f"%{field_value}%"))
+                if field_op == "LIKE" else alvo.filter(LeadFieldValue.value == field_value))
+        query = query.filter(Lead.id.in_(alvo))
+    # Atividade sem passo de cadência é atividade extra — o original as separa
+    # da cadência porque nascem de uma decisão do SDR, não do roteiro.
+    if escopo == "cadencia":
+        query = query.filter(LeadActivity.cadence_step_id.isnot(None))
+    elif escopo == "extras":
+        query = query.filter(LeadActivity.cadence_step_id.is_(None))
     items = query.all()
     scored = sorted(items, key=lambda a: serial.queue_score(a, now), reverse=True)[:limit]
+
+    # Tentativas por lead numa consulta só: em fila de 60 itens, contar dentro
+    # do laço eram 60 idas ao banco.
+    ids = [a.lead_id for a in scored]
+    tentativas = dict(db.query(LeadActivity.lead_id, func.count(LeadActivity.id))
+                      .filter(LeadActivity.lead_id.in_(ids or [-1]),
+                              LeadActivity.status.in_(["DONE", "SKIPPED"]))
+                      .group_by(LeadActivity.lead_id).all()) if ids else {}
+    passos = {p.id: p for p in db.query(CadenceStep).filter(
+        CadenceStep.id.in_([a.cadence_step_id for a in scored if a.cadence_step_id] or [-1])).all()}         if scored else {}
+
     out = []
     for a in scored:
         row = serial.lead_activity(a, now)
         row["score"] = serial.queue_score(a, now)
+        row["tentativas"] = tentativas.get(a.lead_id, 0)
+        passo = passos.get(a.cadence_step_id)
+        row["extra"] = a.cadence_step_id is None
+        row["passo"] = ({"id": passo.id, "dia": passo.day, "ordem": passo.order_in_day}
+                        if passo else None)
         out.append(row)
     late = sum(1 for a in items if a.scheduled_at < now)
+    extras = sum(1 for a in items if a.cadence_step_id is None)
     return {"data": out, "meta": {"total": len(items), "late": late,
-                                  "onTime": len(items) - late,
+                                  "onTime": len(items) - late, "extras": extras,
                                   "generatedAt": serial.iso(now)}}
 
 
