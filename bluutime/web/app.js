@@ -5583,7 +5583,52 @@ PAGES["meu-perfil"] = {
   area: "Empresa", title: "Meu perfil",
   async render() {
     const me = state.me;
+    const aba = state.perfilAba || "geral";
     view.innerHTML = `
+      <ul class="nav nav-tabs">
+        ${[["geral", "Dados"], ["senha", "Senha"]].map(([k, t]) =>
+          `<li${aba === k ? ' class="active"' : ""}><a data-perfaba="${k}">${t}</a></li>`).join("")}
+      </ul>
+      <div id="perfBody" class="mt-10"></div>`;
+    view.querySelectorAll("[data-perfaba]").forEach((a) => {
+      a.onclick = () => { state.perfilAba = a.dataset.perfaba; go("meu-perfil"); };
+    });
+    const corpo = document.getElementById("perfBody");
+
+    if (aba === "senha") {
+      // A troca de senha existia só no menu do topo; no original ela é uma
+      // aba do perfil, e as regras ficam escritas na tela.
+      corpo.innerHTML = panel("Trocar minha senha", `
+        <div class="field"><label for="psAtual">Senha atual</label>
+          <input class="form-control" id="psAtual" type="password" autocomplete="current-password"></div>
+        <div class="field"><label for="psNova">Nova senha</label>
+          <input class="form-control" id="psNova" type="password" autocomplete="new-password"></div>
+        <div class="field"><label for="psRepete">Repita a nova senha</label>
+          <input class="form-control" id="psRepete" type="password" autocomplete="new-password"></div>
+        <ul class="text-muted text-size-small" style="padding-left:18px;margin:0 0 14px">
+          <li>Ao menos 8 caracteres.</li>
+          <li>Pedimos a senha atual: é o que impede que uma sessão esquecida
+              aberta vire troca de credencial por quem passar na mesa.</li>
+          <li>Vale para o CapiBLU também — é o mesmo login.</li>
+        </ul>
+        <button class="btn btn-main btn-sm" id="psSalvar">Trocar senha</button>`);
+      document.getElementById("psSalvar").onclick = async (e) => {
+        const v = (id) => document.getElementById(id).value;
+        if (v("psNova").length < 8) return toast("A nova senha precisa de ao menos 8 caracteres.", "err");
+        if (v("psNova") !== v("psRepete")) return toast("As duas não são iguais.", "err");
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        try {
+          await api("/api/auth/change-password", { method: "POST", body: {
+            senha_atual: v("psAtual"), nova_senha: v("psNova") } });
+          toast("Senha alterada.", "ok");
+          go("meu-perfil");
+        } catch (err) { toast(err.message, "err"); btn.disabled = false; }
+      };
+      return;
+    }
+
+    corpo.innerHTML = `
       ${panel("Meu perfil", `
         <div class="text-center mb-20">
           <div style="width:78px;height:78px;border-radius:50%;margin:0 auto;overflow:hidden;
@@ -5637,36 +5682,39 @@ PAGES["meu-perfil"] = {
 };
 
 /* ── Administração ───────────────────────────────────────────────────── */
+/* ── Empresa ─────────────────────────────────────────────────────────────
+   O original tem um hub de empresa com abas; aqui as três coisas viviam
+   empilhadas na mesma página, sem busca e sem como remover alguém. */
+const ROLE_LABEL = {
+  ADMINISTRATOR: "Administrador", MANAGER: "Gestor",
+  SDR: "SDR", SALESMAN: "Vendedor",
+};
+
 PAGES.usuarios = {
-  area: "Empresa", title: "Usuários e times",
+  area: "Empresa", title: "Empresa",
   async render() {
+    const aba = state.empresaAba || "usuarios";
+    const f = state.userFilter || { page: 1, per_page: 25 };
+    const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v !== "" && v != null));
     const [users, teams, empresa] = await Promise.all([
-      api("/api/users"), api("/api/teams"), api("/api/me/company")]);
-    state.users = users.data;
-    const rows = users.data.map((u) => ({ cells: [
-      `<div class="media-left"><div class="lead-avatar-dot ${u.online ? "success" : ""}">${h(u.initials)}</div></div>
-       <div class="media-body"><strong>${h(u.name)}</strong><br>
-       <span class="text-muted text-size-small">${h(u.email)}</span></div>`,
-      u.roles.map((r) => `<span class="pill">${h(r)}</span>`).join(" "),
-      u.team ? h(u.team.name) : "—",
-      u.dailyGoal,
-      u.active ? `<span class="pill green">Ativo</span>` : `<span class="pill grey">Inativo</span>`,
-      `<button class="btn btn-default btn-xs" data-edit-user="${u.id}">Editar</button>`,
-    ] }));
+      api(`/api/users?${qs}`), api("/api/teams"), api("/api/me/company")]);
+    // O boot guarda a lista inteira para os dropdowns; a tela é paginada, e
+    // sobrescrever aqui deixaria "transferir lead" com 25 nomes.
+    const p = users.pagination;
+
+    const abas = [["gerais", "Dados gerais"], ["usuarios", `Usuários`], ["times", `Times`]];
     view.innerHTML = `
-      <div class="toolbar"><span class="text-muted">${users.data.length} usuários · ${teams.length} times</span>
-        <span class="spacer"></span>
-        <button class="btn btn-main btn-xs" id="newUser">Novo usuário</button></div>
-      ${panel("Usuários", table(["Usuário", "Papéis", "Time", "Meta diária", "Situação", ""], rows))}
-      ${panel("Times", table(["Time", "Integrantes", ""],
-        teams.map((t) => ({ cells: [
-          h(t.name),
-          t.users.map((u) => h(u.name)).join(", ") || "—",
-          `<button class="btn btn-default btn-xs" data-edit-team="${t.id}">Editar</button>
-           <button class="btn btn-default btn-xs" data-del-team="${t.id}" data-nome="${h(t.name)}">Remover</button>`,
-        ] })), { empty: "Nenhum time ainda." }),
-        { actions: nivelPeloMenos("admin") ? `<button class="btn btn-main btn-xs" id="newTeam">Criar time</button>` : "" })}
-      ${panel("Dados da empresa", `
+      <ul class="nav nav-tabs">
+        ${abas.map(([k, t]) => `<li${aba === k ? ' class="active"' : ""}><a data-emaba="${k}">${t}</a></li>`).join("")}
+      </ul>
+      <div id="emBody" class="mt-10"></div>`;
+    view.querySelectorAll("[data-emaba]").forEach((a) => {
+      a.onclick = () => { state.empresaAba = a.dataset.emaba; go("usuarios"); };
+    });
+    const body = document.getElementById("emBody");
+
+    if (aba === "gerais") {
+      body.innerHTML = panel("Dados da empresa", `
         <div class="field-row">
           <div class="field"><label for="emNome">Nome</label>
             <input class="form-control" id="emNome" value="${h(empresa.name || "")}"></div>
@@ -5676,44 +5724,129 @@ PAGES.usuarios = {
         <div class="field"><label for="emSite">Site</label>
           <input class="form-control" id="emSite" value="${h(empresa.site || "")}"></div>
         ${nivelPeloMenos("admin") ? `<button class="btn btn-main btn-sm" id="emSalvar">Atualizar dados</button>`
-          : `<span class="text-muted text-size-small">Só administrador edita os dados da empresa.</span>`}`)}`;
-    document.getElementById("newUser").onclick = () => openUserForm();
-    view.querySelectorAll("[data-edit-user]").forEach((b) => {
-      b.onclick = () => openUserForm(users.data.find((u) => String(u.id) === b.dataset.editUser));
+          : `<span class="text-muted text-size-small">Só administrador edita os dados da empresa.</span>`}`);
+      const salvarEmpresa = document.getElementById("emSalvar");
+      if (salvarEmpresa) salvarEmpresa.onclick = async (ev) => {
+        const bt = ev.currentTarget;
+        bt.disabled = true;
+        try {
+          await api("/api/me/company", { method: "PATCH", body: {
+            name: document.getElementById("emNome").value,
+            phone: document.getElementById("emTel").value,
+            site: document.getElementById("emSite").value,
+          } });
+          toast("Dados da empresa atualizados.", "ok");
+        } catch (e) { toast(e.message, "err"); }
+        bt.disabled = false;
+      };
+      return;
+    }
+
+    if (aba === "times") {
+      body.innerHTML = panel("Times", table(["Time", "Integrantes", ""],
+        teams.map((t) => ({ cells: [
+          h(t.name),
+          t.users.map((u) => h(u.name)).join(", ") || "—",
+          `<button class="btn btn-default btn-xs" data-edit-team="${t.id}">Editar</button>
+           <button class="btn btn-default btn-xs" data-del-team="${t.id}" data-nome="${h(t.name)}">Remover</button>`,
+        ] })), { empty: "Nenhum time ainda." }),
+        { actions: nivelPeloMenos("admin") ? `<button class="btn btn-main btn-xs" id="newTeam">Criar time</button>` : "" });
+      const novoTime = document.getElementById("newTeam");
+      if (novoTime) novoTime.onclick = () => openTeamForm(null, state.users);
+      body.querySelectorAll("[data-edit-team]").forEach((b) => {
+        b.onclick = () => openTeamForm(teams.find((t) => String(t.id) === b.dataset.editTeam), state.users);
+      });
+      body.querySelectorAll("[data-del-team]").forEach((b) => {
+        b.onclick = () => confirmDialog("Remover time",
+          `Remover o time "${b.dataset.nome}"? As pessoas continuam, só ficam sem time.`,
+          async () => {
+            try {
+              await api(`/api/teams/${b.dataset.delTeam}`, { method: "DELETE" });
+              toast("Time removido.", "ok"); go("usuarios");
+            } catch (e) { toast(e.message, "err"); }
+          });
+      });
+      return;
+    }
+
+    const admin = nivelPeloMenos("admin");
+    const rows = users.data.map((u) => ({ cells: [
+      `<div class="media-left"><div class="lead-avatar-dot ${u.online ? "success" : ""}">${h(u.initials)}</div></div>
+       <div class="media-body"><strong>${h(u.name)}</strong><br>
+       <span class="text-muted text-size-small">${h(u.email)}</span></div>`,
+      u.roles.map((r) => `<span class="pill">${h(ROLE_LABEL[r] || r)}</span>`).join(" ") || "—",
+      u.team ? h(u.team.name) : "—",
+      u.dailyGoal ?? "—",
+      // O cadastro só está completo quando existe login no CapiBLU — é ele
+      // que deixa a pessoa entrar nas duas ferramentas.
+      u.temLogin === false ? `<span class="pill amber" title="Sem conta no CapiBLU: não consegue entrar">Sem login</span>`
+        : u.temLogin === true ? `<span class="pill green">Tem login</span>` : "—",
+      u.leads ?? "—",
+      u.active ? `<span class="pill green">Ativo</span>` : `<span class="pill grey">Inativo</span>`,
+      `<button class="btn btn-default btn-xs" data-edit-user="${u.id}">Editar</button>
+       ${admin ? `<button class="btn btn-default btn-xs" data-del-user="${u.id}" data-nome="${h(u.name)}">Excluir</button>` : ""}`,
+    ] }));
+
+    body.innerHTML = `
+      <div class="toolbar">
+        <input class="form-control grow" id="uQ" placeholder="Buscar por nome ou e-mail…" value="${h(f.q || "")}">
+        <select class="form-control" id="uTime">${options(teams, f.team_id, { blank: "Todos os times" })}</select>
+        <select class="form-control" id="uPapel">
+          <option value="">Todos os papéis</option>
+          ${Object.entries(ROLE_LABEL).map(([k, v]) =>
+            `<option value="${k}"${f.role === k ? " selected" : ""}>${v}</option>`).join("")}
+        </select>
+        <select class="form-control" id="uAtivo">
+          <option value="">Ativos e inativos</option>
+          <option value="true"${f.active === "true" ? " selected" : ""}>Só ativos</option>
+          <option value="false"${f.active === "false" ? " selected" : ""}>Só inativos</option>
+        </select>
+        <span class="spacer"></span>
+        ${admin ? `<button class="btn btn-main btn-xs" id="newUser">Novo usuário</button>` : ""}
+      </div>
+      ${panel(`Usuários (${p.totalRowCount})`,
+        table(["Usuário", "Papéis", "Time", "Meta diária", "Login", "Leads", "Situação", ""], rows,
+          { scroll: true, empty: f.q ? "Ninguém com esse nome ou e-mail." : "Nenhum usuário." }),
+        { actions: pager(p) })}`;
+
+    const setFilter = (key, value) => {
+      state.userFilter = { ...f, [key]: value, page: 1 };
+      go("usuarios");
+    };
+    let tu;
+    document.getElementById("uQ").oninput = (e) => {
+      clearTimeout(tu);
+      const v = e.target.value;
+      tu = setTimeout(() => setFilter("q", v), 350);
+    };
+    document.getElementById("uTime").onchange = (e) => setFilter("team_id", e.target.value);
+    document.getElementById("uPapel").onchange = (e) => setFilter("role", e.target.value);
+    document.getElementById("uAtivo").onchange = (e) => setFilter("active", e.target.value);
+    view.querySelectorAll("[data-goto-page]").forEach((b) => {
+      b.onclick = () => { state.userFilter = { ...f, page: Number(b.dataset.gotoPage) }; go("usuarios"); };
     });
 
-    const novoTime = document.getElementById("newTeam");
-    if (novoTime) novoTime.onclick = () => openTeamForm(null, users.data);
-    view.querySelectorAll("[data-edit-team]").forEach((b) => {
-      b.onclick = () => openTeamForm(teams.find((t) => String(t.id) === b.dataset.editTeam), users.data);
+    const novo = document.getElementById("newUser");
+    if (novo) novo.onclick = () => openUserForm();
+    body.querySelectorAll("[data-edit-user]").forEach((b) => {
+      b.onclick = () => openUserForm(users.data.find((u) => String(u.id) === b.dataset.editUser));
     });
-    view.querySelectorAll("[data-del-team]").forEach((b) => {
-      b.onclick = () => confirmDialog("Remover time",
-        `Remover o time "${b.dataset.nome}"? As pessoas continuam, só ficam sem time.`,
+    body.querySelectorAll("[data-del-user]").forEach((b) => {
+      b.onclick = () => confirmDialog("Excluir usuário",
+        `${b.dataset.nome} sai da empresa de vez. Quem tem lead ou atividade no nome não pode ser excluído — nesse caso, inative.`,
         async () => {
           try {
-            await api(`/api/teams/${b.dataset.delTeam}`, { method: "DELETE" });
-            toast("Time removido.", "ok"); go("usuarios");
+            await api(`/api/users/${b.dataset.delUser}`, { method: "DELETE" });
+            toast("Usuário excluído.", "ok"); go("usuarios");
           } catch (e) { toast(e.message, "err"); }
         });
     });
-
-    const salvarEmpresa = document.getElementById("emSalvar");
-    if (salvarEmpresa) salvarEmpresa.onclick = async (ev) => {
-      const bt = ev.currentTarget;
-      bt.disabled = true;
-      try {
-        await api("/api/me/company", { method: "PATCH", body: {
-          name: document.getElementById("emNome").value,
-          phone: document.getElementById("emTel").value,
-          site: document.getElementById("emSite").value,
-        } });
-        toast("Dados da empresa atualizados.", "ok");
-      } catch (e) { toast(e.message, "err"); }
-      bt.disabled = false;
-    };
   },
 };
+
+// O hub tem nome próprio no original; o item de menu continua apontando para
+// "usuarios", então as duas rotas levam à mesma tela.
+PAGES.empresa = PAGES.usuarios;
 
 function openUserForm(user) {
   const u = user || {};

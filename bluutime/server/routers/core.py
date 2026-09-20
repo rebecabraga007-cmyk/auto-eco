@@ -3,7 +3,7 @@ import os
 from datetime import date, datetime
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from .. import perm
@@ -12,7 +12,7 @@ from ..config import WEB
 from ..db import get_db
 from ..deps import session_email
 from ..models import (Client, Company, CustomField, FitscoreRule, Goal, Holiday,
-                      Integration, LostReason, Team, User, Webhook)
+                      Integration, Lead, LeadActivity, LostReason, Team, User, Webhook)
 from ..serial import client as ser_client
 from ..serial import iso, user_full
 
@@ -277,23 +277,105 @@ def featureflags():
     return FEATURE_FLAGS
 
 
+def _emails_com_login() -> set[str]:
+    """E-mails que têm conta no CapiBLU — é o login das duas ferramentas.
+
+    Sem isso, um usuário da operação cadastrado aqui parece pronto mas não
+    consegue entrar, e ninguém descobre até ele tentar. Uma leitura só, em
+    vez de uma consulta por linha.
+    """
+    try:
+        import auth as capiblu_auth
+        return {(u.get("email") or "").lower() for u in capiblu_auth.list_users()}
+    except Exception:
+        # Sem a base de contas o resto da tela continua de pé; o que some é
+        # só o aviso de cadastro incompleto.
+        return set()
+
+
 @router.get("/users")
-def list_users(db: Session = Depends(get_db)):
+def list_users(q: str | None = None, active: bool | None = None,
+               team_id: int | None = None, role: str | None = None,
+               page: int = 1, per_page: int = 200, db: Session = Depends(get_db)):
     # Fica aberto pra qualquer nível de propósito — dropdown de "transferir
     # lead"/"responsáveis da cadência" precisa disso pro SDR também, não só
     # pro gestor. O que não faz sentido é peer ver a meta diária individual
     # de peer; isso sai da resposta pra quem não é gestor+ (menos a própria).
     ator = perm.ator(db)
-    users = db.query(User).order_by(User.id).all()
+    gestor = ator.pelo_menos("gestor")
+    query = db.query(User)
+    if q:
+        alvo = f"%{q.strip()}%"
+        query = query.filter(or_(User.name.ilike(alvo), User.email.ilike(alvo)))
+    if active is not None:
+        query = query.filter(User.active == active)
+    if team_id:
+        query = query.filter(User.team_id == team_id)
+    if role:
+        # `roles` é uma string separada por vírgula; o LIKE tem que casar o
+        # papel inteiro, senão "SDR" traria "SDR_MANAGER" se um dia existir.
+        query = query.filter(or_(User.roles == role, User.roles.like(f"{role},%"),
+                                 User.roles.like(f"%,{role}"), User.roles.like(f"%,{role},%")))
+    total = query.count()
+    per_page = max(5, min(500, per_page))
+    page = max(1, page)
+    users = (query.order_by(User.id).offset((page - 1) * per_page).limit(per_page).all())
+
+    # Leads por dono numa consulta só — a coluna existe para explicar por que
+    # o botão de excluir fica travado.
+    ids = [u.id for u in users]
+    leads = dict(db.query(Lead.sdr_id, func.count(Lead.id))
+                 .filter(Lead.sdr_id.in_(ids or [-1]))
+                 .group_by(Lead.sdr_id).all()) if ids else {}
+    com_login = _emails_com_login() if gestor else set()
+
     data = []
     for u in users:
         row = user_full(u)
-        if not ator.pelo_menos("gestor") and u.id != ator.user_id:
+        if not gestor and u.id != ator.user_id:
             row.pop("dailyGoal", None)
+        if gestor:
+            row["leads"] = leads.get(u.id, 0)
+            row["temLogin"] = (u.email or "").lower() in com_login if com_login else None
         data.append(row)
+    total_pages = max(1, -(-total // per_page))
     return {"data": data,
-            "pagination": {"page": 1, "perPage": 100, "totalRowCount": len(users),
-                           "totalPageCount": 1, "hasPrev": False, "hasNext": False}}
+            "pagination": {"page": page, "perPage": per_page, "totalRowCount": total,
+                           "totalPageCount": total_pages, "hasPrev": page > 1,
+                           "hasNext": page < total_pages}}
+
+
+@router.delete("/users/{uid}")
+def delete_user(uid: int, db: Session = Depends(get_db)):
+    """Exclusão definitiva — o que o Meetime chama de "remover da empresa".
+
+    Três travas: ninguém se exclui, o último administrador ativo não sai (a
+    empresa ficaria sem quem gerencia), e quem tem lead ou atividade no nome
+    não some — apagar levaria o histórico junto. Para esses, o caminho é
+    inativar.
+    """
+    ator = perm.ator(db)
+    ator.exigir("admin", "excluir usuário")
+    u = db.get(User, uid)
+    if not u:
+        raise HTTPException(404, "Usuário não encontrado.")
+    if u.id == ator.user_id:
+        raise HTTPException(400, "Você não pode excluir a si mesmo.")
+    if "ADMINISTRATOR" in u.role_list:
+        outros = [x for x in db.query(User).filter(User.active.is_(True)).all()
+                  if x.id != u.id and "ADMINISTRATOR" in x.role_list]
+        if not outros:
+            raise HTTPException(400, "É o último administrador ativo — promova outra "
+                                     "pessoa antes de excluir.")
+    n_leads = db.query(func.count(Lead.id)).filter(Lead.sdr_id == uid).scalar()
+    n_ativ = db.query(func.count(LeadActivity.id)).filter(LeadActivity.user_id == uid).scalar()
+    if n_leads or n_ativ:
+        raise HTTPException(400, f"{u.name} tem {n_leads} lead(s) e {n_ativ} atividade(s) "
+                                 "no nome. Transfira ou inative em vez de excluir — "
+                                 "excluir levaria o histórico junto.")
+    db.delete(u)
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/users")
