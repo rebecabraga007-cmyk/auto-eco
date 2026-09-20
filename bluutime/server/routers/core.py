@@ -789,7 +789,10 @@ def create_field(payload: dict = Body(...), db: Session = Depends(get_db)):
 @router.get("/flow/fitscore")
 def fitscore_rules(db: Session = Depends(get_db)):
     rows = db.query(FitscoreRule).order_by(FitscoreRule.id).all()
+    # O identificador vai junto: é por ele que a tela do lead casa a regra com
+    # o valor gravado e mostra qual bateu.
     return [{"id": r.id, "fieldId": r.field_id, "fieldName": r.field.name if r.field else "",
+             "fieldIdentifier": r.field.identifier if r.field else "",
              "expressionType": r.expression_type, "targetValue": r.target_value, "score": r.score}
             for r in rows]
 

@@ -454,6 +454,9 @@ async function boot() {
   state.lostReasons = reasons;
   state.dialerConfig = dialerCfg;
   state.teams = teams;
+  // As permissões da empresa decidem o que o SDR vê habilitado; sem elas a
+  // tela chutava pelo nível e errava quando a empresa liberava algo extra.
+  state.permissoes = await api("/api/flow/permissions/configuration").catch(() => ({}));
   go(location.hash.slice(1) || "dashboard");
 }
 
@@ -1471,6 +1474,9 @@ PAGES.leads = {
     const f = state.leadFilter || { page: 1, limit: 50 };
     const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v));
     const res = await api(`/api/flow/leads?${qs}`);
+    // Guarda a página para as ações em massa saberem o que foi selecionado
+    // sem pedir os leads de novo.
+    state.leadsNaTela = res.data;
     const campos = state.leadFields || [];
     const rows = res.data.map((l) => ({ cells: [
       `<input type="checkbox" class="lead-check" value="${l.id}">`,
@@ -1587,16 +1593,32 @@ function selectedLeadIds() {
 function openBulkModal() {
   const ids = selectedLeadIds();
   if (!ids.length) return toast("Selecione ao menos um lead.", "err");
+  // Habilitação condicional, como no original: a ação que não faz sentido
+  // para a seleção aparece desligada dizendo por quê, em vez de falhar depois.
+  const escolhidos = (state.leadsNaTela || []).filter((l) => ids.includes(l.id));
+  const situacoes = new Set(escolhidos.map((l) => l.status));
+  const finalizados = escolhidos.filter((l) => l.status === "WON" || l.status === "LOST").length;
+  const podeDeletar = nivelPeloMenos("gestor") || (state.permissoes || {}).leadsDelete;
+  const acoes = [
+    ["transfer", "Transferir para outro SDR", ""],
+    ["switch_cadence", "Trocar de cadência",
+      finalizados ? `${finalizados} lead(s) já finalizado(s) na seleção — trocar cadência reabriria` : ""],
+    ["back_to_waiting", "Voltar para espera",
+      situacoes.has("WAITING") ? "algum lead já está em espera" : ""],
+    ["lost", "Marcar como perdido",
+      finalizados ? `${finalizados} lead(s) da seleção já estão finalizados` : ""],
+    ["delete", "Apagar", podeDeletar ? "" : "só gestor, ou com a permissão ligada em Ajustes"],
+  ];
   const m = modal({
     title: `Ações em massa · ${ids.length} leads`,
     body: `<div class="field"><label for="bulkAction">Ação</label>
         <select class="form-control" id="bulkAction">
-          <option value="transfer">Transferir para outro SDR</option>
-          <option value="switch_cadence">Trocar de cadência</option>
-          <option value="back_to_waiting">Voltar para espera</option>
-          <option value="lost">Marcar como perdido</option>
-          <option value="delete">Apagar</option>
-        </select></div>
+          ${acoes.map(([v, rot, motivo]) =>
+            `<option value="${v}"${motivo ? " disabled" : ""} title="${h(motivo)}">${rot}${
+              motivo ? ` — indisponível: ${h(motivo)}` : ""}</option>`).join("")}
+        </select>
+        ${acoes.some(([, , mo]) => mo) ? `<span class="help-block">
+          Ação desligada vem com o motivo escrito ao lado.</span>` : ""}</div>
       <div class="field" id="bulkExtra"></div>`,
     footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
              <button class="btn btn-main btn-sm" data-ok>Aplicar</button>`,
@@ -1782,9 +1804,15 @@ PAGES.lead = {
     view.innerHTML = `
       <div class="panel panel-flat"><div class="panel-body">
         <div class="lead-page-head">
-          <div>
+          <div class="lead-identidade">
+            <button type="button" class="lead-avatar-grande" data-fitpop
+              title="Ver como o fit score foi somado">${h((l.name || "?").slice(0, 2).toUpperCase())}
+              <span class="fit-selo ${l.fitscore >= 5 ? "alto" : l.fitscore > 0 ? "medio" : "zero"}">${l.fitscore ?? 0}</span>
+            </button>
+            <div>
             <h1 class="lead-page-title">${h(l.name)}</h1>
             <div class="text-muted">${h(l.company || "—")}${l.position ? ` · ${h(l.position)}` : ""}</div>
+            </div>
           </div>
           <div class="heading-elements">
             ${statusPill(l.status)}
@@ -2029,6 +2057,37 @@ PAGES.lead = {
         ? pendentes.find((a) => String(a.id) === escolha.value) || proxima
         : proxima;
       openExecuteModal(alvo, null);
+    };
+    // Popover do fit score: a nota sozinha não diz nada; o que convence é ver
+    // qual regra bateu e quanto cada uma somou.
+    const fitBtn = view.querySelector("[data-fitpop]");
+    if (fitBtn) fitBtn.onclick = async () => {
+      const m = modal({ title: `Fit score de ${l.name}`, body: LOADING,
+        footer: `<button class="btn btn-main btn-sm" data-close-fit>Fechar</button>` });
+      m.root.querySelector("[data-close-fit]").onclick = m.close;
+      try {
+        const regras = await api("/api/flow/fitscore");
+        const valores = l.customFields || {};
+        const linhas = regras.map((r) => {
+          const valor = String(valores[r.fieldIdentifier || ""] ?? "");
+          const bateu = r.expressionType === "LIKE"
+            ? valor.toLowerCase().includes((r.targetValue || "").toLowerCase())
+            : valor === r.targetValue;
+          return { ...r, valor, bateu };
+        });
+        m.root.querySelector(".modal-body").innerHTML = `
+          <div class="fit-total">${l.fitscore ?? 0} <span>pontos</span></div>
+          ${table(["Campo", "Condição", "Esperado", "No lead", "Pontos"],
+            linhas.map((r) => ({ cells: [
+              h(r.fieldName || "—"), r.expressionType === "LIKE" ? "Contém" : "Igual a",
+              h(r.targetValue), h(r.valor || "—"),
+              r.bateu ? `<span class="pill green">+${r.score}</span>`
+                      : `<span class="text-muted">0</span>`] })),
+            { empty: "Nenhuma regra de pontuação cadastrada — todo lead vale 0." })}`;
+      } catch (e) {
+        m.root.querySelector(".modal-body").innerHTML =
+          `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
+      }
     };
     const btRetomar = view.querySelector("[data-retomar]");
     if (btRetomar) btRetomar.onclick = async () => {
@@ -2527,6 +2586,8 @@ PAGES.cadencias = {
     const rows = list.map((c) => ({ cells: [
       `<input type="checkbox" class="cad-check" value="${c.id}" data-on="${c.executing ? 1 : 0}">`,
       `<a data-open-cad="${c.id}"><strong>${h(c.name)}</strong></a>
+       ${c.overview.errosEntrega ? `<span class="pill red ml-5" data-erro-cad="${c.id}"
+          title="Entregas bloqueadas ou com falha nos leads desta cadência">⚠ ${c.overview.errosEntrega}</span>` : ""}
        ${c.description ? `<br><span class="text-muted text-size-small">${h(c.description)}</span>` : ""}`,
       c.client ? `<span class="pill" style="border-color:${h(c.client.color)}">${h(c.client.name)}</span>` : "—",
       `<span class="pill">${h(FOCUS_LABEL[c.cadenceFocus] || c.cadenceFocus)}</span>`,
@@ -2582,6 +2643,14 @@ PAGES.cadencias = {
     document.getElementById("newCad").onclick = () => openCadenceForm();
     const limpar = document.getElementById("cLimpar");
     if (limpar) limpar.onclick = () => { state.cadFilter = {}; go("cadencias"); };
+    view.querySelectorAll("[data-erro-cad]").forEach((b) => {
+      b.style.cursor = "pointer";
+      b.onclick = (e) => {
+        e.stopPropagation();
+        state.envioAba = "entregas";
+        go("envio");
+      };
+    });
     view.querySelectorAll("[data-ordc]").forEach((t2) => {
       t2.onclick = () => {
         const campo = t2.dataset.ordc;
@@ -3605,6 +3674,13 @@ PAGES["lista-ligacoes"] = {
         <a class="btn btn-default btn-xs" href="/api/dialer/calls/export${filtrosQS(extra)}">Exportar</a>
         <a class="btn btn-default btn-xs" href="/api/reports/dropped-calls">Baixar derrubadas</a>
       </div>
+      <div class="legenda-filtro">
+        ${[["", "Todas", "grey"], ["MEANINGFUL", "Significativa", "green"],
+           ["NOT_MEANINGFUL", "Não significativa", "blue"], ["NO_CONTACT", "Sem contato", "amber"]]
+          .map(([k, rot, tom]) => `<button type="button" class="pill ${tom}${(f.output || "") === k ? " ativo" : ""}"
+            data-legenda="${k}">${rot}</button>`).join("")}
+        <span class="text-muted text-size-small">clique para filtrar</span>
+      </div>
       ${panel(`${res.pagination.totalRowCount} ligações`,
         table(["", "Situação", "Usuário", "Lead", "Origem", "Destino", "Data", "Duração", "Tipo", ""],
               rows, { scroll: true }),
@@ -3617,6 +3693,13 @@ PAGES["lista-ligacoes"] = {
     let tb;
     busca.oninput = () => { clearTimeout(tb); tb = setTimeout(() => set("q", busca.value), 350); };
     ligarFiltros(() => go("lista-ligacoes"));
+    // A legenda do original é o filtro: clicar no rótulo recorta a lista.
+    view.querySelectorAll("[data-legenda]").forEach((b) => {
+      b.onclick = () => {
+        state.callFilter = { ...f, output: b.dataset.legenda, page: 1 };
+        go("lista-ligacoes");
+      };
+    });
     view.querySelectorAll("[data-lead]").forEach((a) => {
       a.onclick = () => go(`lead/${a.dataset.lead}`);
     });
@@ -4368,7 +4451,7 @@ PAGES["feedback-oportunidade"] = {
           <div class="qual-linha">
             <div class="qual-topo"><strong>${h(t.tag)}</strong>
               <span class="text-muted text-size-small">${t.total} resposta${t.total === 1 ? "" : "s"}</span></div>
-            <div class="qual-barra" title="Sim: ${t.sim} · Não: ${t.nao}">
+            <div class="qual-barra" data-qualpop="${h(t.tag)}">
               <button type="button" class="qual-sim" style="width:${t.simPercentual}%"
                 data-qual="${h(t.tag)}" data-v="1"
                 title="Ver os ${t.sim} que responderam sim">${t.simPercentual >= 12 ? `${t.sim} sim` : ""}</button>
@@ -4379,6 +4462,19 @@ PAGES["feedback-oportunidade"] = {
           </div>`).join("") : emptyState("Nenhuma resposta de qualificação no recorte."),
           { subtitle: "Clique em um pedaço da barra para ver os feedbacks daquela resposta." })}
         ${panel("Feedbacks ao longo do tempo", fbSerieChart(stats.serie))}`;
+      // Popover de contagem: o tooltip do navegador some ao mexer o mouse e não
+      // dá para ler com calma, que é justamente o que se quer aqui.
+      body.querySelectorAll("[data-qualpop]").forEach((barra) => {
+        const t = stats.tags.find((x) => x.tag === barra.dataset.qualpop);
+        if (!t) return;
+        const pop = document.createElement("div");
+        pop.className = "qual-pop";
+        pop.innerHTML = `<strong>${h(t.tag)}</strong>
+          <div>Sim: <b>${t.sim}</b> (${t.simPercentual}%)</div>
+          <div>Não: <b>${t.nao}</b> (${100 - t.simPercentual}%)</div>
+          <div class="text-muted">${t.total} resposta${t.total === 1 ? "" : "s"}</div>`;
+        barra.appendChild(pop);
+      });
       body.querySelectorAll("[data-qual]").forEach((b) => {
         b.onclick = () => {
           state.feedbackAba = "respondidos";

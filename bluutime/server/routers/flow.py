@@ -21,11 +21,26 @@ from .. import agenda, perm, render, serial, webhooks
 router = APIRouter(prefix="/api/flow")
 
 
+def _erros_de_entrega(db: Session, cadence_id: int) -> int:
+    """Entregas que não saíram, dos leads desta cadência.
+
+    É o badge de erro da tabela do original. Aqui o erro que existe de verdade
+    é a entrega bloqueada ou falha — não há execução de passo que estoure
+    sozinha.
+    """
+    return (db.query(func.count(Delivery.id))
+            .join(Lead, Delivery.lead_id == Lead.id)
+            .filter(Lead.cadence_id == cadence_id,
+                    Delivery.status.in_(["BLOCKED", "FAILED", "ERROR"]))
+            .scalar() or 0)
+
+
 def _overview(db: Session, cadence_id: int) -> dict:
     rows = (db.query(Lead.status, func.count(Lead.id))
             .filter(Lead.cadence_id == cadence_id).group_by(Lead.status).all())
     counts = dict(rows)
     return {"total": sum(counts.values()),
+            "errosEntrega": _erros_de_entrega(db, cadence_id),
             "won": counts.get("WON", 0), "lost": counts.get("LOST", 0),
             "waiting": counts.get("WAITING", 0), "executing": counts.get("EXECUTING", 0),
             "onExtraActivity": counts.get("ON_EXTRA_ACTIVITY", 0),

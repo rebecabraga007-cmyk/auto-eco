@@ -1525,3 +1525,63 @@ th.ord:hover { color: var(--text); }
 /* Sub-abas dentro de uma aba: menores, sem a borda de cima. */
 .nav-tabs-sub { margin-bottom: 12px; font-size: 12.5px; }
 .nav-tabs-sub > li > a { padding: 6px 12px; }
+
+/* Avatar do lead com o fit score, e o resumo da soma no popover. */
+.lead-identidade { display: flex; align-items: center; gap: 14px; }
+.lead-avatar-grande {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--avatar-bg);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.lead-avatar-grande:hover { border-color: var(--green-label); }
+.fit-selo {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  min-width: 20px;
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 18px;
+  color: #fff;
+  background: var(--muted);
+  border: 2px solid var(--panel);
+  border-radius: 10px;
+}
+.fit-selo.alto { background: var(--green); }
+.fit-selo.medio { background: var(--blue); }
+.fit-total { font-size: 30px; font-weight: 600; color: var(--green); margin-bottom: 12px; }
+.fit-total span { font-size: 13px; font-weight: 400; color: var(--muted); }
+
+/* Legenda clicável da lista de ligações. */
+.legenda-filtro { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0; }
+.legenda-filtro .pill { cursor: pointer; border-style: solid; }
+.legenda-filtro .pill.ativo { outline: 2px solid var(--green-label); outline-offset: 1px; }
+
+/* Popover de contagem da barra de qualificação. */
+.qual-barra { position: relative; }
+.qual-pop {
+  position: absolute;
+  z-index: 20;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  min-width: 170px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .12);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s;
+}
+.qual-barra:hover .qual-pop { opacity: 1; }
