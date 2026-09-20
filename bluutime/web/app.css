@@ -1955,3 +1955,6 @@ tr.linha-padrao > td { background: rgba(0, 0, 0, .03); }
 .faixa-metricas .fm-ico { font-size: 15px; color: var(--muted); }
 .faixa-metricas strong { font-size: 17px; font-weight: 500; color: var(--text); }
 .faixa-metricas small { font-size: 11.5px; color: var(--muted); }
+
+/* Resultado da ligação no painel: ícone e rótulo na cor do resultado. */
+.razao { white-space: nowrap; font-size: 12.5px; }

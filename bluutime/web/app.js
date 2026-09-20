@@ -3963,58 +3963,15 @@ function openClientForm(client) {
 /* ── Ligações ────────────────────────────────────────────────────────── */
 PAGES.ligacoes = {
   area: "Ligações", title: "Painel de Ligações",
+  // O painel do original é operacional, não analítico: "Minhas ligações
+  // hoje", quatro colunas, e pronto. O que estava aqui era um segundo
+  // dashboard de estatísticas, repetindo o que Estatísticas > Ligações já
+  // responde melhor — e nenhum dos dois era a tela do Meetime.
   async render() {
-    // Ligações derrubadas: conectou e caiu em até 10s. Não é falha técnica, é
-    // sinal de abordagem — e não aparecia em tela nenhuma.
-    const qs = filtrosQS();
-    const [ov, derrubadas] = await Promise.all([
-      api(`/api/dialer/calls/statistics/overview${qs}`),
-      api(`/api/dialer/calls/statistics/dropped${qs}`).catch(() => ({ data: [] })),
-    ]);
-    const o = ov.data[0];
-    const best = o.bestHourToCall;
-    const listaDerrubadas = derrubadas.data || [];
     view.innerHTML = `
-      <div class="toolbar">${periodoControle()}${timeControle()}${usuarioControle()}${cadenciaControle()}</div>
-      ${kpis([
-        { value: o.totalCalls, label: "Ligações no período" },
-        { value: o.totalConnected, label: "Conectadas", tone: "success" },
-        { value: `${o.meaningfulRate}%`, label: "Significativas", tone: "info" },
-        { value: fmtDuration(o.averageDuration), label: "Duração média", tone: "warning" },
-      ])}
-      <div class="two-col mt-10">
-        ${panel("Conexão por hora do dia",
-          bars(o.byHour.map((r) => ({ label: `${r.hour}h`, value: r.connected,
-            tone: best && r.hour === best.bestStartHour ? "success" : "info" }))),
-          { subtitle: best ? `Melhor janela: ${best.bestStartHour}h–${best.bestEndHour}h, ${best.connectedPercentage}% de conexão` : "" })}
-        ${panel("Resultado das conectadas",
-          bars((o.statuses.find((s) => s.status === "CONNECTED") || { outputs: [] }).outputs.map((x) => ({
-            label: { MEANINGFUL: "Significativa", NOT_MEANINGFUL: "Não significativa", NO_CONTACT: "Sem contato" }[x.output] || x.output,
-            value: x.count,
-            tone: x.output === "MEANINGFUL" ? "success" : x.output === "NO_CONTACT" ? "warning" : "info",
-          }))))}
-      </div>
-      ${panel("Distribuição", `<div class="stat-line">
-        <span><b>${o.totalMobile}</b>Celular</span>
-        <span><b>${o.totalLandline}</b>Fixo</span>
-        <span><b>${fmtDuration(o.totalDurationInSeconds)}</b>Tempo total</span>
-        <span><b>${o.averageDailyCallsPerRep}</b>Ligações/SDR/dia</span>
-      </div>`)}
-      ${panel("Ligações de hoje", `<div id="hojeBox">${LOADING}</div>`,
-        { subtitle: "O painel operacional do original: o que já foi discado hoje, com detalhe e nova tentativa" })}
-      ${panel(`Derrubadas (${listaDerrubadas.length})`, listaDerrubadas.length
-        ? table(["Quando", "SDR", "Lead", "Empresa", "Número", "Duração"],
-            listaDerrubadas.slice(0, 60).map((c) => ({ cells: [
-              fmtDateTime(c.originStarted),
-              h((c.user || {}).name || "—"),
-              h(c.flowLeadName || "—"),
-              h(c.flowLeadCompany || "—"),
-              h(c.receiverPhone || "—"),
-              `${c.receiverConnectedDuration}s`,
-            ] })), { scroll: true })
-        : emptyState("Nenhuma ligação derrubada no período."),
-        { subtitle: "Atendeu e desligou em até 10 segundos — sinal de abordagem, não de linha." })}`;
-    ligarFiltros(() => go("ligacoes"));
+      ${panel("Minhas ligações hoje", `<div id="hojeBox">${LOADING}</div>`,
+        { subtitle: "O que já foi discado hoje, com detalhe e nova tentativa",
+          actions: `<button class="btn btn-default btn-xs" data-page="estatisticas-ligacoes">Ver estatísticas</button>` })}`;
     carregarLigacoesDeHoje();
   },
 };
@@ -4037,21 +3994,32 @@ async function carregarLigacoesDeHoje() {
     return;
   }
   const p = r.pagination || { page: 1, totalPageCount: 1, totalRowCount: r.data.length };
+  // Colunas do original: o resultado com o ícone da razão, a hora com a
+  // duração embaixo, e o destino com o lead em cima e o telefone embaixo.
+  const razao = (c) => {
+    if (c.status !== "CONNECTED") {
+      return `<span class="razao" style="color:#737373" title="Não conectada">✕ Não conectada</span>`;
+    }
+    const [ico, cor, rot] = RAZAO_LIGACAO[c.output]
+      || ["?", "#737373", "Não informado"];
+    return `<span class="razao" style="color:${cor}"${c.output ? "" :
+      ` title="Ao término da ligação não foi informado o output da ligação."`}>${ico} ${h(rot)}</span>`;
+  };
   caixa.innerHTML = `
-    <p class="text-muted text-size-small">${p.totalRowCount} ${p.totalRowCount === 1 ? "ligação" : "ligações"} hoje.</p>
-    ${table(["Hora", "Lead", "Empresa", "Número", "Status", "Resultado", "Duração", ""],
+    ${table(["Status", "Hora/Duração", "Destino", ""],
       r.data.map((c) => ({ cells: [
-        fmtDateTime(c.originStarted).split(", ")[1] || fmtDateTime(c.originStarted),
-        c.flowLeadId ? `<a data-hoje-lead="${c.flowLeadId}">${h(c.flowLeadName || "—")}</a>`
-                     : h(c.flowLeadName || "—"),
-        h(c.flowLeadCompany || "—"), h(c.receiverPhone || "—"),
-        `<span class="pill ${c.status === "CONNECTED" ? "green" : "grey"}">${h(CALL_STATUS_LABEL[c.status] || c.status)}</span>`,
-        h(CALL_OUTPUT_LABEL[c.output] || c.output || "—"),
-        fmtDuration(c.receiverConnectedDuration || 0),
-        `<button class="btn btn-default btn-xs" data-hoje-det="${c.id}">Detalhes</button>
+        razao(c),
+        `<h6 class="no-margin">${(fmtDateTime(c.originStarted).split(", ")[1] || "—").slice(0, 5)}
+          <small class="display-block no-margin text-muted">${fmtDuration(c.receiverConnectedDuration || 0)}</small></h6>`,
+        `${c.flowLeadId
+            ? `<span title="Atividade de prospecção" style="color:var(--ok);margin-right:5px">◎</span>
+               <a data-hoje-lead="${c.flowLeadId}">${h(c.flowLeadName || "—")}</a>`
+            : h(c.flowLeadName || "—")}
+         <small class="text-muted display-block">${h(c.receiverPhone || "—")}</small>`,
+        `<button class="btn btn-default btn-xs" data-hoje-det="${c.id}" title="Ver detalhes">👁</button>
          ${c.flowLeadId ? `<button class="btn btn-default btn-xs" data-hoje-rep="${c.flowLeadId}"
-            title="Registrar nova tentativa para este lead">Nova tentativa</button>` : ""}`,
-      ] })), { scroll: true, empty: "Nenhuma ligação registrada hoje." })}
+            title="Repetir ligação">☎</button>` : ""}`,
+      ] })), { scroll: true, empty: "Nenhuma ligação hoje" })}
     <div class="text-right mt-10">${pager(p)}</div>`;
 
   caixa.querySelectorAll("[data-hoje-lead]").forEach((a) => {
@@ -4091,6 +4059,14 @@ function variacaoSelo(v) {
   return `<span class="pill ${sobe ? "green" : "red"}" title="${v.diferenca > 0 ? "+" : ""}${v.diferenca} contra o período anterior">
     ${sobe ? "▲" : "▼"} ${Math.abs(v.percentual)}%</span>`;
 }
+
+// Ícone, cor e rótulo de cada resultado, como o `callReasons` do original.
+const RAZAO_LIGACAO = {
+  MEANINGFUL: ["↑", "var(--ok)", "Significativa"],
+  NOT_MEANINGFUL: ["↓", "var(--blue)", "Não Significativa"],
+  NO_CONTACT: ["🚫", "var(--red)", "Sem contato"],
+  BUSY: ["⊖", "var(--warn)", "Cliente Ocupado"],
+};
 
 const CALL_STATUS_LABEL = {
   CONNECTED: "Conectada", NOT_PERFORMED: "Não realizada",
