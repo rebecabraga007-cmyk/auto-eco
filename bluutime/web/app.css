@@ -1795,3 +1795,15 @@ tr.linha-padrao > td { background: rgba(0, 0, 0, .03); }
 .sem-atividades h4 { margin: 0 0 6px; font-size: 16px; font-weight: 400; }
 .sem-atividades h6 { margin: 0; font-size: 13px; font-weight: 400; color: var(--muted); }
 .sem-atividades a { cursor: pointer; text-decoration: underline; }
+
+/* .alert-primary e .input-group vêm do original; usados no cabeçalho de API
+   e Webhooks e na caixa "token + Copiar". O flex aqui faz o papel do
+   display:table do Bootstrap, com o mesmo resultado visual. */
+.alert-primary { color: var(--link-dark); background: var(--info-bg); border-color: var(--link); }
+.alert-primary .alert-link { font-weight: 500; text-decoration: underline; }
+.input-group { display: flex; }
+.input-group .form-control { flex: 1 1 auto; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.input-group-addon { display: flex; align-items: center; padding: 7px 12px; font-size: 13px;
+  line-height: 1; color: var(--text); text-align: center; background: #fcfcfc;
+  border: 1px solid var(--line); border-left: 0; border-radius: 0 2px 2px 0; }
+.display-block { display: block; }

@@ -7325,7 +7325,7 @@ PAGES["meu-perfil"] = {
     }
 
     corpo.innerHTML = `
-      ${panel("Meu perfil", `
+      ${panel("Atualizar conta", `
         <div class="text-center mb-20">
           <div style="width:78px;height:78px;border-radius:50%;margin:0 auto;overflow:hidden;
                       background:var(--body);display:flex;align-items:center;justify-content:center;
@@ -7335,23 +7335,24 @@ PAGES["meu-perfil"] = {
           </div>
           <label class="dropzone mt-10" id="avatarDrop" style="padding:14px">
             <input type="file" id="avatarInput" accept="image/*" hidden>
-            <div class="text-size-small"><strong>Arraste uma foto aqui</strong> ou clique para escolher</div>
-            <div class="text-muted text-size-small" id="avatarInfo">JPG ou PNG, até 4 MB</div>
+            <div class="text-size-small">Clique aqui ou arraste um arquivo para fazer o upload da sua foto</div>
+            <div class="text-muted text-size-small" id="avatarInfo">JPG ou PNG, até 4MB</div>
             <div class="barra-progresso" id="avatarBarra" hidden><span></span></div>
           </label>
+          <div class="text-danger text-italic mt-5" id="avatarErro"></div>
         </div>
-        <div class="field"><label for="perfNome">Nome</label>
-          <input class="form-control" id="perfNome" value="${h(me.name)}"></div>
-        <div class="field"><label>E-mail</label>
-          <input class="form-control" value="${h(me.email)}" disabled></div>
+        <div class="field"><label for="perfNome">Nome:</label>
+          <input class="form-control" id="perfNome" value="${h(me.name)}" placeholder="Seu nome"></div>
+        <div class="field"><label>E-mail:</label>
+          <input class="form-control" value="${h(me.email)}" placeholder="Seu email" disabled></div>
         <div class="field"><label for="perfRemetente">Remetente das minhas cadências
           <span class="text-muted text-size-small">— de quem o lead vê o e-mail chegar</span></label>
           <input class="form-control" id="perfRemetente" value="${h(me.emailFrom || "")}"
                  placeholder="seunome@capiblu.net">
           <span class="help-block">Precisa ser do domínio verificado para envio. Em branco, sai
             com o remetente da empresa. A resposta continua vindo para ${h(me.email)}.</span></div>
-        <div class="field"><label>Assinatura de e-mail
-          <span class="text-muted text-size-small">— entra no fim de todo e-mail enviado pela cadência</span></label>
+        <div class="field"><label title="Assinatura de email utilizada nos envios via cadência.">
+          Assinatura de email:</label>
           <div class="editor-barra">
             ${[["b", "<b>", "</b>", "negrito"], ["i", "<i>", "</i>", "itálico"],
                ["a", '<a href="">', "</a>", "link"], ["br", "<br>", "", "quebra de linha"]]
@@ -7360,19 +7361,36 @@ PAGES["meu-perfil"] = {
             <span class="text-muted text-size-small">HTML simples — o que entra aqui vai no rodapé do e-mail</span>
           </div>
           <textarea class="form-control" id="perfAssinatura" rows="4">${h(me.emailSignature || "")}</textarea>
-          <div class="assinatura-previa" id="assinaturaPrevia"></div></div>
+          <div class="assinatura-previa" id="assinaturaPrevia"></div>
+          <a id="perfAjudaAssinatura" style="cursor:pointer">Precisa de ajuda para inserir imagens
+            na assinatura?</a>
+          <div class="como-funciona" id="perfAjudaBox" hidden>
+            <p>A assinatura aceita HTML simples. Para uma imagem, use uma que já esteja publicada
+              na web e aponte para ela:
+              <code>&lt;img src="https://…/logo.png" width="120"&gt;</code>.</p>
+            <p>Imagem colada de dentro do computador não funciona: o e-mail sai daqui e o leitor
+              do outro lado precisa conseguir buscar o arquivo por conta própria.</p>
+            <p>Muitos clientes de e-mail bloqueiam imagem por padrão, então não ponha nela nada
+              que precise ser lido — telefone e cargo vão em texto.</p>
+          </div></div>
         <div class="toolbar mt-10" style="border:0;padding:0;background:none">
           <span class="spacer"></span>
-          <button class="btn btn-main btn-sm" id="perfSalvar">Atualizar dados</button>
+          <button class="btn btn-main btn-sm" id="perfSalvar">Atualizar Dados</button>
         </div>`)}`;
 
     const avatarInfo = document.getElementById("avatarInfo");
     const avatarBarra = document.getElementById("avatarBarra");
     const mandarFoto = async (file) => {
       if (!file) return;
-      if (!/^image\//.test(file.type)) return toast("Só imagem (JPG ou PNG).", "err");
+      const erro = document.getElementById("avatarErro");
+      erro.textContent = "";
+      if (!/^image\//.test(file.type)) {
+        erro.textContent = "*Apenas imagens são permitidas.";
+        return;
+      }
       if (file.size > 4 * 1024 * 1024) {
-        return toast(`A foto tem ${(file.size / 1048576).toFixed(1)} MB; o limite é 4 MB.`, "err");
+        erro.textContent = "*Tamanho máximo permitido: 4MB";
+        return;
       }
       avatarInfo.textContent = `Enviando ${file.name}…`;
       avatarBarra.hidden = false;
@@ -7420,6 +7438,10 @@ PAGES["meu-perfil"] = {
     });
     assinatura.oninput = pintarPrevia;
     pintarPrevia();
+
+    const ajudaLink = document.getElementById("perfAjudaAssinatura");
+    const ajudaBox = document.getElementById("perfAjudaBox");
+    if (ajudaLink && ajudaBox) ajudaLink.onclick = () => { ajudaBox.hidden = !ajudaBox.hidden; };
 
     document.getElementById("perfSalvar").onclick = async (e) => {
       const btn = e.currentTarget;
@@ -7979,23 +8001,36 @@ async function detalheIntegracao(chave, ctx) {
   const hooks = await api("/api/webhooks");
   const souAdmin = nivelPeloMenos("admin");
   view.innerHTML = `${voltar}
-    ${panel("Webhooks", table(["Eventos", "URL de destino", "Situação", "Criado", ""],
+    <div class="text-center">
+      <h1 class="page-title">Webhooks
+        <small class="page-description">Permite enviar atualizações de dados do Bluutime para
+          outros sistemas.</small></h1>
+    </div>
+    <div class="alert alert-primary">
+      <a href="/docs" target="_blank" rel="noopener" class="alert-link">Clique aqui</a>
+      para acessar a
+      <a href="/docs" target="_blank" rel="noopener" class="alert-link">documentação</a>
+      dos Webhooks enviados pelo Bluutime.
+    </div>
+    ${panel("Webhooks configurados", table(["Eventos", "URL Destino", "Situação", "Criado", ""],
       hooks.map((w) => ({ cells: [
-        w.events.map((e) => `<span class="pill">${h(e)}</span>`).join(" "),
+        `${w.events.map((e) => `<span class="pill">${h(e)}</span>`).join(" ")}${
+          w.enabled ? "" : ` <span class="text-muted">(Desativado)</span>`}`,
         `<code style="word-break:break-all">${h(w.targetUrl)}</code>`,
         w.enabled ? `<span class="pill green">Ativo</span>` : `<span class="pill grey">Inativo</span>`,
         fmtDate(w.created),
-        souAdmin ? `<button class="btn btn-default btn-xs" data-hook-toggle="${w.id}" data-on="${w.enabled ? 1 : 0}">
+        souAdmin ? `<button class="btn btn-default btn-xs" data-hook-toggle="${w.id}" data-on="${w.enabled ? 1 : 0}"
+                      title="${w.enabled ? "Desativar" : "Ativar"} webhook">
                       ${w.enabled ? "Desativar" : "Ativar"}</button>
-                    <button class="btn btn-default btn-xs" data-del-hook="${w.id}">Remover</button>`
+                    <button class="btn btn-default btn-xs" data-del-hook="${w.id}">Excluir</button>`
                  : `<span class="text-muted text-size-small">—</span>`] })),
-      { scroll: true, empty: "Nenhum webhook." })
+      { scroll: true, empty: "Nenhum webhook configurado.",
+        emptyHint: souAdmin ? "Use o botão Cadastrar novo acima." : "" })
       + (souAdmin ? "" : `<div class="alert alert-info alert-styled-left mt-10">
            Só administradores gerenciam webhooks.</div>`),
       { subtitle: "O corpo do evento é o mesmo JSON que a API devolve para o objeto — lead em LEAD.*, atividade em ACTIVITY.DONE",
         actions: souAdmin
-          ? `<a class="btn btn-default btn-xs" href="/docs#/default" target="_blank" rel="noopener">Ver o formato na API</a>
-             <button class="btn btn-main btn-xs" id="newHook">Novo webhook</button>` : "" })}`;
+          ? `<button class="btn btn-main btn-xs" id="newHook" title="Cadastrar novo">Cadastrar novo</button>` : "" })}`;
   fechar();
   // O PATCH existia no backend desde sempre, mas não havia botão: um webhook
   // com destino fora do ar só podia ser removido, nunca pausado.
@@ -8019,11 +8054,12 @@ async function detalheIntegracao(chave, ctx) {
   const newHookBtn = document.getElementById("newHook");
   if (newHookBtn) newHookBtn.onclick = () => {
     const m = modal({
-      title: "Novo webhook",
-      body: `<div class="field"><label for="whUrl">URL de destino *</label>
-          <input class="form-control" id="whUrl" placeholder="https://..."></div>
-        <div class="field"><label for="whEvents">Eventos</label>
-          <select class="form-control" id="whEvents" multiple size="7">
+      title: "Cadastrar Webhook",
+      body: `<div class="field">
+          <label for="whEvents" class="text-semibold">Eventos:</label>
+          <div class="help-block">Eventos que irão disparar notificações para este webhook.</div>
+          <select class="form-control" id="whEvents" multiple size="7"
+                  aria-label="Escolher eventos..">
             <option value="LEAD.WON" selected>LEAD.WON</option>
             <option value="LEAD.LOST">LEAD.LOST</option>
             <option value="LEAD.CREATED">LEAD.CREATED</option>
@@ -8031,15 +8067,28 @@ async function detalheIntegracao(chave, ctx) {
             <option value="ACTIVITY.DONE">ACTIVITY.DONE</option>
             <option value="MESSAGE.SENT">MESSAGE.SENT</option>
             <option value="BASE.IMPORTED">BASE.IMPORTED</option>
-          </select></div>`,
+          </select></div>
+        <div class="field">
+          <label for="whUrl" class="text-semibold">URL Destino:</label>
+          <div class="help-block">Endereço para envio das mensagens quando os eventos cadastrados
+            ocorrerem.</div>
+          <input class="form-control" id="whUrl" placeholder="URL para recebimento">
+          <small class="text-danger help-block" id="whUrlErro" hidden>Tenha certeza de que a URL
+            inicie com HTTPS e seja um endereço válido.</small></div>`,
       footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
                <button class="btn btn-main btn-sm" data-save>Criar</button>`,
     });
     m.root.querySelector("[data-cancel]").onclick = m.close;
     m.root.querySelector("[data-save]").onclick = async () => {
+      const url = m.root.querySelector("#whUrl").value.trim();
+      const aviso = m.root.querySelector("#whUrlErro");
+      // O original só aceita HTTPS: webhook em HTTP manda os dados do lead
+      // em claro, e não adianta descobrir isso depois do primeiro disparo.
+      aviso.hidden = /^https:\/\/[^\s/]+\.[^\s/]+/i.test(url);
+      if (!aviso.hidden) return;
       try {
         await api("/api/webhooks", { method: "POST", body: {
-          targetUrl: m.root.querySelector("#whUrl").value.trim(),
+          targetUrl: url,
           events: [...m.root.querySelector("#whEvents").selectedOptions].map((o) => o.value) } });
         m.close(); toast("Webhook criado.", "ok"); go("integracoes");
       } catch (e) { toast(e.message, "err"); }
@@ -8095,7 +8144,7 @@ PAGES.ajustes = {
       ["geral", "Geral", ["Configurações gerais", "Objetivo Diário de Atividades",
                           "Calendário de trabalho"]],
       ["campos", "Campos e funil", ["Campos do lead", "Etapa do lead (funil)", "Lead scoring (fitscore)"]],
-      ["resultado", "Resultado", ["Motivos de perda", "Feedback de oportunidade"]],
+      ["resultado", "Resultado", ["Motivos de perda", "Feedback de Oportunidade"]],
       ["permissoes", "Permissões", ["Permissões"]],
       ["email", "E-mail", ["E-mail — remetente", "Blacklist de E-mails Automáticos",
                            "Domínios de envio (whitelabel)"]],
@@ -8378,8 +8427,14 @@ PAGES.ajustes = {
         <div class="text-center mt-10">
           <button class="btn btn-main btn-sm" id="blSalvar">Salvar Lista</button>
         </div>`)}
-      ${panel("Domínios de envio (whitelabel)",
-        `<div id="dominiosBox">${LOADING}</div>`,
+      ${panel("Domínios de envio (whitelabel)", `
+        <p class="text-muted">Autorize o Bluutime a utilizar o seu endereço de e-mail para garantir
+          a entregabilidade dos e-mails enviados a partir da plataforma. Lembrando que essa
+          configuração só é necessária caso os integrantes do time não possam integrar às suas
+          caixas de e-mail.</p>
+        <p class="text-muted">Adicione abaixo os domínios que serão utilizados no envio de seus
+          e-mails (Ex: usuario@suaempresa.com.br).</p>
+        <div id="dominiosBox">${LOADING}</div>`,
         { subtitle: "Estado real dos domínios no provedor de envio. Cadastrar ou remover domínio se faz no painel do provedor — é recurso da conta que paga a fatura." })}`;
 
     view.querySelectorAll("[data-cfgaba]").forEach((a) => {
@@ -8403,13 +8458,28 @@ PAGES.ajustes = {
           box.innerHTML = `<div class="alert alert-info alert-styled-left">${h(d.motivo)}</div>`;
           return;
         }
-        box.innerHTML = d.dominios.length ? d.dominios.map((dom) => `
+        box.innerHTML = d.dominios.length ? `<div class="dominios-topo">Domínios adicionados
+          <span class="badge bg-blue">${d.dominios.length}</span></div>`
+          + d.dominios.map((dom) => `
           <div class="sub-block">
-            <h4>${h(dom.nome)}
+            <h4>${dom.status === "verified" ? `<span class="text-success">✓</span>`
+                                            : `<span class="text-danger">✕</span>`} ${h(dom.nome)}
               <span class="pill ${dom.status === "verified" ? "green" : dom.status === "failed" ? "red" : "amber"}">${h(dom.status)}</span>
               ${dom.envio === "enabled" ? `<span class="pill green">envio liberado</span>` : `<span class="pill grey">envio bloqueado</span>`}
               <span class="text-muted text-size-small">${h(dom.regiao || "")} · desde ${h(dom.criado || "—")}</span>
             </h4>
+            <p class="text-size-small">${dom.status === "verified"
+              ? "A configuração de DNS foi concluída com sucesso no seu servidor."
+              : dom.status === "failed"
+                ? `A configuração dos registros de DNS falhou. Você pode verificar a configuração
+                   do seu servidor e tentar novamente.`
+                : `Ainda não foi possível encontrar os registros de DNS no seu servidor.<br>
+                   <small class="text-muted">É normal que ocorra um intervalo entre
+                   <strong>12 a 48 horas</strong> até que as novas configurações tenham efeito.
+                   Durante esse tempo, nosso servidor tentará validar a configuração
+                   automaticamente.</small>`}</p>
+            ${dom.status === "verified" ? "" : `<div class="mb-10">
+              <button class="btn btn-default btn-xs" data-revalidar="${h(dom.id || dom.nome)}">Atualizar validação</button></div>`}
             ${table(["Registro", "Nome", "Valor", "Situação"],
               dom.registros.map((r) => ({ cells: [
                 `<span class="pill">${h(r.tipo || "")}</span>`,
@@ -8417,7 +8487,21 @@ PAGES.ajustes = {
                 `<code class="text-size-small" style="word-break:break-all">${h(r.valor || "")}</code>`,
                 `<span class="pill ${r.status === "verified" ? "green" : "amber"}">${h(r.status || "—")}</span>`,
               ] })), { scroll: true, empty: "Sem registros DNS informados pelo provedor." })}
-          </div>`).join("") : emptyState("Nenhum domínio cadastrado no provedor.");
+          </div>`).join("") : emptyState("Nenhum domínio cadastrado",
+            "Todos os e-mails enviados pelo Bluutime usam o seu domínio, seguindo o padrão "
+            + "seunome@suaempresa.com.br. Faça a configuração do whitelabel para garantir maiores "
+            + "taxas de entregabilidade e diminuir as chances de seus e-mails serem tratados como SPAM.");
+        box.querySelectorAll("[data-revalidar]").forEach((b) => {
+          b.onclick = async () => {
+            b.disabled = true;
+            try {
+              await api(`/api/flow/email/domains/${encodeURIComponent(b.dataset.revalidar)}/verificar`,
+                        { method: "POST" });
+              toast("Validação pedida ao provedor — recarregue em alguns minutos.", "ok");
+            } catch (e2) { toast(e2.message, "err"); }
+            b.disabled = false;
+          };
+        });
       } catch (e) {
         box.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
       }
@@ -8982,11 +9066,25 @@ async function abaTokens() {
     t.ultimo_uso ? fmtDateTime(epoch(t.ultimo_uso)) : "nunca usado",
     `<button class="btn btn-default btn-xs tk-del" data-id="${t.id}">Revogar</button>`,
   ] }));
-  out.innerHTML = panel("Tokens de API", rows.length
-    ? table(["Nome", "Dono", "Criado", "Último uso", ""], rows)
-    : emptyState("Nenhum token. Token permite chamar a API sem passar pelo login."),
-    { subtitle: "O valor do token aparece uma única vez, na criação.",
-      actions: `<button class="btn btn-main btn-xs" id="tkNovo">Novo token</button>` });
+  out.innerHTML = `
+    <div class="text-center">
+      <h1 class="page-title">API
+        <small class="page-description">Permite flexibilidade e customização para fazer consultas
+          e criar dados no Bluutime.</small></h1>
+    </div>
+    <div class="alert alert-primary">
+      <a href="/docs" target="_blank" rel="noopener" class="alert-link">Clique aqui</a>
+      para acessar a
+      <a href="/docs" target="_blank" rel="noopener" class="alert-link">documentação</a>
+      da API do Bluutime.
+    </div>
+    ${panel("Token de API", rows.length
+      ? table(["Nome", "Dono", "Criado", "Último uso", ""], rows)
+      : emptyState("Nenhum token gerado.",
+                   "O token permite chamar a API sem passar pelo login."),
+      { subtitle: "O token é gerado uma única vez, o qual permite consultar e enviar dados na sua "
+                  + "conta. Por isso, mantenha este token guardado de forma segura.",
+        actions: `<button class="btn btn-main btn-xs" id="tkNovo">Gerar token</button>` })}`;
 
   document.getElementById("tkNovo").onclick = () => {
     const m = modal({
@@ -9011,11 +9109,25 @@ async function abaTokens() {
           nome, user_id: Number(m.root.querySelector("#tnUser").value) } });
         m.close();
         // O valor só existe agora: o servidor guarda o hash.
-        modal({ title: "Token gerado", body: `
-          <div class="alert alert-info alert-styled-left">
-            Copie agora — este valor não aparece de novo.
+        const valor = novo.token || novo.valor || JSON.stringify(novo);
+        const mv = modal({ title: "Token de API", body: `
+          <div class="input-group">
+            <input class="form-control" id="tkValor" readonly value="${h(valor)}">
+            <span class="input-group-addon" id="tkCopiar" style="cursor:pointer">Copiar</span>
           </div>
-          <div class="json-box" style="user-select:all">${h(novo.token || novo.valor || JSON.stringify(novo))}</div>` });
+          <small class="text-muted display-block mt-10">Esta é a sua identificação única que
+            permite consultar e criar dados na sua conta. Por isso, mantenha este token guardado
+            em lugar seguro — ele não aparece de novo.</small>` });
+        mv.root.querySelector("#tkCopiar").onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(valor);
+            toast("Token copiado.", "ok");
+          } catch {
+            // Sem permissão de área de transferência: seleciona para o Ctrl+C.
+            mv.root.querySelector("#tkValor").select();
+            toast("Selecionado — use Ctrl+C.", "");
+          }
+        };
         go("contas");
       } catch (e) { toast(e.message, "err"); }
     };
