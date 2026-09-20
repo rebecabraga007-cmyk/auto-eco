@@ -1142,7 +1142,38 @@ def goals(ref: str, db: Session = Depends(get_db)):
                                                      / len(rows), 4) if rows else 0.15)},
             "usersGoals": [{"user": {"id": g.user.id, "name": g.user.name},
                             "opportunitiesGoal": g.opportunities_goal,
-                            "conversionRateGoal": g.conversion_rate_goal} for g in rows]}
+                            "conversionRateGoal": g.conversion_rate_goal} for g in rows],
+            # Insumos da "Estimativa de esforço" do original. O número que
+            # falta para fechar a conta é quantas atividades custa levar um
+            # lead até o fim — e isso não é chute, é a média histórica desta
+            # empresa. Sem lead finalizado ainda, vai None e a tela diz que
+            # não dá para estimar em vez de inventar um número.
+            "esforco": _insumos_de_esforco(db, month)}
+
+
+def _insumos_de_esforco(db: Session, month: date) -> dict:
+    """Atividades por lead finalizado e dias úteis do mês."""
+    finalizados = (db.query(Lead.id)
+                   .filter(or_(Lead.won_at.isnot(None), Lead.lost_at.isnot(None)))
+                   .limit(2000).all())
+    ids = [l[0] for l in finalizados]
+    atividades = (db.query(func.count(LeadActivity.id))
+                  .filter(LeadActivity.lead_id.in_(ids),
+                          LeadActivity.status == "DONE").scalar() if ids else 0)
+    empresa = _company(db)
+    uteis_cfg = {int(x) for x in (empresa.working_days or "1,2,3,4,5").split(",") if x.strip()}
+    fim = date(month.year + (month.month == 12), (month.month % 12) + 1, 1)
+    dias_uteis = sum(1 for i in range((fim - month).days)
+                     if (month + timedelta(days=i)).isoweekday() in uteis_cfg)
+    # Média só vale com amostra. Esta base veio de uma migração que trouxe o
+    # desfecho dos leads mas quase nenhuma atividade executada: dividir 7 por
+    # 551 daria "0 atividades por lead", e a estimativa sairia dizendo que a
+    # meta se atinge sem trabalho nenhum. Abaixo do piso, devolve None e a
+    # tela explica que não há histórico para estimar.
+    PISO = 30
+    media = round(atividades / len(ids), 1) if ids and atividades >= PISO else None
+    return {"atividadesPorLead": media, "atividadesConsideradas": atividades,
+            "leadsFinalizados": len(ids), "diasUteis": dias_uteis, "amostraMinima": PISO}
 
 
 @router.put("/flow/goals/{ref}")

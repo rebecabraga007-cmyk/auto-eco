@@ -1867,3 +1867,9 @@ tr.linha-padrao > td { background: rgba(0, 0, 0, .03); }
 .resumo-timeline { display: flex; gap: 22px; flex-wrap: wrap; margin: 0 0 14px;
   font-size: 12.5px; color: var(--muted); }
 .resumo-timeline strong { margin-right: 4px; font-size: 15px; font-weight: 500; color: var(--text); }
+
+/* Estimativa de esforço do modal de metas. */
+.esforco { margin: 14px 0; padding: 12px 14px; font-size: 12.5px;
+  background: var(--creme); border-radius: 3px; }
+.esforco h6 { margin: 0 0 6px; font-size: 12px; font-weight: 500; color: var(--muted); }
+.esforco .display-block { margin-top: 4px; font-size: 11.5px; }

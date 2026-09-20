@@ -726,6 +726,35 @@ function renderGoalChart(series, target) {
  * Antes listava os 36 usuários da base — inativos inclusive — com dois
  * campos cada, e não havia nem total nem como tirar alguém. No original a
  * meta nasce no nível da empresa e é distribuída entre quem participa. */
+/** "Estimativa de esforço para atingir a meta", do original.
+ *
+ * leads = oportunidades ÷ conversão; atividades por dia por vendedor sai da
+ * média histórica de atividades por lead finalizado desta empresa. Sem
+ * histórico suficiente não estima: um número inventado aqui vira meta
+ * diária de alguém. */
+function estimativaEsforco(meta, conv, participantes, dados) {
+  const box = (dentro) => `<div class="esforco">
+    <h6>Estimativa de esforço para atingir a meta</h6>${dentro}</div>`;
+  if (!meta || !conv) {
+    return box(`<span class="text-muted">Para obter a estimativa, defina a meta de Oportunidades
+      e Taxa de Conversão.</span>`);
+  }
+  const leads = Math.ceil(meta / (conv / 100));
+  if (!dados.atividadesPorLead) {
+    return box(`Será necessário finalizar <span class="text-semibold">${leads} leads</span>.
+      <span class="text-muted display-block">Ainda não dá para estimar as atividades por dia:
+      a base tem ${dados.atividadesConsideradas || 0} atividades executadas em leads finalizados,
+      e a média só começa a significar algo a partir de ${dados.amostraMinima || 30}.</span>`);
+  }
+  const porDia = participantes && dados.diasUteis
+    ? Math.ceil(leads * dados.atividadesPorLead / dados.diasUteis / participantes) : null;
+  return box(`Será necessário finalizar <span class="text-semibold">${leads} leads</span>
+    ${porDia ? `e realizar uma média de <span class="text-semibold">${porDia} atividades</span>
+      diárias por vendedor.` : "."}
+    <span class="text-muted display-block">Base: ${dados.atividadesPorLead} atividades por lead
+      finalizado, ${dados.diasUteis} dias úteis no mês.</span>`);
+}
+
 async function openGoalsModal(ref) {
   const current = await api(`/api/flow/goals/${ref}`);
   const nome = (id) => (state.users.find((u) => u.id === id) || {}).name || `Usuário ${id}`;
@@ -751,14 +780,20 @@ async function openGoalsModal(ref) {
       .filter((u) => u.active !== false && !linhas.some((l) => l.userId === u.id));
     m.root.querySelector("#gmCorpo").innerHTML = `
       <div class="gm-total">
-        <div class="field"><label for="gmMeta">Meta de oportunidades da empresa</label>
-          <input class="form-control" type="number" min="0" id="gmMeta" value="${total}"></div>
-        <div class="field"><label for="gmConv">Conversão alvo (%)</label>
-          <input class="form-control" type="number" min="1" max="100" id="gmConv" value="${convMedia}"></div>
+        <div class="field"><label for="gmMeta">Meta de Oportunidades
+          <small class="text-muted display-block">Número total de oportunidades para o mês</small></label>
+          <input class="form-control" type="number" min="0" id="gmMeta" value="${total}"
+                 placeholder="meta oportunidades"></div>
+        <div class="field"><label for="gmConv">Meta de Taxa de Conversão
+          <small class="text-muted display-block">Percentual dos leads finalizados no mês que a
+            empresa espera transformar em oportunidades</small></label>
+          <input class="form-control" type="number" min="1" max="100" id="gmConv" value="${convMedia}"
+                 placeholder="meta conversão"></div>
         <div class="text-muted text-size-small">
           Mexer aqui redistribui entre os ${linhas.length} participante${linhas.length === 1 ? "" : "s"};
           mexer em alguém embaixo atualiza o total.</div>
       </div>
+      ${estimativaEsforco(total, convMedia, linhas.length, current.esforco || {})}
       ${linhas.length ? linhas.map((l, i) => `
         <div class="field-row gm-linha" data-i="${i}">
           <div class="field"><label>${h(l.nome)} — oportunidades</label>
@@ -768,7 +803,7 @@ async function openGoalsModal(ref) {
           <div class="field" style="flex:0 0 auto;align-self:end">
             <button class="btn btn-default btn-xs" data-remover="${i}" title="Tirar da meta">Remover</button></div>
         </div>`).join("")
-        : `<p class="text-muted">Nenhum participante ainda — escolha alguém abaixo.</p>`}
+        : `<p class="text-muted">Adicione aqui os usuários que irão contribuir para a meta.</p>`}
       ${disponiveis.length ? `
         <div class="toolbar mt-10" style="border:0;padding:0;background:none">
           <select class="form-control" id="gmNovo">${options(disponiveis, "", { blank: "Adicionar participante…" })}</select>
@@ -810,6 +845,12 @@ async function openGoalsModal(ref) {
       ? Math.round(linhas.reduce((n, l) => n + (Number(l.conv) || 0), 0) / linhas.length) : 15;
     m.root.querySelector("#gmMeta").value = total;
     m.root.querySelector("#gmConv").value = conv;
+    // A estimativa depende dos dois números: sem isto ela congelaria no
+    // valor de quando a tela foi desenhada e mentiria enquanto se digita.
+    const est = m.root.querySelector(".esforco");
+    if (est) {
+      est.outerHTML = estimativaEsforco(total, conv, linhas.length, current.esforco || {});
+    }
   };
 
   desenhar();
@@ -8277,7 +8318,7 @@ PAGES.ajustes = {
     const CFG_ABAS = [
       ["geral", "Geral", ["Configurações gerais", "Objetivo Diário de Atividades",
                           "Calendário de trabalho"]],
-      ["campos", "Campos e funil", ["Campos do lead", "Etapa do lead (funil)", "Lead scoring (fitscore)"]],
+      ["campos", "Campos e funil", ["Campos dos Leads", "Etapa do lead (funil)", "Lead scoring (fitscore)"]],
       ["resultado", "Resultado", ["Motivos de perda", "Feedback de Oportunidade"]],
       ["permissoes", "Permissões", ["Permissões"]],
       ["email", "E-mail", ["E-mail — remetente", "Blacklist de E-mails Automáticos",
@@ -8293,10 +8334,6 @@ PAGES.ajustes = {
         <div class="toolbar" style="border:0;padding:8px 0;background:none;flex-wrap:wrap;gap:14px">
           <label><input type="checkbox" id="cfgABS"${cfg.accountBasedSalesEnabled ? " checked" : ""}>
             Vendas por conta <span class="text-muted text-size-small">— mesmo domínio de e-mail cai sempre com o mesmo vendedor</span></label>
-        </div>
-        <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
-          <label><input type="checkbox" id="cfgImport"${cfg.regularUserCanImportLeadList ? " checked" : ""}>
-            Vendedor comum pode importar lista de leads</label>
         </div>
         <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
           <label><input type="checkbox" id="cfgFila"${cfg.smartQueueEnabled ? " checked" : ""}>
@@ -8337,34 +8374,35 @@ PAGES.ajustes = {
           actions: `<button class="btn btn-main btn-xs" id="metasSalvar">Salvar metas</button>` })}
 
       ${panel("Permissões", `
-        <div class="alert alert-info alert-styled-left">
-          O original mostra um par de caixas por permissão, uma para cada perfil. Aqui a coluna do
-          gestor é fixa: gestor e admin têm acesso total por construção, e desmarcar ali não teria
-          efeito nenhum — melhor deixar visível e travado do que fingir que é ajustável.
-        </div>
-        <table class="table table-striped"><thead><tr>
-            <th>Permissão</th><th style="width:110px">Vendedor</th><th style="width:110px">Gestor</th>
-          </tr></thead><tbody>
-          ${[["permVisivel", permCfg.leadsVisibleAll, "Ver e acessar leads de outros usuários", ""],
-             ["permAdd", permCfg.leadsAddManual, "Adicionar leads individualmente", ""],
-             ["permStats", permCfg.statisticsAccess, "Acessar a aba de Estatísticas", ""],
-             ["permDel", permCfg.leadsDelete, "Apagar leads",
-              "só os da própria carteira, e a ação não tem volta"]]
-            .map(([id, ligado, rotulo, nota]) => `<tr>
-              <td>${rotulo}${nota ? `<br><span class="text-muted text-size-small">${nota}</span>` : ""}</td>
-              <td><input type="checkbox" id="${id}"${ligado ? " checked" : ""}></td>
-              <td><input type="checkbox" checked disabled title="Gestor e admin sempre têm"></td>
-            </tr>`).join("")}
-          </tbody></table>
+        <div class="text-muted text-size-small mb-15">Vale para quem tem perfil de vendedor.
+          Gestor e admin têm acesso total por construção.</div>
+        ${[["permVisivel", permCfg.leadsVisibleAll, "Ver e acessar leads de outros usuários",
+            "Permitir que o usuário veja e acesse todos os leads, incluindo os de outros responsáveis"],
+           ["permDel", permCfg.leadsDelete, "Deletar Leads",
+            "Permitir que o usuário exclua leads permanentemente"],
+           ["permImport", permCfg.leadbaseUpload, "Adicionar leads via lista de importação",
+            "Permitir importação de leads via lista e acesso ao histórico de importações anteriores"],
+           ["permAdd", permCfg.leadsAddManual, "Adicionar leads individualmente",
+            "Permitir adicionar leads manualmente (via página de leads)"],
+           ["permStats", permCfg.statisticsAccess, "Acessar a aba de Estatísticas",
+            "Permitir que o usuário veja os números do time, e não só os próprios"]]
+          .map(([id, ligado, rotulo, nota]) => `
+            <div class="opcao-switch">
+              <label><input type="checkbox" id="${id}"${ligado ? " checked" : ""}>
+                <span><h5>${h(rotulo)}</h5>
+                  <small class="text-muted">${h(nota)}</small></span></label>
+            </div>`).join("")}
         <div class="toolbar mt-10" style="border:0;padding:0;background:none">
           <span class="spacer"></span>
           <button class="btn btn-main btn-sm" id="permSalvar">Salvar</button>
         </div>`)}
 
       ${panel("Motivos de perda",
-        table(["Motivo", ""], reasons.map((r) => ({ cells: [h(r.name),
+        table(["Nome do motivo", ""], reasons.map((r) => ({ cells: [h(r.name),
           `<button class="btn btn-default btn-xs" data-edit-reason="${r.id}" data-nome="${h(r.name)}">Editar</button>
-           <button class="btn btn-default btn-xs" data-del-reason="${r.id}">Remover</button>`] }))),
+           <button class="btn btn-default btn-xs" data-del-reason="${r.id}">Remover</button>`] })),
+          { empty: "Nenhum motivo de perda cadastrado",
+            emptyHint: "Sem motivo cadastrado, marcar um lead como perdido não diz por quê." }),
         { actions: `<button class="btn btn-main btn-xs" id="newReason">Adicionar</button>` })}
 
       ${(() => {
@@ -8374,7 +8412,7 @@ PAGES.ajustes = {
         const doTipo = tipo === "nativos" ? fields.filter((f) => !f.customField)
           : tipo === "personalizados" ? fields.filter((f) => f.customField) : fields;
         const ordenados = [...doTipo].sort((a, b) => (a.index || 0) - (b.index || 0));
-        return panel("Campos do lead", `
+        return panel("Campos dos Leads", `
           <ul class="nav nav-tabs nav-tabs-sub">
             ${[["todos", `Todos (${fields.length})`],
                ["personalizados", `Personalizados (${fields.filter((f) => f.customField).length})`],
@@ -8382,10 +8420,11 @@ PAGES.ajustes = {
               .map(([k, rot]) => `<li${tipo === k ? ' class="active"' : ""}>
                 <a data-campotipo="${k}">${rot}</a></li>`).join("")}
           </ul>
-          ${table(["Campo", "Identificador", "Tipo", "Visível", "Obrig. p/ ganhar", "Obrig. p/ perder", ""],
+          ${table(["Nome e tipo do campo", "Identificador", "Tipo", "Visível",
+                   "Obrigatório para ganho", "Obrigatório para perdido", ""],
             ordenados.map((f, i) => ({ cells: [h(f.name), `<code>${h(f.identifier)}</code>
               <button class="btn btn-default btn-xs ml-5" data-copia="${h(f.identifier)}"
-                title="Copiar a chave usada na API e nas merge tags">copiar</button>`,
+                title="Copiar chave API">copiar</button>`,
               f.customField ? `<span class="pill green">Personalizado</span>` : `<span class="pill grey">Nativo</span>`,
               f.customField ? (f.visible ? "Sim" : "Não") : "Sim",
               f.wonMandatory ? "Sim" : "—", f.lostMandatory ? "Sim" : "—",
@@ -8680,7 +8719,6 @@ PAGES.ajustes = {
       try {
         await api("/api/flow/configuration", { method: "PATCH", body: {
           accountBasedSalesEnabled: document.getElementById("cfgABS").checked,
-          regularUserCanImportLeadList: document.getElementById("cfgImport").checked,
           smartQueueEnabled: document.getElementById("cfgFila").checked,
           workingDays: dias,
           minutePrice: Number(document.getElementById("cfgMinuto").value) || 0,
@@ -8739,6 +8777,7 @@ PAGES.ajustes = {
           leadsVisibleAll: document.getElementById("permVisivel").checked,
           leadsAddManual: document.getElementById("permAdd").checked,
           leadsDelete: document.getElementById("permDel").checked,
+          leadbaseUpload: document.getElementById("permImport").checked,
           statisticsAccess: document.getElementById("permStats").checked,
         } });
         toast("Permissões salvas.", "ok");
