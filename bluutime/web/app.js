@@ -1729,20 +1729,18 @@ PAGES.lead = {
     // Reunião: o Meetime tem "agendamento" e "registro" como abas separadas.
     // Aqui é uma só, porque a reunião vira uma atividade no histórico e, se já
     // aconteceu, entra também no feedback de oportunidade.
+    const jaFoi = aba === "registrar";
     const reuniao = `
       <div class="alert alert-info alert-styled-left">
-        Agendar cria uma atividade de reunião no histórico. Registrar marca que
-        ela aconteceu — é o que o feedback de oportunidade pergunta depois.
+        ${jaFoi
+          ? "Registra uma reunião que já aconteceu: entra concluída no histórico e preenche a data do feedback de oportunidade."
+          : "Agenda a reunião como atividade no histórico do lead, e ela aparece na fila de execução."}
       </div>
       <div class="field-row">
         <div class="field"><label for="rnQuando">Data e hora</label>
           <input class="form-control" type="datetime-local" id="rnQuando"></div>
-        <div class="field"><label for="rnComo">O que registrar</label>
-          <select class="form-control" id="rnComo">
-            <option value="agendar">Agendar para o futuro</option>
-            <option value="aconteceu">Registrar que já aconteceu</option>
-          </select></div>
       </div>
+      <input type="hidden" id="rnComo" value="${jaFoi ? "aconteceu" : "agendar"}">
       <div class="field"><label for="rnNota">Anotação</label>
         <textarea class="form-control" id="rnNota" rows="3" placeholder="Com quem, o que ficou combinado…"></textarea></div>
       <button class="btn btn-main btn-sm" id="rnSalvar">Salvar</button>`;
@@ -1852,13 +1850,14 @@ PAGES.lead = {
         <div>
           <ul class="nav nav-tabs">
             ${[["historico", "Histórico"], ["agendar", "Agendar atividade"],
-               ["reuniao", "Reunião"], ["conversas", "Conversas"],
+               ["reuniao", "Agendar reunião"], ["registrar", "Registrar reunião"],
+               ["conversas", "Conversas"],
                ["dados", "Dados"], ["anotacoes", "Anotações"]].map(([k, v]) =>
               `<li${aba === k ? ' class="active"' : ""}><a data-laba="${k}">${v}</a></li>`).join("")}
           </ul>
           <div class="panel panel-flat"><div class="panel-body">
             ${aba === "historico" ? historico : aba === "agendar" ? agendar
-              : aba === "reuniao" ? reuniao
+              : aba === "reuniao" || aba === "registrar" ? reuniao
               : aba === "conversas" ? `<div id="leadConversas">${LOADING}</div>`
               : aba === "dados" ? dados : anotacoes}
           </div></div>
@@ -3968,19 +3967,38 @@ PAGES.estatisticas = {
 
     if (aba === "cadencias") {
       const co = await api(`/api/flow/statistics/cadence-overview${filtrosQS()}`);
+      // Duas sub-abas, como o `cadenceOverviewNavTabs` do original: onde a base
+      // está agora, e quanto cada cadência converte.
+      const sub = state.estCadSub || "distribuicao";
+      const lista = [...co.data];
       view.innerHTML = `${barra}${abas}<div class="mt-10">
-        ${panel("Onde os leads estão parados",
-          table(["Cadência", "Total", "Em espera", "Prospectando", "Ganhos", "Perdidos", "Conversão"],
-            co.data.map((c) => ({ cells: [
-              h(c.name), c.total, c.porSituacao.WAITING,
-              c.porSituacao.EXECUTING + c.porSituacao.ON_EXTRA_ACTIVITY,
-              `<span class="pill green">${c.porSituacao.WON}</span>`,
-              `<span class="pill red">${c.porSituacao.LOST}</span>`,
-              `${c.conversao}%`] })),
-            { scroll: true, empty: "Nenhuma cadência com lead." }),
-          { subtitle: "A conversão mostra o resultado; isto mostra onde a base está agora." })}
+        <ul class="nav nav-tabs nav-tabs-sub">
+          ${[["distribuicao", "Distribuição"], ["conversao", "Taxa de conversão"]].map(([k, v]) =>
+            `<li${sub === k ? ' class="active"' : ""}><a data-cadsub="${k}">${v}</a></li>`).join("")}
+        </ul>
+        ${sub === "distribuicao"
+          ? panel("Onde os leads estão parados",
+              table(["Cadência", "Total", "Em espera", "Prospectando", "Ganhos", "Perdidos", "Conversão"],
+                lista.map((c) => ({ cells: [
+                  h(c.name), c.total, c.porSituacao.WAITING,
+                  c.porSituacao.EXECUTING + c.porSituacao.ON_EXTRA_ACTIVITY,
+                  `<span class="pill green">${c.porSituacao.WON}</span>`,
+                  `<span class="pill red">${c.porSituacao.LOST}</span>`,
+                  `${c.conversao}%`] })),
+                { scroll: true, empty: "Nenhuma cadência com lead." }),
+              { subtitle: "A conversão mostra o resultado; isto mostra onde a base está agora." })
+          : panel("Quanto cada cadência converte",
+              bars(lista.filter((c) => c.total)
+                .sort((a, b) => b.conversao - a.conversao)
+                .map((c) => ({ label: `${c.name} (${c.porSituacao.WON}/${c.total})`,
+                               value: c.conversao, tone: "success" }))),
+              { subtitle: "Percentual de ganhos sobre o total de leads que passaram pela cadência." })}
       </div>`;
-      return ligar();
+      ligar();
+      view.querySelectorAll("[data-cadsub]").forEach((a) => {
+        a.onclick = () => { state.estCadSub = a.dataset.cadsub; go(`estatisticas/${aba}`); };
+      });
+      return;
     }
 
     if (aba === "conversao") {
@@ -4023,12 +4041,10 @@ PAGES.estatisticas = {
       const por = state.estMotivoPor || "reason";
       const lr = await api(`/api/flow/statistics/lost-reasons${filtrosQS({ by: por })}`);
       view.innerHTML = `${barra}${abas}<div class="mt-10">
-        <div class="toolbar">
-          <select class="form-control" id="smPor">
-            ${[["reason", "Por motivo"], ["user", "Por usuário"], ["team", "Por time"], ["cadence", "Por cadência"]]
-              .map(([k, v]) => `<option value="${k}"${por === k ? " selected" : ""}>${v}</option>`).join("")}
-          </select>
-        </div>
+        <ul class="nav nav-tabs nav-tabs-sub">
+          ${[["reason", "Por motivo"], ["user", "Por usuário"], ["team", "Por time"], ["cadence", "Por cadência"]]
+            .map(([k, v]) => `<li${por === k ? ' class="active"' : ""}><a data-smpor="${k}">${v}</a></li>`).join("")}
+        </ul>
         ${panel("Por que os leads são perdidos",
           bars(lr.data.slice(0, 10).map((r) => ({ label: r.label, value: r.count, tone: "warning" }))),
           { actions: lr.data.length > 10
@@ -4036,8 +4052,9 @@ PAGES.estatisticas = {
             subtitle: `${lr.data.reduce((n, r) => n + r.count, 0)} leads perdidos no período` })}
       </div>`;
       ligar();
-      const sm = document.getElementById("smPor");
-      if (sm) sm.onchange = () => { state.estMotivoPor = sm.value; go(`estatisticas/${aba}`); };
+      view.querySelectorAll("[data-smpor]").forEach((a) => {
+        a.onclick = () => { state.estMotivoPor = a.dataset.smpor; go(`estatisticas/${aba}`); };
+      });
       const smMais = document.getElementById("smMais");
       if (smMais) smMais.onclick = () => verMaisMotivos(lr.data);
       return;
@@ -6786,7 +6803,8 @@ PAGES.usuarios = {
     // sobrescrever aqui deixaria "transferir lead" com 25 nomes.
     const p = users.pagination;
 
-    const abas = [["gerais", "Dados gerais"], ["usuarios", `Usuários`], ["times", `Times`]];
+    const abas = [["gerais", "Dados gerais"], ["usuarios", "Usuários"], ["times", "Times"],
+                  ["binas", "Binas"], ["whitelabel", "E-mail whitelabel"]];
     view.innerHTML = `
       <ul class="nav nav-tabs">
         ${abas.map(([k, t]) => `<li${aba === k ? ' class="active"' : ""}><a data-emaba="${k}">${t}</a></li>`).join("")}
@@ -6823,6 +6841,46 @@ PAGES.usuarios = {
         } catch (e) { toast(e.message, "err"); }
         bt.disabled = false;
       };
+      return;
+    }
+
+    if (aba === "binas") {
+      // Mesma lista de Ajustes de Ligações, aqui porque no original a bina é
+      // cadastro da empresa, não do discador.
+      const cfg = await api("/api/dialer/configuration");
+      const lista = cfg.callerIdList || [];
+      body.innerHTML = panel("Números de origem (bina)",
+        `${lista.length ? table(["Número", "Rótulo", "Padrão"], lista.map((n) => ({ cells: [
+            `<code>${h(n.number)}</code>`, h(n.label || "—"),
+            n.default ? `<span class="pill green">padrão</span>` : "—"] })))
+          : emptyState("Nenhum número cadastrado.")}
+        <p class="text-muted text-size-small mt-10">
+          O cadastro fica em <a data-page="dialer-ajustes" style="cursor:pointer;text-decoration:underline">Ligações &gt; Ajustes &gt; Números</a>,
+          junto com o tipo de chamada.</p>`,
+        { subtitle: "De quais números as ligações saem" });
+      return;
+    }
+
+    if (aba === "whitelabel") {
+      body.innerHTML = panel("Domínios de envio", `<div id="empDominios">${LOADING}</div>`,
+        { subtitle: "Estado real no Resend, lido na hora" });
+      const box = document.getElementById("empDominios");
+      try {
+        const d = await api("/api/flow/email/domains");
+        box.innerHTML = d.configurado
+          ? table(["Domínio", "Situação", "Região", "Envio", "Criado"],
+              (d.dominios || []).map((x) => ({ cells: [
+                `<strong>${h(x.nome)}</strong>`,
+                x.status === "verified" ? `<span class="pill green">verificado</span>`
+                  : `<span class="pill amber">${h(x.status)}</span>`,
+                h(x.regiao || "—"), h(x.envio || "—"), h(x.criado || "—")] })),
+              { empty: "Nenhum domínio." })
+            + `<p class="text-muted text-size-small mt-10">Os registros de DNS ficam em
+               <a data-page="integracoes" style="cursor:pointer;text-decoration:underline">Integrações &gt; E-mail</a>.</p>`
+          : `<div class="alert alert-info alert-styled-left">${h(d.motivo || "Resend não configurado.")}</div>`;
+      } catch (e) {
+        box.innerHTML = `<span class="text-muted text-size-small">${h(e.message)}</span>`;
+      }
       return;
     }
 
@@ -7308,8 +7366,23 @@ PAGES.ajustes = {
       api("/api/flow/fitscore"), api("/api/flow/deal-feedback/configuration"),
       api("/api/flow/permissions/configuration"), api("/api/flow/email/configuration")]);
     const camposPersonalizados = fields.filter((f) => f.customField);
+    // Abas do `flowConfig` do original. A página monta tudo e esconde o que
+    // não é da aba ativa: painel cujo título não esteja no mapa continua
+    // aparecendo, então renomear um título não some com a seção.
+    const cfgAba = state.ajustesAba || "geral";
+    const CFG_ABAS = [
+      ["geral", "Geral", ["Configurações gerais", "Metas diárias", "Calendário de trabalho"]],
+      ["campos", "Campos e funil", ["Campos do lead", "Etapa do lead (funil)", "Lead scoring (fitscore)"]],
+      ["resultado", "Resultado", ["Motivos de perda", "Feedback de oportunidade"]],
+      ["permissoes", "Permissões", ["Permissões"]],
+      ["email", "E-mail", ["E-mail — remetente", "Domínios de envio (whitelabel)"]],
+    ];
 
     view.innerHTML = `
+      <ul class="nav nav-tabs">
+        ${CFG_ABAS.map(([k, rot]) => `<li${cfgAba === k ? ' class="active"' : ""}>
+          <a data-cfgaba="${k}">${rot}</a></li>`).join("")}
+      </ul>
       ${panel("Configurações gerais", `
         <div class="filter-row" style="grid-template-columns:1fr 2fr">
           <div><label class="text-muted text-size-small">Meta diária padrão da empresa</label>
@@ -7509,6 +7582,16 @@ PAGES.ajustes = {
       ${panel("Domínios de envio (whitelabel)",
         `<div id="dominiosBox">${LOADING}</div>`,
         { subtitle: "Estado real dos domínios no provedor de envio. Cadastrar ou remover domínio se faz no painel do provedor — é recurso da conta que paga a fatura." })}`;
+
+    view.querySelectorAll("[data-cfgaba]").forEach((a) => {
+      a.onclick = () => { state.ajustesAba = a.dataset.cfgaba; go("ajustes"); };
+    });
+    const daAba = new Set((CFG_ABAS.find(([k]) => k === cfgAba) || [])[2] || []);
+    const conhecidos = new Set(CFG_ABAS.flatMap(([, , t]) => t));
+    view.querySelectorAll(".panel").forEach((pn) => {
+      const titulo = (pn.querySelector(".panel-title") || {}).textContent || "";
+      if (conhecidos.has(titulo.trim()) && !daAba.has(titulo.trim())) pn.hidden = true;
+    });
 
     // Carrega depois de pintar a tela: a consulta sai para fora e não pode
     // segurar o resto de Ajustes.
