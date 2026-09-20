@@ -2171,6 +2171,7 @@ PAGES.cadencias = {
     const list = await api(`/api/flow/cadences?${qs}`);
     state.cadences = list;
     const rows = list.map((c) => ({ cells: [
+      `<input type="checkbox" class="cad-check" value="${c.id}" data-on="${c.executing ? 1 : 0}">`,
       `<a data-open-cad="${c.id}"><strong>${h(c.name)}</strong></a>
        ${c.description ? `<br><span class="text-muted text-size-small">${h(c.description)}</span>` : ""}`,
       c.client ? `<span class="pill" style="border-color:${h(c.client.color)}">${h(c.client.name)}</span>` : "—",
@@ -2202,11 +2203,16 @@ PAGES.cadencias = {
           <option value="">Todas as prioridades</option>
           ${Object.entries(PRIORITY_LABEL).map(([k, v]) => `<option value="${k}"${f.priority === k ? " selected" : ""}>${v}</option>`).join("")}
         </select>
+        ${Object.values(f).some((v) => v)
+          ? `<button class="btn btn-default btn-xs" id="cLimpar">Limpar filtros</button>` : ""}
         <span class="spacer"></span>
+        <button class="btn btn-default btn-xs" id="cadPausar" disabled>Pausar</button>
+        <button class="btn btn-default btn-xs" id="cadSeguir" disabled>Continuar</button>
         <button class="btn btn-main btn-xs" id="newCad">Criar cadência</button>
       </div>
-      ${panel(`${list.length} cadências`,
-        table(["Cadência", "Cliente", "Foco", "Prioridade", "Etapas", "Leads",
+      ${panel(`${list.length} cadências${Object.values(f).some((v) => v) ? " no filtro" : ""}`,
+        table([`<input type="checkbox" id="cadTodas" title="Selecionar todas" aria-label="Selecionar todas">`,
+               "Cadência", "Cliente", "Foco", "Prioridade", "Etapas", "Leads",
                "Esperando", "Em execução", "Ganhos", "Perdidos", "Conversão",
                "Responsáveis", "Situação", ""], rows, { scroll: true }))}`;
 
@@ -2217,6 +2223,44 @@ PAGES.cadencias = {
     document.getElementById("cFocus").onchange = (e) => set("focus", e.target.value);
     document.getElementById("cPrio").onchange = (e) => set("priority", e.target.value);
     document.getElementById("newCad").onclick = () => openCadenceForm();
+    const limpar = document.getElementById("cLimpar");
+    if (limpar) limpar.onclick = () => { state.cadFilter = {}; go("cadencias"); };
+
+    // Pausar e continuar em massa: no fim do trimestre, pausar quinze
+    // cadências uma a uma é quinze modais.
+    const marcadas = () => [...view.querySelectorAll(".cad-check:checked")].map((c) => Number(c.value));
+    const pausar = document.getElementById("cadPausar");
+    const seguir = document.getElementById("cadSeguir");
+    const sincronizar = () => {
+      const n = marcadas().length;
+      pausar.disabled = seguir.disabled = !n;
+      pausar.textContent = n ? `Pausar (${n})` : "Pausar";
+      seguir.textContent = n ? `Continuar (${n})` : "Continuar";
+    };
+    view.querySelectorAll(".cad-check").forEach((c) => { c.onchange = sincronizar; });
+    const todas = document.getElementById("cadTodas");
+    if (todas) todas.onchange = () => {
+      view.querySelectorAll(".cad-check").forEach((c) => { c.checked = todas.checked; });
+      sincronizar();
+    };
+    const emMassa = (executing) => {
+      const ids = marcadas();
+      confirmDialog(executing ? "Continuar cadências" : "Pausar cadências",
+        executing
+          ? `${ids.length} cadência(s) voltam a agendar atividade.`
+          : `${ids.length} cadência(s) param de agendar. As atividades já na fila continuam lá.`,
+        async () => {
+          try {
+            for (const id of ids) {
+              await api(`/api/flow/cadences/${id}`, { method: "PATCH", body: { executing } });
+            }
+            toast(`${ids.length} cadência(s) atualizada(s).`, "ok");
+            go("cadencias");
+          } catch (e) { toast(e.message, "err"); }
+        });
+    };
+    pausar.onclick = () => emMassa(false);
+    seguir.onclick = () => emMassa(true);
     view.querySelectorAll("[data-drill]").forEach((a) => {
       a.onclick = () => {
         state.leadFilter = { page: 1, limit: 50, cadence_id: a.dataset.drill,
@@ -3113,9 +3157,11 @@ PAGES.extrato = {
   async render() {
     // O detalhamento por ligação sai da própria lista — o extrato do original
     // mostra os dois: o agregado por pessoa e a linha a linha que o explica.
+    const pagina = state.extratoPagina || 1;
     const [res, detalhe] = await Promise.all([
       api(`/api/dialer/calls/statements${filtrosQS()}`),
-      api(`/api/dialer/calls${filtrosQS({ limit: 200 })}`).catch(() => ({ data: [] })),
+      api(`/api/dialer/calls${filtrosQS({ limit: 50, page: pagina })}`)
+        .catch(() => ({ data: [], pagination: { page: 1, totalPageCount: 1 } })),
     ]);
     const rows = res.data.map((r) => ({ cells: [
       r.user ? h(r.user.name) : "—", r.calls, r.minutes, fmtMoney(r.cost)] }));
@@ -3128,20 +3174,30 @@ PAGES.extrato = {
         { value: res.data.length, label: "Usuários com consumo", tone: "info" },
       ])}
       ${panel("Consumo por usuário", table(["Usuário", "Ligações", "Minutos", "Custo"], rows))}
-      ${panel(`Detalhamento por ligação${detalhe.data.length >= 200 ? " (200 mais recentes)" : ""}`,
-        table(["Data", "Usuário", "Destino", "Tipo", "Situação", "Duração", "Custo"],
+      ${panel(`Detalhamento por ligação (${(detalhe.pagination || {}).totalRowCount || detalhe.data.length})`,
+        table(["Data", "Usuário", "Origem", "Destino", "Tipo", "Situação", "Duração", "Tarifa", "Custo", ""],
           detalhe.data.map((c) => ({ cells: [
             fmtDateTime(c.originStarted),
             c.user ? h(c.user.name) : "—",
+            h(c.originPhone || "—"),
             h(c.receiverPhone || "—"),
             c.receiverType === "MOBILE" ? "Celular" : "Fixo",
             c.status === "CONNECTED" ? `<span class="pill green">Conectada</span>`
               : `<span class="pill red">Não conectada</span>`,
             fmtDuration(c.receiverConnectedDuration),
+            fmtMoney(res.meta.pricePerMinute),
             fmtMoney(c.receiverPrice),
+            `<button class="btn btn-default btn-xs" data-ext-det="${c.id}">Detalhes</button>`,
           ] })), { scroll: true, empty: "Nenhuma ligação no período." }),
-        { subtitle: `Tarifa de ${fmtMoney(res.meta.pricePerMinute)} por minuto, cobrada só sobre o tempo conectado.` })}`;
+        { subtitle: `Tarifa de ${fmtMoney(res.meta.pricePerMinute)} por minuto, cobrada só sobre o tempo conectado.`,
+          actions: pager(detalhe.pagination || { page: 1, totalPageCount: 1 }) })}`;
     ligarPeriodo(() => go("extrato"));
+    view.querySelectorAll("[data-ext-det]").forEach((b) => {
+      b.onclick = () => openDetalheLigacao(Number(b.dataset.extDet));
+    });
+    view.querySelectorAll("[data-goto-page]").forEach((b) => {
+      b.onclick = () => { state.extratoPagina = Number(b.dataset.gotoPage); go("extrato"); };
+    });
   },
 };
 
