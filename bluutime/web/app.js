@@ -7707,7 +7707,9 @@ async function abaCanais() {
           ? `<button class="btn btn-main btn-sm ml-5" id="waParear">Parear número</button>`
           : ""}
         ${c.channel === "WHATSAPP" && c.state === "CONNECTED"
-          ? `<span class="text-muted text-size-small ml-5">Número pareado.</span>` : ""}
+          ? `<span class="text-muted text-size-small ml-5">Número pareado.</span>
+             <button class="btn btn-default btn-sm ml-5" id="waCair">Desconectar</button>
+             <button class="btn btn-danger btn-sm ml-5" id="waSair">Desparear número</button>` : ""}
       </div>
       ${c.channel === "WHATSAPP" ? `<div id="waQr" class="mt-10"></div>` : ""}`)).join("")}`;
 
@@ -7716,6 +7718,25 @@ async function abaCanais() {
   });
   const parear = document.getElementById("waParear");
   if (parear) parear.onclick = () => parearWhatsapp();
+  // Derrubar a sessão e desparear são coisas diferentes: a primeira volta
+  // sozinha no próximo connect, a segunda exige ler o QR de novo.
+  const cair = document.getElementById("waCair");
+  if (cair) cair.onclick = () => confirmDialog("Desconectar",
+    "A sessão cai agora. Reconectar é um clique — o número segue pareado.", async () => {
+      try {
+        await api("/api/envio/whatsapp/desconectar", { method: "POST", body: {} });
+        toast("Sessão encerrada.", "ok"); go("envio");
+      } catch (e) { toast(e.message, "err"); }
+    });
+  const sair = document.getElementById("waSair");
+  if (sair) sair.onclick = () => confirmDialog("Desparear número",
+    "O número é removido da instância. Para voltar, alguém precisa ler o QR no celular de novo.",
+    async () => {
+      try {
+        await api("/api/envio/whatsapp/desconectar", { method: "POST", body: { logout: true } });
+        toast("Número despareado.", "ok"); go("envio");
+      } catch (e) { toast(e.message, "err"); }
+    });
 }
 
 function testarCanal(canal) {

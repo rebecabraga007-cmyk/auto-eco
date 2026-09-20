@@ -110,6 +110,25 @@ class Wuzapi(Channel):
         except Exception as exc:
             return {"ok": False, "error": type(exc).__name__}
 
+    async def disconnect(self, *, logout: bool = False) -> dict:
+        """Fecha a sessão. Com `logout`, desparea o número de vez.
+
+        São coisas diferentes: desconectar cai e volta sozinho no próximo
+        connect; deslogar exige ler o QR de novo no celular.
+        """
+        ok, why = self.configured()
+        if not ok:
+            return {"ok": False, "error": why}
+        rota = "/session/logout" if logout else "/session/disconnect"
+        try:
+            async with self._client() as c:
+                r = await c.post(rota)
+            return {"ok": r.status_code < 400, "status": r.status_code,
+                    "body": (r.json() if r.content else {})}
+        except Exception as exc:
+            return {"ok": False, "error": type(exc).__name__}
+
+
     async def check_number(self, phone: str) -> bool | None:
         ok, _ = self.configured()
         num = to_phone(phone)

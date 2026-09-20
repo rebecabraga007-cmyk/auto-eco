@@ -61,6 +61,22 @@ async def whatsapp_qrcode(db: Session = Depends(get_db)):
     return await ch.qrcode()
 
 
+@router.post("/whatsapp/desconectar")
+async def whatsapp_desconectar(payload: dict = Body(default={}), db: Session = Depends(get_db)):
+    """Derruba a sessão; com `logout`, desparea o número.
+
+    Estava só no provedor: para trocar o número da empresa era preciso entrar
+    no wuzapi por fora, e quem não tinha esse acesso ficava preso ao número
+    pareado.
+    """
+    perm.ator(db).exigir("gestor", "desconectar o WhatsApp")
+    ch = channels.get("WHATSAPP")
+    if not hasattr(ch, "disconnect"):
+        raise HTTPException(400, f"O provedor {channels.provedor_whatsapp()} "
+                                 "não expõe desconexão por aqui.")
+    return await ch.disconnect(logout=bool(payload.get("logout")))
+
+
 @router.get("/quem-sou-eu")
 def quem_sou_eu(db: Session = Depends(get_db)):
     """O nível efetivo do usuário — é isto que a UI usa para esconder botão."""
