@@ -2434,6 +2434,9 @@ PAGES.cadencias = {
     const marcadas = () => [...view.querySelectorAll(".cad-check:checked")].map((c) => Number(c.value));
     const pausar = document.getElementById("cadPausar");
     const seguir = document.getElementById("cadSeguir");
+    // Trocar de tela antes da lista chegar deixa estes dois nulos: a render é
+    // assíncrona e o `view` já foi reescrito por outra página.
+    if (!pausar || !seguir) return;
     const sincronizar = () => {
       const n = marcadas().length;
       pausar.disabled = seguir.disabled = !n;
