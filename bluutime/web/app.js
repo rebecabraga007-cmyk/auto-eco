@@ -2940,82 +2940,360 @@ PAGES.relatorios = {
   },
 };
 
+/* ── Feedback de oportunidade ────────────────────────────────────────────
+   Três abas, como no original: Pendentes, Respondidos e Qualificação. Os
+   filtros são os mesmos nas três e viram chips removíveis no cabeçalho —
+   antes a tela mostrava a empresa inteira sem jeito de recortar. */
+const FB_FILTRO_VAZIO = { page: 1, per_page: 25 };
+
+const FB_ROTULO = {
+  de: "Ganho a partir de", ate: "Ganho até",
+  respondido_de: "Respondido a partir de", respondido_ate: "Respondido até",
+  reuniao_de: "Reunião a partir de", reuniao_ate: "Reunião até",
+  cadence_id: "Cadência", user_id: "Vendedor", team_id: "Time",
+  meeting: "Reunião", tag: "Qualificação", q: "Busca",
+};
+
+function fbFiltro() {
+  return { ...FB_FILTRO_VAZIO, ...(state.fbFilter || {}) };
+}
+
+function fbAplicar(mudanca) {
+  // Qualquer mudança de filtro volta para a página 1: continuar na página 4
+  // de um resultado que agora tem uma página só devolve uma tela vazia.
+  state.fbFilter = { ...fbFiltro(), ...mudanca, page: mudanca.page || 1 };
+  go("feedback-oportunidade");
+}
+
+function fbQS(f, extra = {}) {
+  const p = new URLSearchParams();
+  Object.entries({ ...f, ...extra }).forEach(([k, v]) => {
+    if (v !== "" && v !== null && v !== undefined) p.set(k, v);
+  });
+  return p.toString();
+}
+
+function fbValorLegivel(chave, valor, f) {
+  if (chave === "cadence_id") return (state.cadences.find((c) => String(c.id) === String(valor)) || {}).name || valor;
+  if (chave === "user_id") return (state.users.find((u) => String(u.id) === String(valor)) || {}).name || valor;
+  if (chave === "team_id") return (state.teams.find((t) => String(t.id) === String(valor)) || {}).name || valor;
+  if (chave === "meeting") return valor === "yes" ? "aconteceu" : "não aconteceu";
+  if (chave === "tag") return `${valor} = ${f.tag_value === "0" ? "não" : "sim"}`;
+  if (/^(de|ate|respondido_de|respondido_ate|reuniao_de|reuniao_ate)$/.test(chave)) return fmtDate(valor);
+  return valor;
+}
+
+function fbChips(f) {
+  const ativos = Object.keys(FB_ROTULO).filter((k) => f[k]);
+  if (!ativos.length) return "";
+  return `<div class="fb-chips">
+    ${ativos.map((k) => `<span class="fb-chip">${h(FB_ROTULO[k])}: <strong>${h(fbValorLegivel(k, f[k], f))}</strong>
+      <button type="button" data-fbtira="${k}" title="Remover filtro" aria-label="Remover filtro ${h(FB_ROTULO[k])}">×</button></span>`).join("")}
+    <button type="button" class="btn btn-default btn-xs" data-fblimpa>Limpar tudo</button>
+  </div>`;
+}
+
+/** Formata a chave do balde sem passar por `Date`.
+ *
+ * `fmtDate("2026-09-08")` lê a string como meia-noite UTC e mostra 07/09 aqui
+ * no fuso de Brasília — o gráfico inteiro aparecia um dia atrasado. */
+function fbDiaLegivel(chave) {
+  const p = String(chave || "").split("-");
+  if (p.length === 2) return `${p[1]}/${p[0]}`;
+  if (p.length === 3) return `${p[2]}/${p[1]}/${p[0]}`;
+  return chave;
+}
+
+function fbSerieChart(serie) {
+  if (!serie.length) return emptyState("Sem feedbacks no recorte.");
+  const W = 760, H = 200, padL = 34, padB = 26;
+  const max = Math.max(1, ...serie.map((s) => s.respondidos + s.pendentes));
+  const larg = (W - padL - 10) / serie.length;
+  const barra = Math.max(4, Math.min(28, larg - 6));
+  const alt = (v) => (v / max) * (H - padB - 14);
+  // Ticks inteiros e sem repetição: com poucos feedbacks, arredondar frações
+  // do máximo desenhava "0 · 1 · 1" na lateral.
+  const ticks = [...new Set([0, Math.round(max / 2), max])];
+  const grid = ticks.map((v) => {
+    const yy = H - padB - alt(v);
+    return `<line x1="${padL}" y1="${yy}" x2="${W - 10}" y2="${yy}" stroke="#eee"/>
+            <text x="6" y="${yy + 4}" font-size="11" fill="#999">${v}</text>`;
+  }).join("");
+  const colunas = serie.map((s, i) => {
+    const x = padL + i * larg + (larg - barra) / 2;
+    const hr = alt(s.respondidos), hp = alt(s.pendentes);
+    const titulo = `${fbDiaLegivel(s.data)} — ${s.respondidos} respondidos, ${s.pendentes} pendentes`;
+    return `<g><title>${h(titulo)}</title>
+      <rect x="${x}" y="${H - padB - hr}" width="${barra}" height="${hr}" fill="#00c850"/>
+      <rect x="${x}" y="${H - padB - hr - hp}" width="${barra}" height="${hp}" fill="#ffc107"/></g>`;
+  }).join("");
+  // Sem altura fixa o SVG estica junto com a largura do painel e as barras
+  // saem do cartão; o `.fb-chart` prende a altura como no gráfico de metas.
+  return `<div class="fb-chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Feedbacks por dia">
+      ${grid}${colunas}
+      <text x="${padL}" y="${H - 6}" font-size="11" fill="#999">${fbDiaLegivel(serie[0].data)}</text>
+      <text x="${W - 70}" y="${H - 6}" font-size="11" fill="#999">${fbDiaLegivel(serie[serie.length - 1].data)}</text>
+    </svg></div>
+    <div class="legenda"><span><i style="background:#00c850"></i>Respondidos</span>
+      <span><i style="background:#ffc107"></i>Pendentes</span></div>`;
+}
+
 PAGES["feedback-oportunidade"] = {
   area: "Estatísticas", title: "Feedback de oportunidade",
   async render() {
     const modo = state.feedbackAba || "pendentes";
-    const [pendentes, stats, respondidos] = await Promise.all([
-      api("/api/flow/deal-feedbacks?status=pending"),
-      api("/api/flow/statistics/deal-feedbacks"),
-      api("/api/flow/deal-feedbacks?status=filled").catch(() => []),
+    const f = fbFiltro();
+    const status = modo === "respondidos" ? "filled" : "pending";
+    const gestor = nivelPeloMenos("gestor");
+    const [lista, stats] = await Promise.all([
+      modo === "qualificacao" ? Promise.resolve({ items: [], total: 0, page: 1, perPage: 25 })
+        : api(`/api/flow/deal-feedbacks?${fbQS(f, { status })}`),
+      api(`/api/flow/statistics/deal-feedbacks?${fbQS({ ...f, page: "", per_page: "", tag: "", tag_value: "", q: "" })}`),
     ]);
+    const totalPageCount = Math.max(1, Math.ceil(lista.total / (lista.perPage || 25)));
+
+    const abas = [["pendentes", "Pendentes", stats.pending],
+                  ["respondidos", "Respondidos", stats.filled],
+                  ["qualificacao", "Qualificação", stats.tags.length]];
 
     view.innerHTML = `
+      <div class="toolbar">
+        <input class="form-control grow" id="fbQ" placeholder="Buscar lead ou empresa…" value="${h(f.q || "")}">
+        <button class="btn btn-default btn-xs" id="fbFiltros">Filtros</button>
+        ${modo === "qualificacao" ? "" : `
+          <select class="form-control" id="fbPorPagina" title="Itens por página">
+            ${[10, 25, 50, 100].map((n) => `<option value="${n}"${Number(f.per_page) === n ? " selected" : ""}>${n} por página</option>`).join("")}
+          </select>`}
+        ${gestor && modo !== "qualificacao"
+          ? `<button class="btn btn-danger btn-xs" id="fbExcluir" disabled>Excluir selecionados</button>` : ""}
+      </div>
+      ${fbChips(f)}
       <ul class="nav nav-tabs">
-        <li${modo === "pendentes" ? ' class="active"' : ""}><a data-fbmodo="pendentes">Pendentes
-          <span class="badge${modo === "pendentes" ? " badge-success" : ""}">${stats.pending}</span></a></li>
-        <li${modo === "respondidos" ? ' class="active"' : ""}><a data-fbmodo="respondidos">Respondidos
-          <span class="badge${modo === "respondidos" ? " badge-success" : ""}">${stats.filled}</span></a></li>
+        ${abas.map(([id, rotulo, n]) => `<li${modo === id ? ' class="active"' : ""}>
+          <a data-fbmodo="${id}">${rotulo} <span class="badge${modo === id ? " badge-success" : ""}">${n}</span></a></li>`).join("")}
       </ul>
       <div id="fbBody" class="mt-10"></div>`;
 
-    document.querySelectorAll("[data-fbmodo]").forEach((a) => {
-      a.onclick = () => { state.feedbackAba = a.dataset.fbmodo; go("feedback-oportunidade"); };
+    view.querySelectorAll("[data-fbmodo]").forEach((a) => {
+      a.onclick = () => { state.feedbackAba = a.dataset.fbmodo; fbAplicar({}); };
     });
+    view.querySelectorAll("[data-fbtira]").forEach((b) => {
+      b.onclick = () => {
+        const chave = b.dataset.fbtira;
+        fbAplicar(chave === "tag" ? { tag: "", tag_value: "" } : { [chave]: "" });
+      };
+    });
+    const limpa = view.querySelector("[data-fblimpa]");
+    if (limpa) limpa.onclick = () => { state.fbFilter = { ...FB_FILTRO_VAZIO }; go("feedback-oportunidade"); };
+    let tq;
+    document.getElementById("fbQ").oninput = (e) => {
+      clearTimeout(tq);
+      const v = e.target.value;
+      tq = setTimeout(() => fbAplicar({ q: v }), 350);
+    };
+    document.getElementById("fbFiltros").onclick = () => abrirFiltrosFeedback(f);
+    const pp = document.getElementById("fbPorPagina");
+    if (pp) pp.onchange = () => fbAplicar({ per_page: pp.value });
 
     const body = document.getElementById("fbBody");
-    if (modo === "pendentes") {
-      body.innerHTML = table(["Lead", "Empresa", "Vendedor", "Ganho em", ""],
-        pendentes.map((f) => ({ cells: [
-          h(f.leadName), h(f.company || "—"), f.user ? h(f.user.name) : "—", fmtDate(f.createdAt),
-          `<button class="btn btn-main btn-xs" data-responder="${f.id}">Responder</button>`,
-        ] })), { empty: "Nenhum feedback pendente — tudo respondido." });
-      body.querySelectorAll("[data-responder]").forEach((b) => {
-        b.onclick = () => abrirFormFeedback(pendentes.find((f) => f.id === Number(b.dataset.responder)));
-      });
-    } else {
+    if (modo === "qualificacao") {
       body.innerHTML = `
         ${panel("Reuniões", grade([
-          campo("Respondidos", stats.filled), campo("Teve reunião", stats.meetingHappened),
+          campo("Respondidos", stats.filled), campo("Pendentes", stats.pending),
+          campo("Teve reunião", stats.meetingHappened),
           campo("Não teve reunião", stats.meetingNotHappened),
-        ], 3))}
+        ], 4))}
         ${panel("Qualificação", stats.tags.length ? stats.tags.map((t) => `
-          <div class="mb-10"><strong>${h(t.tag)}</strong>
-            <div class="progress" style="height:18px">
-              <div class="progress-bar progress-bar--primary" style="width:${t.simPercentual}%"></div>
+          <div class="qual-linha">
+            <div class="qual-topo"><strong>${h(t.tag)}</strong>
+              <span class="text-muted text-size-small">${t.total} resposta${t.total === 1 ? "" : "s"}</span></div>
+            <div class="qual-barra" title="Sim: ${t.sim} · Não: ${t.nao}">
+              <button type="button" class="qual-sim" style="width:${t.simPercentual}%"
+                data-qual="${h(t.tag)}" data-v="1"
+                title="Ver os ${t.sim} que responderam sim">${t.simPercentual >= 12 ? `${t.sim} sim` : ""}</button>
+              <button type="button" class="qual-nao" style="width:${100 - t.simPercentual}%"
+                data-qual="${h(t.tag)}" data-v="0"
+                title="Ver os ${t.nao} que responderam não">${100 - t.simPercentual >= 12 ? `${t.nao} não` : ""}</button>
             </div>
-            <span class="text-muted text-size-small">Sim: ${t.sim} · Não: ${t.nao} (${t.simPercentual}%)</span>
-          </div>`).join("") : emptyState("Nenhuma resposta ainda."))}
-        ${panel(`Feedbacks respondidos (${respondidos.length})`,
-          table(["Lead", "Empresa", "Vendedor", "Reunião", "Qualificação", "Respondido em", ""],
-            respondidos.map((f) => ({ cells: [
-              f.leadId ? `<a data-lead="${f.leadId}">${h(f.leadName)}</a>` : h(f.leadName),
-              h(f.company || "—"), f.user ? h(f.user.name) : "—",
-              f.meetingHappened === true ? `<span class="pill green">Aconteceu</span>`
-                : f.meetingHappened === false ? `<span class="pill red">Não aconteceu</span>`
-                : `<span class="pill grey">—</span>`,
-              Object.entries(f.qualification || {}).map(([t, v]) =>
-                `<span class="pill ${v ? "green" : "grey"}">${h(t)}</span>`).join(" ") || "—",
-              fmtDate(f.filledAt),
-              f.notes ? `<button class="btn btn-default btn-xs" data-fbnota="${f.id}">Observações</button>` : "",
-            ] })), { scroll: true, empty: "Nenhum feedback respondido ainda." }),
-          { subtitle: "O que o vendedor respondeu sobre cada oportunidade — antes só o total aparecia." })}`;
-
-      body.querySelectorAll("[data-lead]").forEach((a) => {
-        a.onclick = () => go(`lead/${a.dataset.lead}`);
-      });
-      body.querySelectorAll("[data-fbnota]").forEach((b) => {
+          </div>`).join("") : emptyState("Nenhuma resposta de qualificação no recorte."),
+          { subtitle: "Clique em um pedaço da barra para ver os feedbacks daquela resposta." })}
+        ${panel("Feedbacks ao longo do tempo", fbSerieChart(stats.serie))}`;
+      body.querySelectorAll("[data-qual]").forEach((b) => {
         b.onclick = () => {
-          const f = respondidos.find((x) => String(x.id) === b.dataset.fbnota);
-          const mm = modal({ title: `Observações — ${f.leadName}`,
-            body: `<div style="white-space:pre-wrap">${h(f.notes)}</div>`,
-            footer: `<button class="btn btn-default btn-sm" data-close-obs>Fechar</button>` });
-          mm.root.querySelector("[data-close-obs]").onclick = mm.close;
+          state.feedbackAba = "respondidos";
+          fbAplicar({ tag: b.dataset.qual, tag_value: b.dataset.v });
         };
       });
+      return;
+    }
+
+    const check = (id) => gestor ? `<input type="checkbox" class="fb-check" value="${id}">` : "";
+    const cabecalho = gestor
+      ? [`<input type="checkbox" id="fbTodos" title="Selecionar todos" aria-label="Selecionar todos">`]
+      : [];
+
+    if (modo === "pendentes") {
+      body.innerHTML = `
+        <p class="text-muted text-size-small">${lista.total} pendente${lista.total === 1 ? "" : "s"}${
+          f.q || Object.keys(FB_ROTULO).some((k) => f[k]) ? " no recorte atual" : ""}.</p>
+        ${table([...cabecalho, "Lead", "Empresa", "Cadência", "Dono do lead", "Vendedor", "Ganho em", ""],
+          lista.items.map((x) => ({ cells: [
+            ...(gestor ? [check(x.id)] : []),
+            `<a data-lead="${x.leadId}">${h(x.leadName)}</a>`,
+            h(x.company || "—"), x.cadence ? h(x.cadence.name) : "—",
+            x.leadOwner ? h(x.leadOwner.name) : "—", x.user ? h(x.user.name) : "—",
+            fmtDate(x.createdAt),
+            `<button class="btn btn-main btn-xs" data-responder="${x.id}">Responder</button>
+             <button class="btn btn-default btn-xs" data-fbinfo="${x.id}" title="Informações">i</button>`,
+          ] })), { empty: f.q ? "Nenhum pendente com esse texto." : "Nenhum feedback pendente — tudo respondido." })}
+        <div class="text-right mt-10">${pager({ page: lista.page, totalPageCount })}</div>`;
+    } else {
+      body.innerHTML = `
+        <p class="text-muted text-size-small">${lista.total} respondido${lista.total === 1 ? "" : "s"}${
+          f.q || Object.keys(FB_ROTULO).some((k) => f[k]) ? " no recorte atual" : ""}.</p>
+        ${table([...cabecalho, "Lead", "Empresa", "Cadência", "Vendedor", "Resultado", "Reunião em",
+                 "Qualificação", "Respondido em", ""],
+          lista.items.map((x) => ({ cells: [
+            ...(gestor ? [check(x.id)] : []),
+            `<a data-lead="${x.leadId}">${h(x.leadName)}</a>`,
+            h(x.company || "—"), x.cadence ? h(x.cadence.name) : "—",
+            x.user ? h(x.user.name) : "—",
+            x.meetingHappened === true ? `<span class="pill green">Aconteceu</span>`
+              : x.meetingHappened === false ? `<span class="pill red">Não aconteceu</span>`
+              : `<span class="pill grey">—</span>`,
+            fmtDate(x.meetingAt),
+            Object.entries(x.qualification || {}).map(([t, v]) =>
+              `<span class="pill ${v ? "green" : "grey"}">${h(t)}</span>`).join(" ") || "—",
+            fmtDate(x.filledAt),
+            `<button class="btn btn-default btn-xs" data-fbinfo="${x.id}" title="Informações">i</button>`,
+          ] })), { scroll: true, empty: "Nenhum feedback respondido no recorte." })}
+        <div class="text-right mt-10">${pager({ page: lista.page, totalPageCount })}</div>
+        ${panel("Feedbacks ao longo do tempo", fbSerieChart(stats.serie))}`;
+    }
+
+    body.querySelectorAll("[data-lead]").forEach((a) => {
+      a.onclick = () => go(`lead/${a.dataset.lead}`);
+    });
+    body.querySelectorAll("[data-responder]").forEach((b) => {
+      b.onclick = () => abrirFormFeedback(lista.items.find((x) => String(x.id) === b.dataset.responder));
+    });
+    body.querySelectorAll("[data-fbinfo]").forEach((b) => {
+      b.onclick = () => abrirInfoFeedback(Number(b.dataset.fbinfo));
+    });
+    body.querySelectorAll("[data-goto-page]").forEach((b) => {
+      b.onclick = () => fbAplicar({ page: Number(b.dataset.gotoPage) });
+    });
+
+    const excluir = document.getElementById("fbExcluir");
+    if (excluir) {
+      const marcados = () => [...body.querySelectorAll(".fb-check:checked")].map((c) => Number(c.value));
+      const sincronizar = () => { excluir.disabled = !marcados().length; };
+      body.querySelectorAll(".fb-check").forEach((c) => { c.onchange = sincronizar; });
+      const todos = document.getElementById("fbTodos");
+      if (todos) todos.onchange = () => {
+        body.querySelectorAll(".fb-check").forEach((c) => { c.checked = todos.checked; });
+        sincronizar();
+      };
+      excluir.onclick = () => {
+        const ids = marcados();
+        confirmDialog("Excluir feedbacks",
+          `${ids.length} feedback${ids.length === 1 ? "" : "s"} ${ids.length === 1 ? "será removido" : "serão removidos"} de vez. Isso não volta atrás.`,
+          async () => {
+            try {
+              await api("/api/flow/deal-feedbacks", { method: "DELETE", body: { ids } });
+              toast("Feedbacks excluídos.", "ok");
+              go("feedback-oportunidade");
+            } catch (e) { toast(e.message, "err"); }
+          });
+      };
     }
   },
 };
+
+function abrirFiltrosFeedback(f) {
+  const data = (id, rotulo, valor) => `
+    <div class="field"><label for="${id}">${rotulo}</label>
+      <input type="date" class="form-control" id="${id}" value="${h(valor || "")}"></div>`;
+  const m = modal({
+    title: "Filtros",
+    wide: true,
+    body: `
+      <div class="filtros-grid">
+        ${data("fbDe", "Ganho a partir de", f.de)}${data("fbAte", "Ganho até", f.ate)}
+        ${data("fbReuniaoDe", "Reunião a partir de", f.reuniao_de)}${data("fbReuniaoAte", "Reunião até", f.reuniao_ate)}
+        ${data("fbRespDe", "Respondido a partir de", f.respondido_de)}${data("fbRespAte", "Respondido até", f.respondido_ate)}
+        <div class="field"><label for="fbCad">Cadência</label>
+          <select class="form-control" id="fbCad">${options(state.cadences, f.cadence_id, { blank: "Todas" })}</select></div>
+        <div class="field"><label for="fbUser">Vendedor</label>
+          <select class="form-control" id="fbUser">${options(state.users, f.user_id, { blank: "Todos" })}</select></div>
+        <div class="field"><label for="fbTime">Time</label>
+          <select class="form-control" id="fbTime">${options(state.teams, f.team_id, { blank: "Todos" })}</select></div>
+        <div class="field"><label for="fbReuniao">Reunião</label>
+          <select class="form-control" id="fbReuniao">
+            <option value="">Tanto faz</option>
+            <option value="yes"${f.meeting === "yes" ? " selected" : ""}>Aconteceu</option>
+            <option value="no"${f.meeting === "no" ? " selected" : ""}>Não aconteceu</option>
+          </select></div>
+        <div class="field"><label for="fbIntervalo">Agrupar o gráfico por</label>
+          <select class="form-control" id="fbIntervalo">
+            ${[["dia", "Dia"], ["semana", "Semana"], ["mes", "Mês"]].map(([v, r]) =>
+              `<option value="${v}"${(f.intervalo || "dia") === v ? " selected" : ""}>${r}</option>`).join("")}
+          </select></div>
+      </div>`,
+    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+             <button class="btn btn-main btn-sm" data-ok>Aplicar</button>`,
+  });
+  m.root.querySelector("[data-cancel]").onclick = m.close;
+  m.root.querySelector("[data-ok]").onclick = () => {
+    const v = (id) => m.root.querySelector(`#${id}`).value;
+    m.close();
+    fbAplicar({
+      de: v("fbDe"), ate: v("fbAte"),
+      reuniao_de: v("fbReuniaoDe"), reuniao_ate: v("fbReuniaoAte"),
+      respondido_de: v("fbRespDe"), respondido_ate: v("fbRespAte"),
+      cadence_id: v("fbCad"), user_id: v("fbUser"), team_id: v("fbTime"),
+      meeting: v("fbReuniao"), intervalo: v("fbIntervalo"),
+    });
+  };
+}
+
+async function abrirInfoFeedback(id) {
+  let d;
+  try {
+    d = await api(`/api/flow/deal-feedbacks/${id}`);
+  } catch (e) { return toast(e.message, "err"); }
+  const linha = (rotulo, valor) => `<div class="info-linha"><span>${h(rotulo)}</span><strong>${valor}</strong></div>`;
+  const resposta = (v) => v === true ? `<span class="pill green">Sim</span>`
+    : v === false ? `<span class="pill grey">Não</span>`
+    : `<span class="pill grey">Não respondida</span>`;
+  const m = modal({
+    title: `Informações — ${d.leadName}`,
+    wide: true,
+    body: `
+      <div class="info-grid">
+        ${linha("Empresa", h(d.company || "—"))}
+        ${linha("Cadência", d.cadence ? h(d.cadence.name) : "—")}
+        ${linha("Dono do lead", d.leadOwner ? h(d.leadOwner.name) : "—")}
+        ${linha("Dono da oportunidade", d.user ? h(d.user.name) : "—")}
+        ${linha("Ganho em", fmtDateTime(d.createdAt))}
+        ${linha("Reunião em", d.meetingAt ? fmtDateTime(d.meetingAt) : "—")}
+        ${linha("Respondido em", d.filledAt ? fmtDateTime(d.filledAt) : "—")}
+        ${linha("Resultado", d.meetingHappened === true ? `<span class="pill green">Reunião aconteceu</span>`
+          : d.meetingHappened === false ? `<span class="pill red">Reunião não aconteceu</span>`
+          : `<span class="pill amber">Aguardando resposta</span>`)}
+      </div>
+      <h4 class="mt-10">Qualificação</h4>
+      ${d.answers.length
+        ? `<div class="info-grid">${d.answers.map((a) => linha(a.tag, resposta(a.value))).join("")}</div>`
+        : `<p class="text-muted">Nenhuma pergunta de qualificação cadastrada em Ajustes.</p>`}
+      <h4 class="mt-10">Observações</h4>
+      <div style="white-space:pre-wrap">${d.notes ? h(d.notes) : `<span class="text-muted">Sem observações.</span>`}</div>`,
+    footer: `<button class="btn btn-default btn-sm" data-lead-ir>Abrir o lead</button>
+             <button class="btn btn-main btn-sm" data-close-info>Fechar</button>`,
+  });
+  m.root.querySelector("[data-close-info]").onclick = m.close;
+  m.root.querySelector("[data-lead-ir]").onclick = () => { m.close(); go(`lead/${d.leadId}`); };
+}
 
 async function abrirFormFeedback(f) {
   const cfg = await api("/api/flow/deal-feedback/configuration");
@@ -3027,6 +3305,8 @@ async function abrirFormFeedback(f) {
           <button type="button" class="chip" data-v="1">Sim</button>
           <button type="button" class="chip" data-v="0">Não</button>
         </div></div>
+      <div class="field"><label for="fbQuando">Data da reunião</label>
+        <input type="date" class="form-control" id="fbQuando"></div>
       ${cfg.qualificationTags.map((t) => `
         <div class="field"><label><input type="checkbox" class="fb-tag" data-tag="${h(t)}"> ${h(t)}</label></div>`).join("")
         || `<p class="text-muted">Nenhuma pergunta de qualificação cadastrada em Ajustes.</p>`}
@@ -3046,9 +3326,11 @@ async function abrirFormFeedback(f) {
     if (reuniao === null) return toast("Diga se a reunião aconteceu.", "err");
     const qualification = {};
     m.root.querySelectorAll(".fb-tag").forEach((c) => { qualification[c.dataset.tag] = c.checked; });
+    const quando = m.root.querySelector("#fbQuando").value;
     try {
       await api(`/api/flow/deal-feedbacks/${f.id}`, { method: "POST", body: {
         meetingHappened: reuniao, qualification, notes: m.root.querySelector("#fbNotes").value.trim(),
+        meetingAt: quando ? `${quando}T12:00:00` : "",
       } });
       m.close(); toast("Feedback enviado.", "ok"); go("feedback-oportunidade");
     } catch (e) { toast(e.message, "err"); }

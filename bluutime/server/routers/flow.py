@@ -1174,21 +1174,157 @@ def lead_outcome(lid: int, payload: dict = Body(...), db: Session = Depends(get_
 # ── Feedback de oportunidade ──
 # Nasce (LeadFeedback sem filled_at) quando o lead vira WON com a
 # funcionalidade ligada; o vendedor responde depois da reunião (ou não).
-@router.get("/deal-feedbacks")
-def list_deal_feedbacks(status: str = "pending", db: Session = Depends(get_db)):
-    ator = perm.ator(db)
-    query = db.query(LeadFeedback)
+def _fb_dia(valor: str | None, fim: bool = False) -> datetime | None:
+    """Converte AAAA-MM-DD no começo (ou no fim) daquele dia."""
+    if not valor:
+        return None
+    try:
+        d = datetime.fromisoformat(valor[:10])
+    except ValueError:
+        raise HTTPException(400, f"Data inválida: {valor}")
+    return d + timedelta(days=1, microseconds=-1) if fim else d
+
+
+def _fb_balde(quando: datetime, intervalo: str) -> str:
+    if intervalo == "mes":
+        return quando.strftime("%Y-%m")
+    if intervalo == "semana":
+        inicio = quando - timedelta(days=quando.weekday())
+        return inicio.strftime("%Y-%m-%d")
+    return quando.strftime("%Y-%m-%d")
+
+
+def _fb_escopo(db: Session, query, ator, team_id: int | None):
+    """Quem não é gestor só vê o próprio feedback; o time é filtro do gestor."""
     if not ator.pelo_menos("gestor"):
-        query = query.filter(LeadFeedback.user_id == (ator.user_id or -1))
-    query = query.filter(LeadFeedback.filled_at.is_(None) if status == "pending"
-                         else LeadFeedback.filled_at.isnot(None))
-    rows = query.order_by(LeadFeedback.created_at.desc()).limit(200).all()
-    return [{"id": r.id, "leadId": r.lead_id, "leadName": r.lead.name if r.lead else "",
-            "company": r.lead.company if r.lead else "", "user": serial.user_min(r.user),
+        return query.filter(LeadFeedback.user_id == (ator.user_id or -1))
+    if team_id:
+        ids = [r[0] for r in db.query(User.id).filter(User.team_id == team_id).all()]
+        # Time sem ninguém tem que devolver zero, e não a empresa inteira.
+        query = query.filter(LeadFeedback.user_id.in_(ids or [-1]))
+    return query
+
+
+def _fb_query(db: Session, *, status: str, de: str | None, ate: str | None,
+              respondido_de: str | None, respondido_ate: str | None,
+              reuniao_de: str | None, reuniao_ate: str | None,
+              cadence_id: int | None, user_id: int | None, team_id: int | None,
+              meeting: str | None):
+    ator = perm.ator(db)
+    query = _fb_escopo(db, db.query(LeadFeedback).join(Lead, LeadFeedback.lead_id == Lead.id),
+                       ator, team_id)
+    if status == "pending":
+        query = query.filter(LeadFeedback.filled_at.is_(None))
+    elif status == "filled":
+        query = query.filter(LeadFeedback.filled_at.isnot(None))
+    for coluna, inicio, fim in ((LeadFeedback.created_at, de, ate),
+                                (LeadFeedback.filled_at, respondido_de, respondido_ate),
+                                (LeadFeedback.meeting_at, reuniao_de, reuniao_ate)):
+        if inicio:
+            query = query.filter(coluna >= _fb_dia(inicio))
+        if fim:
+            query = query.filter(coluna <= _fb_dia(fim, fim=True))
+    if cadence_id:
+        query = query.filter(Lead.cadence_id == cadence_id)
+    if user_id:
+        query = query.filter(LeadFeedback.user_id == user_id)
+    if meeting == "yes":
+        query = query.filter(LeadFeedback.meeting_happened.is_(True))
+    elif meeting == "no":
+        query = query.filter(LeadFeedback.meeting_happened.is_(False))
+    return query
+
+
+def _ser_deal_feedback(r: LeadFeedback) -> dict:
+    lead = r.lead
+    return {"id": r.id, "leadId": r.lead_id, "leadName": lead.name if lead else "",
+            "company": lead.company if lead else "",
+            "leadStatus": lead.status if lead else "",
+            "cadence": ({"id": lead.cadence.id, "name": lead.cadence.name}
+                        if lead and lead.cadence else None),
+            # Dono do lead é quem prospectou; dono da oportunidade é quem
+            # responde o feedback. Quase sempre é a mesma pessoa, mas o Meetime
+            # separa as duas colunas porque nem sempre é.
+            "leadOwner": serial.user_min(lead.sdr) if lead else None,
+            "user": serial.user_min(r.user),
             "meetingHappened": r.meeting_happened,
+            "meetingAt": serial.iso(r.meeting_at),
             "qualification": json.loads(r.qualification or "{}"),
             "notes": r.notes, "createdAt": serial.iso(r.created_at),
-            "filledAt": serial.iso(r.filled_at)} for r in rows]
+            "filledAt": serial.iso(r.filled_at)}
+
+
+def _fb_tag(linhas: list[dict], tag: str | None, tag_value: str | None) -> list[dict]:
+    """Filtro por resposta de qualificação — fica em Python porque a
+    qualificação é um JSON em texto, não uma coluna."""
+    if not tag:
+        return linhas
+    quer = tag_value != "0"
+    return [l for l in linhas if bool(l["qualification"].get(tag)) is quer]
+
+
+@router.get("/deal-feedbacks")
+def list_deal_feedbacks(status: str = "pending", de: str | None = None,
+                        ate: str | None = None, respondido_de: str | None = None,
+                        respondido_ate: str | None = None, reuniao_de: str | None = None,
+                        reuniao_ate: str | None = None, cadence_id: int | None = None,
+                        user_id: int | None = None, team_id: int | None = None,
+                        meeting: str | None = None, tag: str | None = None,
+                        tag_value: str | None = None, q: str | None = None,
+                        page: int = 1, per_page: int = 25,
+                        db: Session = Depends(get_db)):
+    query = _fb_query(db, status=status, de=de, ate=ate, respondido_de=respondido_de,
+                      respondido_ate=respondido_ate, reuniao_de=reuniao_de,
+                      reuniao_ate=reuniao_ate, cadence_id=cadence_id, user_id=user_id,
+                      team_id=team_id, meeting=meeting)
+    if q:
+        alvo = f"%{q.strip()}%"
+        query = query.filter(or_(Lead.name.ilike(alvo), Lead.company.ilike(alvo)))
+    ordem = (LeadFeedback.filled_at.desc() if status == "filled"
+             else LeadFeedback.created_at.desc())
+    linhas = [_ser_deal_feedback(r) for r in query.order_by(ordem).all()]
+    linhas = _fb_tag(linhas, tag, tag_value)
+    per_page = max(5, min(200, per_page))
+    page = max(1, page)
+    inicio = (page - 1) * per_page
+    return {"items": linhas[inicio:inicio + per_page], "total": len(linhas),
+            "page": page, "perPage": per_page}
+
+
+@router.get("/deal-feedbacks/{fid}")
+def get_deal_feedback(fid: int, db: Session = Depends(get_db)):
+    """Tudo o que o modal de informações do Meetime mostra em uma chamada."""
+    fb = db.get(LeadFeedback, fid)
+    if not fb:
+        raise HTTPException(404, "Feedback não encontrado.")
+    ator = perm.ator(db)
+    if not ator.pelo_menos("gestor") and fb.user_id != ator.user_id:
+        raise HTTPException(403, "Este feedback não é seu.")
+    company = db.query(Company).first()
+    perguntas = [t.strip() for t in ((company.deal_feedback_tags or "").splitlines()
+                                     if company else []) if t.strip()]
+    dados = _ser_deal_feedback(fb)
+    respostas = dados["qualification"]
+    # As perguntas cadastradas hoje mandam na ordem; uma resposta de pergunta
+    # já removida da configuração continua aparecendo, senão ela sumiria do
+    # histórico sem aviso.
+    dados["answers"] = ([{"tag": t, "value": respostas.get(t)} for t in perguntas]
+                        + [{"tag": t, "value": v} for t, v in respostas.items()
+                           if t not in perguntas])
+    return dados
+
+
+@router.delete("/deal-feedbacks")
+def delete_deal_feedbacks(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Exclusão em massa — é do gestor, e some de vez (o Meetime também)."""
+    perm.ator(db).exigir("gestor", "excluir feedbacks de oportunidade")
+    ids = [int(i) for i in (payload.get("ids") or [])]
+    if not ids:
+        raise HTTPException(400, "Selecione ao menos um feedback.")
+    n = (db.query(LeadFeedback).filter(LeadFeedback.id.in_(ids))
+         .delete(synchronize_session=False))
+    db.commit()
+    return {"ok": True, "removidos": n}
 
 
 @router.post("/deal-feedbacks/{fid}")
@@ -1203,6 +1339,12 @@ def fill_deal_feedback(fid: int, payload: dict = Body(...), db: Session = Depend
     fb.qualification = json.dumps(
         {str(k): bool(v) for k, v in (payload.get("qualification") or {}).items()})
     fb.notes = (payload.get("notes") or "").strip()
+    quando = payload.get("meetingAt")
+    if quando:
+        try:
+            fb.meeting_at = datetime.fromisoformat(str(quando).replace("Z", ""))
+        except ValueError:
+            raise HTTPException(400, "Data da reunião inválida.")
     fb.filled_at = datetime.utcnow()
     # Quem não teve reunião pode ser reencaminhado a uma cadência específica
     # pra buscar novo agendamento — só se a empresa configurou uma.
@@ -1218,21 +1360,46 @@ def fill_deal_feedback(fid: int, payload: dict = Body(...), db: Session = Depend
 
 
 @router.get("/statistics/deal-feedbacks")
-def deal_feedback_statistics(db: Session = Depends(get_db)):
-    filled = db.query(LeadFeedback).filter(LeadFeedback.filled_at.isnot(None)).all()
-    pending = db.query(func.count(LeadFeedback.id)).filter(LeadFeedback.filled_at.is_(None)).scalar()
-    meeting_yes = sum(1 for f in filled if f.meeting_happened)
-    meeting_no = sum(1 for f in filled if f.meeting_happened is False)
+def deal_feedback_statistics(de: str | None = None, ate: str | None = None,
+                             respondido_de: str | None = None,
+                             respondido_ate: str | None = None,
+                             reuniao_de: str | None = None,
+                             reuniao_ate: str | None = None,
+                             cadence_id: int | None = None, user_id: int | None = None,
+                             team_id: int | None = None, meeting: str | None = None,
+                             intervalo: str = "dia", db: Session = Depends(get_db)):
+    """Os mesmos filtros da lista, para que o gráfico e os números batam com
+    o que está na tela — antes as estatísticas eram sempre da empresa toda."""
+    comum = dict(de=de, ate=ate, respondido_de=respondido_de,
+                 respondido_ate=respondido_ate, reuniao_de=reuniao_de,
+                 reuniao_ate=reuniao_ate, cadence_id=cadence_id, user_id=user_id,
+                 team_id=team_id, meeting=meeting)
+    respondidos = _fb_query(db, status="filled", **comum).all()
+    aguardando = _fb_query(db, status="pending", **comum).all()
+    meeting_yes = sum(1 for f in respondidos if f.meeting_happened)
+    meeting_no = sum(1 for f in respondidos if f.meeting_happened is False)
     tag_counts: dict[str, dict[str, int]] = {}
-    for f in filled:
+    for f in respondidos:
         for tag, valor in json.loads(f.qualification or "{}").items():
             slot = tag_counts.setdefault(tag, {"sim": 0, "nao": 0})
             slot["sim" if valor else "nao"] += 1
-    tags = [{"tag": t, "sim": v["sim"], "nao": v["nao"],
-            "simPercentual": round(100 * v["sim"] / max(1, v["sim"] + v["nao"]))}
-           for t, v in tag_counts.items()]
-    return {"pending": pending, "filled": len(filled),
-            "meetingHappened": meeting_yes, "meetingNotHappened": meeting_no, "tags": tags}
+    tags = [{"tag": t, "sim": v["sim"], "nao": v["nao"], "total": v["sim"] + v["nao"],
+             "simPercentual": round(100 * v["sim"] / max(1, v["sim"] + v["nao"]))}
+            for t, v in sorted(tag_counts.items(),
+                               key=lambda kv: -(kv[1]["sim"] + kv[1]["nao"]))]
+    # Série temporal: respondidos x pendentes ao longo do período. A chave é a
+    # data de criação, que é a única que os dois lados têm.
+    balde: dict[str, dict[str, int]] = {}
+    for f in respondidos + aguardando:
+        if not f.created_at:
+            continue
+        chave = _fb_balde(f.created_at, intervalo)
+        slot = balde.setdefault(chave, {"respondidos": 0, "pendentes": 0})
+        slot["respondidos" if f.filled_at else "pendentes"] += 1
+    serie = [{"data": k, **v} for k, v in sorted(balde.items())]
+    return {"pending": len(aguardando), "filled": len(respondidos),
+            "meetingHappened": meeting_yes, "meetingNotHappened": meeting_no,
+            "tags": tags, "serie": serie}
 
 
 @router.post("/execution/activities/{aid}/reschedule")

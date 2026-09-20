@@ -534,6 +534,10 @@ class LeadFeedback(Base):
     lead_id: Mapped[int] = mapped_column(ForeignKey("lead.id", ondelete="CASCADE"))
     user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     meeting_happened: Mapped[bool | None] = mapped_column(Boolean)
+    # Data da reunião: o Meetime a mostra como coluna e como filtro. Aqui ela
+    # é informada por quem responde, porque o gatilho do feedback é o ganho do
+    # lead e não um agendamento — sem isso a coluna seria sempre vazia.
+    meeting_at: Mapped[datetime | None] = mapped_column(DateTime)
     qualification: Mapped[str] = mapped_column(Text, default="{}")  # JSON {tag: bool}
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
