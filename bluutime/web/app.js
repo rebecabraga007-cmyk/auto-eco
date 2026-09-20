@@ -6227,83 +6227,273 @@ function openUserForm(user) {
   };
 }
 
+/* ── Integrações ─────────────────────────────────────────────────────────
+   Antes cada integração era um liga/desliga que não ligava nada — inclusive
+   cinco CRMs que ninguém vai usar. Agora o hub mostra as quatro que existem
+   de verdade, cada uma com a sua tela de detalhe e o estado real. */
+const CANAL_ESTADO = {
+  CONNECTED: ["green", "Conectado"], DISCONNECTED: ["amber", "Desconectado"],
+  NOT_CONFIGURED: ["grey", "Não configurado"], ERROR: ["red", "Com erro"],
+};
+const selo = (estado) => {
+  const [tom, rotulo] = CANAL_ESTADO[estado] || ["grey", estado || "—"];
+  return `<span class="pill ${tom}">${h(rotulo)}</span>`;
+};
+
 PAGES.integracoes = {
-  area: "Integrações", title: "Integrações e webhooks",
+  area: "Integrações", title: "Integrações",
   async render() {
-    const [list, hooks, capi] = await Promise.all([
-      api("/api/integrations"), api("/api/webhooks"), api("/api/capiblu/status")]);
-    const cards = list.map((i) => `<div class="tool-card">
-      <h4>${h(i.name)}</h4><div class="what">${h(i.kind)}</div>
-      <div class="mt-10"><span class="pill ${i.connected ? "green" : "grey"}">${i.connected ? "Conectado" : "Não conectado"}</span>
-        ${i.lastSync ? `<span class="text-muted text-size-small ml-5">${fmtDateTime(i.lastSync)}</span>` : ""}</div>
-      <div class="mt-10"><button class="btn btn-default btn-xs" data-toggle-int="${h(i.key)}">
-        ${i.connected ? "Desconectar" : "Conectar"}</button></div></div>`).join("");
-    const souAdmin = nivelPeloMenos("admin");
-    const hookRows = hooks.map((w) => ({ cells: [
-      w.events.map((e) => `<span class="pill">${h(e)}</span>`).join(" "),
-      `<code>${h(w.targetUrl)}</code>`,
-      w.enabled ? `<span class="pill green">Ativo</span>` : `<span class="pill grey">Inativo</span>`,
-      fmtDate(w.created),
-      souAdmin ? `<button class="btn btn-default btn-xs" data-del-hook="${w.id}">Remover</button>`
-               : `<span class="text-muted text-size-small">—</span>`] }));
+    const alvo = state.integracaoAberta || "";
+    const [canais, capi] = await Promise.all([
+      api("/api/envio/canais").catch(() => ({ sendingEnabled: false, channels: [] })),
+      api("/api/capiblu/status").catch(() => ({ available: false, tools: [], areas: [] })),
+    ]);
+    const canal = (k) => canais.channels.find((c) => c.channel === k) || {};
+
+    if (alvo) return detalheIntegracao(alvo, { canais, capi, canal });
+
+    const cartao = (chave, nome, oque, estado, extra) => `
+      <div class="tool-card">
+        <h4>${h(nome)}</h4><div class="what">${h(oque)}</div>
+        <div class="mt-10">${estado}</div>
+        ${extra ? `<div class="mt-10 text-muted text-size-small">${extra}</div>` : ""}
+        <div class="mt-10"><button class="btn btn-default btn-xs" data-int="${chave}">Detalhes</button></div>
+      </div>`;
 
     view.innerHTML = `
-      ${panel("CapiBLU", `<div class="stat-line">
-          <span><b>${capi.available ? "Ativo" : "Indisponível"}</b>Serviço de dados</span>
-          <span><b>${capi.tools.length}</b>Ferramentas expostas</span>
-          <span><b>${capi.areas.length}</b>Áreas</span></div>
-        ${capi.available ? "" : `<div class="alert alert-info alert-styled-left mt-10">${h(capi.error || "")}</div>`}`,
-        { actions: `<button class="btn btn-default btn-xs" data-page="capiblu-ferramentas">Ver ferramentas</button>` })}
-      ${panel("Integrações", `<div class="tool-grid">${cards}</div>`)}
-      ${panel("Webhooks", table(["Eventos", "URL de destino", "Situação", "Criado", ""], hookRows)
-        + (souAdmin ? "" : `<div class="alert alert-info alert-styled-left mt-10">
-             Só administradores gerenciam webhooks.</div>`),
-        { actions: souAdmin ? `<button class="btn btn-main btn-xs" id="newHook">Novo webhook</button>` : "" })}`;
+      ${canais.sendingEnabled ? "" : `<div class="alert alert-info alert-styled-left">
+        O envio está <strong>desligado</strong> (<code>BLUUTIME_SEND</code>): mensagens de
+        cadência ficam registradas como simuladas até alguém soltar o freio de mão.</div>`}
+      ${panel("Integrações", `<div class="tool-grid">
+        ${cartao("capiblu", "CapiBLU", "Dados, enriquecimento e prospecção",
+          capi.available ? `<span class="pill green">Ativo</span>` : `<span class="pill red">Indisponível</span>`,
+          `${capi.tools.length} ferramentas em ${capi.areas.length} áreas`)}
+        ${cartao("email", "E-mail (Resend)", "Envio de e-mail da cadência",
+          selo(canal("EMAIL").state), h(canal("EMAIL").from || ""))}
+        ${cartao("whatsapp", "WhatsApp", "Mensagem e conversa pelo número da BLU",
+          selo(canal("WHATSAPP").state), h(canal("WHATSAPP").provider || ""))}
+        ${cartao("zenvia", "Zenvia", "SMS e telefonia (voz)",
+          selo(canal("SMS").state), "Voz depende de DID e saldo")}
+      </div>`, { subtitle: "As três que a BLU decidiu usar, mais o WhatsApp" })}
+      ${panel("Fora de escopo", `
+        <p class="text-muted">Os CRMs que o Meetime integra — Pipedrive, Salesforce, RD Station,
+        HubSpot, Ploomes — e o Google Agenda ficaram de fora por decisão de escopo. O que existia
+        aqui era um botão que só virava um booleano no banco, sem credencial, sem mapeamento de
+        campo e sem sincronizar nada; tirei da tela em vez de deixar parecendo que funciona.</p>
+        <p class="text-muted text-size-small">Quem precisa mandar evento para um CRM usa
+        <a data-page="integracoes-webhooks" style="cursor:pointer;text-decoration:underline">webhooks</a> —
+        é assim que o LEAD.WON já chega na Ploomes hoje.</p>`)}
+      ${panel("Webhooks e API", `<div class="tool-grid">
+        <div class="tool-card"><h4>Webhooks</h4>
+          <div class="what">Eventos do Bluutime empurrados para fora</div>
+          <div class="mt-10"><button class="btn btn-default btn-xs" data-int="webhooks">Gerenciar</button></div></div>
+        <div class="tool-card"><h4>Token de API</h4>
+          <div class="what">Acesso programático às rotas do Bluutime</div>
+          <div class="mt-10"><button class="btn btn-default btn-xs" data-page="contas">Abrir contas de acesso</button></div></div>
+      </div>`)}`;
 
-    view.querySelectorAll("[data-toggle-int]").forEach((b) => {
-      b.onclick = async () => {
-        await api(`/api/integrations/${b.dataset.toggleInt}`, { method: "PATCH", body: {} });
-        go("integracoes");
-      };
+    view.querySelectorAll("[data-int]").forEach((b) => {
+      b.onclick = () => { state.integracaoAberta = b.dataset.int; go("integracoes"); };
     });
-    view.querySelectorAll("[data-del-hook]").forEach((b) => {
-      b.onclick = () => confirmDialog("Remover webhook", "Remover este webhook?", async () => {
-        try {
-          await api(`/api/webhooks/${b.dataset.delHook}`, { method: "DELETE" });
-          toast("Webhook removido."); go("integracoes");
-        } catch (e) { toast(e.message, "err"); }
-      });
-    });
-    const newHookBtn = document.getElementById("newHook");
-    if (newHookBtn) newHookBtn.onclick = () => {
-      const m = modal({
-        title: "Novo webhook",
-        body: `<div class="field"><label for="whUrl">URL de destino *</label>
-            <input class="form-control" id="whUrl" placeholder="https://..."></div>
-          <div class="field"><label for="whEvents">Eventos</label>
-            <select class="form-control" id="whEvents" multiple size="7">
-              <option value="LEAD.WON" selected>LEAD.WON</option>
-              <option value="LEAD.LOST">LEAD.LOST</option>
-              <option value="LEAD.CREATED">LEAD.CREATED</option>
-              <option value="LEAD.REPLIED">LEAD.REPLIED</option>
-              <option value="ACTIVITY.DONE">ACTIVITY.DONE</option>
-              <option value="MESSAGE.SENT">MESSAGE.SENT</option>
-              <option value="BASE.IMPORTED">BASE.IMPORTED</option>
-            </select></div>`,
-        footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
-                 <button class="btn btn-main btn-sm" data-save>Criar</button>`,
-      });
-      m.root.querySelector("[data-cancel]").onclick = m.close;
-      m.root.querySelector("[data-save]").onclick = async () => {
-        try {
-          await api("/api/webhooks", { method: "POST", body: {
-            targetUrl: m.root.querySelector("#whUrl").value.trim(),
-            events: [...m.root.querySelector("#whEvents").selectedOptions].map((o) => o.value) } });
-          m.close(); toast("Webhook criado.", "ok"); go("integracoes");
-        } catch (e) { toast(e.message, "err"); }
-      };
-    };
   },
+};
+
+async function detalheIntegracao(chave, ctx) {
+  const voltar = `<div class="toolbar">
+      <button class="btn btn-default btn-xs" id="intVoltar">‹ Integrações</button></div>`;
+  const fechar = () => {
+    document.getElementById("intVoltar").onclick = () => {
+      state.integracaoAberta = ""; go("integracoes");
+    };
+  };
+
+  if (chave === "capiblu") {
+    const c = ctx.capi;
+    view.innerHTML = `${voltar}
+      ${panel("CapiBLU", `
+        <div class="stat-line">
+          <span><b>${c.available ? "Ativo" : "Indisponível"}</b>Serviço de dados</span>
+          <span><b>${c.tools.length}</b>Ferramentas expostas</span>
+          <span><b>${c.areas.length}</b>Áreas</span>
+        </div>
+        ${c.available
+          ? `<p class="text-muted mt-10">O serviço roda no mesmo processo do Bluutime: as
+             consultas de empresa, sócio, telefone e enriquecimento não saem pela rede.</p>`
+          : `<div class="alert alert-danger alert-styled-left mt-10">${h(c.error || "")}</div>`}`,
+        { actions: `<button class="btn btn-default btn-xs" data-page="capiblu-ferramentas">Ver ferramentas</button>` })}`;
+    return fechar();
+  }
+
+  if (chave === "email") {
+    const e = ctx.canal("EMAIL");
+    const dom = await api("/api/flow/email/domains").catch(() => ({ configurado: false, dominios: [] }));
+    view.innerHTML = `${voltar}
+      ${panel("E-mail (Resend)", `
+        <div class="info-grid">
+          <div class="info-linha"><span>Estado</span><strong>${selo(e.state)}</strong></div>
+          <div class="info-linha"><span>Remetente</span><strong>${h(e.from || "—")}</strong></div>
+          <div class="info-linha"><span>Servidor</span><strong>${h(e.host || "—")}</strong></div>
+          <div class="info-linha"><span>Envio real</span><strong>${ctx.canais.sendingEnabled
+            ? `<span class="pill green">ligado</span>` : `<span class="pill amber">desligado</span>`}</strong></div>
+        </div>
+        ${e.reason ? `<div class="alert alert-info alert-styled-left mt-10">${h(e.reason)}</div>` : ""}`,
+        { actions: `<button class="btn btn-default btn-xs" id="emTeste">Enviar teste</button>` })}
+      ${panel("Domínios verificados", dom.configurado
+        ? table(["Domínio", "Situação", "Região", "Envio", "Criado", ""],
+            (dom.dominios || []).map((d) => ({ cells: [
+              `<strong>${h(d.nome)}</strong>`,
+              d.status === "verified" ? `<span class="pill green">verificado</span>`
+                : `<span class="pill amber">${h(d.status)}</span>`,
+              h(d.regiao || "—"), h(d.envio || "—"), h(d.criado || "—"),
+              `<button class="btn btn-default btn-xs" data-dns="${h(d.nome)}">Ver DNS</button>`,
+            ] })), { empty: "Nenhum domínio no Resend." })
+        : `<div class="alert alert-info alert-styled-left">${h(dom.motivo || "Resend não configurado.")}</div>`,
+        { subtitle: "Lidos do Resend na hora — a tela não guarda cópia" })}`;
+    fechar();
+    const teste = document.getElementById("emTeste");
+    if (teste) teste.onclick = () => promptOne("Enviar e-mail de teste", "Para qual endereço?",
+      async (para) => {
+        try {
+          const r = await api("/api/envio/teste", { method: "POST", body: { channel: "EMAIL", to: para } });
+          toast(r.status === "SENT" ? "E-mail enviado." : `Registrado como ${r.status}.`, "ok");
+        } catch (err) { toast(err.message, "err"); }
+      }, "Enviar", state.me.email);
+    view.querySelectorAll("[data-dns]").forEach((b) => {
+      b.onclick = () => {
+        const d = (dom.dominios || []).find((x) => x.nome === b.dataset.dns);
+        const m = modal({ wide: true, title: `DNS de ${d.nome}`,
+          body: table(["Tipo", "Nome", "Valor"], (d.registros || []).map((r) => ({ cells: [
+            h(r.tipo), `<code>${h(r.nome)}</code>`,
+            `<code style="word-break:break-all">${h(r.valor)}</code>`] })), { scroll: true }),
+          footer: `<button class="btn btn-main btn-sm" data-close-dns>Fechar</button>` });
+        m.root.querySelector("[data-close-dns]").onclick = m.close;
+      };
+    });
+    return;
+  }
+
+  if (chave === "whatsapp") {
+    const w = ctx.canal("WHATSAPP");
+    view.innerHTML = `${voltar}
+      ${panel("WhatsApp", `
+        <div class="info-grid">
+          <div class="info-linha"><span>Estado</span><strong>${selo(w.state)}</strong></div>
+          <div class="info-linha"><span>Provedor</span><strong>${h(w.provider || "—")}</strong></div>
+          <div class="info-linha"><span>Instância</span><strong>${h(w.instance || "—")}</strong></div>
+          <div class="info-linha"><span>Envio real</span><strong>${ctx.canais.sendingEnabled
+            ? `<span class="pill green">ligado</span>` : `<span class="pill amber">desligado</span>`}</strong></div>
+        </div>
+        ${w.reason ? `<div class="alert alert-info alert-styled-left mt-10">${h(w.reason)}</div>` : ""}
+        <p class="text-muted text-size-small mt-10">Parear é ler um QR code com o celular
+        que vai atender. A sessão fica no provedor, não aqui.</p>`,
+        { actions: `<button class="btn btn-default btn-xs" data-page="envio">Parear número</button>
+                    <button class="btn btn-default btn-xs" data-page="whatsapp">Ver conversas</button>` })}`;
+    return fechar();
+  }
+
+  if (chave === "zenvia") {
+    const s = ctx.canal("SMS");
+    const z = await api("/api/integrations/zenvia/status").catch((e) => ({ erro: e.message }));
+    view.innerHTML = `${voltar}
+      ${panel("Zenvia — SMS", `
+        <div class="info-grid">
+          <div class="info-linha"><span>Estado</span><strong>${selo(s.state)}</strong></div>
+          <div class="info-linha"><span>Remetente</span><strong>${h(s.from || "—")}</strong></div>
+        </div>
+        ${s.reason ? `<div class="alert alert-info alert-styled-left mt-10">${h(s.reason)}</div>` : ""}`)}
+      ${panel("Zenvia — Voz (telefonia)", !z.configurado
+        ? `<div class="alert alert-info alert-styled-left">${h(z.motivo || z.erro || "Sem token de voz.")}</div>`
+        : `<div class="info-grid">
+            <div class="info-linha"><span>Saldo</span><strong>${z.saldo == null ? "—"
+              : `R$ ${Number(z.saldo).toFixed(2).replace(".", ",")}`}</strong></div>
+            <div class="info-linha"><span>Números (DID)</span><strong>${(z.dids || []).length}</strong></div>
+          </div>
+          ${z.erro ? `<div class="alert alert-danger alert-styled-left mt-10">${h(z.erro)}</div>` : ""}
+          ${z.podeLigar
+            ? `<div class="alert alert-success alert-styled-left mt-10">Conta pronta para ligar.</div>`
+            : `<div class="alert alert-info alert-styled-left mt-10">
+                Falta ${[!(z.dids || []).length && "comprar um número (DID)",
+                         !(z.saldo >= (z.saldoMinimo || 1))
+                           && `colocar saldo (hoje R$ ${Number(z.saldo || 0).toFixed(2).replace(".", ",")})`]
+                        .filter(Boolean).join(" e ")}.
+                Enquanto isso o discador registra a ligação, mas não disca.</div>`}`,
+        { subtitle: "Lido da Zenvia na hora" })}`;
+    return fechar();
+  }
+
+  // webhooks
+  const hooks = await api("/api/webhooks");
+  const souAdmin = nivelPeloMenos("admin");
+  view.innerHTML = `${voltar}
+    ${panel("Webhooks", table(["Eventos", "URL de destino", "Situação", "Criado", ""],
+      hooks.map((w) => ({ cells: [
+        w.events.map((e) => `<span class="pill">${h(e)}</span>`).join(" "),
+        `<code style="word-break:break-all">${h(w.targetUrl)}</code>`,
+        w.enabled ? `<span class="pill green">Ativo</span>` : `<span class="pill grey">Inativo</span>`,
+        fmtDate(w.created),
+        souAdmin ? `<button class="btn btn-default btn-xs" data-hook-toggle="${w.id}" data-on="${w.enabled ? 1 : 0}">
+                      ${w.enabled ? "Desativar" : "Ativar"}</button>
+                    <button class="btn btn-default btn-xs" data-del-hook="${w.id}">Remover</button>`
+                 : `<span class="text-muted text-size-small">—</span>`] })),
+      { scroll: true, empty: "Nenhum webhook." })
+      + (souAdmin ? "" : `<div class="alert alert-info alert-styled-left mt-10">
+           Só administradores gerenciam webhooks.</div>`),
+      { actions: souAdmin ? `<button class="btn btn-main btn-xs" id="newHook">Novo webhook</button>` : "" })}`;
+  fechar();
+  // O PATCH existia no backend desde sempre, mas não havia botão: um webhook
+  // com destino fora do ar só podia ser removido, nunca pausado.
+  view.querySelectorAll("[data-hook-toggle]").forEach((b) => {
+    b.onclick = async () => {
+      try {
+        await api(`/api/webhooks/${b.dataset.hookToggle}`, { method: "PATCH",
+          body: { enabled: b.dataset.on !== "1" } });
+        toast("Webhook atualizado.", "ok"); go("integracoes");
+      } catch (e) { toast(e.message, "err"); }
+    };
+  });
+  view.querySelectorAll("[data-del-hook]").forEach((b) => {
+    b.onclick = () => confirmDialog("Remover webhook", "Remover este webhook?", async () => {
+      try {
+        await api(`/api/webhooks/${b.dataset.delHook}`, { method: "DELETE" });
+        toast("Webhook removido."); go("integracoes");
+      } catch (e) { toast(e.message, "err"); }
+    });
+  });
+  const newHookBtn = document.getElementById("newHook");
+  if (newHookBtn) newHookBtn.onclick = () => {
+    const m = modal({
+      title: "Novo webhook",
+      body: `<div class="field"><label for="whUrl">URL de destino *</label>
+          <input class="form-control" id="whUrl" placeholder="https://..."></div>
+        <div class="field"><label for="whEvents">Eventos</label>
+          <select class="form-control" id="whEvents" multiple size="7">
+            <option value="LEAD.WON" selected>LEAD.WON</option>
+            <option value="LEAD.LOST">LEAD.LOST</option>
+            <option value="LEAD.CREATED">LEAD.CREATED</option>
+            <option value="LEAD.REPLIED">LEAD.REPLIED</option>
+            <option value="ACTIVITY.DONE">ACTIVITY.DONE</option>
+            <option value="MESSAGE.SENT">MESSAGE.SENT</option>
+            <option value="BASE.IMPORTED">BASE.IMPORTED</option>
+          </select></div>`,
+      footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+               <button class="btn btn-main btn-sm" data-save>Criar</button>`,
+    });
+    m.root.querySelector("[data-cancel]").onclick = m.close;
+    m.root.querySelector("[data-save]").onclick = async () => {
+      try {
+        await api("/api/webhooks", { method: "POST", body: {
+          targetUrl: m.root.querySelector("#whUrl").value.trim(),
+          events: [...m.root.querySelector("#whEvents").selectedOptions].map((o) => o.value) } });
+        m.close(); toast("Webhook criado.", "ok"); go("integracoes");
+      } catch (e) { toast(e.message, "err"); }
+    };
+  };
+}
+
+// Rota direta para a aba de webhooks, usada pelo texto do "fora de escopo".
+PAGES["integracoes-webhooks"] = {
+  area: "Integrações", title: "Webhooks",
+  async render() { state.integracaoAberta = "webhooks"; return PAGES.integracoes.render(); },
 };
 
 PAGES.financeiro = {

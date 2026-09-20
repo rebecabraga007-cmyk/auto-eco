@@ -1,7 +1,9 @@
 """Conta, empresa, usuários, times, clientes e ajustes."""
+import asyncio
 import os
 from datetime import date, datetime
 
+import httpx
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -806,6 +808,34 @@ def integrations(db: Session = Depends(get_db)):
             for i in db.query(Integration).order_by(Integration.name)]
 
 
+@router.get("/integrations/zenvia/status")
+async def zenvia_status():
+    """Saldo e números da conta Zenvia Voice, lidos na hora.
+
+    É o que decide se a telefonia pode ligar: sem DID comprado não há de onde
+    sair a chamada, e sem saldo ela não completa. Guardar esse estado no banco
+    só criaria uma cópia velha de um número que muda a cada ligação.
+    """
+    token = os.environ.get("ZENVIA_VOICE_TOKEN") or ""
+    if not token:
+        return {"configurado": False, "motivo": "Falta ZENVIA_VOICE_TOKEN no .env."}
+    base = "https://voice-api.zenvia.com"
+    headers = {"Access-Token": token}
+    try:
+        async with httpx.AsyncClient(timeout=12.0, headers=headers) as cli:
+            saldo_r, did_r = await asyncio.gather(cli.get(f"{base}/saldo"),
+                                                  cli.get(f"{base}/did"))
+    except Exception as e:  # rede fora, DNS, timeout
+        return {"configurado": True, "erro": f"Não consegui falar com a Zenvia: {e}"}
+    saldo = (saldo_r.json().get("dados") or {}).get("saldo") if saldo_r.status_code == 200 else None
+    dids = ((did_r.json().get("dados") or {}).get("dids") or []) if did_r.status_code == 200 else []
+    # Um centavo é saldo positivo e não paga ligação nenhuma: o corte útil é
+    # um real, senão a tela diria "pronto para ligar" e a chamada cairia.
+    return {"configurado": True, "saldo": saldo, "dids": dids, "saldoMinimo": 1,
+            "podeLigar": bool(dids) and (saldo or 0) >= 1,
+            "erro": "" if saldo_r.status_code == 200 else f"HTTP {saldo_r.status_code} ao ler o saldo"}
+
+
 @router.patch("/integrations/{key}")
 def toggle_integration(key: str, payload: dict = Body(...), db: Session = Depends(get_db)):
     perm.ator(db).exigir("gestor", "ligar/desligar integração")
@@ -840,6 +870,31 @@ def create_webhook(payload: dict = Body(...), db: Session = Depends(get_db)):
     db.add(w)
     db.commit()
     return {"id": w.id, "events": w.events.split(","), "targetUrl": w.target_url}
+
+
+@router.patch("/webhooks/{wid}")
+def update_webhook(wid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Liga, desliga e reaponta um webhook.
+
+    Antes só dava para remover: um destino fora do ar tinha que ser apagado e
+    recadastrado depois, perdendo a data de criação e o histórico de entrega.
+    """
+    perm.ator(db).exigir("admin", "editar webhook")
+    w = db.get(Webhook, wid)
+    if not w:
+        raise HTTPException(404, "Webhook nao encontrado.")
+    if "enabled" in payload:
+        w.enabled = bool(payload["enabled"])
+    if payload.get("targetUrl"):
+        url = str(payload["targetUrl"]).strip()
+        if not url.startswith(("http://", "https://")):
+            raise HTTPException(400, "A URL precisa comecar com http:// ou https://.")
+        w.target_url = url
+    if payload.get("events"):
+        w.events = ",".join(str(e).strip() for e in payload["events"] if str(e).strip())
+    db.commit()
+    return {"id": w.id, "targetUrl": w.target_url, "enabled": w.enabled,
+            "events": [e for e in w.events.split(",") if e]}
 
 
 @router.delete("/webhooks/{wid}")

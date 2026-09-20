@@ -23,19 +23,25 @@ class Email(Channel):
     label = "E-mail (SMTP)"
 
     def __init__(self):
-        self.host = os.environ.get("SMTP_HOST") or ""
-        self.port = int(os.environ.get("SMTP_PORT") or 587)
-        self.user = os.environ.get("SMTP_USER") or ""
-        self.password = os.environ.get("SMTP_PASSWORD") or ""
-        self.from_name = os.environ.get("SMTP_FROM_NAME") or "BLU Sales Group"
-        self.from_addr = os.environ.get("SMTP_FROM") or self.user
-        self.starttls = (os.environ.get("SMTP_STARTTLS", "1") != "0")
+        # O relay é o mesmo Resend do CapiBLU, que já vive no `.env` com o
+        # prefixo `CAPIBLU_SMTP_`. Ler só `SMTP_*` fazia o canal se declarar
+        # "não configurado" com a credencial certa dois nomes ao lado — e o
+        # e-mail nunca sairia, mesmo com o freio de mão solto.
+        env = os.environ.get
+        self.host = env("SMTP_HOST") or env("CAPIBLU_SMTP_HOST") or ""
+        self.port = int(env("SMTP_PORT") or env("CAPIBLU_SMTP_PORT") or 587)
+        self.user = env("SMTP_USER") or env("CAPIBLU_SMTP_USER") or ""
+        self.password = env("SMTP_PASSWORD") or env("CAPIBLU_SMTP_SENHA") or ""
+        self.from_name = env("SMTP_FROM_NAME") or "BLU Sales Group"
+        self.from_addr = env("SMTP_FROM") or env("CAPIBLU_SMTP_DE") or self.user
+        self.starttls = (env("SMTP_STARTTLS", "1") != "0")
 
     def configured(self) -> tuple[bool, str]:
         faltando = [n for n, v in (("SMTP_HOST", self.host), ("SMTP_USER", self.user),
                                    ("SMTP_PASSWORD", self.password)) if not v]
         if faltando:
-            return False, f"Falta configurar {', '.join(faltando)} no .env."
+            return False, ("Falta configurar " + ", ".join(faltando)
+                           + " no .env (ou os equivalentes CAPIBLU_SMTP_*).")
         return True, ""
 
     async def state(self) -> dict:
