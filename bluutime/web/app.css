@@ -74,7 +74,7 @@
   --info-line: #b3e5fc;  /* borda de .alert-info */
 
   --creme: #f7f7f7;      /* .wa-thread */
-  --creme-2: #f5f5f5;    /* hover de superfície clara, .pill.grey */
+  --creme: #f5f5f5;    /* hover de superfície clara, .pill.grey */
   --creme-3: #f8f8f8;    /* hover de linha de tabela */
   --preto: #111;         /* ilustração do WhatsApp vazio */
 
@@ -216,7 +216,7 @@ a:hover { color: var(--link-dark); text-decoration: none; }
   font-size: 13px;
   line-height: 1.5384616;
 }
-.dropdown-menu li a:hover { background: var(--creme-2); color: #242826; }
+.dropdown-menu li a:hover { background: var(--creme); color: #242826; }
 .divider { height: 1px; margin: 6px 0; overflow: hidden; background: var(--line-soft); }
 /* [FIX 2] .navbar-lg .navbar-nav>.dropdown-user img{max-height:32px} */
 .avatar {
@@ -260,7 +260,7 @@ a:hover { color: var(--link-dark); text-decoration: none; }
 .label-default { background: #999; border-color: #999; }
 .label-light {
   color: #555;
-  background: var(--creme-2);
+  background: var(--creme);
   border-color: var(--line);
 }
 .nav-new-top {
@@ -280,14 +280,17 @@ a:hover { color: var(--link-dark); text-decoration: none; }
   font-weight: 500;
   line-height: 1.5384616;
   letter-spacing: .1px;
-  color: var(--muted);
+  color: #fff;
   text-align: center;
   white-space: nowrap;
   vertical-align: baseline;
   background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 2px;
+  border: 1px solid transparent;
+  border-radius: 10px;
 }
+.bg-grey-400 { background: #888; border-color: #888; color: #fff; }
+.bg-grey { background: #777; border-color: #777; color: #fff; }
+.bg-blue { background: #03a9f4; border-color: #03a9f4; color: #fff; }
 .badge-success { background: var(--green-label); border-color: var(--green-label); color: #fff; }
 .status-mark {
   display: inline-block;
@@ -323,7 +326,7 @@ a:hover { color: var(--link-dark); text-decoration: none; }
 }
 .breadcrumb {
   margin: 0;
-  padding: 0;
+  padding: 8px 0;
   list-style: none;
   display: flex;
   align-items: center;
@@ -417,7 +420,7 @@ a:hover { color: var(--link-dark); text-decoration: none; }
   border-color: var(--line);
   cursor: pointer;
 }
-.btn:hover { background: var(--creme-2); border-color: #ccc; }
+.btn:hover { background: var(--creme); border-color: #ccc; }
 .btn-xs { padding: 4px 9px; font-size: 12px; line-height: 1.6666667; }
 .btn-sm { padding: 6px 11px; font-size: 12px; }
 /* [FIX 3] .btn-main{background:#00c850;border-color:#00c850} em todos os estados */
@@ -473,6 +476,14 @@ a:hover { color: var(--link-dark); text-decoration: none; }
 }
 /* [FIX 12] .input-xlg real: 42px · 10px 15px · 14px */
 .input-xlg { height: 42px; padding: 10px 15px; font-size: 14px; line-height: 1.4285715; }
+/* No original o textarea escapa da altura fixa do .form-control, e os
+   utilitários de alinhamento existem soltos — a nossa folha só tinha a
+   versão de dentro de `.field`, então `rows` não valia nada fora dela. */
+textarea.form-control { height: auto; }
+.text-center { text-align: center; }
+.text-left { text-align: left; }
+.text-right { text-align: right; }
+
 .form-control-feedback {
   position: absolute;
   top: 0;
@@ -580,7 +591,7 @@ table { width: 100%; max-width: 100%; border-collapse: collapse; background: #ff
 .kpi.warning .number { color: var(--warn); }
 
 .alert {
-  padding: 12px 16px;
+  padding: 15px 20px;
   margin-bottom: 20px;
   border: 1px solid transparent;
   border-radius: 3px;
@@ -1103,7 +1114,7 @@ body.app-loading .page-container { opacity: .35; }
 .pill.blue  { background: var(--info-bg); border-color: var(--info-line); color: var(--link-dark); }
 .pill.red   { background: var(--red-bg); border-color: var(--red-bg); color: var(--red); }
 .pill.amber { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn); }
-.pill.grey  { background: var(--creme-2); }
+.pill.grey  { background: var(--creme); }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
 
@@ -1152,7 +1163,7 @@ body.app-loading .page-container { opacity: .35; }
 .queue-item.late { border-left: 3px solid var(--red); }
 .queue-rank {
   width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
-  background: var(--creme-2); color: var(--muted); font-weight: 500; font-size: 12px;
+  background: var(--creme); color: var(--muted); font-weight: 500; font-size: 12px;
 }
 .queue-item.late .queue-rank { background: var(--red-bg); color: var(--red); }
 
@@ -1171,7 +1182,7 @@ body.app-loading .page-container { opacity: .35; }
 .split { display: grid; grid-template-columns: 320px minmax(0,1fr); gap: 20px; }
 .wa-list { max-height: 460px; overflow: auto; margin: -6px -6px 0; }
 .wa-row { padding: 11px 12px; border-bottom: 1px solid var(--line-soft); cursor: pointer; }
-.wa-row:hover, .wa-row.active { background: var(--creme-2); }
+.wa-row:hover, .wa-row.active { background: var(--creme); }
 .wa-thread { display: grid; gap: 8px; padding: 16px; max-height: 420px; overflow: auto; background: var(--creme); }
 .bubble { max-width: 72%; padding: 9px 12px; border-radius: 8px; font-size: 12px; line-height: 1.5; }
 .bubble.out { background: #dcf8c6; justify-self: end; }
@@ -1181,7 +1192,7 @@ body.app-loading .page-container { opacity: .35; }
 .wizard-steps { display: flex; gap: 6px; margin-bottom: 18px; }
 .wizard-steps span {
   flex: 1; text-align: center; padding: 9px; font-size: 12px; font-weight: 500;
-  background: var(--creme-2); color: #999; border-bottom: 2px solid var(--line);
+  background: var(--creme); color: #999; border-bottom: 2px solid var(--line);
 }
 .wizard-steps span.active { background: #fff; color: var(--text); border-bottom-color: var(--green); }
 
@@ -1217,7 +1228,7 @@ body.app-loading .page-container { opacity: .35; }
   text-transform: uppercase;
   line-height: 1.5384616;
   color: #555;
-  background: var(--creme-2);
+  background: var(--creme);
   border: 1px solid var(--line);
   border-radius: 2px;
   cursor: pointer;
@@ -1283,7 +1294,7 @@ body.app-loading .page-container { opacity: .35; }
   border-bottom: 1px solid var(--line-soft);
   margin-bottom: 14px;
 }
-.filter-summary .token { background: var(--creme-2); border-color: var(--line); color: #555; }
+.filter-summary .token { background: var(--creme); border-color: var(--line); color: #555; }
 
 /* Filtros avançados: recolhidos, com contador do que está ativo lá dentro. */
 .adv-toggle { display: flex; align-items: center; gap: 8px; padding: 9px 0; }
@@ -1660,7 +1671,7 @@ th.ord:hover { color: var(--text); }
   text-align: center;
   font-size: 13px;
   color: var(--muted);
-  background: var(--creme-2);
+  background: var(--creme);
   border-radius: 50%;
 }
 .lead-nome { display: block; font-weight: 600; color: var(--text); text-transform: uppercase; font-size: 12.5px; cursor: pointer; }
@@ -1674,14 +1685,14 @@ th.ord:hover { color: var(--text); }
   letter-spacing: .1px;
   text-transform: uppercase;
   color: var(--muted);
-  background: var(--creme-2);
+  background: var(--creme);
   border-radius: 2px;
 }
 .status-tag.ok { color: #1b5e20; background: var(--ok-bg); }
 .status-tag.ruim { color: #b71c1c; background: var(--red-bg); }
 .kebab { position: relative; display: inline-block; }
 .kebab-btn { padding: 2px 8px; font-size: 17px; line-height: 1; color: var(--muted); background: none; border: 0; cursor: pointer; border-radius: 3px; }
-.kebab-btn:hover { background: var(--creme-2); color: var(--text); }
+.kebab-btn:hover { background: var(--creme); color: var(--text); }
 .kebab-menu {
   position: absolute;
   z-index: 40;
@@ -1696,9 +1707,32 @@ th.ord:hover { color: var(--text); }
   text-align: left;
 }
 .kebab-menu a { display: block; padding: 9px 16px; font-size: 13px; color: var(--text); cursor: pointer; }
-.kebab-menu a:hover { background: var(--creme-2); }
+.kebab-menu a:hover { background: var(--creme); }
 
 /* Estado vazio da lista, como o do original. */
 .vazio-registro { padding: 70px 0 40px; text-align: center; opacity: .22; }
 .vazio-icone { font-size: 54px; line-height: 1; }
 .vazio-registro h2 { margin: 12px 0 0; font-size: 22px; font-weight: 400; }
+
+/* Bloco "Como funciona?" das telas de configuração, como no original. */
+.como-funciona { margin: 6px 0 10px; font-size: 12.5px; color: var(--muted); }
+.como-funciona ol { margin: 6px 0 0; padding-left: 20px; }
+.como-funciona li { margin-bottom: 3px; }
+.como-funciona code { padding: 1px 4px; font-size: 11.5px; background: var(--creme); border-radius: 2px; }
+
+/* Blacklist: o original abre com um bloco "Como funciona?" dentro de um
+   .mt-alert, e o contador de domínios fica alinhado à direita, acima da caixa. */
+.como-funciona h6 { margin: 0 0 6px; font-size: 13px; font-weight: 500; color: var(--text); }
+.como-funciona p { margin: 0 0 6px; }
+.como-funciona p:last-child { margin-bottom: 0; }
+.text-italic { font-style: italic; }
+.bl-contagem { min-height: 18px; margin-bottom: 4px; font-size: 12px; text-align: right; }
+
+/* Botão-link de ação em linha de tabela (o `.btn-link .btn-action` do
+   original): só o ícone, verde para confirmar e cinza para desfazer. */
+.btn-acao { padding: 0 6px; border: 0; background: none; font-size: 15px;
+  line-height: 1; color: var(--green-label); cursor: pointer; }
+.btn-acao:hover { opacity: .7; }
+.btn-acao[disabled] { opacity: .4; cursor: default; }
+.btn-acao-cinza { color: var(--muted); }
+tr.linha-padrao > td { background: rgba(0, 0, 0, .03); }

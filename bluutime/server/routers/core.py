@@ -744,8 +744,15 @@ def update_flow_config(payload: dict = Body(...), db: Session = Depends(get_db))
         days = sorted({int(d) for d in payload["workingDays"] if 1 <= int(d) <= 7})
         c.working_days = ",".join(str(d) for d in days) or "1,2,3,4,5"
     if "blacklist" in payload:
-        c.blacklist_domains = "\n".join(
-            str(d).strip().lower() for d in payload["blacklist"] if str(d).strip())
+        # O limite do original é de 1024 domínios — a tela avisa, mas quem
+        # chama a API direto também tem que esbarrar nele.
+        dominios = [str(d).strip().lower().lstrip("@") for d in payload["blacklist"] if str(d).strip()]
+        if len(dominios) > 1024:
+            raise HTTPException(400, "O limite máximo é de 1024 domínios.")
+        invalido = next((d for d in dominios if "@" in d or "." not in d or " " in d), None)
+        if invalido:
+            raise HTTPException(400, f'"{invalido}" não é um domínio válido — informe sem o @.')
+        c.blacklist_domains = "\n".join(dominios)
     db.commit()
     return flow_config(db)
 

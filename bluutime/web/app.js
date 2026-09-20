@@ -123,7 +123,7 @@ function table(headers, rows, opts = {}) {
   if (!rows.length) return emptyState(opts.empty || "Nada por aqui ainda.");
   return `<div class="table-responsive${opts.scroll ? " table-scroll" : ""}">
     <table class="table table-striped table-hover">
-      <thead><tr>${headers.map((x) => `<th>${x}</th>`).join("")}</tr></thead>
+      ${opts.noHead ? "" : `<thead><tr>${headers.map((x) => `<th>${x}</th>`).join("")}</tr></thead>`}
       <tbody>${rows.map((r) => `<tr${r.attrs || ""}>${r.cells.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody>
     </table></div>`;
 }
@@ -1664,10 +1664,10 @@ PAGES.leads = {
       <div class="panel panel-flat">
         ${res.stages && res.stages.length ? `<ul class="nav nav-tabs">
           <li${!f.stage ? ' class="active"' : ""}><a data-stage="">Todas
-            <span class="badge${!f.stage ? " badge-success" : ""}">${res.pagination.totalRowCount}</span></a></li>
+            <span class="badge${!f.stage ? " badge-success" : " bg-grey-400"}">${res.pagination.totalRowCount}</span></a></li>
           ${res.stages.map((e) => `<li${f.stage === e.label ? ' class="active"' : ""}>
             <a data-stage="${h(e.label)}">${h(e.label)}
-              <span class="badge${f.stage === e.label ? " badge-success" : ""}">${e.count}</span></a></li>`).join("")}
+              <span class="badge${f.stage === e.label ? " badge-success" : " bg-grey-400"}">${e.count}</span></a></li>`).join("")}
         </ul>` : ""}
         <div class="panel-body">
           <div class="leads-resumo">
@@ -4798,7 +4798,7 @@ PAGES["feedback-oportunidade"] = {
       ${fbChips(f)}
       <ul class="nav nav-tabs">
         ${abas.map(([id, rotulo, n]) => `<li${modo === id ? ' class="active"' : ""}>
-          <a data-fbmodo="${id}">${rotulo} <span class="badge${modo === id ? " badge-success" : ""}">${n}</span></a></li>`).join("")}
+          <a data-fbmodo="${id}">${rotulo} <span class="badge${modo === id ? " badge-success" : " bg-grey-400"}">${n}</span></a></li>`).join("")}
       </ul>
       <div id="fbBody" class="mt-10"></div>`;
 
@@ -6183,9 +6183,9 @@ function renderGente() {
     <div class="panel panel-flat">
       <ul class="nav nav-tabs">
         <li${gente.aba === "exatos" ? ' class="active"' : ""}><a data-aba="exatos">Nome exato
-          <span class="badge${gente.aba === "exatos" ? " badge-success" : ""}">${nExatos}</span></a></li>
+          <span class="badge${gente.aba === "exatos" ? " badge-success" : " bg-grey-400"}">${nExatos}</span></a></li>
         <li${gente.aba === "amplos" ? ' class="active"' : ""}><a data-aba="amplos">Outros sobrenomes
-          <span class="badge${gente.aba === "amplos" ? " badge-success" : ""}">${gente.total}</span></a></li>
+          <span class="badge${gente.aba === "amplos" ? " badge-success" : " bg-grey-400"}">${gente.total}</span></a></li>
       </ul>
       <div class="toolbar" style="margin:0;border-width:0 0 1px;border-radius:0">
         <button class="btn btn-default btn-xs" id="gRank">Calcular ranking</button>
@@ -7793,13 +7793,14 @@ async function detalheIntegracao(chave, ctx) {
       m.root.querySelector("[data-ok]").onclick = async (ev) => {
         const nome = m.root.querySelector("#ndNome").value.trim();
         if (!nome) return toast("Informe o domínio.", "err");
-        ev.currentTarget.disabled = true;
+        const bt = ev.currentTarget;
+        bt.disabled = true;
         try {
           await api("/api/flow/email/domains", { method: "POST", body: { nome } });
           m.close();
           toast("Domínio criado. Publique o DNS e clique em Verificar.", "ok");
           go("integracoes");
-        } catch (e) { toast(e.message, "err"); ev.currentTarget.disabled = false; }
+        } catch (e) { toast(e.message, "err"); bt.disabled = false; }
       };
     };
     view.querySelectorAll("[data-verificar]").forEach((b) => {
@@ -8004,11 +8005,13 @@ PAGES.ajustes = {
     // aparecendo, então renomear um título não some com a seção.
     const cfgAba = state.ajustesAba || "geral";
     const CFG_ABAS = [
-      ["geral", "Geral", ["Configurações gerais", "Metas diárias", "Calendário de trabalho"]],
+      ["geral", "Geral", ["Configurações gerais", "Objetivo Diário de Atividades",
+                          "Calendário de trabalho"]],
       ["campos", "Campos e funil", ["Campos do lead", "Etapa do lead (funil)", "Lead scoring (fitscore)"]],
       ["resultado", "Resultado", ["Motivos de perda", "Feedback de oportunidade"]],
       ["permissoes", "Permissões", ["Permissões"]],
-      ["email", "E-mail", ["E-mail — remetente", "Domínios de envio (whitelabel)"]],
+      ["email", "E-mail", ["E-mail — remetente", "Blacklist de E-mails Automáticos",
+                           "Domínios de envio (whitelabel)"]],
     ];
 
     view.innerHTML = `
@@ -8017,9 +8020,7 @@ PAGES.ajustes = {
           <a data-cfgaba="${k}">${rot}</a></li>`).join("")}
       </ul>
       ${panel("Configurações gerais", `
-        <div class="filter-row" style="grid-template-columns:1fr 2fr">
-          <div><label class="text-muted text-size-small">Meta diária padrão da empresa</label>
-            <input class="form-control" type="number" min="1" id="cfgDailyGoal" value="${cfg.defaultDailyGoal}"></div>
+        <div class="filter-row" style="grid-template-columns:1fr">
           <div><label class="text-muted text-size-small">Dias úteis <span class="text-grey">— a fila não agenda fora deles</span></label>
             <div class="chip-grid" id="cfgDias">
               ${DIAS_SEMANA.map(([v, t]) => `<button type="button" class="chip${cfg.workingDays.includes(v) ? " active" : ""}" data-v="${v}">${t}</button>`).join("")}
@@ -8049,25 +8050,27 @@ PAGES.ajustes = {
             <span class="help-block">Zero esconde o cálculo. Com valor, a tela de Usuários mostra
               quanto o time custa por mês.</span></div>
         </div>
-        <div class="field"><label class="text-muted text-size-small">Blacklist de domínios de e-mail
-          <span class="text-grey">— um por linha; lead desses domínios é perdido automaticamente</span></label>
-          <textarea class="form-control" id="cfgBlacklist" rows="3" placeholder="concorrente.com.br">${h(cfg.blacklist.join("\n"))}</textarea>
-          <span class="help-block" id="blCount">${cfg.blacklist.length} domínio${cfg.blacklist.length === 1 ? "" : "s"} · limite de 1024 caracteres</span></div>
         <div class="toolbar mt-10" style="border:0;padding:0;background:none">
           <span class="spacer"></span>
           <button class="btn btn-main btn-sm" id="cfgSalvar">Salvar configurações</button>
         </div>`)}
 
-      ${panel("Metas diárias", table(["Usuário", "Atividades por dia", ""],
-        cfg.usersGoals.map((g) => {
-          const u = state.users.find((x) => x.id === g.userId);
-          return { cells: [h(u ? u.name : g.userId),
-            `<input class="form-control input-sm" type="number" min="0" style="max-width:110px"
-                    data-meta-user="${g.userId}" value="${g.dailyGoal}">`,
-            `<button class="btn btn-default btn-xs" data-meta-padrao="${g.userId}"
-                     title="Voltar ao padrão da empresa">Usar padrão</button>`] };
-        })), { subtitle: `Padrão da empresa: ${cfg.defaultDailyGoal} atividades/dia. A meta individual manda no "Meu dia" da Execução.`,
-               actions: `<button class="btn btn-main btn-xs" id="metasSalvar">Salvar metas</button>` })}
+      ${panel("Objetivo Diário de Atividades", table(["", "", ""],
+        [{ attrs: ' class="linha-padrao"', cells: ["<strong>Objetivo Padrão</strong>",
+            `<input class="form-control input-sm" type="number" min="1" max="999" style="max-width:110px"
+                    id="cfgDailyGoal" value="${cfg.defaultDailyGoal}">`,
+            `<button class="btn-acao" id="metaPadraoAplicar" title="Aplicar">✓</button>`] }]
+          .concat(cfg.usersGoals.map((g) => {
+            const u = state.users.find((x) => x.id === g.userId);
+            return { cells: [h(u ? u.name : g.userId),
+              `<input class="form-control input-sm" type="number" min="1" max="999" style="max-width:110px"
+                      data-meta-user="${g.userId}" value="${g.dailyGoal}">`,
+              `<button class="btn-acao" data-meta-aplicar="${g.userId}" title="Aplicar">✓</button>
+               <button class="btn-acao btn-acao-cinza" data-meta-padrao="${g.userId}"
+                       title="Utilizar padrão">↺</button>`] };
+          })), { noHead: true }),
+        { subtitle: "Número de atividades esperado que cada vendedor realizará diariamente.",
+          actions: `<button class="btn btn-main btn-xs" id="metasSalvar">Salvar metas</button>` })}
 
       ${panel("Permissões", `
         <div class="alert alert-info alert-styled-left">
@@ -8246,6 +8249,28 @@ PAGES.ajustes = {
           <button class="btn btn-default btn-sm" id="emlVerificar">Verificar domínio</button>
           <button class="btn btn-main btn-sm" id="emlSalvar">Salvar</button>
         </div>`)}
+      ${panel("Blacklist de E-mails Automáticos", `
+        <div class="como-funciona">
+          <h6>Como funciona?</h6>
+          <p>Ao adicionar um domínio de e-mail na blacklist, o Bluutime não realizará o envio de e-mails
+            para leads deste domínio e eles serão perdidos automaticamente. Para criar esta configuração,
+            preencha o campo abaixo usando as seguintes regras:</p>
+          <p>1. Informe <span class="text-semibold">um domínio por linha</span>, sem separação por
+            vírgulas ou outro caractere.</p>
+          <p>2. Insira o domínio sem o caractere <span class="text-semibold">@</span>. Por exemplo, para
+            um lead com e-mail <span class="text-italic">exemplo@blusalesgroup.com.br</span>, o domínio
+            de e-mail válido que o representa é:
+            <span class="text-italic">blusalesgroup.com.br</span></p>
+          <p>3. O limite máximo é de 1024 domínios.</p>
+        </div>
+        <div class="bl-contagem text-muted" id="blCount">${cfg.blacklist.length
+          ? `${cfg.blacklist.length} domínio${cfg.blacklist.length === 1 ? "" : "s"} adicionado${cfg.blacklist.length === 1 ? "" : "s"}`
+          : ""}</div>
+        <textarea class="form-control" id="cfgBlacklist" rows="12" style="resize:none"
+          placeholder="Ex:${String.fromCharCode(10)}exemplo.com.br${String.fromCharCode(10)}suaempresa.com.br">${h(cfg.blacklist.join(String.fromCharCode(10)))}</textarea>
+        <div class="text-center mt-10">
+          <button class="btn btn-main btn-sm" id="blSalvar">Salvar Lista</button>
+        </div>`)}
       ${panel("Domínios de envio (whitelabel)",
         `<div id="dominiosBox">${LOADING}</div>`,
         { subtitle: "Estado real dos domínios no provedor de envio. Cadastrar ou remover domínio se faz no painel do provedor — é recurso da conta que paga a fatura." })}`;
@@ -8302,12 +8327,10 @@ PAGES.ajustes = {
       btn.disabled = true;
       try {
         await api("/api/flow/configuration", { method: "PATCH", body: {
-          defaultDailyGoal: Number(document.getElementById("cfgDailyGoal").value) || 170,
           accountBasedSalesEnabled: document.getElementById("cfgABS").checked,
           regularUserCanImportLeadList: document.getElementById("cfgImport").checked,
           smartQueueEnabled: document.getElementById("cfgFila").checked,
           workingDays: dias,
-          blacklist: document.getElementById("cfgBlacklist").value.split("\n").map((s) => s.trim()).filter(Boolean),
           minutePrice: Number(document.getElementById("cfgMinuto").value) || 0,
           seatPrice: Number(document.getElementById("cfgAssento").value) || 0,
         } });
@@ -8534,32 +8557,79 @@ PAGES.ajustes = {
       } catch (e) { toast(e.message, "err"); }
       bt.disabled = false;
     };
+    // No original cada linha aplica sozinha (o ✓) ou volta ao padrão (o ↺);
+    // o "Salvar metas" do cabeçalho grava tudo de uma vez.
+    const aplicarMeta = async (uid, valor, bt) => {
+      bt.disabled = true;
+      try {
+        await api(`/api/users/${uid}`, { method: "PATCH", body: { dailyGoal: Number(valor) || 0 } });
+        toast("Objetivo aplicado.", "ok");
+        const alvo = cfg.usersGoals.find((g) => String(g.userId) === String(uid));
+        if (alvo) alvo.dailyGoal = Number(valor) || 0;
+      } catch (e) { toast(e.message, "err"); }
+      bt.disabled = false;
+    };
+    view.querySelectorAll("[data-meta-aplicar]").forEach((b) => {
+      b.onclick = () => {
+        const campo = view.querySelector(`[data-meta-user="${b.dataset.metaAplicar}"]`);
+        if (campo) aplicarMeta(b.dataset.metaAplicar, campo.value, b);
+      };
+    });
     view.querySelectorAll("[data-meta-padrao]").forEach((b) => {
       b.onclick = () => {
         const campo = view.querySelector(`[data-meta-user="${b.dataset.metaPadrao}"]`);
-        if (campo) campo.value = cfg.defaultDailyGoal;
+        const padrao = Number((document.getElementById("cfgDailyGoal") || {}).value) || cfg.defaultDailyGoal;
+        if (!campo) return;
+        campo.value = padrao;
+        aplicarMeta(b.dataset.metaPadrao, padrao, b);
       };
     });
+    const metaPadraoAplicar = document.getElementById("metaPadraoAplicar");
+    if (metaPadraoAplicar) metaPadraoAplicar.onclick = async (ev) => {
+      const bt = ev.currentTarget;
+      bt.disabled = true;
+      try {
+        await api("/api/flow/configuration", { method: "PATCH", body: {
+          defaultDailyGoal: Number(document.getElementById("cfgDailyGoal").value) || 170 } });
+        toast("Objetivo padrão aplicado.", "ok");
+      } catch (e) { toast(e.message, "err"); }
+      bt.disabled = false;
+    };
 
-    // Contador vivo da blacklist, com o limite do original.
+    // Contador vivo da blacklist. O limite do original é de 1024 *domínios*,
+    // não de caracteres — era isso que a tela dizia errado antes.
     const bl = document.getElementById("cfgBlacklist");
     const blCount = document.getElementById("blCount");
+    const blLinhas = () => bl.value.split(String.fromCharCode(10)).map((x) => x.trim()).filter(Boolean);
     if (bl && blCount) bl.oninput = () => {
-      const linhas = bl.value.split(String.fromCharCode(10)).map((x) => x.trim()).filter(Boolean);
-      const chars = bl.value.length;
-      blCount.innerHTML = `${linhas.length} domínio${linhas.length === 1 ? "" : "s"} · `
-        + (chars > 1024
-          ? `<span style="color:#f44336">${chars} caracteres — passou do limite de 1024</span>`
-          : `${chars} de 1024 caracteres`);
+      const n = blLinhas().length;
+      blCount.innerHTML = !n ? ""
+        : n > 1024 ? `<span style="color:#f44336">${n} domínios — passou do limite de 1024</span>`
+        : `${n} domínio${n === 1 ? "" : "s"} adicionado${n === 1 ? "" : "s"}`;
+    };
+    const blSalvar = document.getElementById("blSalvar");
+    if (bl && blSalvar) blSalvar.onclick = async (ev) => {
+      const dominios = blLinhas();
+      if (dominios.length > 1024) return toast("O limite máximo é de 1024 domínios.", "err");
+      const invalido = dominios.find((d) => d.includes("@") || !/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(d));
+      if (invalido) return toast(`"${invalido}" não é um domínio válido — informe sem o @.`, "err");
+      const bt = ev.currentTarget;
+      bt.disabled = true;
+      try {
+        await api("/api/flow/configuration", { method: "PATCH", body: { blacklist: dominios } });
+        toast("Blacklist salva.", "ok");
+      } catch (err) { toast(err.message, "err"); }
+      bt.disabled = false;
     };
     const fitLigadoSalvar = document.getElementById("fitLigadoSalvar");
     if (fitLigadoSalvar) fitLigadoSalvar.onclick = async (ev) => {
-      ev.currentTarget.disabled = true;
+      const bt = ev.currentTarget;
+      bt.disabled = true;
       try {
         await api("/api/flow/configuration", { method: "PATCH", body: {
           fitscoreEnabled: document.getElementById("fitLigado").checked } });
         toast("Lead scoring atualizado.", "ok"); go("ajustes");
-      } catch (e) { toast(e.message, "err"); ev.currentTarget.disabled = false; }
+      } catch (e) { toast(e.message, "err"); bt.disabled = false; }
     };
   },
 };
