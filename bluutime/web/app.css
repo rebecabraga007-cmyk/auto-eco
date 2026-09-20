@@ -1475,3 +1475,17 @@ th.ord:hover { color: var(--text); }
 .rel-corpo { padding: 0 16px 16px; border-top: 1px solid var(--line-soft); }
 .rel-colunas { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
 .rel-colunas span { padding: 2px 8px; font-size: 11px; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 10px; }
+
+/* Área de arrastar e soltar do wizard de importação. */
+.dropzone {
+  display: block;
+  padding: 28px 18px;
+  text-align: center;
+  cursor: pointer;
+  background: var(--panel-2);
+  border: 2px dashed var(--line);
+  border-radius: 4px;
+  transition: .12s;
+}
+.dropzone:hover, .dropzone.sobre { border-color: var(--green-label); background: var(--avatar-bg); }
+.dropzone .dz-icon { font-size: 26px; color: var(--muted); margin-bottom: 6px; }

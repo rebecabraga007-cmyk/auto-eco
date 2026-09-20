@@ -1537,7 +1537,10 @@ PAGES.lead = {
 
     // O botão de executar age sobre a próxima atividade pendente — é o mesmo
     // objeto que a fila de Execução passa pro modal.
-    const proxima = l.timeline.find((a) => a.status === "PENDING" && a.kind !== "CALL");
+    // Mais de uma pendente é comum quando o lead ficou parado: o original
+    // deixa escolher qual executar em vez de assumir a primeira.
+    const pendentes = l.timeline.filter((a) => a.status === "PENDING" && a.kind !== "CALL");
+    const proxima = pendentes[0];
     // Etapa do lead mora no campo personalizado eleito pela empresa.
     const campoEtapa = state.stageField || null;
     const etapas = (state.stageOptions || []);
@@ -1606,7 +1609,14 @@ PAGES.lead = {
               ${etapas.map((e) => `<option value="${h(e)}"${etapaAtual === e ? " selected" : ""}>${h(e)}</option>`).join("")}
             </select>` : ""}
             ${l.phone ? `<button class="btn btn-default btn-sm" data-ligar>Registrar ligação</button>` : ""}
-            ${proxima ? `<button class="btn btn-main btn-sm" data-exec>Executar ${h(TYPE_LABEL[proxima.type] || "atividade")}</button>` : ""}
+            ${pendentes.length > 1 ? `<select class="form-control input-sm" id="ltQual"
+              aria-label="Qual atividade executar" style="width:auto">
+              ${pendentes.map((a) => `<option value="${a.id}">${h(TYPE_LABEL[a.type] || a.type)} · ${fmtDate(a.scheduledAt)}</option>`).join("")}
+            </select>` : ""}
+            ${proxima ? `<button class="btn btn-main btn-sm" data-exec>Executar${
+              pendentes.length > 1 ? "" : ` ${h(TYPE_LABEL[proxima.type] || "atividade")}`}</button>` : ""}
+            ${l.status === "ON_EXTRA_ACTIVITY"
+              ? `<button class="btn btn-default btn-sm" data-retomar>Retomar cadência</button>` : ""}
             <button class="btn btn-success btn-sm" data-won>Ganho</button>
             <button class="btn btn-danger btn-sm" data-lost>Perdido</button>
             <button class="btn btn-default btn-sm" data-edit>Editar</button>
@@ -1639,6 +1649,8 @@ PAGES.lead = {
               ...(c.proximaAtividade ? [["Próxima atividade", fmtDateTime(c.proximaAtividade)]] : []),
             ].map(([k, v]) => `<tr><td class="text-grey">${k}</td><td>${v}</td></tr>`).join("")}</tbody></table>`);
           })()}
+          ${l.company ? panel("Outros leads da conta", `<div id="contaBox">${LOADING}</div>`,
+            { subtitle: "Quem mais está sendo trabalhado na mesma empresa" }) : ""}
           ${panel("CapiBLU", `
             <button class="btn btn-default btn-xs" data-enrich>Enriquecer</button>
             <button class="btn btn-default btn-xs" data-validate>Validar telefone</button>
@@ -1661,6 +1673,34 @@ PAGES.lead = {
     view.querySelectorAll("[data-laba]").forEach((a) => {
       a.onclick = () => { state.leadAba = a.dataset.laba; go(`lead/${id}`); };
     });
+
+    // Visão da conta: dois SDRs trabalhando a mesma empresa sem saber é o
+    // jeito mais rápido de queimar o contato. Carrega depois de pintar.
+    if (l.company) (async () => {
+      const box = document.getElementById("contaBox");
+      if (!box) return;
+      try {
+        const r = await api(`/api/flow/leads?q=${encodeURIComponent(l.company)}&limit=10`);
+        const outros = r.data.filter((x) => x.id !== l.id);
+        box.innerHTML = outros.length
+          ? table(["Lead", "Situação", "Responsável"], outros.slice(0, 6).map((x) => ({ cells: [
+              `<a data-conta-lead="${x.id}">${h(x.name)}</a>`,
+              statusPill(x.status), x.sdr ? h(x.sdr.name) : "—"] })))
+            + (outros.length > 6 ? `<div class="text-muted text-size-small mt-10">
+                 e mais ${outros.length - 6}. <a data-conta-todos>Ver todos</a></div>` : "")
+          : `<span class="text-muted text-size-small">Nenhum outro lead desta empresa.</span>`;
+        box.querySelectorAll("[data-conta-lead]").forEach((a) => {
+          a.onclick = () => go(`lead/${a.dataset.contaLead}`);
+        });
+        const todos = box.querySelector("[data-conta-todos]");
+        if (todos) todos.onclick = () => {
+          state.leadFilter = { page: 1, limit: 50, q: l.company };
+          go("leads");
+        };
+      } catch (e) {
+        box.innerHTML = `<span class="text-muted text-size-small">${h(e.message)}</span>`;
+      }
+    })();
     const tipo = document.getElementById("ltTipo");
     if (tipo) tipo.onchange = (e) => { state.leadFiltroTipo = e.target.value; go(`lead/${id}`); };
 
@@ -1723,7 +1763,21 @@ PAGES.lead = {
 
     view.querySelector("[data-edit]").onclick = () => openLeadForm(l);
     const btExec = view.querySelector("[data-exec]");
-    if (btExec) btExec.onclick = () => openExecuteModal(proxima);
+    if (btExec) btExec.onclick = () => {
+      const escolha = document.getElementById("ltQual");
+      const alvo = escolha
+        ? pendentes.find((a) => String(a.id) === escolha.value) || proxima
+        : proxima;
+      openExecuteModal(alvo, null);
+    };
+    const btRetomar = view.querySelector("[data-retomar]");
+    if (btRetomar) btRetomar.onclick = async () => {
+      try {
+        const r = await api(`/api/flow/execution/leads/${l.id}/resume`, { method: "POST", body: {} });
+        toast(`${r.resumed} atividade(s) retomada(s).`, "ok");
+        go(`lead/${l.id}`);
+      } catch (e) { toast(e.message, "err"); }
+    };
     view.querySelector("[data-won]").onclick = async () => {
       try {
         await api(`/api/flow/execution/leads/${l.id}/outcome`, { method: "POST", body: { outcome: "WON" } });
@@ -2613,9 +2667,17 @@ function openImportWizard() {
     body: `<div class="wizard-steps"><span class="active" data-s="1">1. Arquivo</span>
       <span data-s="2">2. Campos</span><span data-s="3">3. Execução</span></div>
       <div id="wizBody">
-        <div class="field"><label for="wizFile">Arquivo CSV</label>
-          <input class="form-control" type="file" id="wizFile" accept=".csv,.txt"></div>
-        <div class="text-muted text-size-small">A primeira linha precisa conter os nomes das colunas.</div>
+        <label class="dropzone" id="wizDrop">
+          <input type="file" id="wizFile" accept=".csv,.txt" hidden>
+          <div class="dz-icon">⇪</div>
+          <div><strong>Arraste o arquivo aqui</strong> ou clique para escolher</div>
+          <div class="text-muted text-size-small" id="wizArquivo">CSV ou TXT, até 10 MB</div>
+        </label>
+        <ul class="text-muted text-size-small" style="padding-left:18px;margin:10px 0 0">
+          <li>A primeira linha precisa conter os nomes das colunas.</li>
+          <li>Salve em UTF-8. Arquivo em ANSI/Latin-1 chega com "José" virando "JosÃ©",
+              e o nome fica assim no lead.</li>
+        </ul>
       </div>`,
     footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
              <button class="btn btn-main btn-sm" data-next>Continuar</button>`,
@@ -2628,6 +2690,44 @@ function openImportWizard() {
   const step = (n) => m.root.querySelectorAll("[data-s]").forEach((s) =>
     s.classList.toggle("active", Number(s.dataset.s) === n));
 
+  // Arrastar e soltar, com a validação antes de subir: mandar 40 MB para o
+  // servidor só para ouvir "não" é esperar à toa.
+  const LIMITE = 10 * 1024 * 1024;
+  const drop = m.root.querySelector("#wizDrop");
+  const campoArquivo = m.root.querySelector("#wizFile");
+  const rotulo = m.root.querySelector("#wizArquivo");
+  const aceitar = (file) => {
+    if (!file) return false;
+    if (!/\.(csv|txt)$/i.test(file.name)) {
+      toast("Só CSV ou TXT.", "err");
+      return false;
+    }
+    if (file.size > LIMITE) {
+      toast(`O arquivo tem ${(file.size / 1048576).toFixed(1)} MB; o limite é 10 MB. `
+            + "Divida em partes.", "err");
+      return false;
+    }
+    rotulo.innerHTML = `<strong>${h(file.name)}</strong> · ${(file.size / 1024).toFixed(0)} KB`;
+    return true;
+  };
+  if (drop) {
+    campoArquivo.onchange = () => { if (!aceitar(campoArquivo.files[0])) campoArquivo.value = ""; };
+    ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => {
+      e.preventDefault(); drop.classList.add("sobre");
+    }));
+    ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => {
+      e.preventDefault(); drop.classList.remove("sobre");
+    }));
+    drop.addEventListener("drop", (e) => {
+      const file = e.dataTransfer.files[0];
+      if (aceitar(file)) {
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        campoArquivo.files = dt.files;
+      }
+    });
+  }
+
   next.onclick = async () => {
     if (!preview) {
       const file = m.root.querySelector("#wizFile").files[0];
@@ -2635,11 +2735,15 @@ function openImportWizard() {
       const fd = new FormData();
       fd.append("file", file);
       next.disabled = true;
+      next.innerHTML = `<span class="spinner"></span> lendo o arquivo…`;
       try {
         const res = await fetch("/api/flow/lead-bases/preview", { method: "POST", body: fd, credentials: "same-origin" });
         preview = await res.json();
         if (!res.ok) throw new Error(preview.detail || "Falha ao ler o arquivo.");
-      } catch (e) { next.disabled = false; return toast(e.message, "err"); }
+      } catch (e) {
+        next.disabled = false; next.textContent = "Continuar";
+        return toast(e.message, "err");
+      }
       next.disabled = false;
       step(2);
       const fields = [["name", "Nome completo *"], ["firstName", "Primeiro nome"], ["email", "E-mail"],
