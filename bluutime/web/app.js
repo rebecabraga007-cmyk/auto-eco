@@ -69,6 +69,17 @@ const fmtDateTime = (iso) => iso
   : "—";
 const fmtMoney = (v) => (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const fmtDuration = (s) => s ? `${Math.floor(s / 60)}m ${s % 60}s` : "—";
+/** Duração longa em dia/hora/minuto, como o "1d 10h" do original. */
+const fmtDuracaoLonga = (seg) => {
+  const n = Number(seg) || 0;
+  if (!n) return "—";
+  const d = Math.floor(n / 86400), hh = Math.floor((n % 86400) / 3600);
+  const mm = Math.floor((n % 3600) / 60), ss = n % 60;
+  if (d) return `${d}d ${hh}h`;
+  if (hh) return `${hh}h ${mm}min`;
+  if (mm) return `${mm}min ${ss}seg`;
+  return `${ss}seg`;
+};
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
 function toast(message, kind = "") {
@@ -703,6 +714,57 @@ function verMaisMotivos(lista) {
 }
 
 /** Medidor circular — o gauge do original, em SVG puro. */
+/** Rosca de várias fatias, com o total no miolo — a da Visão Geral de
+ * Ligações. Diferente do `medidor`, que é uma porcentagem só.
+ *
+ * Desenha com `stroke-dasharray` num círculo em vez de `path`: cada fatia é
+ * um traço do comprimento da sua fração, deslocado pela soma das anteriores.
+ * Fatia de 0% não vira traço nenhum, senão viraria um pontinho. */
+function rosca(fatias, total, legenda) {
+  const soma = fatias.reduce((n, f) => n + f.valor, 0) || 1;
+  const r = 70, circ = 2 * Math.PI * r;
+  let offset = 0;
+  const aneis = fatias.map((f) => {
+    const frac = f.valor / soma;
+    if (!f.valor) return "";
+    const traco = `<circle cx="100" cy="100" r="${r}" fill="none" stroke="${f.cor}" stroke-width="30"
+      stroke-dasharray="${circ * frac} ${circ}" stroke-dashoffset="${-circ * offset}"
+      transform="rotate(-90 100 100)"><title>${h(f.rotulo)}: ${f.valor} (${Math.round(frac * 100)}%)</title></circle>`;
+    offset += frac;
+    return traco;
+  }).join("");
+  return `<div class="rosca">
+    <svg viewBox="0 0 200 200" role="img" aria-label="Distribuição das ligações">
+      <circle cx="100" cy="100" r="${r}" fill="none" stroke="var(--line-soft)" stroke-width="30"/>
+      ${aneis}
+      <text x="100" y="98" text-anchor="middle" font-size="30" fill="var(--text)">${h(total)}</text>
+      <text x="100" y="118" text-anchor="middle" font-size="12" fill="var(--muted)">${h(legenda)}</text>
+    </svg>
+    <div class="rosca-legenda">
+      ${fatias.map((f) => `<span><i style="background:${f.cor}"></i>${h(f.rotulo)}:
+        <strong>${Math.round((f.valor / soma) * 100)}%</strong></span>`).join("")}
+    </div>
+  </div>`;
+}
+
+/** Faixa de métricas com ícone, valor e rótulo — a linha que abre a Visão
+ * Geral de Ligações no original. */
+function faixaMetricas(itens) {
+  return `<div class="faixa-metricas">
+    ${itens.map((i) => `<div><span class="fm-ico">${i.ico}</span>
+      <strong>${h(i.valor)}</strong><small>${h(i.rotulo)}</small></div>`).join("")}
+  </div>`;
+}
+
+// As cinco fatias da rosca, na ordem e nas cores do original.
+const FATIAS_LIGACAO = [
+  ["MEANINGFUL", "Significativa", "var(--ok)"],
+  ["NOT_MEANINGFUL", "Não Significativa", "var(--blue)"],
+  ["BUSY", "Cliente Ocupado", "var(--warn)"],
+  ["NO_CONTACT", "Sem Contato", "var(--orange)"],
+  ["NOT_CONNECTED", "Não conectada", "#cfcfcf"],
+];
+
 function medidor(rotulo, percentual, cor) {
   const pct = Math.round(Math.max(0, Math.min(100, Number(percentual) || 0)));
   const r = 42, circ = 2 * Math.PI * r;
@@ -4066,35 +4128,39 @@ PAGES["estatisticas-ligacoes"] = {
     state.estLigAba = aba;
     const qs = filtrosQS();
 
-    const abas = `<ul class="nav nav-tabs">
-      ${[["geral", "Visão geral"], ["funil", "Funil"], ["detalhamento", "Detalhamento"],
-         ["volume", "Volume"], ["historico", "Histórico"], ["horario", "Horário ideal"]]
-        .map(([k, v]) => `<li${aba === k ? ' class="active"' : ""}><a data-estlig="${k}">${v}</a></li>`).join("")}
-    </ul>`;
+    // Mesma casca das Estatísticas de Prospecção: filtros e índice à
+    // esquerda, pergunta em cima do conteúdo.
+    const ABAS_LIG = [["geral", "Visão Geral"], ["detalhamento", "Detalhamento"],
+                      ["funil", "Funil"], ["volume", "Volume"],
+                      ["historico", "Histórico"], ["horario", "Horário ideal"]];
+    const PERGUNTA_LIG = {
+      geral: "Como está a distribuição das ligações?",
+      detalhamento: "Como as ligações se acumulam no período?",
+      funil: "Quanto do volume vira conversa de verdade?",
+      volume: "Quando o time liga?",
+      historico: "O que aconteceu em cada ligação?",
+      horario: "Qual o melhor horário para ligar?",
+    };
 
     let corpo = "";
     if (aba === "geral") {
-      const [f, d] = await Promise.all([
+      const [f, d, mh] = await Promise.all([
         api(`/api/dialer/calls/statistics/funnel${qs}`),
         api(`/api/dialer/calls/statistics/distribution${qs}`),
+        api(`/api/dialer/calls/statistics/best-hour${qs}`).catch(() => ({ melhorHora: null })),
       ]);
+      const porFatia = Object.fromEntries((d.fatias || []).map((x) => [x.chave, x.total]));
       corpo = `
-        ${kpis([
-          { value: f.atual.total, label: "Realizadas", tone: "info" },
-          { value: f.atual.conectadas, label: "Conectadas", tone: "success" },
-          { value: f.atual.significativas, label: "Significativas", tone: "success" },
-          { value: `${f.taxas.conexao}%`, label: "Taxa de conexão" },
+        ${faixaMetricas([
+          { ico: "◷", valor: fmtDuracaoLonga(d.tempoTotalSegundos), rotulo: "tempo total" },
+          { ico: "◍", valor: fmtDuracaoLonga(d.mediaConversaSegundos), rotulo: "média em conversa" },
+          { ico: "☊", valor: d.diariasPorVendedor ?? "—", rotulo: "diárias por vendedor" },
+          { ico: "◎", valor: `${f.taxas.conexao}%`, rotulo: "taxa de conexão" },
+          { ico: "◔", valor: mh.melhorHora == null ? "—" : `${mh.melhorHora} - ${mh.melhorHora + 1}h`,
+            rotulo: "horário ideal" },
         ])}
-        <div class="two-col mt-10">
-          ${panel("Distribuição por status", bars(d.status.map((r) => ({
-            label: CALL_STATUS_LABEL[r.chave] || r.chave, value: r.total,
-            tone: r.chave === "CONNECTED" ? "success" : "warning" }))),
-            { subtitle: "O que aconteceu com cada tentativa" })}
-          ${panel("Resultado das conectadas", bars(d.resultado.map((r) => ({
-            label: CALL_OUTPUT_LABEL[r.chave] || r.chave, value: r.total,
-            tone: r.chave === "MEANINGFUL" ? "success" : "info" }))),
-            { subtitle: "Como o SDR classificou a conversa" })}
-        </div>`;
+        ${panel("", rosca(FATIAS_LIGACAO.map(([k, rot, cor]) =>
+          ({ rotulo: rot, valor: porFatia[k] || 0, cor })), d.total, "ligações"))}`;
     } else if (aba === "funil") {
       const f = await api(`/api/dialer/calls/statistics/funnel${qs}`);
       const etapa = (rot, valor, chave, sub) => `
@@ -4207,8 +4273,23 @@ PAGES["estatisticas-ligacoes"] = {
           bars(hst.data.map((r) => ({ label: r.label, value: r.conectadas, tone: "success" }))))}`;
     }
 
-    view.innerHTML = `<div class="toolbar">${periodoControle()}${timeControle()}${usuarioControle()}${cadenciaControle()}</div>${abas}
-      <div class="mt-10">${corpo}</div>`;
+    view.innerHTML = `
+      <div class="est-layout">
+        <aside class="est-filtros">
+          <div class="est-filtros-topo">FILTROS</div>
+          <div class="est-filtros-campos">${periodoControle()}${cadenciaControle()}</div>
+          <div class="est-secao">LIGAÇÕES</div>
+          <ul class="est-menu">
+            ${ABAS_LIG.map(([k, rot]) => `<li${aba === k ? ' class="ativa"' : ""}>
+              <a data-estlig="${k}">${h(rot)}</a></li>`).join("")}
+          </ul>
+        </aside>
+        <div class="est-conteudo">
+          <h1 class="est-pergunta">${h(PERGUNTA_LIG[aba] || "")}</h1>
+          <div class="toolbar est-selects">${timeControle()}${usuarioControle()}</div>
+          ${corpo}
+        </div>
+      </div>`;
 
     ligarFiltros(() => go("estatisticas-ligacoes"));
     view.querySelectorAll("[data-estlig]").forEach((a) => {
@@ -4619,17 +4700,49 @@ PAGES.estatisticas = {
     const aba = abaUrl || state.estAba || "geral";
     state.estAba = aba;
     const clientId = state.statClient || "";
-    const abas = `<ul class="nav nav-tabs">
-      ${[["geral", "Visão geral"], ["cadencias", "Distribuição dos Leads nas Cadências"],
-         ["conversao", "Conversão por passo"], ["desempenho", "Desempenho"],
-         ["email", "E-mail"], ["motivos", "Motivos de perda"],
-         ["resposta", "Tempo de resposta"]].map(([k, v]) =>
-        `<li${aba === k ? ' class="active"' : ""}><a data-estaba="${k}">${v}</a></li>`).join("")}
-    </ul>`;
-    const barra = `<div class="toolbar">
-        <select class="form-control" id="sClient">${options(state.clients, clientId, { blank: "Todos os clientes" })}</select>
-        ${periodoControle()}${timeControle()}${usuarioControle()}${cadenciaControle()}
+    // A casca das Estatísticas é a do Meetime: coluna de filtros à esquerda,
+    // com o período e as cadências em cima e o índice das telas embaixo, e o
+    // conteúdo à direita começando por uma pergunta. Era uma fileira de abas
+    // horizontais, que não cabia em sete telas e não tinha onde pôr filtro.
+    const ABAS_EST = [
+      ["geral", "Atividades"], ["cadencias", "Cadências"],
+      ["conversao", "Conversão"], ["desempenho", "Desempenho"],
+      ["email", "E-mails"], ["motivos", "Motivos de Perda"],
+      ["resposta", "Tempo de resposta"],
+    ];
+    const PERGUNTA = {
+      geral: "Como está a prospecção no período?",
+      cadencias: "Como estão distribuídos os leads nas cadências?",
+      conversao: "Como está o engajamento e conversão dos leads?",
+      desempenho: "Qual a eficiência dos vendedores?",
+      email: "Como os leads reagem aos e-mails?",
+      motivos: "Por que os leads são perdidos?",
+      resposta: "Quanto tempo o lead espera pela primeira abordagem?",
+    };
+    view.innerHTML = `
+      <div class="est-layout">
+        <aside class="est-filtros">
+          <div class="est-filtros-topo">FILTROS</div>
+          <div class="est-filtros-campos">${periodoControle()}${cadenciaControle()}</div>
+          <div class="est-secao">PROSPECÇÃO</div>
+          <ul class="est-menu">
+            ${ABAS_EST.map(([k, rot]) => `<li${aba === k ? ' class="ativa"' : ""}>
+              <a data-estaba="${k}">${h(rot)}</a></li>`).join("")}
+          </ul>
+        </aside>
+        <div class="est-conteudo">
+          <h1 class="est-pergunta">${h(PERGUNTA[aba] || "")}</h1>
+          <div class="toolbar est-selects">
+            <select class="form-control" id="sClient">${options(state.clients, clientId, { blank: "Todos os clientes" })}</select>
+            ${timeControle()}${usuarioControle()}
+          </div>
+          <div id="estConteudo"></div>
+        </div>
       </div>`;
+    const alvo = document.getElementById("estConteudo");
+    // `barra` e `abas` viraram vazios: a casca já desenhou os dois. Ficam
+    // como constantes para que os sete ramos abaixo não precisem mudar.
+    const barra = "", abas = "";
 
     const ligar = () => {
       const c = document.getElementById("sClient");
@@ -4646,7 +4759,7 @@ PAGES.estatisticas = {
       // está agora, e quanto cada cadência converte.
       const sub = state.estCadSub || "distribuicao";
       const lista = [...co.data];
-      view.innerHTML = `${barra}${abas}<div class="mt-10">
+      alvo.innerHTML = `${barra}${abas}<div class="mt-10">
         <ul class="nav nav-tabs nav-tabs-sub">
           ${[["distribuicao", "Distribuição"], ["conversao", "Taxa de conversão"]].map(([k, v]) =>
             `<li${sub === k ? ' class="active"' : ""}><a data-cadsub="${k}">${v}</a></li>`).join("")}
@@ -4679,7 +4792,7 @@ PAGES.estatisticas = {
     if (aba === "conversao") {
       const cid = state.estCadencia || (state.cadences[0] && state.cadences[0].id);
       const dados = cid ? await api(`/api/flow/statistics/cadence-steps/${cid}${filtrosQS()}`).catch(() => null) : null;
-      view.innerHTML = `${barra}${abas}<div class="mt-10">
+      alvo.innerHTML = `${barra}${abas}<div class="mt-10">
         <div class="toolbar">
           <select class="form-control" id="scCad">${options(state.cadences, cid)}</select>
           <span class="spacer text-muted text-size-small">
@@ -4715,7 +4828,7 @@ PAGES.estatisticas = {
     if (aba === "motivos") {
       const por = state.estMotivoPor || "reason";
       const lr = await api(`/api/flow/statistics/lost-reasons${filtrosQS({ by: por })}`);
-      view.innerHTML = `${barra}${abas}<div class="mt-10">
+      alvo.innerHTML = `${barra}${abas}<div class="mt-10">
         <ul class="nav nav-tabs nav-tabs-sub">
           ${[["reason", "Por motivo"], ["user", "Por usuário"], ["team", "Por time"], ["cadence", "Por cadência"]]
             .map(([k, v]) => `<li${por === k ? ' class="active"' : ""}><a data-smpor="${k}">${v}</a></li>`).join("")}
@@ -4738,7 +4851,7 @@ PAGES.estatisticas = {
     if (aba === "email") {
       const e = await api(`/api/flow/statistics/email${periodoQS()}`);
       const r = e.resumo;
-      view.innerHTML = `${barra}${abas}<div class="mt-10">
+      alvo.innerHTML = `${barra}${abas}<div class="mt-10">
         ${!e.rastreioLigado ? `<div class="alert alert-info alert-styled-left">
           Rastreio de abertura e clique <strong>desligado</strong>. Envio e falha já são
           contados; abertura e clique só passam a contar depois de ligar
@@ -4788,7 +4901,7 @@ PAGES.estatisticas = {
       const d = await api(`/api/flow/statistics/performance${filtrosQS()}`);
       const somaTipo = (chave) => d.performances.reduce((n, p) => n + p[chave], 0);
       const outras = Object.entries(d.geral.outrasSituacoes || {});
-      view.innerHTML = `${barra}${abas}<div class="mt-10">
+      alvo.innerHTML = `${barra}${abas}<div class="mt-10">
         <div class="two-col">
           ${panel("", `<div class="ganhos-cartao">
             <h1>${d.geral.ganhos}</h1>
@@ -4842,7 +4955,7 @@ PAGES.estatisticas = {
 
     if (aba === "resposta") {
       const r = await api(`/api/flow/statistics/response-time${filtrosQS()}`);
-      view.innerHTML = `${barra}${abas}<div class="mt-10">
+      alvo.innerHTML = `${barra}${abas}<div class="mt-10">
         ${kpis([
           { value: `${r.percentual}%`, label: `Abordados em até ${r.metaHoras}h`, tone: "success" },
           { value: `${r.mediaHoras}h`, label: "Tempo médio até a 1ª abordagem", tone: "info" },
@@ -4866,8 +4979,7 @@ PAGES.estatisticas = {
       `<span class="pill">${h(PRIORITY_LABEL[c.priority])}</span>`,
       c.total, c.won, `${c.conversion}%`] }));
 
-    view.innerHTML = `
-      ${barra}${abas}
+    alvo.innerHTML = `
       ${kpis([
         { value: s.activities.total, label: "Atividades realizadas" },
         { value: `${s.activities.latePercent}%`, label: "Fora do prazo", tone: "danger" },

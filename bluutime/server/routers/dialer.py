@@ -389,11 +389,38 @@ def distribution(since: str | None = None, until: str | None = None,
         if c.status == "CONNECTED":
             por_resultado[c.output or "SEM_CLASSIFICACAO"] = \
                 por_resultado.get(c.output or "SEM_CLASSIFICACAO", 0) + 1
+    # A rosca do original é UMA classificação com cinco fatias, não duas
+    # listas: status e resultado combinados no que a pessoa de fato quer
+    # saber — falou bem, falou mal, ocupado, não falou, não conectou.
+    fatias = {"MEANINGFUL": 0, "NOT_MEANINGFUL": 0, "BUSY": 0,
+              "NO_CONTACT": 0, "NOT_CONNECTED": 0}
+    total_seg = 0
+    for c in linhas:
+        if c.status == "BUSY":
+            fatias["BUSY"] += 1
+        elif c.status != "CONNECTED":
+            fatias["NOT_CONNECTED"] += 1
+        elif c.output in ("MEANINGFUL", "NOT_MEANINGFUL", "NO_CONTACT"):
+            fatias[c.output] += 1
+        else:
+            fatias["NO_CONTACT"] += 1
+        total_seg += c.duration or 0
+    conectadas = [c for c in linhas if c.status == "CONNECTED"]
+    # "Média em conversa" conta só o que conectou: incluir as não atendidas
+    # puxaria a média para zero e não diria nada sobre a conversa.
+    media_seg = round(sum(c.duration or 0 for c in conectadas) / len(conectadas)) if conectadas else 0
+    dias = len({c.started_at.date() for c in linhas}) or 1
+    vendedores = len({c.user_id for c in linhas if c.user_id}) or 1
     return {"total": len(linhas),
             "status": [{"chave": k, "total": v} for k, v in
                        sorted(por_status.items(), key=lambda kv: -kv[1])],
             "resultado": [{"chave": k, "total": v} for k, v in
-                          sorted(por_resultado.items(), key=lambda kv: -kv[1])]}
+                          sorted(por_resultado.items(), key=lambda kv: -kv[1])],
+            "fatias": [{"chave": k, "total": v} for k, v in fatias.items()],
+            "tempoTotalSegundos": total_seg,
+            "mediaConversaSegundos": media_seg,
+            "diariasPorVendedor": round(len(linhas) / dias / vendedores, 1),
+            "dias": dias, "vendedores": vendedores}
 
 
 @router.get("/calls/statistics/cumulative")
