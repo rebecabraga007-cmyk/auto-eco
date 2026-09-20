@@ -3080,7 +3080,10 @@ PAGES.bases = {
       `<span class="pill ${b.status === "COMPLETED" ? "green" : b.status === "FAILED" ? "red" : "amber"}">${h(b.status)}</span>`,
       b.createdBy ? h(b.createdBy.name) : "—",
       fmtDate(b.created),
-      `<button class="btn btn-default btn-xs" data-leads-base="${b.id}">Ver leads</button>
+      `${b.status === "DRAFT"
+          ? `<button class="btn btn-main btn-xs" data-continuar="${b.id}">Continuar</button>
+             <button class="btn btn-default btn-xs" data-descartar="${b.id}" data-nome="${h(b.name)}">Descartar</button>`
+          : `<button class="btn btn-default btn-xs" data-leads-base="${b.id}">Ver leads</button>`}
        ${b.sourceQuery ? `<button class="btn btn-default btn-xs" data-query="${b.id}">Ver consulta</button>` : ""}
        ${nivelPeloMenos("admin") ? `<button class="btn btn-default btn-xs" data-del-base="${b.id}"
          data-nome="${h(b.name)}" data-n="${b.numberOfLeads}">Excluir</button>` : ""}`,
@@ -3097,7 +3100,27 @@ PAGES.bases = {
         table(["Base", "Origem", "Cliente", "Leads", "Descartados", "Situação", "Criada por", "Data", ""], rows, { scroll: true }),
         { subtitle: "Base vinda do CapiBLU guarda a consulta que a gerou — dá para reexecutar" })}`;
 
-    document.getElementById("importCsv").onclick = openImportWizard;
+    document.getElementById("importCsv").onclick = () => openImportWizard();
+    // Importação interrompida: o arquivo ficou no servidor, então dá para
+    // continuar do mapeamento em vez de subir tudo de novo.
+    view.querySelectorAll("[data-continuar]").forEach((b) => {
+      b.onclick = async () => {
+        try {
+          const d = await api(`/api/flow/lead-bases/${b.dataset.continuar}/draft`);
+          openImportWizard(d);
+        } catch (e) { toast(e.message, "err"); }
+      };
+    });
+    view.querySelectorAll("[data-descartar]").forEach((b) => {
+      b.onclick = () => confirmDialog("Descartar rascunho",
+        `O arquivo de "${b.dataset.nome}" sai do servidor e a importação não continua.`,
+        async () => {
+          try {
+            await api(`/api/flow/lead-bases/${b.dataset.descartar}`, { method: "DELETE" });
+            toast("Rascunho descartado.", "ok"); go("bases");
+          } catch (e) { toast(e.message, "err"); }
+        });
+    });
     view.querySelectorAll("[data-leads-base]").forEach((b) => {
       b.onclick = () => { state.leadFilter = { lead_base_id: b.dataset.leadsBase, page: 1 }; go("leads"); };
     });
@@ -3148,7 +3171,8 @@ PAGES.bases = {
   },
 };
 
-function openImportWizard() {
+function openImportWizard(rascunho) {
+  let draftId = rascunho ? rascunho.id : null;
   const m = modal({
     title: "Importar base de leads", wide: true,
     body: `<div class="wizard-steps"><span class="active" data-s="1">1. Arquivo</span>
@@ -3173,6 +3197,14 @@ function openImportWizard() {
   const next = m.root.querySelector("[data-next]");
   let preview = null;
   m.root.querySelector("[data-cancel]").onclick = m.close;
+  if (rascunho) {
+    // Retomar: o arquivo já está no servidor, então o passo 1 fica para trás.
+    preview = { content: rascunho.content, delimiter: ",",
+                columns: (rascunho.content.split(String.fromCharCode(10))[0] || "").split(/[;,]/)
+                  .map((c) => c.trim().replace(/^"|"$/g, "")),
+                sample: [], mapping: rascunho.mapping || {} };
+    setTimeout(() => next.click(), 0);
+  }
 
   const step = (n) => m.root.querySelectorAll("[data-s]").forEach((s) =>
     s.classList.toggle("active", Number(s.dataset.s) === n));
@@ -3232,6 +3264,15 @@ function openImportWizard() {
         return toast(e.message, "err");
       }
       next.disabled = false;
+      next.textContent = "Continuar";
+      // Guarda o rascunho assim que o arquivo é lido: daqui para a frente,
+      // fechar a aba não perde o upload.
+      try {
+        const r = await api("/api/flow/lead-bases/draft", { method: "POST", body: {
+          id: draftId, content: preview.content,
+          name: `[Importação] ${new Date().toLocaleDateString("pt-BR")}` } });
+        draftId = r.id;
+      } catch { /* rascunho é conveniência: falhar aqui não impede importar */ }
       step(2);
       const fields = [["name", "Nome completo *"], ["firstName", "Primeiro nome"], ["email", "E-mail"],
         ["company", "Empresa"], ["position", "Cargo"], ["phone", "Telefone"], ["cnpj", "CNPJ"],
@@ -3255,6 +3296,10 @@ function openImportWizard() {
       body.querySelectorAll("[data-map]").forEach((s) => { if (s.value) mapping[s.dataset.map] = s.value; });
       if (!mapping.name) return toast("Mapeie a coluna do nome.", "err");
       preview.mapping = mapping;
+      if (draftId) {
+        api("/api/flow/lead-bases/draft", { method: "POST", body: {
+          id: draftId, content: preview.content, mapping } }).catch(() => {});
+      }
       step(3);
       body.innerHTML = `
         <div class="field"><label for="wizName">Nome da base *</label>
@@ -3279,7 +3324,7 @@ function openImportWizard() {
         clientId: Number(m.root.querySelector("#wizClient").value) || null,
         sdrId: Number(m.root.querySelector("#wizSdr").value) || null,
         cadenceId: Number(m.root.querySelector("#wizCad").value) || null,
-        createdById: state.me.id,
+        createdById: state.me.id, draftId,
       } });
       m.close();
       toast(`${res.imported} leads importados (${res.discarded} descartados).`, "ok");

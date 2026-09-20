@@ -237,6 +237,11 @@ class LeadBase(Base):
     # Amostra das linhas descartadas na importação (JSON). Só o número não
     # ajuda ninguém: "descartei 40" sem dizer quais é um problema sem pista.
     discarded_sample: Mapped[str] = mapped_column(Text, default="")
+    # Rascunho de importação: o wizard guarda arquivo e mapa aqui quando passa
+    # do primeiro passo, para que fechar a aba no meio não obrigue a começar
+    # de novo. Some assim que a importação conclui.
+    draft_content: Mapped[str] = mapped_column(Text, default="")
+    draft_mapping: Mapped[str] = mapped_column(Text, default="")
     client_id: Mapped[int | None] = mapped_column(ForeignKey("client.id"))
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

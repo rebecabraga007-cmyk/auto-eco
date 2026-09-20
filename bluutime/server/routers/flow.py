@@ -1047,6 +1047,52 @@ async def preview_csv(file: UploadFile = File(...)):
             "content": raw if len(raw) < 2_000_000 else ""}
 
 
+@router.post("/lead-bases/draft")
+def salvar_rascunho(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Guarda o arquivo e o mapa no meio do wizard.
+
+    A importação é um passo só no servidor, mas o wizard tem três telas: sem
+    isto, fechar a aba entre escolher o arquivo e confirmar o mapeamento
+    jogava fora o upload inteiro.
+    """
+    ator = perm.ator(db)
+    perm.exigir_ou_permissao(db, ator, "regular_user_can_import", "importar lista de leads")
+    conteudo = payload.get("content") or ""
+    if not conteudo:
+        raise HTTPException(400, "Sem conteúdo para guardar.")
+    if len(conteudo) > 4_000_000:
+        raise HTTPException(400, "Arquivo grande demais para guardar como rascunho.")
+    bid = payload.get("id")
+    base = db.get(LeadBase, bid) if bid else None
+    if base is None:
+        base = LeadBase(name=(payload.get("name") or "Importação em andamento").strip(),
+                        source="CSV", status="DRAFT",
+                        created_by_id=ator.user_id)
+        db.add(base)
+    elif base.status != "DRAFT":
+        raise HTTPException(400, "Esta base já foi importada.")
+    base.name = (payload.get("name") or base.name).strip()
+    base.draft_content = conteudo
+    base.draft_mapping = json.dumps(payload.get("mapping") or {}, ensure_ascii=False)
+    base.client_id = payload.get("clientId") or None
+    db.commit()
+    return {"id": base.id, "status": base.status}
+
+
+@router.get("/lead-bases/{bid}/draft")
+def ler_rascunho(bid: int, db: Session = Depends(get_db)):
+    base = db.get(LeadBase, bid)
+    if not base or base.status != "DRAFT":
+        raise HTTPException(404, "Rascunho não encontrado.")
+    perm.ator(db)                            # exige sessão; a base em si não tem dono
+    try:
+        mapa = json.loads(base.draft_mapping or "{}")
+    except ValueError:
+        mapa = {}
+    return {"id": base.id, "name": base.name, "content": base.draft_content,
+            "mapping": mapa, "clientId": base.client_id}
+
+
 @router.post("/lead-bases/import")
 def import_base(payload: dict = Body(...), db: Session = Depends(get_db)):
     """Passo 2 do wizard: cria a base a partir do CSV com o mapa de colunas."""
@@ -1094,6 +1140,14 @@ def import_base(payload: dict = Body(...), db: Session = Depends(get_db)):
         imported += 1
     base.number_of_leads = imported
     base.discarded_leads = discarded
+    base.draft_content = ""
+    base.draft_mapping = ""
+    rascunho = payload.get("draftId")
+    if rascunho:
+        # O rascunho vira histórico: a base recém-criada é que fica.
+        antigo = db.get(LeadBase, int(rascunho))
+        if antigo is not None and antigo.status == "DRAFT" and antigo.id != base.id:
+            db.delete(antigo)
     base.discarded_sample = json.dumps(descartadas, ensure_ascii=False)
     base.status = "COMPLETED"
     _fire_webhooks(db, "BASE.IMPORTED", {"leadBaseId": base.id, "name": base.name,
