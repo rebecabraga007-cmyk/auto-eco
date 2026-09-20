@@ -547,6 +547,23 @@ function verMaisMotivos(lista) {
   m.root.querySelector("[data-close-motivos]").onclick = m.close;
 }
 
+/** Medidor circular — o gauge do original, em SVG puro. */
+function medidor(rotulo, percentual, cor) {
+  const pct = Math.round(Math.max(0, Math.min(100, Number(percentual) || 0)));
+  const r = 42, circ = 2 * Math.PI * r;
+  return `<div class="medidor">
+    <svg viewBox="0 0 110 110" role="img" aria-label="${h(rotulo)}: ${pct}%">
+      <circle cx="55" cy="55" r="${r}" fill="none" stroke="#ededed" stroke-width="10"/>
+      <circle cx="55" cy="55" r="${r}" fill="none" stroke="${cor}" stroke-width="10"
+              stroke-linecap="round" stroke-dasharray="${circ}"
+              stroke-dashoffset="${circ * (1 - pct / 100)}"
+              transform="rotate(-90 55 55)"/>
+      <text x="55" y="61" text-anchor="middle" font-size="22" font-weight="600" fill="#333">${pct}%</text>
+    </svg>
+    <div class="text-muted text-size-small">${h(rotulo)}</div>
+  </div>`;
+}
+
 function renderGoalChart(series, target) {
   const W = 760, H = 320, padL = 44, padB = 28;
   const max = Math.max(target, ...series.map((s) => s.actual || 0)) || 1;
@@ -1710,7 +1727,13 @@ PAGES.lead = {
                 ? `${c.emailsAbertos} <span class="text-muted text-size-small">(${Math.round(c.emailsAbertos / c.emailsEnviados * 100)}%)</span>`
                 : "0"],
               ["Conversas", c.conversas],
+              ...(c.inicioAgendado ? [["Início agendado", fmtDateTime(c.inicioAgendado)]] : []),
               ...(c.proximaAtividade ? [["Próxima atividade", fmtDateTime(c.proximaAtividade)]] : []),
+              // Quando a última atividade da cadência for executada, o lead é
+              // perdido automaticamente por fim de cadência. Ver a data chegando
+              // é o que dá chance de fazer algo antes.
+              ...(c.perdaPrevista ? [["Perda automática prevista",
+                `<span class="pill amber">${fmtDate(c.perdaPrevista)}</span>`]] : []),
             ].map(([k, v]) => `<tr><td class="text-grey">${k}</td><td>${v}</td></tr>`).join("")}</tbody></table>`);
           })()}
           ${l.company ? panel("Outros leads da conta", `<div id="contaBox">${LOADING}</div>`,
@@ -3785,6 +3808,13 @@ PAGES.estatisticas = {
             { value: `${dados.resumo.taxaEngajados}%`, label: "Engajados", tone: "info" },
             { value: `${dados.resumo.taxaGanhos}%`, label: "Ganhos", tone: "success" },
           ])}
+          ${panel("Onde a cadência converte", `<div class="medidores">
+            ${[["Engajados", dados.resumo.taxaEngajados, "#2196f3"],
+               ["Ganhos", dados.resumo.taxaGanhos, "#00c850"],
+               ["Finalizados", dados.resumo.leads
+                 ? Math.round((dados.resumo.finalizados / dados.resumo.leads) * 100) : 0, "#777"]]
+              .map(([rot, pct, cor]) => medidor(rot, pct, cor)).join("")}
+          </div>`, { subtitle: "Sobre os leads que passaram pela cadência no período" })}
           ${panel(`Passos de ${h(dados.cadence.name)}`,
             table(["Passo", "Dia", "Atividade", "Executados", "Engajadas", "Ganhos", "Engajamento"],
               dados.passos.map((p) => ({ cells: [p.passo, p.dia, h(p.atividade),

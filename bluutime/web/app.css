@@ -1489,3 +1489,8 @@ th.ord:hover { color: var(--text); }
 }
 .dropzone:hover, .dropzone.sobre { border-color: var(--green-label); background: var(--avatar-bg); }
 .dropzone .dz-icon { font-size: 26px; color: var(--muted); margin-bottom: 6px; }
+
+/* Medidores circulares da aba Conversão. */
+.medidores { display: flex; flex-wrap: wrap; gap: 24px; justify-content: center; }
+.medidor { width: 130px; text-align: center; }
+.medidor svg { width: 100%; height: auto; }

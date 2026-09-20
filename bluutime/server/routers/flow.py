@@ -725,6 +725,14 @@ def get_lead(lid: int, db: Session = Depends(get_db)):
         "conversas": db.query(func.count(Conversation.id))
                        .filter(Conversation.lead_id == lid).scalar(),
         "proximaAtividade": serial.iso(proxima.scheduled_at) if proxima else None,
+        # Início agendado e perda automática prevista: o lead some da fila
+        # sozinho quando a última atividade da cadência é executada, e ninguém
+        # via essa data chegando.
+        "inicioAgendado": serial.iso(acts[0].scheduled_at) if acts else None,
+        "perdaPrevista": (serial.iso(max(a.scheduled_at for a in acts
+                                         if a.status == "PENDING"))
+                          if l.status in ("EXECUTING", "WAITING")
+                          and any(a.status == "PENDING" for a in acts) else None),
     }
     return data
 
