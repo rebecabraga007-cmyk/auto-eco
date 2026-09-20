@@ -1151,13 +1151,22 @@ PAGES.execucao = {
           actions: items.length
             ? `<button class="btn btn-main btn-xs" id="iniciar2">▶ Modo rápido</button>` : "" })}
       ${quentes.data.length ? panel(`Leads aguardando a primeira ligação (${quentes.data.length})`,
-        table(["Lead", "Empresa", "Telefone", "Esperando há", ""],
+        `<div class="toolbar" style="border:0;padding:0 0 8px;background:none">
+          <label class="text-size-small"><input type="checkbox" id="hotTodos"> Selecionar todos</label>
+          <span class="spacer"></span>
+          <button class="btn btn-default btn-xs" id="hotTransferir" disabled>Transferir selecionados</button>
+        </div>` +
+        table([`<span class="text-muted">sel.</span>`, "Lead", "Empresa", "Telefone", "Esperando há", ""],
           quentes.data.map((l) => ({ cells: [
+            `<input type="checkbox" class="hot-check" value="${l.id}">`,
             `<a data-lead="${l.id}"><strong>${h(l.name)}</strong></a>`,
             h(l.company || "—"), h(l.phone || "—"),
+            // Minuto importa em lead que acabou de converter: dizer "0h" para
+            // quem entrou há 40 minutos esconde justamente a urgência.
             l.horasEsperando >= 48 ? `<span class="pill red">${Math.round(l.horasEsperando / 24)} dias</span>`
               : l.horasEsperando >= 24 ? `<span class="pill amber">${Math.round(l.horasEsperando / 24)} dia</span>`
-              : `<span class="pill">${l.horasEsperando}h</span>`,
+              : l.horasEsperando >= 1 ? `<span class="pill">${l.horasEsperando}h</span>`
+              : `<span class="pill green">${Math.max(1, Math.round((l.horasEsperando || 0) * 60))} min</span>`,
             `<button class="btn btn-default btn-xs" data-lead="${l.id}">Abrir</button>`,
           ] })), { scroll: true }),
         { subtitle: "Ninguém ligou para eles ainda. Os mais antigos vêm primeiro — lead novo esfria rápido." }) : ""}`;
@@ -1170,6 +1179,44 @@ PAGES.execucao = {
       state.leadFilter = { page: 1, limit: 50, status: "WAITING" };
       go("leads");
     };
+    // Seleção em massa dos hot leads: quem tem trinta esperando não vai abrir
+    // um por um para redistribuir.
+    const hotBtn = document.getElementById("hotTransferir");
+    if (hotBtn) {
+      const hotMarcados = () => [...view.querySelectorAll(".hot-check:checked")].map((c) => Number(c.value));
+      const sincHot = () => {
+        const n = hotMarcados().length;
+        hotBtn.disabled = !n;
+        hotBtn.textContent = n ? `Transferir ${n} selecionado(s)` : "Transferir selecionados";
+      };
+      view.querySelectorAll(".hot-check").forEach((c) => { c.onchange = sincHot; });
+      const hotTodos = document.getElementById("hotTodos");
+      if (hotTodos) hotTodos.onchange = () => {
+        view.querySelectorAll(".hot-check").forEach((c) => { c.checked = hotTodos.checked; });
+        sincHot();
+      };
+      hotBtn.onclick = () => {
+        const ids = hotMarcados();
+        const m = modal({
+          title: `Transferir ${ids.length} lead(s)`,
+          body: `<div class="field"><label for="hotSdr">Novo responsável</label>
+            <select class="form-control" id="hotSdr">${options(
+              (state.users || []).filter((u) => u.active !== false), "", { blank: "—" })}</select></div>`,
+          footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+                   <button class="btn btn-main btn-sm" data-ok>Transferir</button>`,
+        });
+        m.root.querySelector("[data-cancel]").onclick = m.close;
+        m.root.querySelector("[data-ok]").onclick = async () => {
+          const sdrId = Number(m.root.querySelector("#hotSdr").value);
+          if (!sdrId) return toast("Escolha o responsável.", "err");
+          try {
+            await api("/api/flow/leads/bulk", { method: "POST",
+              body: { leadIds: ids, action: "transfer", sdrId } });
+            m.close(); toast("Leads transferidos.", "ok"); go("execucao");
+          } catch (e) { toast(e.message, "err"); }
+        };
+      };
+    }
     ["iniciar", "iniciar2"].forEach((id) => {
       const b = document.getElementById(id);
       if (b) b.onclick = () => modoRapido(items, 0);
@@ -7502,7 +7549,8 @@ PAGES.ajustes = {
         </div>
         <div class="field"><label class="text-muted text-size-small">Blacklist de domínios de e-mail
           <span class="text-grey">— um por linha; lead desses domínios é perdido automaticamente</span></label>
-          <textarea class="form-control" id="cfgBlacklist" rows="3" placeholder="concorrente.com.br">${h(cfg.blacklist.join("\n"))}</textarea></div>
+          <textarea class="form-control" id="cfgBlacklist" rows="3" placeholder="concorrente.com.br">${h(cfg.blacklist.join("\n"))}</textarea>
+          <span class="help-block" id="blCount">${cfg.blacklist.length} domínio${cfg.blacklist.length === 1 ? "" : "s"} · limite de 1024 caracteres</span></div>
         <div class="toolbar mt-10" style="border:0;padding:0;background:none">
           <span class="spacer"></span>
           <button class="btn btn-main btn-sm" id="cfgSalvar">Salvar configurações</button>
@@ -7521,25 +7569,24 @@ PAGES.ajustes = {
 
       ${panel("Permissões", `
         <div class="alert alert-info alert-styled-left">
-          Gestor e admin sempre têm acesso total. Estas chaves controlam o que um vendedor comum (SDR) pode fazer
-          além da própria carteira. "Importar lista de leads" já fica em Configurações gerais, acima.
+          O original mostra um par de caixas por permissão, uma para cada perfil. Aqui a coluna do
+          gestor é fixa: gestor e admin têm acesso total por construção, e desmarcar ali não teria
+          efeito nenhum — melhor deixar visível e travado do que fingir que é ajustável.
         </div>
-        <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
-          <label><input type="checkbox" id="permVisivel"${permCfg.leadsVisibleAll ? " checked" : ""}>
-            Ver e acessar leads de outros usuários</label>
-        </div>
-        <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
-          <label><input type="checkbox" id="permAdd"${permCfg.leadsAddManual ? " checked" : ""}>
-            Adicionar leads individualmente</label>
-        </div>
-        <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
-          <label><input type="checkbox" id="permStats"${permCfg.statisticsAccess ? " checked" : ""}>
-            Acessar a aba de Estatísticas</label>
-        </div>
-        <div class="toolbar" style="border:0;padding:0 0 8px;background:none;flex-wrap:wrap;gap:14px">
-          <label><input type="checkbox" id="permDel"${permCfg.leadsDelete ? " checked" : ""}>
-            Apagar leads <span class="text-muted text-size-small">— só os da própria carteira, e a ação não tem volta</span></label>
-        </div>
+        <table class="table table-striped"><thead><tr>
+            <th>Permissão</th><th style="width:110px">Vendedor</th><th style="width:110px">Gestor</th>
+          </tr></thead><tbody>
+          ${[["permVisivel", permCfg.leadsVisibleAll, "Ver e acessar leads de outros usuários", ""],
+             ["permAdd", permCfg.leadsAddManual, "Adicionar leads individualmente", ""],
+             ["permStats", permCfg.statisticsAccess, "Acessar a aba de Estatísticas", ""],
+             ["permDel", permCfg.leadsDelete, "Apagar leads",
+              "só os da própria carteira, e a ação não tem volta"]]
+            .map(([id, ligado, rotulo, nota]) => `<tr>
+              <td>${rotulo}${nota ? `<br><span class="text-muted text-size-small">${nota}</span>` : ""}</td>
+              <td><input type="checkbox" id="${id}"${ligado ? " checked" : ""}></td>
+              <td><input type="checkbox" checked disabled title="Gestor e admin sempre têm"></td>
+            </tr>`).join("")}
+          </tbody></table>
         <div class="toolbar mt-10" style="border:0;padding:0;background:none">
           <span class="spacer"></span>
           <button class="btn btn-main btn-sm" id="permSalvar">Salvar</button>
@@ -7551,14 +7598,36 @@ PAGES.ajustes = {
            <button class="btn btn-default btn-xs" data-del-reason="${r.id}">Remover</button>`] }))),
         { actions: `<button class="btn btn-main btn-xs" id="newReason">Adicionar</button>` })}
 
-      ${panel("Campos do lead",
-        table(["Campo", "Identificador", "Tipo", "Visível", "Obrig. p/ ganhar", "Obrig. p/ perder", ""],
-          fields.map((f) => ({ cells: [h(f.name), `<code>${h(f.identifier)}</code>`,
-            f.customField ? `<span class="pill green">Personalizado</span>` : `<span class="pill grey">Nativo</span>`,
-            f.customField ? (f.visible ? "Sim" : "Não") : "Sim",
-            f.wonMandatory ? "Sim" : "—", f.lostMandatory ? "Sim" : "—",
-            f.customField ? `<button class="btn btn-default btn-xs" data-edit-field="${f.id}">Editar</button>` : ""] }))),
-        { actions: `<button class="btn btn-main btn-xs" id="newField">Novo campo</button>` })}
+      ${(() => {
+        // Abas por tipo, como no original: a lista misturava campo nativo com
+        // personalizado e ficava difícil achar o que dá para editar.
+        const tipo = state.campoTipo || "todos";
+        const doTipo = tipo === "nativos" ? fields.filter((f) => !f.customField)
+          : tipo === "personalizados" ? fields.filter((f) => f.customField) : fields;
+        const ordenados = [...doTipo].sort((a, b) => (a.index || 0) - (b.index || 0));
+        return panel("Campos do lead", `
+          <ul class="nav nav-tabs nav-tabs-sub">
+            ${[["todos", `Todos (${fields.length})`],
+               ["personalizados", `Personalizados (${fields.filter((f) => f.customField).length})`],
+               ["nativos", `Nativos (${fields.filter((f) => !f.customField).length})`]]
+              .map(([k, rot]) => `<li${tipo === k ? ' class="active"' : ""}>
+                <a data-campotipo="${k}">${rot}</a></li>`).join("")}
+          </ul>
+          ${table(["Campo", "Identificador", "Tipo", "Visível", "Obrig. p/ ganhar", "Obrig. p/ perder", ""],
+            ordenados.map((f, i) => ({ cells: [h(f.name), `<code>${h(f.identifier)}</code>
+              <button class="btn btn-default btn-xs ml-5" data-copia="${h(f.identifier)}"
+                title="Copiar a chave usada na API e nas merge tags">copiar</button>`,
+              f.customField ? `<span class="pill green">Personalizado</span>` : `<span class="pill grey">Nativo</span>`,
+              f.customField ? (f.visible ? "Sim" : "Não") : "Sim",
+              f.wonMandatory ? "Sim" : "—", f.lostMandatory ? "Sim" : "—",
+              f.customField ? `
+                <button class="btn btn-default btn-xs" data-sobe="${f.id}"${i === 0 ? " disabled" : ""}
+                  title="Subir na ordem">↑</button>
+                <button class="btn btn-default btn-xs" data-desce="${f.id}"${i === ordenados.length - 1 ? " disabled" : ""}
+                  title="Descer na ordem">↓</button>
+                <button class="btn btn-default btn-xs" data-edit-field="${f.id}">Editar</button>` : ""] })))}`,
+          { actions: `<button class="btn btn-main btn-xs" id="newField">Novo campo</button>` });
+      })()}
 
       ${panel("Etapa do lead (funil)", `
         <p class="text-muted text-size-small" style="margin-top:0">
@@ -7827,6 +7896,42 @@ PAGES.ajustes = {
         toast("Motivo atualizado.", "ok"); go("ajustes");
       }, "Salvar", b.dataset.nome);
     });
+    view.querySelectorAll("[data-campotipo]").forEach((a) => {
+      a.onclick = () => { state.campoTipo = a.dataset.campotipo; go("ajustes"); };
+    });
+    view.querySelectorAll("[data-copia]").forEach((b) => {
+      b.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(b.dataset.copia);
+          toast(`Copiado: ${b.dataset.copia}`, "ok");
+        } catch {
+          // Área de transferência bloqueada (http, permissão negada): mostra a
+          // chave para copiar na mão em vez de falhar calado.
+          promptOne("Chave do campo", "Copie daqui", () => {}, "Fechar", b.dataset.copia);
+        }
+      };
+    });
+    // Reordenar troca o índice com o vizinho: mexer no número à mão exigia
+    // abrir o formulário de dois campos para trocar dois de lugar.
+    const trocaOrdem = async (id, direcao) => {
+      const personalizados = fields.filter((f) => f.customField)
+        .sort((a, b) => (a.index || 0) - (b.index || 0));
+      const i = personalizados.findIndex((f) => String(f.id) === String(id));
+      const j = i + direcao;
+      if (i < 0 || j < 0 || j >= personalizados.length) return;
+      const a = personalizados[i], b = personalizados[j];
+      try {
+        await api(`/api/flow/new-lead-fields/${a.id}`, { method: "PATCH", body: { index: b.index || j } });
+        await api(`/api/flow/new-lead-fields/${b.id}`, { method: "PATCH", body: { index: a.index || i } });
+        go("ajustes");
+      } catch (e) { toast(e.message, "err"); }
+    };
+    view.querySelectorAll("[data-sobe]").forEach((b) => {
+      b.onclick = () => trocaOrdem(b.dataset.sobe, -1);
+    });
+    view.querySelectorAll("[data-desce]").forEach((b) => {
+      b.onclick = () => trocaOrdem(b.dataset.desce, 1);
+    });
     view.querySelectorAll("[data-edit-field]").forEach((b) => {
       b.onclick = () => openCampoForm(fields.find((f) => String(f.id) === b.dataset.editField));
     });
@@ -7932,6 +8037,17 @@ PAGES.ajustes = {
       };
     });
 
+    // Contador vivo da blacklist, com o limite do original.
+    const bl = document.getElementById("cfgBlacklist");
+    const blCount = document.getElementById("blCount");
+    if (bl && blCount) bl.oninput = () => {
+      const linhas = bl.value.split(String.fromCharCode(10)).map((x) => x.trim()).filter(Boolean);
+      const chars = bl.value.length;
+      blCount.innerHTML = `${linhas.length} domínio${linhas.length === 1 ? "" : "s"} · `
+        + (chars > 1024
+          ? `<span style="color:#f44336">${chars} caracteres — passou do limite de 1024</span>`
+          : `${chars} de 1024 caracteres`);
+    };
     const fitLigadoSalvar = document.getElementById("fitLigadoSalvar");
     if (fitLigadoSalvar) fitLigadoSalvar.onclick = async (ev) => {
       ev.currentTarget.disabled = true;
