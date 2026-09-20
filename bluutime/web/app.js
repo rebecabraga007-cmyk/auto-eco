@@ -196,7 +196,9 @@ function filtrosQS(extra = {}) {
   const qs = new URLSearchParams();
   if (since) qs.set("since", since);
   if (until) qs.set("until", until);
-  if (state.teamId) qs.set("team_id", state.teamId);
+  if ((state.teamIds || []).length) qs.set("team_id", state.teamIds.join(","));
+  if ((state.userIds || []).length) qs.set("user_id", state.userIds.join(","));
+  if ((state.cadenceIds || []).length) qs.set("cadence_id", state.cadenceIds.join(","));
   Object.entries(extra).forEach(([k, v]) => { if (v) qs.set(k, v); });
   const s = qs.toString();
   return s ? `?${s}` : "";
@@ -214,11 +216,81 @@ function periodoQS(extra = {}) {
 }
 
 /** Seletor de time. Some quando a empresa não tem times cadastrados. */
+/** Filtro de múltipla escolha: botão com contagem e popover de caixas.
+ *
+ * O original deixa marcar vários times, vários usuários e várias cadências no
+ * mesmo filtro. Um `select` só aceita um; um `select multiple` aceita vários e
+ * ninguém entende. O popover é o mesmo padrão do Meetime. */
+function multiControle(id, rotulo, itens, selecionados, vazio) {
+  if (!itens.length) return "";
+  const sel = new Set((selecionados || []).map(String));
+  const marcados = itens.filter((i) => sel.has(String(i.id)));
+  const resumo = !marcados.length ? (vazio || `Todos: ${rotulo.toLowerCase()}`)
+    : marcados.length === 1 ? marcados[0].name
+    : `${marcados.length} ${rotulo.toLowerCase()}`;
+  return `<div class="multi" data-multi="${id}">
+    <button type="button" class="form-control input-sm multi-botao" data-multi-abre="${id}">
+      ${h(resumo)} <span class="multi-seta">▾</span></button>
+    <div class="multi-pop" id="pop-${id}" hidden>
+      <div class="multi-topo">
+        <strong>${h(rotulo)}</strong>
+        <button type="button" class="btn btn-default btn-xs" data-multi-limpa="${id}">Limpar</button>
+      </div>
+      <div class="multi-itens">
+        ${itens.map((i) => `<label><input type="checkbox" value="${h(i.id)}"
+          ${sel.has(String(i.id)) ? " checked" : ""}> ${h(i.name)}</label>`).join("")}
+      </div>
+      <div class="multi-rodape">
+        <button type="button" class="btn btn-main btn-xs" data-multi-ok="${id}">Aplicar</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+/** Liga um `multiControle`; `aoAplicar` recebe a lista de ids escolhidos. */
+function ligarMulti(id, aoAplicar) {
+  const caixa = document.querySelector(`[data-multi="${id}"]`);
+  if (!caixa) return;
+  const pop = document.getElementById(`pop-${id}`);
+  const abre = caixa.querySelector(`[data-multi-abre="${id}"]`);
+  abre.onclick = (e) => {
+    e.stopPropagation();
+    // Um popover aberto por vez: dois abertos se sobrepõem e o de baixo fica
+    // clicável sem estar visível.
+    document.querySelectorAll(".multi-pop").forEach((p) => { if (p !== pop) p.hidden = true; });
+    pop.hidden = !pop.hidden;
+  };
+  pop.onclick = (e) => e.stopPropagation();
+  document.addEventListener("click", () => { pop.hidden = true; }, { once: true });
+  caixa.querySelector(`[data-multi-limpa="${id}"]`).onclick = () => {
+    pop.querySelectorAll("input").forEach((c) => { c.checked = false; });
+    aoAplicar([]);
+  };
+  caixa.querySelector(`[data-multi-ok="${id}"]`).onclick = () => {
+    aoAplicar([...pop.querySelectorAll("input:checked")].map((c) => c.value));
+  };
+}
+
 function timeControle() {
   const times = state.teams || [];
   if (!times.length) return "";
-  return `<select class="form-control input-sm" id="pdTime" aria-label="Time">
-    ${options(times, state.teamId || "", { blank: "Todos os times" })}</select>`;
+  return multiControle("pdTime", "Times", times, state.teamIds || [], "Todos os times");
+}
+
+function usuarioControle() {
+  const ativos = (state.users || []).filter((u) => u.active !== false);
+  return multiControle("pdUser", "Usuários", ativos, state.userIds || [], "Todos os usuários");
+}
+
+function cadenciaControle() {
+  return multiControle("pdCad", "Cadências", state.cadences || [], state.cadenceIds || [], "Todas as cadências");
+}
+
+/** Liga os três filtros de múltipla escolha da barra de uma vez. */
+function ligarFiltros(aoMudar) {
+  ligarPeriodo(aoMudar);
+  ligarMulti("pdUser", (ids) => { state.userIds = ids; aoMudar(); });
+  ligarMulti("pdCad", (ids) => { state.cadenceIds = ids; aoMudar(); });
 }
 
 function periodoControle() {
@@ -254,8 +326,7 @@ function ligarPeriodo(aoMudar) {
   };
   de.onchange = manual;
   ate.onchange = manual;
-  const time = document.getElementById("pdTime");
-  if (time) time.onchange = () => { state.teamId = time.value; aoMudar(); };
+  ligarMulti("pdTime", (ids) => { state.teamIds = ids; aoMudar(); });
 }
 
 /* ── login ───────────────────────────────────────────────────────────── */
@@ -402,7 +473,9 @@ PAGES.dashboard = {
   async render() {
     const ref = state.metaMes || todayISO();
     const fm = state.metaFiltro || {};
-    const qsMeta = new URLSearchParams(Object.entries(fm).filter(([, v]) => v));
+    const qsMeta = new URLSearchParams(Object.entries(fm)
+      .filter(([, v]) => (Array.isArray(v) ? v.length : v))
+      .map(([k, v]) => [k, Array.isArray(v) ? v.join(",") : v]));
     // O esforço necessário vem junto: a meta sozinha diz onde chegar, o
     // esforço diz quanto trabalho falta para lá — e era o que ninguém via.
     const [g, esforco] = await Promise.all([
@@ -437,8 +510,8 @@ PAGES.dashboard = {
           <span>${new Date(`${g.targetMonth.slice(0, 10)}T12:00:00`).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}</span>
           <button class="btn btn-default btn-xs" id="mesSeguinte" title="Mês seguinte" aria-label="Mês seguinte">›</button>
           ${state.metaMes ? `<button class="btn btn-default btn-xs" id="mesHoje">Este mês</button>` : ""}
-          <select class="form-control input-xs" id="metaCad">${options(state.cadences, fm.cadence_id, { blank: "Todas as cadências" })}</select>
-          <select class="form-control input-xs" id="metaUser">${options(state.users, fm.user_id, { blank: "Todos os usuários" })}</select>
+          ${multiControle("metaCad", "Cadências", state.cadences || [], fm.cadence_id || [], "Todas as cadências")}
+          ${multiControle("metaUser", "Usuários", (state.users || []).filter((u) => u.active !== false), fm.user_id || [], "Todos os usuários")}
           ${nivelPeloMenos("gestor")
             ? `<button class="btn-goal" id="editGoals">Editar metas</button>`
             : `<span class="text-muted text-size-small">Só gestor edita metas.</span>`}
@@ -531,12 +604,8 @@ PAGES.dashboard = {
     if (editar) editar.onclick = () => openGoalsModal(ref);
     const definir = document.getElementById("definirMeta");
     if (definir) definir.onclick = () => openGoalsModal(ref);
-    document.getElementById("metaCad").onchange = (e) => {
-      state.metaFiltro = { ...fm, cadence_id: e.target.value }; go("dashboard");
-    };
-    document.getElementById("metaUser").onchange = (e) => {
-      state.metaFiltro = { ...fm, user_id: e.target.value }; go("dashboard");
-    };
+    ligarMulti("metaCad", (ids) => { state.metaFiltro = { ...fm, cadence_id: ids }; go("dashboard"); });
+    ligarMulti("metaUser", (ids) => { state.metaFiltro = { ...fm, user_id: ids }; go("dashboard"); });
     document.getElementById("mesAnterior").onclick = () => { state.metaMes = mesRef(-1); go("dashboard"); };
     document.getElementById("mesSeguinte").onclick = () => { state.metaMes = mesRef(1); go("dashboard"); };
     const hoje = document.getElementById("mesHoje");
@@ -880,7 +949,7 @@ PAGES.painel = {
         </table></div>` : emptyState("Nenhum usuário com atividade neste filtro.")}
       </div></div>`;
 
-    ligarPeriodo(() => go("painel"));
+    ligarFiltros(() => go("painel"));
     document.getElementById("fClient").onchange = (e) => {
       state.filterClient = e.target.value; go("painel");
     };
@@ -3184,7 +3253,7 @@ PAGES.ligacoes = {
     const best = o.bestHourToCall;
     const listaDerrubadas = derrubadas.data || [];
     view.innerHTML = `
-      <div class="toolbar">${periodoControle()}${timeControle()}</div>
+      <div class="toolbar">${periodoControle()}${timeControle()}${usuarioControle()}${cadenciaControle()}</div>
       ${kpis([
         { value: o.totalCalls, label: "Ligações no período" },
         { value: o.totalConnected, label: "Conectadas", tone: "success" },
@@ -3223,7 +3292,7 @@ PAGES.ligacoes = {
             ] })), { scroll: true })
         : emptyState("Nenhuma ligação derrubada no período."),
         { subtitle: "Atendeu e desligou em até 10 segundos — sinal de abordagem, não de linha." })}`;
-    ligarPeriodo(() => go("ligacoes"));
+    ligarFiltros(() => go("ligacoes"));
     carregarLigacoesDeHoje();
   },
 };
@@ -3478,10 +3547,10 @@ PAGES["estatisticas-ligacoes"] = {
           bars(hst.data.map((r) => ({ label: r.label, value: r.conectadas, tone: "success" }))))}`;
     }
 
-    view.innerHTML = `<div class="toolbar">${periodoControle()}${timeControle()}</div>${abas}
+    view.innerHTML = `<div class="toolbar">${periodoControle()}${timeControle()}${usuarioControle()}${cadenciaControle()}</div>${abas}
       <div class="mt-10">${corpo}</div>`;
 
-    ligarPeriodo(() => go("estatisticas-ligacoes"));
+    ligarFiltros(() => go("estatisticas-ligacoes"));
     view.querySelectorAll("[data-estlig]").forEach((a) => {
       a.onclick = () => go(`estatisticas-ligacoes/${a.dataset.estlig}`);
     });
@@ -3532,7 +3601,7 @@ PAGES["lista-ligacoes"] = {
           <option value="">Todas</option>
           <option value="true"${f.important === "true" ? " selected" : ""}>Só importantes</option>
         </select>
-        ${periodoControle()}${timeControle()}
+        ${periodoControle()}${timeControle()}${usuarioControle()}${cadenciaControle()}
         <span class="spacer"></span>
         <a class="btn btn-default btn-xs" href="/api/dialer/calls/export${filtrosQS(extra)}">Exportar</a>
         <a class="btn btn-default btn-xs" href="/api/reports/dropped-calls">Baixar derrubadas</a>
@@ -3548,7 +3617,7 @@ PAGES["lista-ligacoes"] = {
     const busca = document.getElementById("cfQ");
     let tb;
     busca.oninput = () => { clearTimeout(tb); tb = setTimeout(() => set("q", busca.value), 350); };
-    ligarPeriodo(() => go("lista-ligacoes"));
+    ligarFiltros(() => go("lista-ligacoes"));
     view.querySelectorAll("[data-lead]").forEach((a) => {
       a.onclick = () => go(`lead/${a.dataset.lead}`);
     });
@@ -3587,7 +3656,7 @@ PAGES.extrato = {
     const rows = res.data.map((r) => ({ cells: [
       r.user ? h(r.user.name) : "—", r.calls, r.minutes, fmtMoney(r.cost)] }));
     view.innerHTML = `
-      <div class="toolbar">${periodoControle()}${timeControle()}</div>
+      <div class="toolbar">${periodoControle()}${timeControle()}${usuarioControle()}${cadenciaControle()}</div>
       ${kpis([
         { value: res.meta.totalMinutes, label: "Minutos no período" },
         { value: fmtMoney(res.meta.totalCost), label: "Custo estimado", tone: "warning" },
@@ -3612,7 +3681,7 @@ PAGES.extrato = {
           ] })), { scroll: true, empty: "Nenhuma ligação no período." }),
         { subtitle: `Tarifa de ${fmtMoney(res.meta.pricePerMinute)} por minuto, cobrada só sobre o tempo conectado.`,
           actions: pager(detalhe.pagination || { page: 1, totalPageCount: 1 }) })}`;
-    ligarPeriodo(() => go("extrato"));
+    ligarFiltros(() => go("extrato"));
     view.querySelectorAll("[data-ext-det]").forEach((b) => {
       b.onclick = () => openDetalheLigacao(Number(b.dataset.extDet));
     });
@@ -3885,13 +3954,13 @@ PAGES.estatisticas = {
     </ul>`;
     const barra = `<div class="toolbar">
         <select class="form-control" id="sClient">${options(state.clients, clientId, { blank: "Todos os clientes" })}</select>
-        ${periodoControle()}${timeControle()}
+        ${periodoControle()}${timeControle()}${usuarioControle()}${cadenciaControle()}
       </div>`;
 
     const ligar = () => {
       const c = document.getElementById("sClient");
       if (c) c.onchange = (e) => { state.statClient = e.target.value; go("estatisticas"); };
-      ligarPeriodo(() => go("estatisticas"));
+      ligarFiltros(() => go(`estatisticas/${aba}`));
       view.querySelectorAll("[data-estaba]").forEach((a) => {
         a.onclick = () => { state.estAba = a.dataset.estaba; go(`estatisticas/${a.dataset.estaba}`); };
       });
@@ -4104,7 +4173,7 @@ PAGES.relatorios = {
           </div>`).join("")}
       </div>
       <p class="text-muted text-size-small mt-10">CSV com ponto-e-vírgula, compatível com Excel pt-BR.</p>`;
-    ligarPeriodo(() => go("relatorios"));
+    ligarFiltros(() => go("relatorios"));
     view.querySelectorAll("[data-rel]").forEach((c) => {
       c.onclick = () => {
         state.relatorioAberto = state.relatorioAberto === c.dataset.rel ? "" : c.dataset.rel;

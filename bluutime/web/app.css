@@ -1494,3 +1494,30 @@ th.ord:hover { color: var(--text); }
 .medidores { display: flex; flex-wrap: wrap; gap: 24px; justify-content: center; }
 .medidor { width: 130px; text-align: center; }
 .medidor svg { width: 100%; height: auto; }
+
+/* Filtro de múltipla escolha: botão com contagem e popover de caixas. */
+.multi { position: relative; display: inline-block; }
+.multi-botao { min-width: 150px; text-align: left; cursor: pointer; background: var(--panel); }
+.multi-seta { float: right; color: var(--muted); }
+.multi-pop {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 250px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .12);
+}
+.multi-topo, .multi-rodape {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+}
+.multi-topo { border-bottom: 1px solid var(--line-soft); }
+.multi-rodape { border-top: 1px solid var(--line-soft); }
+.multi-itens { max-height: 240px; overflow: auto; padding: 6px 10px; }
+.multi-itens label { display: block; padding: 3px 0; font-size: 12.5px; font-weight: 400; cursor: pointer; }
+.multi-itens label:hover { color: var(--link); }

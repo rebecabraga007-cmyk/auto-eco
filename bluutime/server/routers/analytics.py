@@ -93,7 +93,7 @@ def control_panel(client_id: int | None = None, since: str | None = None,
 
 
 @router.get("/flow/goals/{ref}/progress")
-def goal_progress(ref: str, user_id: int | None = None, cadence_id: int | None = None,
+def goal_progress(ref: str, user_id: str | None = None, cadence_id: str | None = None,
                   db: Session = Depends(get_db)):
     """Dashboard de metas: ganhos por dia × linha da meta, ranking e insights.
 
@@ -103,8 +103,10 @@ def goal_progress(ref: str, user_id: int | None = None, cadence_id: int | None =
     start, end = _month_range(ref)
     today = min(datetime.utcnow(), end)
     goals = db.query(Goal).filter_by(target_month=start.date()).all()
-    if user_id:
-        goals = [g for g in goals if g.user_id == user_id]
+    usuarios = ids_de(user_id)
+    cadencias = ids_de(cadence_id)
+    if usuarios:
+        goals = [g for g in goals if g.user_id in usuarios]
     # Meta ausente não vira 25 em silêncio: o front mostra o estado "sem meta
     # definida" e o convite a definir, como no original.
     definida = bool(goals and sum(g.opportunities_goal for g in goals))
@@ -113,12 +115,12 @@ def goal_progress(ref: str, user_id: int | None = None, cadence_id: int | None =
 
     won_q = db.query(Lead).filter(Lead.won_at.between(start, end))
     lost_q = db.query(Lead).filter(Lead.lost_at.between(start, end))
-    if user_id:
-        won_q = won_q.filter(Lead.sdr_id == user_id)
-        lost_q = lost_q.filter(Lead.sdr_id == user_id)
-    if cadence_id:
-        won_q = won_q.filter(Lead.cadence_id == cadence_id)
-        lost_q = lost_q.filter(Lead.cadence_id == cadence_id)
+    if usuarios:
+        won_q = won_q.filter(Lead.sdr_id.in_(usuarios))
+        lost_q = lost_q.filter(Lead.sdr_id.in_(usuarios))
+    if cadencias:
+        won_q = won_q.filter(Lead.cadence_id.in_(cadencias))
+        lost_q = lost_q.filter(Lead.cadence_id.in_(cadencias))
     won, lost = won_q.all(), lost_q.all()
     per_day = Counter(l.won_at.date().isoformat() for l in won)
 
@@ -239,19 +241,41 @@ def calculate_effort(ref: str, db: Session = Depends(get_db)):
             "conversionRateGoal": conv}
 
 
-def usuarios_do_time(db: Session, team_id: int | None) -> list[int] | None:
-    """Ids de quem está no time, ou `None` quando não há filtro de time.
+def ids_de(valor) -> list[int]:
+    """"3", "3,7" ou None → lista de ids.
+
+    Os filtros nasceram aceitando um id só; o original aceita vários. Em vez
+    de duplicar cada rota, o mesmo parâmetro passou a aceitar a lista separada
+    por vírgula — um valor sozinho continua funcionando igual.
+    """
+    if valor in (None, "", []):
+        return []
+    if isinstance(valor, (list, tuple, set)):
+        bruto = valor
+    else:
+        bruto = str(valor).split(",")
+    saida = []
+    for x in bruto:
+        x = str(x).strip()
+        if x.isdigit():
+            saida.append(int(x))
+    return saida
+
+
+def usuarios_do_time(db: Session, team_id) -> list[int] | None:
+    """Ids de quem está nos times pedidos, ou `None` quando não há filtro.
 
     Lista vazia não é o mesmo que `None`: um time sem ninguém tem que devolver
     zero, não a empresa inteira — por isso o chamador testa `is not None`.
     """
-    if not team_id:
+    times = ids_de(team_id)
+    if not times:
         return None
-    return [r[0] for r in db.query(User.id).filter(User.team_id == team_id).all()]
+    return [r[0] for r in db.query(User.id).filter(User.team_id.in_(times)).all()]
 
 
 @router.get("/flow/statistics/cadence-overview")
-def cadence_overview(team_id: int | None = None, db: Session = Depends(get_db)):
+def cadence_overview(team_id: str | None = None, db: Session = Depends(get_db)):
     """Distribuição dos leads nas cadências — quantos em cada situação.
 
     É a tela `cadence-overview` do original: mostra onde a base está parada,
@@ -373,7 +397,7 @@ def email_statistics(since: str | None = None, until: str | None = None,
 
 @router.get("/flow/statistics/performance")
 def performance(since: str | None = None, until: str | None = None,
-                team_id: int | None = None, db: Session = Depends(get_db)):
+                team_id: str | None = None, db: Session = Depends(get_db)):
     """Eficiência por vendedor — a tela `statistics/flow/performance`.
 
     "Execução geral" é realizadas sobre o que foi atribuído. Atividade
@@ -425,7 +449,7 @@ def performance(since: str | None = None, until: str | None = None,
 
 @router.get("/flow/statistics/response-time")
 def response_time(since: str | None = None, until: str | None = None,
-                  team_id: int | None = None, db: Session = Depends(get_db)):
+                  team_id: str | None = None, db: Session = Depends(get_db)):
     """Quanto tempo entre o lead chegar e a primeira abordagem.
 
     Mede só quem JÁ foi abordado. Lead que ninguém tocou ainda não tem tempo
@@ -493,7 +517,7 @@ def _company_goal_hours(db: Session) -> int:
 
 @router.get("/flow/statistics/lost-reasons")
 def lost_reasons_breakdown(since: str | None = None, until: str | None = None,
-                           by: str = "reason", team_id: int | None = None,
+                           by: str = "reason", team_id: str | None = None,
                            db: Session = Depends(get_db)):
     """Motivos de perda por motivo, usuário, time ou cadência."""
     perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
@@ -521,7 +545,7 @@ def lost_reasons_breakdown(since: str | None = None, until: str | None = None,
 
 @router.get("/flow/statistics/summary")
 def statistics(since: str | None = None, until: str | None = None,
-               client_id: int | None = None, team_id: int | None = None,
+               client_id: int | None = None, team_id: str | None = None,
                db: Session = Depends(get_db)):
     perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
     end = datetime.fromisoformat(until) if until else datetime.utcnow()

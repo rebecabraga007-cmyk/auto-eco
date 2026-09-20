@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import Call, CallFeedback, Company, Lead, Team, User
 from .. import agenda, perm, serial
-from .analytics import usuarios_do_time
+from .analytics import ids_de, usuarios_do_time
 
 router = APIRouter(prefix="/api/dialer")
 
@@ -114,13 +114,18 @@ def _range(since: str | None, until: str | None) -> tuple[datetime, datetime]:
     return start, end + timedelta(days=1) if until else end
 
 
-def _escopo(db: Session, q, team_id: int | None, user_id: int | None):
-    """Recorte por time e por pessoa, na ordem que o original oferece."""
+def _escopo(db: Session, q, team_id, user_id):
+    """Recorte por time e por pessoa, na ordem que o original oferece.
+
+    Os dois aceitam lista separada por vírgula: o Meetime deixa marcar vários
+    times e vários usuários no mesmo filtro.
+    """
     do_time = usuarios_do_time(db, team_id)
     if do_time is not None:
         q = q.filter(Call.user_id.in_(do_time))
-    if user_id:
-        q = q.filter(Call.user_id == user_id)
+    pessoas = ids_de(user_id)
+    if pessoas:
+        q = q.filter(Call.user_id.in_(pessoas))
     return q
 
 
@@ -250,9 +255,9 @@ def update_call(cid: int, payload: dict = Body(...), db: Session = Depends(get_d
 
 
 @router.get("/calls/export")
-def export_calls(user_id: int | None = None, status: str | None = None,
+def export_calls(user_id: str | None = None, status: str | None = None,
                  output: str | None = None, since: str | None = None,
-                 until: str | None = None, team_id: int | None = None,
+                 until: str | None = None, team_id: str | None = None,
                  q: str | None = None, db: Session = Depends(get_db)):
     """Exporta a lista filtrada, como o botão Exportar do original."""
     res = list_calls(user_id=user_id, status=status, output=output, since=since,
@@ -282,7 +287,7 @@ def export_calls(user_id: int | None = None, status: str | None = None,
 
 @router.get("/calls/statistics/funnel")
 def funnel(since: str | None = None, until: str | None = None,
-           team_id: int | None = None, user_id: int | None = None,
+           team_id: str | None = None, user_id: str | None = None,
            db: Session = Depends(get_db)):
     """Realizadas → conectadas → significativas, contra o período anterior.
 
@@ -334,7 +339,7 @@ def grouped(since: str | None = None, until: str | None = None,
 
 @router.get("/calls/statistics/history")
 def history(since: str | None = None, until: str | None = None,
-            interval: str = "day", team_id: int | None = None,
+            interval: str = "day", team_id: str | None = None,
             status: str | None = None, db: Session = Depends(get_db)):
     """Série temporal de ligações por dia, semana ou mês."""
     inicio, fim = _range(since, until)
@@ -355,7 +360,7 @@ def history(since: str | None = None, until: str | None = None,
 
 @router.get("/calls/statistics/distribution")
 def distribution(since: str | None = None, until: str | None = None,
-                 team_id: int | None = None, user_id: int | None = None,
+                 team_id: str | None = None, user_id: str | None = None,
                  db: Session = Depends(get_db)):
     """Distribuição por status e por resultado — a rosca da visão geral.
 
@@ -382,7 +387,7 @@ def distribution(since: str | None = None, until: str | None = None,
 
 @router.get("/calls/statistics/cumulative")
 def cumulative(since: str | None = None, until: str | None = None,
-               team_id: int | None = None, status: str | None = None,
+               team_id: str | None = None, status: str | None = None,
                db: Session = Depends(get_db)):
     """Acumulado dia a dia — o `cumulative` do original.
 
@@ -422,7 +427,7 @@ def cumulative(since: str | None = None, until: str | None = None,
 
 @router.get("/calls/statistics/best-hour")
 def best_hour(since: str | None = None, until: str | None = None,
-              team_id: int | None = None, user_id: int | None = None,
+              team_id: str | None = None, user_id: str | None = None,
               db: Session = Depends(get_db)):
     """Taxa de conexão por hora do dia — o "horário ideal" do original.
 
@@ -457,10 +462,10 @@ def best_hour(since: str | None = None, until: str | None = None,
 
 
 @router.get("/calls")
-def list_calls(user_id: int | None = None, status: str | None = None,
+def list_calls(user_id: str | None = None, status: str | None = None,
                output: str | None = None, lead_id: int | None = None,
                since: str | None = None, until: str | None = None,
-               team_id: int | None = None, q: str | None = None,
+               team_id: str | None = None, q: str | None = None,
                important: bool | None = None,
                page: int = 1, limit: int = Query(50, le=500),
                db: Session = Depends(get_db)):
@@ -474,8 +479,9 @@ def list_calls(user_id: int | None = None, status: str | None = None,
             user_id = ator.user_id or -1
     start, end = _range(since, until)
     query = db.query(Call).filter(Call.started_at.between(start, end))
-    if user_id:
-        query = query.filter(Call.user_id == user_id)
+    pessoas = ids_de(user_id)
+    if pessoas:
+        query = query.filter(Call.user_id.in_(pessoas))
     if status:
         query = query.filter(Call.status == status)
     if output:
@@ -537,12 +543,13 @@ def register_call(payload: dict = Body(...), db: Session = Depends(get_db)):
 
 @router.get("/calls/statistics/overview")
 def overview(since: str | None = None, until: str | None = None,
-             user_id: int | None = None, team_id: int | None = None,
+             user_id: str | None = None, team_id: str | None = None,
              db: Session = Depends(get_db)):
     start, end = _range(since, until)
     query = db.query(Call).filter(Call.started_at.between(start, end))
-    if user_id:
-        query = query.filter(Call.user_id == user_id)
+    pessoas = ids_de(user_id)
+    if pessoas:
+        query = query.filter(Call.user_id.in_(pessoas))
     do_time = usuarios_do_time(db, team_id)
     if do_time is not None:
         query = query.filter(Call.user_id.in_(do_time))
@@ -586,7 +593,7 @@ def overview(since: str | None = None, until: str | None = None,
 
 @router.get("/calls/statistics/dropped")
 def dropped(since: str | None = None, until: str | None = None,
-            team_id: int | None = None, db: Session = Depends(get_db)):
+            team_id: str | None = None, db: Session = Depends(get_db)):
     """Relatório de ligações derrubadas: conectadas e encerradas em até 10s."""
     start, end = _range(since, until)
     q = db.query(Call).filter(Call.started_at.between(start, end),
@@ -600,7 +607,7 @@ def dropped(since: str | None = None, until: str | None = None,
 
 @router.get("/calls/statements")
 def statement(since: str | None = None, until: str | None = None,
-              team_id: int | None = None, db: Session = Depends(get_db)):
+              team_id: str | None = None, db: Session = Depends(get_db)):
     start, end = _range(since, until)
     q = (db.query(Call.user_id, func.count(Call.id), func.sum(Call.duration))
          .filter(Call.started_at.between(start, end)))
