@@ -697,8 +697,18 @@ def get_lead(lid: int, db: Session = Depends(get_db)):
     # lead mostrava a atividade "Ligar" agendada e nunca a ligação que aconteceu.
     for c in db.query(Call).filter_by(lead_id=lid).all():
         linha.append({"kind": "CALL", **serial.call(c)})
-    linha.sort(key=lambda r: r.get("originStarted") or r.get("doneAt")
-               or r.get("scheduledAt") or "")
+    # A entrega conta o que a atividade não conta: se saiu, se foi bloqueada e
+    # por quê, e se o lead abriu ou clicou. Sem isto, "mandei o e-mail" e "o
+    # e-mail chegou" eram a mesma linha na tela.
+    for d in db.query(Delivery).filter(Delivery.lead_id == lid).all():
+        linha.append({"kind": "DELIVERY", "id": d.id, "channel": d.channel,
+                      "status": d.status, "subject": d.subject, "to": d.to_address,
+                      "error": d.error, "openedAt": serial.iso(d.opened_at),
+                      "clickedAt": serial.iso(d.clicked_at),
+                      "openCount": d.open_count, "clickCount": d.click_count,
+                      "createdAt": serial.iso(d.created_at)})
+    linha.sort(key=lambda r: r.get("originStarted") or r.get("createdAt")
+               or r.get("doneAt") or r.get("scheduledAt") or "")
     data["timeline"] = linha
 
     # Contadores da sidebar do original: o que já foi feito, quantos e-mails o
@@ -1492,6 +1502,24 @@ def deal_feedback_statistics(de: str | None = None, ate: str | None = None,
     return {"pending": len(aguardando), "filled": len(respondidos),
             "meetingHappened": meeting_yes, "meetingNotHappened": meeting_no,
             "tags": tags, "serie": serie}
+
+
+@router.patch("/execution/activities/{aid}")
+def update_activity_notes(aid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Edita a anotação de uma atividade já realizada.
+
+    O que o SDR escreveu na hora costuma ser telegráfico; a correção vinha
+    depois, e não havia onde escrever — só dava para anotar no lead inteiro,
+    perdendo a qual ligação aquilo se referia.
+    """
+    a = db.get(LeadActivity, aid)
+    if not a:
+        raise HTTPException(404, "Atividade não encontrada.")
+    perm.exigir_dono_lead(db, perm.ator(db), a.lead)
+    if "notes" in payload:
+        a.notes = (payload["notes"] or "").strip()
+    db.commit()
+    return serial.lead_activity(a, datetime.utcnow())
 
 
 @router.post("/execution/activities/{aid}/reschedule")

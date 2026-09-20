@@ -1553,10 +1553,27 @@ function passoTimeline(a) {
         ${a.user ? ` · ${h(a.user.name)}` : ""}</span>
     </div>`;
   }
+  if (a.kind === "DELIVERY") {
+    const [rot, tom] = a.status === "SENT" ? ["Enviado", "green"]
+      : a.status === "SIMULATED" ? ["Simulado", "grey"]
+      : a.status === "BLOCKED" ? ["Bloqueado", "amber"] : ["Falhou", "red"];
+    return `<div class="timeline-item">
+      <span class="pill ${tom}">${h(a.channel === "EMAIL" ? "E-mail" : a.channel)} · ${rot}</span>
+      <strong class="ml-5">${h(a.subject || a.to || "—")}</strong><br>
+      <span class="text-muted text-size-small">${fmtDateTime(a.createdAt)}
+        ${a.to ? ` · ${h(a.to)}` : ""}
+        ${a.openedAt ? ` · <span style="color:#00a443">aberto ${fmtDateTime(a.openedAt)}${
+          a.openCount > 1 ? ` (${a.openCount}×)` : ""}</span>` : ""}
+        ${a.clickedAt ? ` · <span style="color:#00a443">clicou ${fmtDateTime(a.clickedAt)}</span>` : ""}</span>
+      ${a.error ? `<div class="text-size-small mt-10" style="color:#f44336">${h(a.error)}</div>` : ""}
+    </div>`;
+  }
   return `<div class="timeline-item">
     <span class="pill ${a.status === "DONE" ? "green" : a.status === "SKIPPED" ? "grey" : a.late ? "red" : "blue"}">
       ${h(TYPE_LABEL[a.type] || a.type)}</span>
-    <strong class="ml-5">${h(a.activity ? a.activity.name : "")}</strong><br>
+    <strong class="ml-5">${h(a.activity ? a.activity.name : "")}</strong>
+    ${a.status !== "PENDING" ? `<button class="btn btn-default btn-xs ml-5" data-nota-ativ="${a.id}"
+      data-nota="${h(a.notes || "")}" title="Editar anotação">✎</button>` : ""}<br>
     <span class="text-muted text-size-small">
       ${a.status === "PENDING" ? `agendada ${fmtDateTime(a.scheduledAt)}${a.late ? " · atrasada" : ""}`
         : `${a.status === "DONE" ? "realizada" : "ignorada"} ${fmtDateTime(a.doneAt)}`}
@@ -1584,7 +1601,9 @@ PAGES.lead = {
     const etapaAtual = campoEtapa ? (l.customFields || {})[campoEtapa.identifier] || "" : "";
     const filtro = state.leadFiltroTipo || "";
     const passos = l.timeline.filter((a) => !filtro
-      || (filtro === "CALL" ? (a.kind === "CALL" || a.type === "CALL") : a.type === filtro));
+      || (filtro === "CALL" ? (a.kind === "CALL" || a.type === "CALL")
+        : filtro === "E_MAIL" ? (a.kind === "DELIVERY" || a.type === "E_MAIL")
+        : a.type === filtro));
 
     const historico = `
       <div class="toolbar">
@@ -1595,6 +1614,14 @@ PAGES.lead = {
         </select>
         <span class="spacer text-muted text-size-small">${passos.length} de ${l.timeline.length} eventos</span>
       </div>
+      ${l.source || l.channel || l.campaign || l.inbound ? `
+        <div class="alert alert-info alert-styled-left text-size-small">
+          Origem: ${[l.source && `fonte <strong>${h(l.source)}</strong>`,
+                     l.channel && `canal <strong>${h(l.channel)}</strong>`,
+                     l.campaign && `campanha <strong>${h(l.campaign)}</strong>`]
+                    .filter(Boolean).join(" · ") || "—"}${
+            l.inbound ? ` · <span class="pill green">inbound</span>` : ""}
+        </div>` : ""}
       ${passos.length ? `<div class="timeline">${passos.map(passoTimeline).join("")}</div>`
         : emptyState("Nenhum evento no histórico com esse filtro.")}`;
 
@@ -1740,6 +1767,18 @@ PAGES.lead = {
     })();
     const tipo = document.getElementById("ltTipo");
     if (tipo) tipo.onchange = (e) => { state.leadFiltroTipo = e.target.value; go(`lead/${id}`); };
+    // Anotação por atividade: o que o SDR escreveu na hora costuma ser
+    // telegráfico, e a correção não tinha onde morar.
+    view.querySelectorAll("[data-nota-ativ]").forEach((b) => {
+      b.onclick = () => promptOne("Anotação da atividade", "O que aconteceu", async (texto) => {
+        try {
+          await api(`/api/flow/execution/activities/${b.dataset.notaAtiv}`,
+            { method: "PATCH", body: { notes: texto } });
+          toast("Anotação salva.", "ok");
+          go(`lead/${id}`);
+        } catch (e) { toast(e.message, "err"); }
+      }, "Salvar", b.dataset.nota || "");
+    });
 
     const agSalvar = document.getElementById("agSalvar");
     if (agSalvar) {
