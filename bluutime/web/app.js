@@ -3185,10 +3185,16 @@ PAGES.cadencias = {
         <li class="pull-right acoes-cadencia">
           <button class="btn btn-default btn-xs" id="cadVerLeads" disabled
             title="Selecione ao menos uma cadência para habilitar o botão.">Visualizar leads</button>
-          <button class="btn btn-default btn-xs" id="cadPausar" disabled>Pausar execuções</button>
-          <button class="btn btn-default btn-xs" id="cadSeguir" disabled>Continuar execuções</button>
           <button class="btn btn-main btn-xs" id="newCad"${semAtividades ? " disabled" : ""}>${
             (f.type || "STANDARD") === "AUTOMATIC_EMAIL" ? "Criar e-mail automático" : "Criar cadência"}</button>
+          <div class="dropdown cad-mais">
+            <button class="btn btn-default btn-xs" id="cadMais"
+              title="Selecione ao menos uma cadência para habilitar as ações.">▾</button>
+            <ul class="dropdown-menu dropdown-menu-right">
+              <li><a id="cadPausar" class="desabilitado">⏸ Pausar execuções</a></li>
+              <li><a id="cadSeguir" class="desabilitado">▶ Continuar execuções</a></li>
+            </ul>
+          </div>
         </li>
       </ul>
       ${semAtividades ? `<div class="sem-atividades">
@@ -3252,9 +3258,10 @@ PAGES.cadencias = {
     const contador = document.getElementById("cadContador");
     const sincronizar = () => {
       const n = marcadas().length;
-      pausar.disabled = seguir.disabled = verLeads.disabled = !n;
-      pausar.textContent = n ? `Pausar execuções (${n})` : "Pausar execuções";
-      seguir.textContent = n ? `Continuar execuções (${n})` : "Continuar execuções";
+      verLeads.disabled = !n;
+      [pausar, seguir].forEach((a) => a.classList.toggle("desabilitado", !n));
+      pausar.textContent = n ? `⏸ Pausar execuções (${n})` : "⏸ Pausar execuções";
+      seguir.textContent = n ? `▶ Continuar execuções (${n})` : "▶ Continuar execuções";
       contador.textContent = !n ? "Nenhuma cadência selecionada"
         : `${n} cadência${n === 1 ? "" : "s"} selecionada${n === 1 ? "" : "s"}`;
     };
@@ -3286,8 +3293,10 @@ PAGES.cadencias = {
           } catch (e) { toast(e.message, "err"); }
         });
     };
-    pausar.onclick = () => emMassa(false);
-    seguir.onclick = () => emMassa(true);
+    // Item de menu desligado não pode agir: sem `disabled` num <a>, o clique
+    // passaria e chamaria a ação com zero cadências marcadas.
+    pausar.onclick = () => { if (!pausar.classList.contains("desabilitado")) emMassa(false); };
+    seguir.onclick = () => { if (!seguir.classList.contains("desabilitado")) emMassa(true); };
     view.querySelectorAll("[data-drill]").forEach((a) => {
       a.onclick = () => {
         state.leadFilter = { page: 1, limit: 50, cadence_id: a.dataset.drill,
@@ -3296,7 +3305,7 @@ PAGES.cadencias = {
       };
     });
     view.querySelectorAll("[data-open-cad]").forEach((a) => {
-      a.onclick = () => openCadenceDetail(Number(a.dataset.openCad));
+      a.onclick = () => go(`cadencia/${a.dataset.openCad}`);
     });
     view.querySelectorAll("[data-edit-cad]").forEach((b) => {
       b.onclick = () => openCadenceForm(list.find((c) => String(c.id) === b.dataset.editCad));
@@ -3304,112 +3313,234 @@ PAGES.cadencias = {
   },
 };
 
-async function openCadenceDetail(id) {
-  const c = await api(`/api/flow/cadences/${id}`);
-  const byDay = {};
-  c.steps.forEach((s) => { (byDay[s.day] = byDay[s.day] || []).push(s); });
-  const steps = Object.keys(byDay).sort((a, b) => a - b).map((day) => `
-    <div class="mb-20"><strong>Dia ${h(day)}</strong>
-      ${byDay[day].map((s) => `<div class="queue-item" style="grid-template-columns:1fr auto">
-        <div><span class="pill ${s.activity.type === "CALL" ? "blue" : "green"}">${h(TYPE_LABEL[s.activity.type])}</span>
-          <strong class="ml-5">${h(s.activity.name)}</strong>
-          ${s.templateName
-            ? `<span class="pill grey ml-5">modelo: ${h(s.templateName)}</span>`
-            : PRECISA_MODELO.has(s.activity.channel)
-              // Passo de mensagem sem modelo é recusado no envio: melhor dizer
-              // aqui do que na hora de disparar para o lead.
-              ? `<span class="pill amber ml-5">sem modelo — não envia</span>` : ""}
-          ${s.activity.instruction ? `<br><span class="text-muted text-size-small">${h(s.activity.instruction.slice(0, 160))}</span>` : ""}</div>
-        <button class="btn btn-default btn-xs" data-del-step="${s.id}">Remover</button>
-      </div>`).join("")}
-    </div>`).join("") || emptyState("Cadência sem etapas.");
+/* ── Gerenciamento de cadências ────────────────────────────────────────
+   Era um modal com a lista de etapas e um segundo modal para adicionar
+   uma. Na captura é uma página com duas seções sanfonadas — Geral e
+   Atividades — e, dentro de Atividades, dois painéis: a biblioteca de
+   atividades à esquerda e o plano dia a dia à direita. Montar uma cadência
+   de doze passos abrindo doze modais era o que tornava a tela inutilizável. */
+const ICONE_ATIV = { E_MAIL: "✉", CALL: "☎", SOCIAL_POINT: "❝", SEARCH: "⌕", MEETING: "▦" };
+const COR_ATIV = { E_MAIL: "#00acc1", CALL: "var(--ok)", SOCIAL_POINT: "#7e57c2",
+                   SEARCH: "var(--warn)", MEETING: "var(--blu-mid)" };
+const ORDEM_GRUPO = ["E_MAIL", "CALL", "SOCIAL_POINT", "SEARCH", "MEETING"];
 
-  const m = modal({
-    title: c.name, wide: true,
-    body: `${kpis([
-      { value: c.overview.total, label: "Leads" },
-      { value: c.overview.won, label: "Ganhos", tone: "success" },
-      { value: c.overview.lost, label: "Perdidos", tone: "danger" },
-      { value: c.overview.total ? `${Math.round((c.overview.won / c.overview.total) * 100)}%` : "—", label: "Conversão", tone: "info" },
-    ])}
-    <div class="mt-10 mb-20">
-      <span class="pill">${h(FOCUS_LABEL[c.cadenceFocus])}</span>
-      <span class="pill ml-5">${h(PRIORITY_LABEL[c.priority])}</span>
-      ${c.client ? `<span class="pill ml-5" style="border-color:${h(c.client.color)}">${h(c.client.name)}</span>` : ""}
-      <span class="pill ml-5 ${c.executing ? "green" : "grey"}">${c.executing ? "Ativa" : "Pausada"}</span>
-    </div>
-    <h4 style="font-size:13px">Etapas</h4>${steps}`,
-    footer: `<button class="btn btn-default btn-sm" data-add-step>Adicionar etapa</button>
-             <span style="flex:1"></span>
-             <button class="btn btn-default btn-sm" data-close2>Fechar</button>`,
-  });
-  m.root.querySelector("[data-close2]").onclick = m.close;
-  m.root.querySelector("[data-add-step]").onclick = async () => {
-    const [acts, modelos] = await Promise.all([
+PAGES.cadencia = {
+  area: "Prospecção", title: "Gerenciamento de cadências",
+  async render(id) {
+    const cid = Number(id || state.cadenciaAberta);
+    if (!cid) return go("cadencias");
+    state.cadenciaAberta = cid;
+    const [c, acts, modelos] = await Promise.all([
+      api(`/api/flow/cadences/${cid}`),
       api("/api/flow/activities?limit=300"),
-      api("/api/flow/templates"),
+      api("/api/flow/templates").catch(() => []),
     ]);
-    const lista = acts.data || acts;
-    const inner = modal({
-      title: "Adicionar etapa",
-      body: `<div class="field"><label for="stepAct">Atividade</label>
-          <select class="form-control" id="stepAct">${options(acts, "")}</select></div>
-        <div class="field" id="stepTplBox"><label for="stepTpl">Modelo de mensagem</label>
-          <select class="form-control" id="stepTpl"></select>
-          <span class="text-muted text-size-small" id="stepTplAviso"></span></div>
-        <div class="field"><label for="stepDay">Dia da cadência</label>
-          <input class="form-control" type="number" min="1" id="stepDay" value="1"></div>`,
-      footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
-               <button class="btn btn-main btn-sm" data-ok>Adicionar</button>`,
-    });
+    const biblioteca = acts.data || acts;
+    document.getElementById("crumbCurrent").textContent = c.name;
 
-    const selAct = inner.root.querySelector("#stepAct");
-    const selTpl = inner.root.querySelector("#stepTpl");
-    const box = inner.root.querySelector("#stepTplBox");
-    const aviso = inner.root.querySelector("#stepTplAviso");
-    // Só oferece modelo do mesmo canal da atividade — o backend recusa o
-    // contrário, e escolher para depois levar 400 é atrito à toa.
-    const refresh = () => {
-      const act = lista.find((a) => String(a.id) === selAct.value);
-      const canal = act ? act.channel : "";
-      if (!PRECISA_MODELO.has(canal)) {
-        box.style.display = "none";
-        return;
-      }
-      box.style.display = "";
-      const doCanal = modelos.filter((t) => t.channel === canal);
-      selTpl.innerHTML = doCanal.length
-        ? doCanal.map((t) => `<option value="${t.id}">${h(t.name)}</option>`).join("")
-        : `<option value="">— nenhum modelo de ${h(canal)} —</option>`;
-      aviso.textContent = doCanal.length
-        ? `Passo de ${canal}: o texto vem deste modelo.`
-        : `Não há modelo de ${canal}. Crie um em Modelos de mensagem, senão este passo não envia.`;
-    };
-    selAct.onchange = refresh;
-    refresh();
+    const secaoAberta = state.cadSecao || "atividades";
+    const busca = (state.cadBusca || "").toLowerCase();
+    const fechados = state.cadGruposFechados || {};
 
-    inner.root.querySelector("[data-cancel]").onclick = () => { inner.close(); openCadenceDetail(id); };
-    inner.root.querySelector("[data-ok]").onclick = async () => {
-      const body = {
-        activityId: Number(selAct.value),
-        day: Number(inner.root.querySelector("#stepDay").value),
+    // Biblioteca: agrupada por tipo, como no original, e filtrável.
+    const porTipo = {};
+    biblioteca
+      .filter((a) => !busca || a.name.toLowerCase().includes(busca))
+      .forEach((a) => { (porTipo[a.type] = porTipo[a.type] || []).push(a); });
+
+    const porDia = {};
+    c.steps.forEach((s) => { (porDia[s.day] = porDia[s.day] || []).push(s); });
+    const dias = Object.keys(porDia).map(Number).sort((a, b) => a - b);
+    let n = 0;
+
+    view.innerHTML = `
+      <div class="cad-secao">
+        <button class="cad-secao-cab" data-cadsecao="geral">
+          <span class="ok">✓</span> Geral <i>${secaoAberta === "geral" ? "⌄" : "›"}</i>
+        </button>
+        ${secaoAberta === "geral" ? `<div class="cad-secao-corpo">
+          <div class="info-grid">
+            <div class="info-linha"><span>Nome</span><strong>${h(c.name)}</strong></div>
+            <div class="info-linha"><span>Foco</span><strong>${h(FOCUS_LABEL[c.cadenceFocus] || "—")}</strong></div>
+            <div class="info-linha"><span>Prioridade</span><strong>${h(PRIORITY_LABEL[c.priority] || "—")}</strong></div>
+            <div class="info-linha"><span>Cliente</span><strong>${c.client ? h(c.client.name) : "—"}</strong></div>
+            <div class="info-linha"><span>Situação</span><strong>${c.executing
+              ? `<span class="pill green">Ativa</span>` : `<span class="pill grey">Pausada</span>`}</strong></div>
+            <div class="info-linha"><span>Leads</span><strong>${c.overview.total}
+              <span class="text-muted text-size-small">· ${c.overview.won} ganhos · ${c.overview.lost} perdidos</span></strong></div>
+          </div>
+          ${c.description ? `<p class="text-muted mt-10">${h(c.description)}</p>` : ""}
+          <div class="text-right mt-10">
+            <button class="btn btn-default btn-sm" id="cadEditar">Editar dados gerais</button>
+          </div>
+        </div>` : ""}
+      </div>
+
+      <div class="cad-secao">
+        <button class="cad-secao-cab" data-cadsecao="atividades">
+          <span class="ok">✓</span> Atividades <i>${secaoAberta === "atividades" ? "⌄" : "›"}</i>
+        </button>
+        ${secaoAberta === "atividades" ? `<div class="cad-secao-corpo">
+          <div class="cad-builder">
+            <div class="cad-biblioteca">
+              <div class="cad-busca">
+                <span>⌕</span>
+                <input class="form-control" id="cadBusca" placeholder="Pesquisar por atividade"
+                       value="${h(state.cadBusca || "")}">
+              </div>
+              <div class="cad-grupos">
+                ${ORDEM_GRUPO.filter((t) => porTipo[t]).map((t) => `
+                  <div class="cad-grupo">
+                    <button class="cad-grupo-cab" data-cadgrupo="${t}">
+                      <span class="cad-ico" style="background:${COR_ATIV[t]}">${ICONE_ATIV[t]}</span>
+                      ${h(TYPE_LABEL[t] || t)}
+                      <i>${fechados[t] ? "+" : "−"}</i>
+                    </button>
+                    ${fechados[t] ? "" : `<ul>
+                      ${porTipo[t].map((a) => `<li style="border-left-color:${COR_ATIV[t]}"
+                          draggable="true" data-cadarrasta="${a.id}">
+                        <button data-cadadd="${a.id}"
+                          title="${h(a.instruction || a.name)}">${h(a.name)}</button>
+                      </li>`).join("")}
+                    </ul>`}
+                  </div>`).join("")
+                || `<p class="text-muted p-20">${busca ? "Nenhuma atividade com esse nome."
+                     : "Nenhuma atividade cadastrada."}</p>`}
+              </div>
+            </div>
+
+            <div class="cad-plano">
+              ${dias.length ? dias.map((dia) => `
+                <div class="cad-dia" data-cadalvo="${dia}">
+                  <button class="cad-dia-cab" data-caddia="${dia}">Dia: ${dia} <i>⌄</i></button>
+                  <ol class="cad-passos" start="${n + 1}">
+                    ${porDia[dia].map((s) => {
+                      n += 1;
+                      const t = s.activity.type;
+                      return `<li>
+                        <span class="cad-ico" style="background:${COR_ATIV[t] || "#999"}">${ICONE_ATIV[t] || "•"}</span>
+                        <div><strong>${h(s.activity.name)}</strong>
+                          ${s.templateName
+                            ? `<span class="pill grey ml-5">modelo: ${h(s.templateName)}</span>`
+                            : PRECISA_MODELO.has(s.activity.channel)
+                              ? `<span class="pill amber ml-5">sem modelo — não envia</span>` : ""}
+                        </div>
+                        <button class="cad-tirar" data-del-step="${s.id}" title="Remover do dia ${dia}">×</button>
+                      </li>`;
+                    }).join("")}
+                  </ol>
+                </div>`).join("") : emptyState("Cadência sem atividades",
+                  "Arraste uma atividade da esquerda para montar o primeiro dia.")}
+              <div class="cad-dia-novo" data-cadalvo="${(dias[dias.length - 1] || 0) + 1}">
+                Solte aqui para abrir o dia ${(dias[dias.length - 1] || 0) + 1}
+              </div>
+            </div>
+          </div>
+        </div>` : ""}
+      </div>`;
+
+    view.querySelectorAll("[data-cadsecao]").forEach((b) => {
+      b.onclick = () => {
+        state.cadSecao = state.cadSecao === b.dataset.cadsecao ? "" : b.dataset.cadsecao;
+        go(`cadencia/${cid}`);
       };
-      if (box.style.display !== "none" && selTpl.value) body.templateId = Number(selTpl.value);
-      try {
-        await api(`/api/flow/cadences/${id}/steps`, { method: "POST", body });
-        inner.close(); toast("Etapa adicionada.", "ok"); openCadenceDetail(id);
-      } catch (e) { toast(e.message, "err"); }
-    };
-  };
-  m.root.querySelectorAll("[data-del-step]").forEach((b) => {
-    b.onclick = () => confirmDialog("Remover etapa", "Remover esta etapa da cadência?", async () => {
-      try {
-        await api(`/api/flow/cadences/${id}/steps/${b.dataset.delStep}`, { method: "DELETE" });
-        toast("Etapa removida."); openCadenceDetail(id);
-      } catch (e) { toast(e.message, "err"); }
     });
-  });
-}
+    view.querySelectorAll("[data-cadgrupo]").forEach((b) => {
+      b.onclick = () => {
+        const t = b.dataset.cadgrupo;
+        state.cadGruposFechados = { ...fechados, [t]: !fechados[t] };
+        go(`cadencia/${cid}`);
+      };
+    });
+    const campoBusca = document.getElementById("cadBusca");
+    if (campoBusca) {
+      let t;
+      campoBusca.oninput = () => {
+        clearTimeout(t);
+        t = setTimeout(() => { state.cadBusca = campoBusca.value; go(`cadencia/${cid}`); }, 350);
+      };
+    }
+    const editar = document.getElementById("cadEditar");
+    if (editar) editar.onclick = () => openCadenceForm(c);
+
+    /* Montar a cadência é arrastar da biblioteca para um dia, como no
+       original. O clique continua funcionando e cai no último dia: quem usa
+       teclado ou toque não consegue arrastar, e sem isso a tela ficaria
+       inacessível para essas pessoas. */
+    const adicionar = async (activityId, dia) => {
+      const act = biblioteca.find((a) => String(a.id) === String(activityId));
+      if (!act) return;
+      const enviar = async (templateId) => {
+        try {
+          await api(`/api/flow/cadences/${cid}/steps`, { method: "POST",
+            body: { activityId: act.id, day: dia,
+                    ...(templateId ? { templateId } : {}) } });
+          toast(`"${act.name}" no dia ${dia}.`, "ok");
+          go(`cadencia/${cid}`);
+        } catch (e) { toast(e.message, "err"); }
+      };
+      // Passo de mensagem precisa de modelo: pergunta qual antes, senão o
+      // envio é recusado depois, na frente do lead.
+      if (!PRECISA_MODELO.has(act.channel)) return enviar(null);
+      const doCanal = modelos.filter((t) => t.channel === act.channel);
+      if (!doCanal.length) {
+        return toast(`Não há modelo de ${act.channel}. Crie um em Modelos de mensagem, `
+          + "senão este passo não envia.", "err");
+      }
+      const mm = modal({
+        title: `Modelo para "${act.name}"`,
+          body: `<div class="field"><label for="cadTpl">Modelo de mensagem</label>
+            <select class="form-control" id="cadTpl">
+              ${doCanal.map((t) => `<option value="${t.id}">${h(t.name)}</option>`).join("")}
+            </select>
+            <span class="help-block">Passo de ${h(act.channel)}: o texto vem deste modelo.</span></div>`,
+          footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
+                   <button class="btn btn-main btn-sm" data-ok>Adicionar ao dia ${dia}</button>`,
+        });
+      mm.root.querySelector("[data-cancel]").onclick = mm.close;
+      mm.root.querySelector("[data-ok]").onclick = () => {
+        const v = Number(mm.root.querySelector("#cadTpl").value);
+        mm.close();
+        enviar(v);
+      };
+    };
+
+    const ultimoDia = () => dias[dias.length - 1] || 1;
+    view.querySelectorAll("[data-cadadd]").forEach((b) => {
+      b.onclick = () => adicionar(b.dataset.cadadd, ultimoDia());
+    });
+    view.querySelectorAll("[data-cadarrasta]").forEach((li) => {
+      li.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("text/plain", li.dataset.cadarrasta);
+        e.dataTransfer.effectAllowed = "copy";
+        li.classList.add("arrastando");
+      });
+      li.addEventListener("dragend", () => li.classList.remove("arrastando"));
+    });
+    view.querySelectorAll("[data-cadalvo]").forEach((alvoDia) => {
+      alvoDia.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        alvoDia.classList.add("sobre");
+      });
+      alvoDia.addEventListener("dragleave", () => alvoDia.classList.remove("sobre"));
+      alvoDia.addEventListener("drop", (e) => {
+        e.preventDefault();
+        alvoDia.classList.remove("sobre");
+        adicionar(e.dataTransfer.getData("text/plain"), Number(alvoDia.dataset.cadalvo));
+      });
+    });
+    view.querySelectorAll("[data-del-step]").forEach((b) => {
+      b.onclick = () => confirmDialog("Remover atividade",
+        "Remover esta atividade da cadência?", async () => {
+          try {
+            await api(`/api/flow/cadences/${cid}/steps/${b.dataset.delStep}`, { method: "DELETE" });
+            toast("Atividade removida."); go(`cadencia/${cid}`);
+          } catch (e) { toast(e.message, "err"); }
+        });
+    });
+  },
+};
 
 function openCadenceForm(cad) {
   const c = cad || {};

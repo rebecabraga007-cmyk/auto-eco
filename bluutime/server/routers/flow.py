@@ -172,12 +172,26 @@ def add_step(cid: int, payload: dict = Body(...), db: Session = Depends(get_db))
 
 @router.delete("/cadences/{cid}/steps/{sid}")
 def delete_step(cid: int, sid: int, db: Session = Depends(get_db)):
+    """Tira um passo da cadência.
+
+    Passo que já gerou atividade não pode sumir levando a atividade junto: a
+    chave estrangeira de `lead_activity.cadence_step_id` é NO ACTION, então o
+    DELETE estourava 500 — e, se não estourasse, apagaria trabalho que já foi
+    feito e contado nas estatísticas.
+
+    As atividades são soltas do passo em vez de apagadas. Elas viram extras,
+    que é o que de fato são a partir do momento em que o passo não existe
+    mais: continuam no histórico do lead e na fila de quem as tem pendentes.
+    """
     perm.ator(db).exigir("gestor", "editar etapa de cadência")
     s = db.get(CadenceStep, sid)
-    if s and s.cadence_id == cid:
-        db.delete(s)
-        db.commit()
-    return {"ok": True}
+    if not s or s.cadence_id != cid:
+        return {"ok": True}
+    soltas = (db.query(LeadActivity).filter(LeadActivity.cadence_step_id == sid)
+              .update({"cadence_step_id": None}, synchronize_session=False))
+    db.delete(s)
+    db.commit()
+    return {"ok": True, "atividadesSoltas": soltas}
 
 
 # ── Modelos de mensagem ──

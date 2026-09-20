@@ -2030,3 +2030,67 @@ tr.ativ-detalhe-linha > td { background: var(--creme); padding: 0 !important; }
 .painel-meta { display: flex; align-items: center; justify-content: flex-end; gap: 8px;
   margin-bottom: 10px; font-size: 12.5px; color: var(--text); }
 .painel-meta small { color: var(--muted); font-style: italic; }
+
+/* ── Gerenciamento de cadências ────────────────────────────────────────
+   Seções sanfonadas e, dentro de Atividades, os dois painéis: biblioteca à
+   esquerda, plano por dia à direita. */
+.cad-secao { margin-bottom: 14px; background: var(--panel); border: 1px solid var(--line-soft);
+  border-radius: 3px; overflow: hidden; }
+.cad-secao-cab { display: flex; align-items: center; gap: 8px; width: 100%; padding: 16px 20px;
+  border: 0; background: none; font-size: 15px; color: var(--link); cursor: pointer; text-align: left; }
+.cad-secao-cab .ok { display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; font-size: 11px; color: #fff; background: var(--ok); border-radius: 50%; }
+.cad-secao-cab i { margin-left: auto; font-style: normal; color: var(--muted); }
+.cad-secao-corpo { padding: 0 20px 20px; }
+
+.cad-builder { display: grid; grid-template-columns: 340px 1fr; gap: 24px; align-items: start; }
+.cad-biblioteca { border: 1px solid var(--line-soft); border-radius: 3px; overflow: hidden; }
+.cad-busca { display: flex; align-items: center; gap: 6px; padding: 10px;
+  border-bottom: 1px solid var(--line-soft); }
+.cad-busca span { color: var(--muted); }
+.cad-grupos { max-height: 520px; overflow-y: auto; }
+.cad-grupo-cab { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px;
+  border: 0; background: none; font-size: 13px; color: var(--text); cursor: pointer; text-align: left; }
+.cad-grupo-cab i { margin-left: auto; font-style: normal; color: var(--muted); }
+.cad-grupo ul { margin: 0 0 8px; padding: 0; list-style: none; }
+.cad-grupo li { border-left: 3px solid var(--line); margin-left: 22px; }
+.cad-grupo li button { display: block; width: 100%; padding: 6px 10px; border: 0; background: none;
+  font-size: 12.5px; color: var(--text); text-align: left; cursor: pointer; }
+.cad-grupo li button:hover { background: var(--blu-soft); }
+/* Ícone redondo colorido por tipo de atividade, como no original. */
+.cad-ico { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  width: 26px; height: 26px; font-size: 12px; color: #fff; border-radius: 50%; }
+
+.cad-plano { min-width: 0; }
+.cad-dia { padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--line-soft); }
+.cad-dia-cab { padding: 8px 0; border: 0; background: none; font-size: 14px; color: var(--text);
+  cursor: default; }
+.cad-dia-cab i { margin-left: 6px; font-style: normal; color: var(--muted); }
+.cad-passos { margin: 0; padding-left: 26px; }
+.cad-passos li { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+.cad-passos li > div { flex: 1; min-width: 0; }
+.cad-tirar { border: 0; background: none; font-size: 16px; color: var(--muted); cursor: pointer; }
+.cad-tirar:hover { color: var(--red); }
+.cad-add-aqui { margin-left: 26px; border: 0; background: none; font-size: 12px;
+  color: var(--link); cursor: pointer; }
+.cad-novo-dia { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+@media (max-width: 1000px) { .cad-builder { grid-template-columns: 1fr; } }
+
+/* Menu "▾" ao lado de Criar cadência, com as ações em massa dentro. */
+.cad-mais { position: relative; display: inline-block; }
+.cad-mais .dropdown-menu { top: 100%; min-width: 190px; }
+.cad-mais:hover .dropdown-menu, .cad-mais.aberto .dropdown-menu { display: block; }
+.dropdown-menu a.desabilitado { color: var(--muted); cursor: default; opacity: .6; }
+.dropdown-menu a.desabilitado:hover { background: none; }
+
+/* Arrastar da biblioteca para o dia. */
+.cad-grupo li[draggable] { cursor: grab; }
+.cad-grupo li.arrastando { opacity: .45; }
+.cad-dia.sobre, .cad-dia-novo.sobre { background: var(--blu-soft); border-radius: 3px; }
+.cad-dia-novo { margin-top: 12px; padding: 16px; font-size: 12.5px; color: var(--muted);
+  text-align: center; border: 1px dashed var(--line); border-radius: 3px; }
+/* A lupa mora dentro do campo, como no original. */
+.cad-busca input { background-image: none; padding-left: 30px; }
+.cad-busca { position: relative; }
+.cad-busca::before { content: "⌕"; position: absolute; left: 20px; top: 50%;
+  transform: translateY(-50%); color: var(--muted); pointer-events: none; }
