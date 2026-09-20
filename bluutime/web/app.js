@@ -155,7 +155,8 @@ const statusPill = (s) => {
 // Canais cujo passo carrega texto — os demais (ligação, pesquisa) não têm modelo.
 const PRECISA_MODELO = new Set(["EMAIL", "WHATSAPP", "SOCIAL"]);
 
-const TYPE_LABEL = { CALL: "Ligação", E_MAIL: "E-mail", SEARCH: "Pesquisa", SOCIAL_POINT: "Ponto social" };
+const TYPE_LABEL = { CALL: "Ligação", E_MAIL: "E-mail", SEARCH: "Pesquisa",
+                     SOCIAL_POINT: "Ponto social", MEETING: "Reunião" };
 const PRIORITY_LABEL = { VERY_HIGH: "Muito alta", HIGH: "Alta", MEDIUM: "Média", LOW: "Baixa" };
 const FOCUS_LABEL = { OUTBOUND: "Outbound", INBOUND: "Inbound", ACTIVE_INBOUND: "Inbound ativo", OTHER: "Outro" };
 
@@ -1642,6 +1643,27 @@ PAGES.lead = {
       ${passos.length ? `<div class="timeline">${passos.map(passoTimeline).join("")}</div>`
         : emptyState("Nenhum evento no histórico com esse filtro.")}`;
 
+    // Reunião: o Meetime tem "agendamento" e "registro" como abas separadas.
+    // Aqui é uma só, porque a reunião vira uma atividade no histórico e, se já
+    // aconteceu, entra também no feedback de oportunidade.
+    const reuniao = `
+      <div class="alert alert-info alert-styled-left">
+        Agendar cria uma atividade de reunião no histórico. Registrar marca que
+        ela aconteceu — é o que o feedback de oportunidade pergunta depois.
+      </div>
+      <div class="field-row">
+        <div class="field"><label for="rnQuando">Data e hora</label>
+          <input class="form-control" type="datetime-local" id="rnQuando"></div>
+        <div class="field"><label for="rnComo">O que registrar</label>
+          <select class="form-control" id="rnComo">
+            <option value="agendar">Agendar para o futuro</option>
+            <option value="aconteceu">Registrar que já aconteceu</option>
+          </select></div>
+      </div>
+      <div class="field"><label for="rnNota">Anotação</label>
+        <textarea class="form-control" id="rnNota" rows="3" placeholder="Com quem, o que ficou combinado…"></textarea></div>
+      <button class="btn btn-main btn-sm" id="rnSalvar">Salvar</button>`;
+
     const dados = `<table class="table"><tbody>${[
       ["Empresa", h(l.company || "—")], ["Cargo", h(l.position || "—")],
       ["CNPJ", h(l.cnpj || "—")], ["Telefone", h(l.phone || "—")],
@@ -1747,11 +1769,14 @@ PAGES.lead = {
         <div>
           <ul class="nav nav-tabs">
             ${[["historico", "Histórico"], ["agendar", "Agendar atividade"],
+               ["reuniao", "Reunião"], ["conversas", "Conversas"],
                ["dados", "Dados"], ["anotacoes", "Anotações"]].map(([k, v]) =>
               `<li${aba === k ? ' class="active"' : ""}><a data-laba="${k}">${v}</a></li>`).join("")}
           </ul>
           <div class="panel panel-flat"><div class="panel-body">
             ${aba === "historico" ? historico : aba === "agendar" ? agendar
+              : aba === "reuniao" ? reuniao
+              : aba === "conversas" ? `<div id="leadConversas">${LOADING}</div>`
               : aba === "dados" ? dados : anotacoes}
           </div></div>
         </div>
@@ -1802,6 +1827,60 @@ PAGES.lead = {
         } catch (e) { toast(e.message, "err"); }
       }, "Salvar", b.dataset.nota || "");
     });
+
+    const rnSalvar = document.getElementById("rnSalvar");
+    if (rnSalvar) rnSalvar.onclick = async (ev) => {
+      const quando = document.getElementById("rnQuando").value;
+      if (!quando) return toast("Escolha a data da reunião.", "err");
+      const aconteceu = document.getElementById("rnComo").value === "aconteceu";
+      const bt = ev.currentTarget;
+      bt.disabled = true;
+      try {
+        await api(`/api/flow/leads/${id}/activities`, { method: "POST", body: {
+          type: "MEETING", scheduledAt: new Date(quando).toISOString().slice(0, 19),
+          done: aconteceu, notes: document.getElementById("rnNota").value.trim(),
+        } });
+        toast(aconteceu ? "Reunião registrada." : "Reunião agendada.", "ok");
+        state.leadAba = "historico";
+        go(`lead/${id}`);
+      } catch (e) { toast(e.message, "err"); bt.disabled = false; }
+    };
+
+    // Conversas do lead: a mesma conversa de WhatsApp, sem sair da página.
+    if (aba === "conversas") (async () => {
+      const box = document.getElementById("leadConversas");
+      if (!box) return;
+      try {
+        const lista = await api("/api/whatsapp/conversations");
+        const minhas = lista.filter((c) => c.lead && c.lead.id === l.id);
+        if (!minhas.length) {
+          box.innerHTML = `<p class="text-muted">Nenhuma conversa com este lead.</p>
+            ${l.phone ? `<button class="btn btn-default btn-sm" data-abrir-wa>Abrir conversa no WhatsApp</button>` : ""}`;
+          const abrir = box.querySelector("[data-abrir-wa]");
+          if (abrir) abrir.onclick = async () => {
+            try {
+              const c = await api("/api/whatsapp/conversations", { method: "POST", body: { leadId: l.id } });
+              state.waActive = c.id;
+              go("whatsapp");
+            } catch (e) { toast(e.message, "err"); }
+          };
+          return;
+        }
+        const c = await api(`/api/whatsapp/conversations/${minhas[0].id}?limit=40`);
+        box.innerHTML = `
+          <div class="wa-thread" style="max-height:420px">${c.messages.map((msg) => `
+            <div class="bubble ${msg.direction === "OUT" ? "out" : "in"}">${h(msg.body)}
+              <time>${fmtDateTime(msg.sentAt)}</time></div>`).join("")
+            || `<div class="text-muted" style="text-align:center">Sem mensagens.</div>`}</div>
+          <button class="btn btn-default btn-sm mt-10" data-ir-wa>Abrir em Conversas</button>`;
+        box.querySelector("[data-ir-wa]").onclick = () => {
+          state.waActive = minhas[0].id;
+          go("whatsapp");
+        };
+      } catch (e) {
+        box.innerHTML = `<span class="text-muted text-size-small">${h(e.message)}</span>`;
+      }
+    })();
 
     const agSalvar = document.getElementById("agSalvar");
     if (agSalvar) {

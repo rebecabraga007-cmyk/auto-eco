@@ -576,15 +576,27 @@ def create_extra_activity(lid: int, payload: dict = Body(...), db: Session = Dep
     if modelo_id and not db.get(Activity, modelo_id):
         raise HTTPException(400, "Atividade da biblioteca não encontrada.")
 
+    # "Já aconteceu" nasce concluída: registrar uma reunião de ontem como
+    # pendente colocaria na fila de hoje uma coisa que ninguém precisa fazer.
+    feita = bool(payload.get("done"))
     a = LeadActivity(lead_id=lid, activity_id=modelo_id, cadence_step_id=None,
                      user_id=lead.sdr_id or ator.user_id, type=tipo,
                      social_network=payload.get("socialNetwork", ""),
-                     status="PENDING", scheduled_at=agendada,
+                     status="DONE" if feita else "PENDING", scheduled_at=agendada,
+                     done_at=agendada if feita else None,
                      notes=(payload.get("notes") or "").strip())
     db.add(a)
+    # Reunião registrada responde metade do feedback de oportunidade: se há um
+    # pendente sem data, a data passa a ser esta em vez de ficar em branco.
+    if feita and tipo == "MEETING":
+        fb = (db.query(LeadFeedback)
+              .filter(LeadFeedback.lead_id == lid, LeadFeedback.meeting_at.is_(None))
+              .order_by(LeadFeedback.created_at.desc()).first())
+        if fb:
+            fb.meeting_at = agendada
     # Lead parado com atividade marcada volta a contar como em prospecção —
     # senão ele sumiria da fila justamente depois de alguém agendar algo.
-    if lead.status == "WAITING":
+    if lead.status == "WAITING" and not feita:
         lead.status = "EXECUTING"
     db.commit()
     return serial.lead_activity(a, datetime.utcnow())

@@ -15,7 +15,9 @@ from .db import Base
 
 LEAD_STATUS = ["WAITING", "EXECUTING", "ON_EXTRA_ACTIVITY", "PAUSED_FROM_EXECUTING",
                "WON", "LOST", "SWITCHED_CADENCE"]
-ACTIVITY_TYPES = ["SEARCH", "CALL", "E_MAIL", "SOCIAL_POINT"]
+# MEETING entra depois dos quatro do Meetime porque a reunião aqui não é
+# passo de cadência: ela é sempre avulsa, criada na aba Reunião do lead.
+ACTIVITY_TYPES = ["SEARCH", "CALL", "E_MAIL", "SOCIAL_POINT", "MEETING"]
 
 # O canal é a pergunta que o resto do sistema faz ("por onde isso sai?"), e
 # `SOCIAL_POINT` sozinho não responde: WhatsApp e LinkedIn são o mesmo tipo.
