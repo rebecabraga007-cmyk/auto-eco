@@ -873,8 +873,14 @@ def goals(ref: str, db: Session = Depends(get_db)):
     except ValueError:
         d = date.today()
     month = date(d.year, d.month, 1)
-    rows = db.query(Goal).filter_by(target_month=month).all()
+    rows = [g for g in db.query(Goal).filter_by(target_month=month).all() if g.user]
+    total = sum(g.opportunities_goal for g in rows)
     return {"targetMonth": month.isoformat(),
+            # Totais da empresa: é por eles que o original começa, e depois
+            # distribui entre os participantes.
+            "company": {"opportunitiesGoal": total,
+                        "conversionRateGoal": (round(sum(g.conversion_rate_goal for g in rows)
+                                                     / len(rows), 4) if rows else 0.15)},
             "usersGoals": [{"user": {"id": g.user.id, "name": g.user.name},
                             "opportunitiesGoal": g.opportunities_goal,
                             "conversionRateGoal": g.conversion_rate_goal} for g in rows]}
@@ -882,16 +888,26 @@ def goals(ref: str, db: Session = Depends(get_db)):
 
 @router.put("/flow/goals/{ref}")
 def set_goals(ref: str, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Grava a lista de participantes inteira.
+
+    Quem não vem no corpo deixa de ser participante do mês — antes não havia
+    como tirar alguém: a meta de um SDR que saiu do time continuava somando
+    no total da empresa para sempre.
+    """
     perm.ator(db).exigir("gestor", "definir metas do time")
     d = date.fromisoformat(ref) if ref else date.today()
     month = date(d.year, d.month, 1)
+    enviados = set()
     for item in payload.get("usersGoals", []):
-        uid = item["userId"]
+        uid = int(item["userId"])
+        enviados.add(uid)
         g = db.query(Goal).filter_by(user_id=uid, target_month=month).first()
         if not g:
             g = Goal(user_id=uid, target_month=month)
             db.add(g)
         g.opportunities_goal = int(item.get("opportunitiesGoal", 25))
         g.conversion_rate_goal = float(item.get("conversionRateGoal", 0.15))
+    (db.query(Goal).filter(Goal.target_month == month, Goal.user_id.notin_(enviados or [-1]))
+     .delete(synchronize_session=False))
     db.commit()
     return goals(ref, db)

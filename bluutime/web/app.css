@@ -1445,3 +1445,18 @@ tr.row-detail > td { padding: 0 16px 16px !important; border-top: 0 !important; 
   background: var(--line-soft);
   border-radius: 9px;
 }
+
+/* Metas: o total da empresa em cima dos participantes. */
+.gm-total {
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 3px;
+}
+.gm-total .field { display: inline-block; width: 46%; margin-right: 3%; vertical-align: top; }
+
+/* Origem dos leads: barra de conversão por base. */
+.origem-linha { margin-bottom: 12px; }
+.origem-topo { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 3px; font-size: 12.5px; }
+.qual-barra > span { display: block; height: 100%; }

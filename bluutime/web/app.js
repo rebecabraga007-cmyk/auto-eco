@@ -388,10 +388,18 @@ async function boot() {
 api("/api/me").then(boot).catch(showLogin);
 
 /* ── Dashboard ───────────────────────────────────────────────────────── */
+// Mês de referência do Dashboard: `null` é o mês corrente. O original tem
+// seletor de período nas metas, e sem ele não dava para olhar um mês fechado.
+function mesRef(delta = 0) {
+  const base = state.metaMes ? new Date(`${state.metaMes}T12:00:00`) : new Date();
+  const d = new Date(base.getFullYear(), base.getMonth() + delta, 1, 12);
+  return diaISO(d);
+}
+
 PAGES.dashboard = {
   area: "Dashboard", title: "Visão geral",
   async render() {
-    const ref = todayISO();
+    const ref = state.metaMes || todayISO();
     // O esforço necessário vem junto: a meta sozinha diz onde chegar, o
     // esforço diz quanto trabalho falta para lá — e era o que ninguém via.
     const [g, esforco] = await Promise.all([
@@ -422,10 +430,15 @@ PAGES.dashboard = {
       <div class="dashboard-head">
         <h1>Visão geral</h1>
         <div class="goal-filters">
-          <span>${new Date(g.targetMonth).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}</span>
+          <button class="btn btn-default btn-xs" id="mesAnterior" title="Mês anterior" aria-label="Mês anterior">‹</button>
+          <span>${new Date(`${g.targetMonth.slice(0, 10)}T12:00:00`).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}</span>
+          <button class="btn btn-default btn-xs" id="mesSeguinte" title="Mês seguinte" aria-label="Mês seguinte">›</button>
+          ${state.metaMes ? `<button class="btn btn-default btn-xs" id="mesHoje">Este mês</button>` : ""}
           <span><i class="blue-dot"></i>${state.cadences.length} cadências</span>
           <span><i class="blue-dot"></i>${state.users.length} usuários</span>
-          <button class="btn-goal" id="editGoals">Editar metas</button>
+          ${nivelPeloMenos("gestor")
+            ? `<button class="btn-goal" id="editGoals">Editar metas</button>`
+            : `<span class="text-muted text-size-small">Só gestor edita metas.</span>`}
         </div>
       </div>
       ${painelEsforco}
@@ -501,7 +514,12 @@ PAGES.dashboard = {
           <div class="panel-body">${bars(g.byClient.map((c) => ({ label: c.client, value: c.won + c.lost })))}</div></div>
       </div>`;
 
-    document.getElementById("editGoals").onclick = () => openGoalsModal(ref);
+    const editar = document.getElementById("editGoals");
+    if (editar) editar.onclick = () => openGoalsModal(ref);
+    document.getElementById("mesAnterior").onclick = () => { state.metaMes = mesRef(-1); go("dashboard"); };
+    document.getElementById("mesSeguinte").onclick = () => { state.metaMes = mesRef(1); go("dashboard"); };
+    const hoje = document.getElementById("mesHoje");
+    if (hoje) hoje.onclick = () => { state.metaMes = null; go("dashboard"); };
   },
 };
 
@@ -531,34 +549,172 @@ function renderGoalChart(series, target) {
   </svg>`;
 }
 
+/** Modal de metas: total da empresa em cima, participantes embaixo.
+ *
+ * Antes listava os 36 usuários da base — inativos inclusive — com dois
+ * campos cada, e não havia nem total nem como tirar alguém. No original a
+ * meta nasce no nível da empresa e é distribuída entre quem participa. */
 async function openGoalsModal(ref) {
   const current = await api(`/api/flow/goals/${ref}`);
-  const byUser = Object.fromEntries(current.usersGoals.map((g) => [g.user.id, g]));
+  const nome = (id) => (state.users.find((u) => u.id === id) || {}).name || `Usuário ${id}`;
+  // Estado local: o modal recalcula enquanto se digita e só grava no fim.
+  let linhas = current.usersGoals.map((g) => ({
+    userId: g.user.id, nome: g.user.name,
+    meta: g.opportunitiesGoal, conv: Math.round(g.conversionRateGoal * 100),
+  }));
+
   const m = modal({
-    title: "Metas do mês",
-    body: state.users.map((u) => {
-      const g = byUser[u.id] || {};
-      return `<div class="field-row" data-uid="${u.id}">
-        <div class="field"><label>${h(u.name)} — oportunidades</label>
-          <input class="form-control" type="number" min="0" data-goal value="${g.opportunitiesGoal ?? 25}"></div>
-        <div class="field"><label>Conversão alvo (%)</label>
-          <input class="form-control" type="number" min="1" max="100" data-conv value="${Math.round((g.conversionRateGoal ?? 0.15) * 100)}"></div>
-      </div>`;
-    }).join(""),
+    wide: true,
+    title: `Metas de ${new Date(`${current.targetMonth}T12:00:00`).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}`,
+    body: `<div id="gmCorpo"></div>`,
     footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
              <button class="btn btn-main btn-sm" data-save>Salvar metas</button>`,
   });
+
+  const desenhar = () => {
+    const total = linhas.reduce((n, l) => n + (Number(l.meta) || 0), 0);
+    const convMedia = linhas.length
+      ? Math.round(linhas.reduce((n, l) => n + (Number(l.conv) || 0), 0) / linhas.length) : 15;
+    const disponiveis = state.users
+      .filter((u) => u.active !== false && !linhas.some((l) => l.userId === u.id));
+    m.root.querySelector("#gmCorpo").innerHTML = `
+      <div class="gm-total">
+        <div class="field"><label for="gmMeta">Meta de oportunidades da empresa</label>
+          <input class="form-control" type="number" min="0" id="gmMeta" value="${total}"></div>
+        <div class="field"><label for="gmConv">Conversão alvo (%)</label>
+          <input class="form-control" type="number" min="1" max="100" id="gmConv" value="${convMedia}"></div>
+        <div class="text-muted text-size-small">
+          Mexer aqui redistribui entre os ${linhas.length} participante${linhas.length === 1 ? "" : "s"};
+          mexer em alguém embaixo atualiza o total.</div>
+      </div>
+      ${linhas.length ? linhas.map((l, i) => `
+        <div class="field-row gm-linha" data-i="${i}">
+          <div class="field"><label>${h(l.nome)} — oportunidades</label>
+            <input class="form-control" type="number" min="0" data-goal value="${l.meta}"></div>
+          <div class="field"><label>Conversão alvo (%)</label>
+            <input class="form-control" type="number" min="1" max="100" data-conv value="${l.conv}"></div>
+          <div class="field" style="flex:0 0 auto;align-self:end">
+            <button class="btn btn-default btn-xs" data-remover="${i}" title="Tirar da meta">Remover</button></div>
+        </div>`).join("")
+        : `<p class="text-muted">Nenhum participante ainda — escolha alguém abaixo.</p>`}
+      ${disponiveis.length ? `
+        <div class="toolbar mt-10" style="border:0;padding:0;background:none">
+          <select class="form-control" id="gmNovo">${options(disponiveis, "", { blank: "Adicionar participante…" })}</select>
+        </div>` : `<p class="text-muted text-size-small">Todos os usuários ativos já participam.</p>`}`;
+
+    m.root.querySelectorAll(".gm-linha").forEach((row) => {
+      const i = Number(row.dataset.i);
+      row.querySelector("[data-goal]").oninput = (e) => { linhas[i].meta = Number(e.target.value) || 0; atualizarTotal(); };
+      row.querySelector("[data-conv]").oninput = (e) => { linhas[i].conv = Number(e.target.value) || 0; atualizarTotal(); };
+      row.querySelector("[data-remover]").onclick = () => { linhas.splice(i, 1); desenhar(); };
+    });
+    const novo = m.root.querySelector("#gmNovo");
+    if (novo) novo.onchange = () => {
+      const id = Number(novo.value);
+      if (!id) return;
+      linhas.push({ userId: id, nome: nome(id), meta: 25, conv: convMedia || 15 });
+      desenhar();
+    };
+    m.root.querySelector("#gmMeta").onchange = (e) => {
+      const alvo = Number(e.target.value) || 0;
+      if (!linhas.length) return desenhar();
+      // Divisão inteira com o resto no primeiro: somar 7 em 3 pessoas tem que
+      // dar 7, e não 6 nem 9.
+      const base = Math.floor(alvo / linhas.length);
+      const resto = alvo - base * linhas.length;
+      linhas = linhas.map((l, i) => ({ ...l, meta: base + (i < resto ? 1 : 0) }));
+      desenhar();
+    };
+    m.root.querySelector("#gmConv").onchange = (e) => {
+      const v = Number(e.target.value) || 0;
+      linhas = linhas.map((l) => ({ ...l, conv: v }));
+      desenhar();
+    };
+  };
+
+  const atualizarTotal = () => {
+    const total = linhas.reduce((n, l) => n + (Number(l.meta) || 0), 0);
+    const conv = linhas.length
+      ? Math.round(linhas.reduce((n, l) => n + (Number(l.conv) || 0), 0) / linhas.length) : 15;
+    m.root.querySelector("#gmMeta").value = total;
+    m.root.querySelector("#gmConv").value = conv;
+  };
+
+  desenhar();
   m.root.querySelector("[data-cancel]").onclick = m.close;
-  m.root.querySelector("[data-save]").onclick = async () => {
-    const usersGoals = [...m.root.querySelectorAll("[data-uid]")].map((row) => ({
-      userId: Number(row.dataset.uid),
-      opportunitiesGoal: Number(row.querySelector("[data-goal]").value),
-      conversionRateGoal: Number(row.querySelector("[data-conv]").value) / 100,
-    }));
-    await api(`/api/flow/goals/${ref}`, { method: "PUT", body: { usersGoals } });
-    m.close();
-    toast("Metas atualizadas.", "ok");
-    go("dashboard");
+  m.root.querySelector("[data-save]").onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      await api(`/api/flow/goals/${ref}`, { method: "PUT", body: {
+        usersGoals: linhas.map((l) => ({
+          userId: l.userId, opportunitiesGoal: Number(l.meta) || 0,
+          conversionRateGoal: (Number(l.conv) || 0) / 100,
+        })),
+      } });
+      m.close();
+      toast("Metas atualizadas.", "ok");
+      go("dashboard");
+    } catch (err) { toast(err.message, "err"); btn.disabled = false; }
+  };
+}
+
+/** Origem dos leads com conversão, não só volume.
+ *
+ * A origem aqui é a base de onde o lead veio: o Bluutime não guarda fonte,
+ * canal e campanha como o Meetime, que os recebe da integração de inbound. */
+function painelOrigem(origins) {
+  const ordem = state.origemOrdem || "total";
+  const lista = [...origins].sort((a, b) => ordem === "conversao"
+    ? (b.won / Math.max(1, b.total)) - (a.won / Math.max(1, a.total))
+    : b.total - a.total);
+  const linha = (o) => {
+    const pct = o.total ? Math.round((o.won / o.total) * 100) : 0;
+    return `<div class="origem-linha">
+      <div class="origem-topo"><span>${h(o.name)}</span>
+        <strong>${o.won}/${o.total}</strong></div>
+      <div class="qual-barra" title="${o.won} ganhos e ${o.lost} perdidos">
+        <span class="qual-sim" style="width:${pct}%"></span>
+        <span class="qual-nao" style="width:${100 - pct}%"></span>
+      </div>
+      <div class="text-muted text-size-small">${pct}% de conversão</div>
+    </div>`;
+  };
+  return `
+    <div class="panel panel-flat">
+      <div class="panel-heading has-border">
+        <div><h2 class="panel-title">Origem dos leads</h2>
+          <div class="text-muted text-size-small">Base de onde o lead veio, com quanto cada uma converte</div></div>
+        <div class="heading-elements">
+          <select class="form-control input-xs" id="origemOrdem">
+            <option value="total"${ordem === "total" ? " selected" : ""}>Por volume</option>
+            <option value="conversao"${ordem === "conversao" ? " selected" : ""}>Por conversão</option>
+          </select>
+          ${lista.length > 6 ? `<button class="btn btn-default btn-xs" id="origemMais">Ver mais</button>` : ""}
+        </div>
+      </div>
+      <div class="panel-body">${lista.length ? lista.slice(0, 6).map(linha).join("")
+        : emptyState("Nenhum lead finalizado no período.")}</div>
+    </div>`;
+}
+
+function ligarPainelOrigem(origins) {
+  const sel = document.getElementById("origemOrdem");
+  if (sel) sel.onchange = () => { state.origemOrdem = sel.value; go("estatisticas"); };
+  const mais = document.getElementById("origemMais");
+  if (mais) mais.onclick = () => {
+    const lista = [...origins].sort((a, b) => b.total - a.total);
+    const m = modal({
+      wide: true,
+      title: `Origem dos leads (${lista.length})`,
+      body: table(["Origem", "Ganhos", "Perdidos", "Total", "Conversão"],
+        lista.map((o) => ({ cells: [
+          h(o.name), o.won, o.lost, o.total,
+          `${o.total ? Math.round((o.won / o.total) * 100) : 0}%`,
+        ] })), { scroll: true }),
+      footer: `<button class="btn btn-main btn-sm" data-close-origem>Fechar</button>`,
+    });
+    m.root.querySelector("[data-close-origem]").onclick = m.close;
   };
 }
 
@@ -3075,12 +3231,13 @@ PAGES.estatisticas = {
       </div>
       <div class="two-col">
         ${panel("Motivos de perda", bars(s.lostReasons.slice(0, 8).map((r) => ({ label: r.name, value: r.count, tone: "warning" }))))}
-        ${panel("Origem dos leads", bars(s.origins.slice(0, 8).map((o) => ({ label: o.name, value: o.total }))))}
+        ${painelOrigem(s.origins)}
       </div>
       ${panel("Conversão por cadência",
         table(["Cadência", "Cliente", "Prioridade", "Leads", "Ganhos", "Conversão"], cadRows))}`;
 
     ligar();
+    ligarPainelOrigem(s.origins);
   },
 };
 
