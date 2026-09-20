@@ -234,6 +234,9 @@ class LeadBase(Base):
     source_query: Mapped[str] = mapped_column(Text, default="")      # JSON da consulta CapiBLU
     number_of_leads: Mapped[int] = mapped_column(Integer, default=0)
     discarded_leads: Mapped[int] = mapped_column(Integer, default=0)
+    # Amostra das linhas descartadas na importação (JSON). Só o número não
+    # ajuda ninguém: "descartei 40" sem dizer quais é um problema sem pista.
+    discarded_sample: Mapped[str] = mapped_column(Text, default="")
     client_id: Mapped[int | None] = mapped_column(ForeignKey("client.id"))
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

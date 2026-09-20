@@ -401,10 +401,12 @@ PAGES.dashboard = {
   area: "Dashboard", title: "Visão geral",
   async render() {
     const ref = state.metaMes || todayISO();
+    const fm = state.metaFiltro || {};
+    const qsMeta = new URLSearchParams(Object.entries(fm).filter(([, v]) => v));
     // O esforço necessário vem junto: a meta sozinha diz onde chegar, o
     // esforço diz quanto trabalho falta para lá — e era o que ninguém via.
     const [g, esforco] = await Promise.all([
-      api(`/api/flow/goals/${ref}/progress`),
+      api(`/api/flow/goals/${ref}/progress?${qsMeta}`),
       api(`/api/flow/goals/${ref}/calculate-effort`).catch(() => null),
     ]);
     const pct = g.goal.opportunities ? Math.round((g.actual.won / g.goal.opportunities) * 100) : 0;
@@ -435,8 +437,8 @@ PAGES.dashboard = {
           <span>${new Date(`${g.targetMonth.slice(0, 10)}T12:00:00`).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}</span>
           <button class="btn btn-default btn-xs" id="mesSeguinte" title="Mês seguinte" aria-label="Mês seguinte">›</button>
           ${state.metaMes ? `<button class="btn btn-default btn-xs" id="mesHoje">Este mês</button>` : ""}
-          <span><i class="blue-dot"></i>${state.cadences.length} cadências</span>
-          <span><i class="blue-dot"></i>${state.users.length} usuários</span>
+          <select class="form-control input-xs" id="metaCad">${options(state.cadences, fm.cadence_id, { blank: "Todas as cadências" })}</select>
+          <select class="form-control input-xs" id="metaUser">${options(state.users, fm.user_id, { blank: "Todos os usuários" })}</select>
           ${nivelPeloMenos("gestor")
             ? `<button class="btn-goal" id="editGoals">Editar metas</button>`
             : `<span class="text-muted text-size-small">Só gestor edita metas.</span>`}
@@ -449,7 +451,11 @@ PAGES.dashboard = {
           <div class="goal-title">Oportunidades no mês</div>
           <div class="goal-info-row">
             <div class="round-icon">◎</div>
-            <div>Meta de oportunidades<br><strong style="color:#00a443">${g.goal.opportunities}</strong>
+            <div>Meta de oportunidades<br>${g.goal.definida
+              ? `<strong style="color:#00a443">${g.goal.opportunities}</strong>`
+              : `<span class="pill amber">sem meta definida</span>
+                 ${nivelPeloMenos("gestor") ? `<a id="definirMeta" style="cursor:pointer;text-decoration:underline">definir</a>` : ""}
+                 <span class="text-muted text-size-small">— o gráfico usa ${g.goal.opportunities} como referência</span>`}
             · conversão alvo ${Math.round(g.goal.conversionRate * 100)}%</div>
           </div>
           <div class="goal-info-row">
@@ -523,6 +529,14 @@ PAGES.dashboard = {
       g.lostReasons.map((r) => ({ label: r.name, count: r.count })));
     const editar = document.getElementById("editGoals");
     if (editar) editar.onclick = () => openGoalsModal(ref);
+    const definir = document.getElementById("definirMeta");
+    if (definir) definir.onclick = () => openGoalsModal(ref);
+    document.getElementById("metaCad").onchange = (e) => {
+      state.metaFiltro = { ...fm, cadence_id: e.target.value }; go("dashboard");
+    };
+    document.getElementById("metaUser").onchange = (e) => {
+      state.metaFiltro = { ...fm, user_id: e.target.value }; go("dashboard");
+    };
     document.getElementById("mesAnterior").onclick = () => { state.metaMes = mesRef(-1); go("dashboard"); };
     document.getElementById("mesSeguinte").onclick = () => { state.metaMes = mesRef(1); go("dashboard"); };
     const hoje = document.getElementById("mesHoje");
@@ -2863,7 +2877,10 @@ PAGES.bases = {
       `<strong>${h(b.name)}</strong>`,
       `<span class="pill ${b.source === "CAPIBLU" ? "green" : "grey"}">${h(b.source)}</span>`,
       b.client ? h(b.client.name) : "—",
-      b.numberOfLeads, b.discardedLeads,
+      b.numberOfLeads,
+      (b.discardedSample || []).length
+        ? `<a data-descartes="${b.id}">${b.discardedLeads}</a>`
+        : b.discardedLeads,
       `<span class="pill ${b.status === "COMPLETED" ? "green" : b.status === "FAILED" ? "red" : "amber"}">${h(b.status)}</span>`,
       b.createdBy ? h(b.createdBy.name) : "—",
       fmtDate(b.created),
@@ -2887,6 +2904,29 @@ PAGES.bases = {
     document.getElementById("importCsv").onclick = openImportWizard;
     view.querySelectorAll("[data-leads-base]").forEach((b) => {
       b.onclick = () => { state.leadFilter = { lead_base_id: b.dataset.leadsBase, page: 1 }; go("leads"); };
+    });
+    // "Descartei 40" sem dizer quais é um problema sem pista: a amostra mostra
+    // a linha, o motivo e o que vinha no arquivo.
+    view.querySelectorAll("[data-descartes]").forEach((a) => {
+      a.onclick = () => {
+        const base = res.data.find((x) => String(x.id) === a.dataset.descartes);
+        const amostra = base.discardedSample || [];
+        const m = modal({
+          wide: true,
+          title: `Descartados em "${base.name}" (${base.discardedLeads})`,
+          body: `<p class="text-muted text-size-small">
+              ${amostra.length < base.discardedLeads
+                ? `Amostra das ${amostra.length} primeiras; a importação guarda até 20.`
+                : "Todas as linhas descartadas."}</p>
+            ${table(["Linha", "Motivo", "O que vinha no arquivo"], amostra.map((d) => ({ cells: [
+              d.linha, h(d.motivo),
+              `<code style="font-size:11px">${h(Object.entries(d.dados || {})
+                .map(([k, v]) => `${k}=${v}`).join(" · ").slice(0, 160))}</code>`] })),
+              { scroll: true, empty: "Sem amostra guardada — base importada antes deste registro." })}`,
+          footer: `<button class="btn btn-main btn-sm" data-close-desc>Fechar</button>`,
+        });
+        m.root.querySelector("[data-close-desc]").onclick = m.close;
+      };
     });
     view.querySelectorAll("[data-del-base]").forEach((b) => {
       const n = Number(b.dataset.n) || 0;

@@ -1059,11 +1059,16 @@ def import_base(payload: dict = Body(...), db: Session = Depends(get_db)):
     defaults = {"cadenceId": payload.get("cadenceId"), "sdrId": sdr_id,
                 "clientId": payload.get("clientId"), "leadBaseId": base.id}
     imported = discarded = 0
+    descartadas = []
     for raw in reader:
         row = {field: (raw.get(col) or "").strip()
                for field, col in mapping.items() if col}
         if not row.get("name"):
             discarded += 1
+            if len(descartadas) < 20:      # amostra, não o arquivo inteiro
+                descartadas.append({"linha": discarded + imported + 1,
+                                    "motivo": "sem nome",
+                                    "dados": {k: v for k, v in list(raw.items())[:6]}})
             continue
         lead = _build_lead(db, row, defaults)
         lead.lead_base_id = base.id
@@ -1074,6 +1079,7 @@ def import_base(payload: dict = Body(...), db: Session = Depends(get_db)):
         imported += 1
     base.number_of_leads = imported
     base.discarded_leads = discarded
+    base.discarded_sample = json.dumps(descartadas, ensure_ascii=False)
     base.status = "COMPLETED"
     _fire_webhooks(db, "BASE.IMPORTED", {"leadBaseId": base.id, "name": base.name,
                                          "imported": imported, "discarded": discarded})

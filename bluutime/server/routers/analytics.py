@@ -93,16 +93,33 @@ def control_panel(client_id: int | None = None, since: str | None = None,
 
 
 @router.get("/flow/goals/{ref}/progress")
-def goal_progress(ref: str, db: Session = Depends(get_db)):
-    """Dashboard de metas: ganhos por dia × linha da meta, ranking e insights."""
+def goal_progress(ref: str, user_id: int | None = None, cadence_id: int | None = None,
+                  db: Session = Depends(get_db)):
+    """Dashboard de metas: ganhos por dia × linha da meta, ranking e insights.
+
+    Aceita recorte por usuário e por cadência — o cabeçalho do original tem os
+    dois, e sem eles o gráfico só sabia falar da empresa inteira.
+    """
     start, end = _month_range(ref)
     today = min(datetime.utcnow(), end)
     goals = db.query(Goal).filter_by(target_month=start.date()).all()
+    if user_id:
+        goals = [g for g in goals if g.user_id == user_id]
+    # Meta ausente não vira 25 em silêncio: o front mostra o estado "sem meta
+    # definida" e o convite a definir, como no original.
+    definida = bool(goals and sum(g.opportunities_goal for g in goals))
     target = sum(g.opportunities_goal for g in goals) or 25
     conv_goal = (sum(g.conversion_rate_goal for g in goals) / len(goals)) if goals else 0.15
 
-    won = db.query(Lead).filter(Lead.won_at.between(start, end)).all()
-    lost = db.query(Lead).filter(Lead.lost_at.between(start, end)).all()
+    won_q = db.query(Lead).filter(Lead.won_at.between(start, end))
+    lost_q = db.query(Lead).filter(Lead.lost_at.between(start, end))
+    if user_id:
+        won_q = won_q.filter(Lead.sdr_id == user_id)
+        lost_q = lost_q.filter(Lead.sdr_id == user_id)
+    if cadence_id:
+        won_q = won_q.filter(Lead.cadence_id == cadence_id)
+        lost_q = lost_q.filter(Lead.cadence_id == cadence_id)
+    won, lost = won_q.all(), lost_q.all()
     per_day = Counter(l.won_at.date().isoformat() for l in won)
 
     days_in_month = (end - start).days
@@ -186,7 +203,8 @@ def goal_progress(ref: str, db: Session = Depends(get_db)):
 
     return {
         "targetMonth": start.date().isoformat(),
-        "goal": {"opportunities": target, "conversionRate": conv_goal},
+        "goal": {"opportunities": target, "conversionRate": conv_goal,
+                 "definida": definida},
         "actual": {"won": len(won), "lost": len(lost),
                    "conversion": round(len(won) / total * 100, 1) if total else 0},
         "expectedByNow": expected, "gapPercent": round(gap, 1),

@@ -1,4 +1,5 @@
 """Serialização — mantém o formato de resposta compatível com a API do Meetime."""
+import json
 from datetime import datetime
 
 from . import agenda
@@ -110,11 +111,20 @@ def call(c):
     }
 
 
+def _json_ou_lista(texto):
+    """Amostra de descarte gravada como JSON; base antiga não tem nada."""
+    try:
+        return json.loads(texto or "[]")
+    except ValueError:
+        return []
+
+
 def lead_base(b):
     return {"id": b.id, "name": b.name, "status": b.status, "source": b.source,
             "sourceQuery": b.source_query, "numberOfLeads": b.number_of_leads,
             "discardedLeads": b.discarded_leads, "client": client(b.client),
-            "createdBy": user_min(b.created_by), "created": iso(b.created_at)}
+            "createdBy": user_min(b.created_by), "created": iso(b.created_at),
+            "discardedSample": _json_ou_lista(b.discarded_sample)}
 
 
 def queue_score(la, now) -> float:
