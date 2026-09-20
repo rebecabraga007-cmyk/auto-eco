@@ -65,6 +65,11 @@ class Company(Base):
     # Liga/desliga o lead scoring inteiro. Desligado, todo lead pontua 0 e a
     # coluna some da lista — é o que o toggle do original faz.
     fitscore_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Preço do minuto e do assento: o Meetime lê da fatura e do plano. Aqui
+    # quem informa é a empresa — é o dado que ela tem, e melhor um número que
+    # alguém digitou sabendo de onde veio do que uma constante escondida.
+    minute_price: Mapped[float] = mapped_column(Float, default=0.47)
+    seat_price: Mapped[float] = mapped_column(Float, default=0.0)
     regular_user_can_import: Mapped[bool] = mapped_column(Boolean, default=False)
     smart_queue_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     working_days: Mapped[str] = mapped_column(String(20), default="1,2,3,4,5")  # 1=segunda .. 7=domingo

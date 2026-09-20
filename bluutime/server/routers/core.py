@@ -145,7 +145,8 @@ def my_company(db: Session = Depends(get_db)):
     return {"id": c.id, "name": c.name, "phone": c.phone, "site": c.site,
             "modules": c.modules.split(","),
             "addOns": c.add_ons.split(",") if c.add_ons else [],
-            "status": c.status, "monthlyValue": c.monthly_value}
+            "status": c.status, "monthlyValue": c.monthly_value,
+            "seatPrice": c.seat_price, "minutePrice": c.minute_price}
 
 
 @router.get("/users/me/permissions")
@@ -709,6 +710,7 @@ def flow_config(db: Session = Depends(get_db)):
             "leadStageFieldId": c.lead_stage_field_id,
             "responseTimeGoalHours": c.response_time_goal_hours,
             "fitscoreEnabled": c.fitscore_enabled,
+            "minutePrice": c.minute_price, "seatPrice": c.seat_price,
             "usersGoals": [{"userId": u.id, "dailyGoal": u.daily_goal} for u in users]}
 
 
@@ -728,6 +730,10 @@ def update_flow_config(payload: dict = Body(...), db: Session = Depends(get_db))
         c.smart_queue_enabled = bool(payload["smartQueueEnabled"])
     if "fitscoreEnabled" in payload:
         c.fitscore_enabled = bool(payload["fitscoreEnabled"])
+    if "minutePrice" in payload:
+        c.minute_price = max(0.0, float(payload["minutePrice"] or 0))
+    if "seatPrice" in payload:
+        c.seat_price = max(0.0, float(payload["seatPrice"] or 0))
     if "responseTimeGoalHours" in payload:
         c.response_time_goal_hours = max(1, int(payload["responseTimeGoalHours"] or 24))
     if "leadStageFieldId" in payload:

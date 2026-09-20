@@ -7323,6 +7323,11 @@ PAGES.usuarios = {
         <span class="spacer"></span>
         ${admin ? `<button class="btn btn-main btn-xs" id="newUser">Novo usuário</button>` : ""}
       </div>
+      ${(empresa.seatPrice || 0) > 0 ? `<div class="alert alert-info alert-styled-left">
+        ${users.data.filter((u) => u.active !== false).length} assento(s) ativo(s) ×
+        ${fmtMoney(empresa.seatPrice)} = <strong>${fmtMoney(
+          users.data.filter((u) => u.active !== false).length * empresa.seatPrice)}/mês</strong>.
+        Inativar alguém tira o assento da conta no próximo ciclo.</div>` : ""}
       ${panel(`Usuários (${p.totalRowCount})`,
         table(["Usuário", "Papéis", "Time", "Meta diária", "Login", "Leads", "Situação", ""], rows,
           { scroll: true, empty: f.q ? "Ninguém com esse nome ou e-mail." : "Nenhum usuário." }),
@@ -7839,6 +7844,18 @@ PAGES.ajustes = {
           <label><input type="checkbox" id="cfgFila"${cfg.smartQueueEnabled ? " checked" : ""}>
             Fila inteligente <span class="text-muted text-size-small">— prioriza quem tem mais chance de responder</span></label>
         </div>
+        <div class="filter-row" style="grid-template-columns:1fr 1fr">
+          <div><label class="text-muted text-size-small">Tarifa por minuto de ligação (R$)</label>
+            <input class="form-control" type="number" step="0.01" min="0" id="cfgMinuto"
+                   value="${cfg.minutePrice || 0.47}">
+            <span class="help-block">Usada no Extrato. Informe o que a operadora cobra — o número
+              sai da fatura de vocês, não de uma constante minha.</span></div>
+          <div><label class="text-muted text-size-small">Custo por assento/mês (R$)</label>
+            <input class="form-control" type="number" step="0.01" min="0" id="cfgAssento"
+                   value="${cfg.seatPrice || 0}">
+            <span class="help-block">Zero esconde o cálculo. Com valor, a tela de Usuários mostra
+              quanto o time custa por mês.</span></div>
+        </div>
         <div class="field"><label class="text-muted text-size-small">Blacklist de domínios de e-mail
           <span class="text-grey">— um por linha; lead desses domínios é perdido automaticamente</span></label>
           <textarea class="form-control" id="cfgBlacklist" rows="3" placeholder="concorrente.com.br">${h(cfg.blacklist.join("\n"))}</textarea>
@@ -8098,6 +8115,8 @@ PAGES.ajustes = {
           smartQueueEnabled: document.getElementById("cfgFila").checked,
           workingDays: dias,
           blacklist: document.getElementById("cfgBlacklist").value.split("\n").map((s) => s.trim()).filter(Boolean),
+          minutePrice: Number(document.getElementById("cfgMinuto").value) || 0,
+          seatPrice: Number(document.getElementById("cfgAssento").value) || 0,
         } });
         toast("Configurações salvas.", "ok");
         go("ajustes");

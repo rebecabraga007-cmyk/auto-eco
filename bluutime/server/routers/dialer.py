@@ -16,7 +16,18 @@ from .analytics import ids_de, usuarios_do_time
 
 router = APIRouter(prefix="/api/dialer")
 
-MINUTE_PRICE = 0.47  # R$/min — mesma ordem de grandeza do extrato Meetime
+MINUTE_PRICE = 0.47  # padrão quando a empresa não informou a tarifa dela
+
+
+def _preco_minuto(db: Session) -> float:
+    """Tarifa da empresa, com o padrão como rede de segurança.
+
+    O Meetime lê da fatura da operadora; aqui quem informa é quem paga a
+    conta. Melhor um número que alguém digitou sabendo de onde veio do que uma
+    constante escondida no código.
+    """
+    c = db.query(Company).first()
+    return float(getattr(c, "minute_price", 0) or MINUTE_PRICE) if c else MINUTE_PRICE
 
 
 def _company(db: Session) -> Company:
@@ -535,7 +546,7 @@ def register_call(payload: dict = Body(...), db: Session = Depends(get_db)):
              output=payload.get("output", "") if status == "CONNECTED" else "",
              duration=int(payload.get("duration") or 0),
              important=bool(payload.get("important")))
-    c.price = round(c.duration / 60 * MINUTE_PRICE, 4)
+    c.price = round(c.duration / 60 * _preco_minuto(db), 4)
     db.add(c)
     db.commit()
     return serial.call(c)
@@ -614,17 +625,18 @@ def statement(since: str | None = None, until: str | None = None,
     do_time = usuarios_do_time(db, team_id)
     if do_time is not None:
         q = q.filter(Call.user_id.in_(do_time))
+    preco = _preco_minuto(db)
     rows = q.group_by(Call.user_id).all()
     users = {u.id: u for u in db.query(User).all()}
     data, total_min, total_cost = [], 0, 0.0
     for uid, count, seconds in rows:
         minutes = round((seconds or 0) / 60, 1)
-        cost = round(minutes * MINUTE_PRICE, 2)
+        cost = round(minutes * preco, 2)
         total_min += minutes
         total_cost += cost
         data.append({"user": serial.user_min(users.get(uid)), "calls": count,
                      "minutes": minutes, "cost": cost})
     return {"data": data, "meta": {"totalMinutes": round(total_min, 1),
                                    "totalCost": round(total_cost, 2),
-                                   "pricePerMinute": MINUTE_PRICE,
+                                   "pricePerMinute": preco,
                                    "startDate": serial.iso(start), "endDate": serial.iso(end)}}
