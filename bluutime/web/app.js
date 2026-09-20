@@ -3274,8 +3274,13 @@ PAGES.whatsapp = {
     // Estado do canal junto: uma lista vazia por não haver conversa é bem
     // diferente de uma lista vazia porque ninguém pareou o número, e antes as
     // duas apareciam idênticas.
+    const f = state.waFiltro || {};
+    const qs = new URLSearchParams();
+    if (f.q) qs.set("q", f.q);
+    if (f.user_id) qs.set("user_id", f.user_id);
+    if (f.unread) qs.set("unread", "true");
     const [list, canais] = await Promise.all([
-      api("/api/whatsapp/conversations"),
+      api(`/api/whatsapp/conversations?${qs}`),
       api("/api/envio/canais").catch(() => null),
     ]);
     const wa = canais && canais.channels.find((c) => c.channel === "WHATSAPP");
@@ -3290,20 +3295,37 @@ PAGES.whatsapp = {
          </div>`;
     const activeId = state.waActive || (list[0] && list[0].id);
     const rows = list.map((c) => `<div class="wa-row${c.id === activeId ? " active" : ""}" data-conv="${c.id}">
-      <strong>${h(c.title)}</strong><br>
+      <strong>${h(c.title)}</strong>
+      ${c.unread ? `<span class="badge badge-success">${c.unread}</span>` : ""}<br>
       <span class="text-muted text-size-small">${h(c.preview || "—")}</span><br>
-      <span class="text-muted text-size-small">${fmtDateTime(c.lastMessageAt)}</span></div>`).join("")
-      || emptyState("Nenhuma conversa por aqui ainda");
+      <span class="text-muted text-size-small">${fmtDateTime(c.lastMessageAt)}${
+        c.assignedUser ? ` · ${h(c.assignedUser.name)}` : ""}</span></div>`).join("")
+      || emptyState(f.q || f.user_id || f.unread ? "Nenhuma conversa nesse recorte."
+                                                 : "Nenhuma conversa por aqui ainda");
 
     let thread = `<div class="whatsapp-empty" style="padding:60px">Selecione um contato para visualizar a conversa</div>`;
     if (activeId) {
-      const c = await api(`/api/whatsapp/conversations/${activeId}`);
+      // Carregar mais cresce a janela em vez de trocar de página: com
+      // `before` a tela substituía o trecho novo pelo antigo, e a conversa
+      // aparecia sem as últimas mensagens.
+      const limite = state.waLimite || 60;
+      const c = await api(`/api/whatsapp/conversations/${activeId}?limit=${limite}`);
       thread = `
         <div class="panel-heading has-border"><h2 class="panel-title">${h(c.title)}</h2>
-          <div class="heading-elements"><span class="text-muted text-size-small">${h(c.phone)}</span></div></div>
-        <div class="wa-thread">${c.messages.map((msg) => `
+          <div class="heading-elements">
+            <span class="text-muted text-size-small mr-10">${h(c.phone)}</span>
+            <select class="form-control input-xs" id="waDono" title="Atendente">
+              ${options(state.users, (c.assignedUser || {}).id, { blank: "Sem atendente" })}
+            </select>
+          </div></div>
+        <div class="wa-thread">
+          ${c.restantes ? `<div style="text-align:center;padding:8px">
+            <button class="btn btn-default btn-xs" data-mais="1">
+              Carregar mensagens anteriores (${c.restantes})</button></div>` : ""}
+          ${c.messages.map((msg) => `
           <div class="bubble ${msg.direction === "OUT" ? "out" : "in"}">${h(msg.body)}
-            <time>${fmtDateTime(msg.sentAt)}</time></div>`).join("")
+            <time>${fmtDateTime(msg.sentAt)}${msg.status && msg.status !== "SENT"
+              ? ` · ${h(msg.status.toLowerCase())}` : ""}</time></div>`).join("")
           || `<div class="text-muted" style="text-align:center">Sem mensagens.</div>`}</div>
         <div style="display:flex;gap:8px;padding:14px">
           <input class="form-control" id="waInput" placeholder="Escreva uma mensagem">
@@ -3311,14 +3333,41 @@ PAGES.whatsapp = {
         </div>`;
     }
 
-    view.innerHTML = `${aviso}<div class="split">
-      ${panel("Conversas", `<div class="wa-list">${rows}</div>`)}
-      <div class="panel panel-flat">${thread}</div>
-    </div>`;
+    view.innerHTML = `${aviso}
+      <div class="toolbar">
+        <input class="form-control grow" id="waQ" placeholder="Buscar conversa por nome ou número…" value="${h(f.q || "")}">
+        <select class="form-control" id="waAtendente">${options(state.users, f.user_id, { blank: "Todos os atendentes" })}</select>
+        <label class="text-size-small"><input type="checkbox" id="waNaoLidas"${f.unread ? " checked" : ""}> Só não lidas</label>
+      </div>
+      <div class="split">
+        ${panel(`Conversas (${list.length})`, `<div class="wa-list">${rows}</div>`)}
+        <div class="panel panel-flat">${thread}</div>
+      </div>`;
+
+    const setF = (k, v) => { state.waFiltro = { ...f, [k]: v }; state.waLimite = 60; go("whatsapp"); };
+    let tq;
+    document.getElementById("waQ").oninput = (e) => {
+      clearTimeout(tq);
+      const v = e.target.value;
+      tq = setTimeout(() => setF("q", v), 350);
+    };
+    document.getElementById("waAtendente").onchange = (e) => setF("user_id", e.target.value);
+    document.getElementById("waNaoLidas").onchange = (e) => setF("unread", e.target.checked);
 
     view.querySelectorAll("[data-conv]").forEach((r) => {
-      r.onclick = () => { state.waActive = Number(r.dataset.conv); go("whatsapp"); };
+      r.onclick = () => { state.waActive = Number(r.dataset.conv); state.waLimite = 60; go("whatsapp"); };
     });
+    const mais = view.querySelector("[data-mais]");
+    if (mais) mais.onclick = () => { state.waLimite = (state.waLimite || 60) + 60; go("whatsapp"); };
+    const dono = document.getElementById("waDono");
+    if (dono) dono.onchange = async () => {
+      try {
+        await api(`/api/whatsapp/conversations/${activeId}`, { method: "PATCH",
+          body: { assignedUserId: dono.value || null } });
+        toast(dono.value ? "Conversa atribuída." : "Conversa devolvida para a fila.", "ok");
+        go("whatsapp");
+      } catch (e) { toast(e.message, "err"); }
+    };
     const send = document.getElementById("waSend");
     if (send) {
       const input = document.getElementById("waInput");

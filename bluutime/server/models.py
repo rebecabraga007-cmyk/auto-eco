@@ -462,7 +462,12 @@ class Conversation(Base):
     phone: Mapped[str] = mapped_column(String(30), default="")
     title: Mapped[str] = mapped_column(String(160), default="")
     last_message_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Quem assumiu a conversa, e até onde ela já foi lida. Sem os dois, duas
+    # pessoas respondiam o mesmo contato e o "não lidas" não existia.
+    assigned_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    last_read_at: Mapped[datetime | None] = mapped_column(DateTime)
     lead: Mapped["Lead | None"] = relationship()
+    assigned_user: Mapped["User | None"] = relationship()
 
 
 class Message(Base):

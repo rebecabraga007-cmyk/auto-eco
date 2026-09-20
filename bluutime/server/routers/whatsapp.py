@@ -2,22 +2,25 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
-from sqlalchemy import or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from .. import channels, perm, ratelimit
 from ..db import get_db
-from ..models import Company, Conversation, Delivery, Lead, Message
+from ..models import Company, Conversation, Delivery, Lead, Message, User
 from ..serial import iso
 
 router = APIRouter(prefix="/api/whatsapp")
 
 
-def _conv(c: Conversation, last: Message | None = None) -> dict:
+def _conv(c: Conversation, last: Message | None = None, nao_lidas: int = 0) -> dict:
     return {"id": c.id, "phone": c.phone, "title": c.title or (c.lead.name if c.lead else c.phone),
             "lastMessageAt": iso(c.last_message_at),
             "lead": {"id": c.lead.id, "name": c.lead.name, "company": c.lead.company,
                      "status": c.lead.status} if c.lead else None,
+            "assignedUser": ({"id": c.assigned_user.id, "name": c.assigned_user.name}
+                             if c.assigned_user else None),
+            "unread": nao_lidas,
             "preview": (last.body[:90] if last else "")}
 
 
@@ -29,7 +32,8 @@ async def instance_state():
 
 
 @router.get("/conversations")
-def conversations(q: str | None = None, db: Session = Depends(get_db)):
+def conversations(q: str | None = None, user_id: int | None = None,
+                  unread: bool | None = None, db: Session = Depends(get_db)):
     ator = perm.ator(db)
     query = db.query(Conversation)
     if not ator.pelo_menos("gestor"):
@@ -41,27 +45,78 @@ def conversations(q: str | None = None, db: Session = Depends(get_db)):
             query = query.filter(or_(Conversation.lead_id.is_(None),
                                      Conversation.lead_id.in_(minhas)))
     if q:
-        query = query.filter(Conversation.title.ilike(f"%{q}%"))
+        alvo = f"%{q.strip()}%"
+        query = query.filter(or_(Conversation.title.ilike(alvo), Conversation.phone.ilike(alvo)))
+    if user_id:
+        # Atendente é quem assumiu a conversa; quando ninguém assumiu, vale o
+        # dono do lead — é como o time enxerga "minhas conversas".
+        do_lead = db.query(Lead.id).filter(Lead.sdr_id == user_id)
+        query = query.filter(or_(Conversation.assigned_user_id == user_id,
+                                 and_(Conversation.assigned_user_id.is_(None),
+                                      Conversation.lead_id.in_(do_lead))))
     rows = query.order_by(Conversation.last_message_at.desc()).all()
     out = []
     for c in rows:
         last = (db.query(Message).filter_by(conversation_id=c.id)
                 .order_by(Message.sent_at.desc()).first())
-        out.append(_conv(c, last))
+        nao_lidas = (db.query(func.count(Message.id))
+                     .filter(Message.conversation_id == c.id, Message.direction == "IN",
+                             Message.sent_at > (c.last_read_at or datetime(1970, 1, 1)))
+                     .scalar())
+        if unread and not nao_lidas:
+            continue
+        out.append(_conv(c, last, nao_lidas))
     return out
 
 
 @router.get("/conversations/{cid}")
-def conversation(cid: int, db: Session = Depends(get_db)):
+def conversation(cid: int, limit: int = 60, before: int | None = None,
+                 db: Session = Depends(get_db)):
+    """A conversa e as últimas mensagens.
+
+    `before` carrega o trecho anterior: uma conversa de meses não cabe numa
+    resposta só, e abrir a tela não pode depender de baixar tudo.
+    """
     c = db.get(Conversation, cid)
     if not c:
         raise HTTPException(404, "Conversa não encontrada.")
     perm.exigir_dono_lead(db, perm.ator(db), c.lead)
-    msgs = (db.query(Message).filter_by(conversation_id=cid)
-            .order_by(Message.sent_at).all())
-    return {**_conv(c), "messages": [{"id": m.id, "direction": m.direction,
-                                      "body": m.body, "sentAt": iso(m.sent_at)}
-                                     for m in msgs]}
+    limit = max(10, min(200, limit))
+    q = db.query(Message).filter_by(conversation_id=cid)
+    if before:
+        q = q.filter(Message.id < before)
+    msgs = list(reversed(q.order_by(Message.id.desc()).limit(limit).all()))
+    restantes = (db.query(func.count(Message.id))
+                 .filter(Message.conversation_id == cid,
+                         Message.id < (msgs[0].id if msgs else 0)).scalar())
+    # Abrir a conversa é lê-la: o contador zera aqui, não num botão separado.
+    if not before:
+        c.last_read_at = datetime.utcnow()
+        db.commit()
+    return {**_conv(c), "restantes": restantes,
+            "messages": [{"id": m.id, "direction": m.direction, "body": m.body,
+                          "status": m.status, "sentAt": iso(m.sent_at)} for m in msgs]}
+
+
+@router.patch("/conversations/{cid}")
+def update_conversation(cid: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Atribui a conversa a alguém, ou devolve para a fila.
+
+    Sem dono explícito, duas pessoas respondiam o mesmo contato — e no
+    telefone avulso, sem lead, não havia nem a quem perguntar.
+    """
+    c = db.get(Conversation, cid)
+    if not c:
+        raise HTTPException(404, "Conversa não encontrada.")
+    ator = perm.ator(db)
+    perm.exigir_dono_lead(db, ator, c.lead)
+    if "assignedUserId" in payload:
+        uid = payload["assignedUserId"]
+        if uid and not db.get(User, int(uid)):
+            raise HTTPException(400, "Usuário inválido.")
+        c.assigned_user_id = int(uid) if uid else None
+    db.commit()
+    return _conv(c)
 
 
 @router.post("/conversations")
