@@ -592,14 +592,33 @@ def _csv_response(name: str, header: list[str], rows: list[list]) -> StreamingRe
 
 @router.get("/reports")
 def list_reports():
+    """O catálogo, com o que cada arquivo traz dentro.
+
+    O original mostra cartão expansível com a lista de colunas; sem isso, a
+    escolha do relatório era pelo nome e a descoberta do conteúdo era abrir o
+    CSV no Excel.
+    """
     return [
         {"key": "activity-statistics", "name": "Estatísticas de Atividades",
-         "description": "Produtividade e performance por usuário."},
+         "description": "Produtividade e performance por usuário.",
+         "colunas": ["Usuário", "Atividades realizadas", "Ignoradas", "Ligações",
+                     "Conectadas", "Significativas", "E-mails", "Pesquisas",
+                     "Pontos sociais", "Leads ganhos", "Leads perdidos"],
+         "recorte": "Usa o período escolhido; uma linha por usuário."},
         {"key": "executed-activities", "name": "Atividades Executadas",
-         "description": "Todas as atividades realizadas ou ignoradas, com horário, usuário, cadência e lead."},
+         "description": "Todas as atividades realizadas ou ignoradas, com horário, usuário, cadência e lead.",
+         "colunas": ["Data", "Usuário", "Tipo", "Situação", "Lead", "Empresa",
+                     "Cadência", "Agendada para", "Anotações"],
+         "recorte": "Uma linha por atividade concluída no período."},
         {"key": "dropped-calls", "name": "Ligações Derrubadas",
-         "description": "Chamadas conectadas e encerradas em até 10 segundos."},
-        {"key": "leads", "name": "Leads", "description": "Base completa de leads com status e cliente."},
+         "description": "Chamadas conectadas e encerradas em até 10 segundos.",
+         "colunas": ["Data", "Usuário", "Lead", "Empresa", "Número", "Duração"],
+         "recorte": "Atende e desliga é sinal de abordagem, não de linha."},
+        {"key": "leads", "name": "Leads",
+         "description": "Base completa de leads com status e cliente.",
+         "colunas": ["Lead", "Empresa", "E-mail", "Telefone", "Situação", "SDR",
+                     "Cadência", "Cliente", "Criado em"],
+         "recorte": "A base inteira, não só o período."},
     ]
 
 

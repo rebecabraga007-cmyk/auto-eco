@@ -1464,3 +1464,14 @@ tr.row-detail > td { padding: 0 16px 16px !important; border-top: 0 !important; 
 /* Painel de controle: cabeçalho ordenável. */
 th.ord { cursor: pointer; user-select: none; }
 th.ord:hover { color: var(--text); }
+
+/* Catálogo de relatórios: cartão expansível. */
+.rel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.rel-card { background: var(--panel); border: 1px solid var(--line); border-radius: 3px; }
+.rel-card.aberto { border-color: var(--green-label); }
+.rel-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; cursor: pointer; }
+.rel-top:hover { background: var(--panel-2); }
+.rel-seta { color: var(--muted); font-size: 12px; }
+.rel-corpo { padding: 0 16px 16px; border-top: 1px solid var(--line-soft); }
+.rel-colunas { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+.rel-colunas span { padding: 2px 8px; font-size: 11px; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 10px; }

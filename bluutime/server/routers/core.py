@@ -295,6 +295,43 @@ def _emails_com_login() -> set[str]:
         return set()
 
 
+@router.get("/roles/preview")
+def roles_preview(db: Session = Depends(get_db)):
+    """O que cada papel passa a poder — a prévia do formulário de usuário.
+
+    Sai de `perm.py`, não de uma lista escrita à mão na tela: ADMINISTRATOR e
+    MANAGER viram nível "gestor", o resto fica em "sdr", e o que o SDR pode
+    além da própria carteira é o que a empresa liberou em Permissões.
+    """
+    c = _company(db)
+    liberadas = [nome for nome, ligado in (
+        ("ver leads de todo mundo", c.leads_visible_all),
+        ("adicionar lead individualmente", c.leads_add_manual),
+        ("importar lista de leads", c.regular_user_can_import),
+        ("acessar Estatísticas", c.statistics_access),
+        ("apagar os próprios leads", c.leads_delete)) if ligado]
+    comum = ["trabalhar a própria carteira de leads",
+             "executar a fila e registrar atividade",
+             "conversar no WhatsApp dos próprios leads"]
+    gestor = ["ver e editar leads de todo o time", "painel de controle e estatísticas",
+              "definir metas, cadências e motivos de perda",
+              "dar feedback de coaching nas ligações", "configurar canais e testar envio"]
+    admin = ["criar, editar e excluir usuários", "criar e remover times",
+             "editar dados da empresa", "gerenciar webhooks e tokens de API"]
+    return {"roles": [
+        {"key": "ADMINISTRATOR", "label": "Administrador", "nivel": "gestor",
+         "pode": comum + gestor + admin,
+         "nota": "Administrador da operação. Administrar a plataforma (contas de acesso) "
+                 "continua sendo do admin do CapiBLU."},
+        {"key": "MANAGER", "label": "Gestor", "nivel": "gestor", "pode": comum + gestor,
+         "nota": "Enxerga o time inteiro, mas não mexe em usuários nem na empresa."},
+        {"key": "SALESMAN", "label": "Vendedor", "nivel": "sdr", "pode": comum,
+         "nota": "Além disso, só o que a empresa liberou em Permissões."},
+        {"key": "SDR", "label": "SDR", "nivel": "sdr", "pode": comum,
+         "nota": "Mesmo nível do vendedor."},
+    ], "liberadoParaSdr": liberadas}
+
+
 @router.get("/users")
 def list_users(q: str | None = None, active: bool | None = None,
                team_id: int | None = None, role: str | None = None,

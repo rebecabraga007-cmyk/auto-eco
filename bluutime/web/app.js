@@ -2892,8 +2892,9 @@ function grafLinha(serie, campo, cor, rotulo) {
 
 PAGES["estatisticas-ligacoes"] = {
   area: "Estatísticas", title: "Ligações",
-  async render() {
-    const aba = state.estLigAba || "geral";
+  async render(abaUrl) {
+    const aba = abaUrl || state.estLigAba || "geral";
+    state.estLigAba = aba;
     const qs = filtrosQS();
 
     const abas = `<ul class="nav nav-tabs">
@@ -3019,14 +3020,14 @@ PAGES["estatisticas-ligacoes"] = {
 
     ligarPeriodo(() => go("estatisticas-ligacoes"));
     view.querySelectorAll("[data-estlig]").forEach((a) => {
-      a.onclick = () => { state.estLigAba = a.dataset.estlig; go("estatisticas-ligacoes"); };
+      a.onclick = () => go(`estatisticas-ligacoes/${a.dataset.estlig}`);
     });
     const por = document.getElementById("elPor");
-    if (por) por.onchange = () => { state.estLigPor = por.value; go("estatisticas-ligacoes"); };
+    if (por) por.onchange = () => { state.estLigPor = por.value; go(`estatisticas-ligacoes/${aba}`); };
     const intv = document.getElementById("elIntv");
-    if (intv) intv.onchange = () => { state.estLigIntervalo = intv.value; go("estatisticas-ligacoes"); };
+    if (intv) intv.onchange = () => { state.estLigIntervalo = intv.value; go(`estatisticas-ligacoes/${aba}`); };
     const st = document.getElementById("elStatus");
-    if (st) st.onchange = () => { state.estLigStatus = st.value; go("estatisticas-ligacoes"); };
+    if (st) st.onchange = () => { state.estLigStatus = st.value; go(`estatisticas-ligacoes/${aba}`); };
   },
 };
 
@@ -3391,8 +3392,12 @@ PAGES.whatsapp = {
 /* ── Estatísticas e relatórios ───────────────────────────────────────── */
 PAGES.estatisticas = {
   area: "Estatísticas", title: "Prospecção",
-  async render() {
-    const aba = state.estAba || "geral";
+  // A aba vem na URL (`#estatisticas/email`), como as sub-rotas do original:
+  // sem isso não dava para mandar link de uma visão nem voltar pelo botão do
+  // navegador — toda aba era a mesma URL.
+  async render(abaUrl) {
+    const aba = abaUrl || state.estAba || "geral";
+    state.estAba = aba;
     const clientId = state.statClient || "";
     const abas = `<ul class="nav nav-tabs">
       ${[["geral", "Visão geral"], ["cadencias", "Distribuição nas cadências"],
@@ -3411,7 +3416,7 @@ PAGES.estatisticas = {
       if (c) c.onchange = (e) => { state.statClient = e.target.value; go("estatisticas"); };
       ligarPeriodo(() => go("estatisticas"));
       view.querySelectorAll("[data-estaba]").forEach((a) => {
-        a.onclick = () => { state.estAba = a.dataset.estaba; go("estatisticas"); };
+        a.onclick = () => { state.estAba = a.dataset.estaba; go(`estatisticas/${a.dataset.estaba}`); };
       });
     };
 
@@ -3476,7 +3481,7 @@ PAGES.estatisticas = {
       </div>`;
       ligar();
       const sm = document.getElementById("smPor");
-      if (sm) sm.onchange = () => { state.estMotivoPor = sm.value; go("estatisticas"); };
+      if (sm) sm.onchange = () => { state.estMotivoPor = sm.value; go(`estatisticas/${aba}`); };
       return;
     }
 
@@ -3585,15 +3590,38 @@ PAGES.relatorios = {
   area: "Estatísticas", title: "Relatórios",
   async render() {
     const list = await api("/api/reports");
-    const qs = periodoQS();
-    const rows = list.map((r) => ({ cells: [
-      `<strong>${h(r.name)}</strong>`, h(r.description),
-      `<a class="btn btn-default btn-xs" href="/api/reports/${h(r.key)}${qs}">Baixar CSV</a>`] }));
+    const { since, until } = periodoDatas();
+    const aberto = state.relatorioAberto || "";
+    // Catálogo de cartões, como no original: o que o relatório traz dentro
+    // aparece antes de baixar, não depois de abrir o CSV no Excel.
     view.innerHTML = `
       <div class="toolbar">${periodoControle()}</div>
-      ${panel("Relatórios", table(["Relatório", "Para que serve", ""], rows),
-        { subtitle: "O período escolhido acima vale para o arquivo baixado. CSV com ponto-e-vírgula, compatível com Excel pt-BR." })}`;
+      <div class="rel-grid">
+        ${list.map((r) => `
+          <div class="rel-card${aberto === r.key ? " aberto" : ""}">
+            <div class="rel-top" data-rel="${h(r.key)}">
+              <div><strong>${h(r.name)}</strong>
+                <div class="text-muted text-size-small">${h(r.description)}</div></div>
+              <span class="rel-seta">${aberto === r.key ? "▴" : "▾"}</span>
+            </div>
+            ${aberto === r.key ? `<div class="rel-corpo">
+              <div class="text-muted text-size-small">${h(r.recorte || "")}</div>
+              <div class="rel-colunas">${(r.colunas || []).map((c) => `<span>${h(c)}</span>`).join("")}</div>
+              <div class="text-muted text-size-small mt-10">
+                Período: ${since ? fmtDate(since) : "início"} a ${until ? fmtDate(until) : "hoje"}
+              </div>
+              <a class="btn btn-main btn-xs mt-10" href="/api/reports/${h(r.key)}${periodoQS()}">Baixar CSV</a>
+            </div>` : ""}
+          </div>`).join("")}
+      </div>
+      <p class="text-muted text-size-small mt-10">CSV com ponto-e-vírgula, compatível com Excel pt-BR.</p>`;
     ligarPeriodo(() => go("relatorios"));
+    view.querySelectorAll("[data-rel]").forEach((c) => {
+      c.onclick = () => {
+        state.relatorioAberto = state.relatorioAberto === c.dataset.rel ? "" : c.dataset.rel;
+        go("relatorios");
+      };
+    });
   },
 };
 
@@ -3697,8 +3725,9 @@ function fbSerieChart(serie) {
 
 PAGES["feedback-oportunidade"] = {
   area: "Estatísticas", title: "Feedback de oportunidade",
-  async render() {
-    const modo = state.feedbackAba || "pendentes";
+  async render(abaUrl) {
+    const modo = abaUrl || state.feedbackAba || "pendentes";
+    state.feedbackAba = modo;
     const f = fbFiltro();
     const status = modo === "respondidos" ? "filled" : "pending";
     const gestor = nivelPeloMenos("gestor");
@@ -3732,7 +3761,7 @@ PAGES["feedback-oportunidade"] = {
       <div id="fbBody" class="mt-10"></div>`;
 
     view.querySelectorAll("[data-fbmodo]").forEach((a) => {
-      a.onclick = () => { state.feedbackAba = a.dataset.fbmodo; fbAplicar({}); };
+      a.onclick = () => { state.feedbackAba = a.dataset.fbmodo; go(`feedback-oportunidade/${a.dataset.fbmodo}`); };
     });
     view.querySelectorAll("[data-fbtira]").forEach((b) => {
       b.onclick = () => {
@@ -6357,6 +6386,8 @@ function openUserForm(user) {
         <select class="form-control" id="uRoles" multiple size="4">
           ${ROLES.map((r) => `<option value="${r}"${(u.roles || []).includes(r) ? " selected" : ""}>${r}</option>`).join("")}
         </select></div>
+      <div class="field"><label>O que esse papel passa a poder</label>
+        <div id="uPreview" class="text-muted text-size-small">Carregando…</div></div>
       <div class="field-row">
         <div class="field"><label for="uGoal">Meta diária</label>
           <input class="form-control" type="number" id="uGoal" value="${u.dailyGoal || 170}"></div>
@@ -6370,6 +6401,30 @@ function openUserForm(user) {
              <button class="btn btn-main btn-sm" data-save>Salvar</button>`,
   });
   m.root.querySelector("[data-cancel]").onclick = m.close;
+
+  // Prévia das permissões, vinda do servidor: uma lista escrita na tela
+  // envelheceria em silêncio quando a regra mudasse em `perm.py`.
+  (async () => {
+    const box = m.root.querySelector("#uPreview");
+    let dados;
+    try { dados = await api("/api/roles/preview"); } catch { box.textContent = ""; return; }
+    const desenhar = () => {
+      const escolhidos = [...m.root.querySelector("#uRoles").selectedOptions].map((o) => o.value);
+      const papeis = dados.roles.filter((r) => escolhidos.includes(r.key));
+      if (!papeis.length) return box.innerHTML = "Escolha ao menos um papel.";
+      const nivel = papeis.some((r) => r.nivel === "gestor") ? "gestor" : "sdr";
+      const pode = [...new Set(papeis.flatMap((r) => r.pode))];
+      box.innerHTML = `
+        <div>Nível efetivo: <span class="pill ${nivel === "gestor" ? "green" : "grey"}">${nivel}</span></div>
+        <ul style="padding-left:18px;margin:6px 0">${pode.map((x) => `<li>${h(x)}</li>`).join("")}</ul>
+        ${nivel === "sdr" ? `<div>Liberado pela empresa para SDR:
+          ${dados.liberadoParaSdr.length ? h(dados.liberadoParaSdr.join(", ")) : "nada além da carteira"}.</div>` : ""}
+        ${papeis.map((r) => `<div>${h(r.nota)}</div>`).join("")}`;
+    };
+    m.root.querySelector("#uRoles").onchange = desenhar;
+    desenhar();
+  })();
+
   m.root.querySelector("[data-save]").onclick = async (e) => {
     const body = {
       name: m.root.querySelector("#uName").value.trim(),
