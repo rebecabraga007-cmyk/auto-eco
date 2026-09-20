@@ -586,9 +586,8 @@ def create_extra_activity(lid: int, payload: dict = Body(...), db: Session = Dep
     if tipo not in ACTIVITY_TYPES:
         raise HTTPException(400, f"Tipo inválido. Use um de: {', '.join(ACTIVITY_TYPES)}.")
     quando = payload.get("scheduledAt")
-    try:
-        agendada = datetime.fromisoformat(quando) if quando else datetime.utcnow()
-    except ValueError:
+    agendada = serial.instante(quando) if quando else datetime.utcnow()
+    if agendada is None:
         raise HTTPException(400, "Data inválida.")
 
     modelo_id = payload.get("activityId")
@@ -1583,7 +1582,7 @@ def fill_deal_feedback(fid: int, payload: dict = Body(...), db: Session = Depend
     quando = payload.get("meetingAt")
     if quando:
         try:
-            fb.meeting_at = datetime.fromisoformat(str(quando).replace("Z", ""))
+            fb.meeting_at = serial.instante(quando)
         except ValueError:
             raise HTTPException(400, "Data da reunião inválida.")
     fb.filled_at = datetime.utcnow()
@@ -1667,9 +1666,8 @@ def reschedule(aid: int, payload: dict = Body(...), db: Session = Depends(get_db
     if not a:
         raise HTTPException(404, "Atividade não encontrada.")
     perm.exigir_dono_lead(db, perm.ator(db), a.lead)
-    try:
-        wanted = datetime.fromisoformat(payload["scheduledAt"].replace("Z", ""))
-    except (KeyError, ValueError):
+    wanted = serial.instante(payload.get("scheduledAt"))
+    if wanted is None:
         raise HTTPException(400, "scheduledAt inválido.")
     # Chega em UTC; a janela útil é local. Sem isso dava para reagendar uma
     # ligação para domingo às 3h da manhã.

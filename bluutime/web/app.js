@@ -1101,7 +1101,7 @@ PAGES.execucao = {
             ? `<button class="btn btn-main btn-xs" data-enviar="${a.id}">Enviar</button>`
             : `<button class="btn btn-main btn-xs" data-exec="${a.id}">Executar</button>`}
           <button class="btn btn-default btn-xs" data-adiar="${a.id}">Adiar</button>
-          <button class="btn btn-default btn-xs" data-skip="${a.id}">Ignorar</button>
+          <button class="btn btn-default btn-xs" data-skip="${a.id}" title="Ignorar atividade">Ignorar</button>
           <button class="btn btn-success btn-xs" data-ganho="${a.lead.id}">Ganho</button>
           <button class="btn btn-danger btn-xs" data-perdido="${a.lead.id}">Perdido</button>
           ${a.lead.status === "ON_EXTRA_ACTIVITY"
@@ -1115,22 +1115,38 @@ PAGES.execucao = {
 
     let list;
     if (!items.length) {
-      list = emptyState(f.q ? "Nenhuma atividade com esse texto." : "Fila vazia — nada pendente para agora.");
-    } else if (prefs.agrupar) {
-      // Agrupar por passo é o jeito do original de mostrar a cadência: a
-      // ordem por score continua dentro de cada grupo.
-      const grupos = new Map();
-      items.forEach((a) => {
-        const chave = passoRotulo(a);
-        if (!grupos.has(chave)) grupos.set(chave, []);
-        grupos.get(chave).push(a);
-      });
-      let n = 0;
-      list = [...grupos.entries()].map(([chave, linhas]) => `
-        <div class="queue-grupo">${h(chave)} <span>${linhas.length}</span></div>
-        ${linhas.map((a) => cartao(a, n++)).join("")}`).join("");
+      // Três vazios diferentes, como no original: filtrar sem achar não é a
+      // mesma notícia que a fila ter acabado, nem que ela nunca ter enchido.
+      const filtrando = f.q || f.sdr_id || f.client_id || f.cadence_id || f.type || f.field_id;
+      list = filtrando
+        ? emptyState("Não há nada por aqui.", "Tente limpar os filtros de busca.")
+        : (geral && geral.prospectando)
+          ? emptyState("Você completou todas as atividades para hoje!", "Não há pendências por aqui.")
+          : emptyState("Adicione atividades e busque seu objetivo diário",
+                       "Inicie novos leads para adicionar atividades aqui.");
     } else {
-      list = items.map(cartao).join("");
+      // O original separa "Atividades das Cadências" de "Atividades Extras":
+      // uma vem do passo programado, a outra alguém agendou na mão, e
+      // misturá-las esconde quanto do dia é improviso.
+      let n = 0;
+      const desenhar = (linhas) => prefs.agrupar
+        // Agrupar por passo é o jeito do original de mostrar a cadência: a
+        // ordem por score continua dentro de cada grupo.
+        ? [...linhas.reduce((m, a) => {
+            const chave = passoRotulo(a);
+            return m.set(chave, [...(m.get(chave) || []), a]);
+          }, new Map()).entries()].map(([chave, dogrupo]) => `
+            <div class="queue-grupo">${h(chave)} <span>${dogrupo.length}</span></div>
+            ${dogrupo.map((a) => cartao(a, n++)).join("")}`).join("")
+        : linhas.map((a) => cartao(a, n++)).join("");
+      const daCadencia = items.filter((a) => !a.extra);
+      const extras = items.filter((a) => a.extra);
+      list = (daCadencia.length && extras.length)
+        ? `<div class="queue-secao">Atividades das Cadências <span>${daCadencia.length}</span></div>
+           ${desenhar(daCadencia)}
+           <div class="queue-secao">Atividades Extras <span>${extras.length}</span></div>
+           ${desenhar(extras)}`
+        : desenhar(items);
     }
 
     // `state.leadFields` já vem filtrado no boot: só os personalizados.
@@ -1138,7 +1154,7 @@ PAGES.execucao = {
 
     view.innerHTML = `
       <div class="toolbar">
-        <input class="form-control grow" id="qBusca" placeholder="Buscar lead, empresa, e-mail ou telefone…" value="${h(f.q || "")}">
+        <input class="form-control grow" id="qBusca" placeholder="Nome, email ou telefone" value="${h(f.q || "")}">
         <select class="form-control" id="qSdr">${options(state.users, f.sdr_id, { blank: "Todos os SDRs" })}</select>
         <select class="form-control" id="qClient">${options(state.clients, f.client_id, { blank: "Todos os clientes" })}</select>
         <select class="form-control" id="qCad">${options(state.cadences, f.cadence_id, { blank: "Todas as cadências" })}</select>
@@ -1193,8 +1209,8 @@ PAGES.execucao = {
          <div style="margin:0 -20px -20px">${list}</div>`,
         { subtitle: "Atividades pendentes das próximas 24 horas",
           actions: items.length
-            ? `<button class="btn btn-main btn-xs" id="iniciar2">▶ Modo rápido</button>` : "" })}
-      ${quentes.data.length ? panel(`Leads aguardando a primeira ligação (${quentes.data.length})`,
+            ? `<button class="btn btn-main btn-xs" id="iniciar2" title="O lead não será puxado no modo de Execução rápida se já estiver com alguém">▶ Modo Execução rápida</button>` : "" })}
+      ${quentes.data.length ? panel(`Leads aguardando primeira ligação (${quentes.data.length})`,
         `<div class="toolbar" style="border:0;padding:0 0 8px;background:none">
           <label class="text-size-small"><input type="checkbox" id="hotTodos"> Selecionar todos</label>
           <span class="spacer"></span>

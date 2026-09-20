@@ -1,6 +1,6 @@
 """Serialização — mantém o formato de resposta compatível com a API do Meetime."""
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from . import agenda
 from .models import PRIORITY_WEIGHT, channel_of
@@ -8,6 +8,27 @@ from .models import PRIORITY_WEIGHT, channel_of
 
 def iso(dt: datetime | None) -> str | None:
     return dt.isoformat(timespec="seconds") + "Z" if dt else None
+
+
+def instante(valor) -> datetime | None:
+    """Lê um instante vindo do cliente e devolve datetime ingênuo em UTC.
+
+    O `iso()` daqui devolve "…Z", e é isso que o `toISOString()` do navegador
+    manda de volta. Só que `fromisoformat("…Z")` produz datetime COM fuso, e
+    comparar aware com ingênuo — que é o que está nas colunas — levanta
+    TypeError. O erro aparecia depois do commit: a linha entrava no banco e o
+    cliente recebia 500, então quem tentasse de novo criava duplicata.
+
+    Devolve None quando a string não é uma data — quem chama decide se isso
+    é 400 ou se cai num padrão.
+    """
+    if not valor:
+        return None
+    try:
+        d = datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d.replace(tzinfo=None) if d.tzinfo is None else         d.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def user_min(u):

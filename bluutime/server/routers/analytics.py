@@ -310,8 +310,8 @@ def cadence_steps(cadence_id: int, since: str | None = None, until: str | None =
     tudo produziria uma média sem significado.
     """
     perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
-    end = datetime.fromisoformat(until) if until else datetime.utcnow()
-    start = datetime.fromisoformat(since) if since else end - timedelta(days=30)
+    end = serial.instante(until) or datetime.utcnow()
+    start = serial.instante(since) or end - timedelta(days=30)
 
     cad = db.get(Cadence, cadence_id)
     if not cad:
@@ -357,8 +357,8 @@ def email_statistics(since: str | None = None, until: str | None = None,
     finjo que esta contagem é entregabilidade completa.
     """
     perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
-    end = datetime.fromisoformat(until) if until else datetime.utcnow()
-    start = datetime.fromisoformat(since) if since else end - timedelta(days=30)
+    end = serial.instante(until) or datetime.utcnow()
+    start = serial.instante(since) or end - timedelta(days=30)
 
     entregas = (db.query(Delivery)
                 .filter(Delivery.channel == "EMAIL",
@@ -405,8 +405,8 @@ def performance(since: str | None = None, until: str | None = None,
     derrubar a taxa, senão quem não trabalha aparece com 100%.
     """
     perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
-    end = datetime.fromisoformat(until) if until else datetime.utcnow()
-    start = datetime.fromisoformat(since) if since else end - timedelta(days=30)
+    end = serial.instante(until) or datetime.utcnow()
+    start = serial.instante(since) or end - timedelta(days=30)
     do_time = usuarios_do_time(db, team_id)
 
     usuarios = db.query(User).filter(User.active)
@@ -469,8 +469,8 @@ def response_time(since: str | None = None, until: str | None = None,
     fosse ignorada, que é exatamente o contrário do que a métrica serve.
     """
     perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
-    end = datetime.fromisoformat(until) if until else datetime.utcnow()
-    start = datetime.fromisoformat(since) if since else end - timedelta(days=30)
+    end = serial.instante(until) or datetime.utcnow()
+    start = serial.instante(since) or end - timedelta(days=30)
     meta_horas = _company_goal_hours(db)
 
     q = db.query(Lead).filter(Lead.created_at.between(start, end))
@@ -533,8 +533,8 @@ def lost_reasons_breakdown(since: str | None = None, until: str | None = None,
                            db: Session = Depends(get_db)):
     """Motivos de perda por motivo, usuário, time ou cadência."""
     perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
-    end = datetime.fromisoformat(until) if until else datetime.utcnow()
-    start = datetime.fromisoformat(since) if since else end - timedelta(days=30)
+    end = serial.instante(until) or datetime.utcnow()
+    start = serial.instante(since) or end - timedelta(days=30)
     q = db.query(Lead).filter(Lead.lost_at.between(start, end))
     do_time = usuarios_do_time(db, team_id)
     if do_time is not None:
@@ -560,8 +560,8 @@ def statistics(since: str | None = None, until: str | None = None,
                client_id: int | None = None, team_id: str | None = None,
                db: Session = Depends(get_db)):
     perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
-    end = datetime.fromisoformat(until) if until else datetime.utcnow()
-    start = datetime.fromisoformat(since) if since else end - timedelta(days=30)
+    end = serial.instante(until) or datetime.utcnow()
+    start = serial.instante(since) or end - timedelta(days=30)
     # Time é um conjunto de pessoas, então filtrar por time é filtrar pelo dono:
     # o executor da atividade, o SDR do lead.
     do_time = usuarios_do_time(db, team_id)
@@ -758,8 +758,8 @@ def download_report(key: str, since: str | None = None, until: str | None = None
     # "Relatórios" já é gestor+ (index.html); o servidor tinha ficado mais
     # permissivo que a própria tela que leva até ele.
     perm.ator(db).exigir("gestor", "baixar relatório")
-    end = datetime.fromisoformat(until) if until else datetime.utcnow()
-    start = datetime.fromisoformat(since) if since else end - timedelta(days=30)
+    end = serial.instante(until) or datetime.utcnow()
+    start = serial.instante(since) or end - timedelta(days=30)
 
     if key == "activity-statistics":
         rows = []

@@ -120,8 +120,8 @@ def update_dialer_configuration(payload: dict = Body(...), db: Session = Depends
 
 
 def _range(since: str | None, until: str | None) -> tuple[datetime, datetime]:
-    end = datetime.fromisoformat(until) if until else datetime.utcnow()
-    start = datetime.fromisoformat(since) if since else end.replace(day=1, hour=0, minute=0)
+    end = serial.instante(until) or datetime.utcnow()
+    start = serial.instante(since) or end.replace(day=1, hour=0, minute=0)
     return start, end + timedelta(days=1) if until else end
 
 

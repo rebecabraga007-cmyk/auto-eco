@@ -1854,3 +1854,11 @@ tr.linha-padrao > td { background: rgba(0, 0, 0, .03); }
 .secao-dobra { display: flex; align-items: center; gap: 6px; margin: 18px 0 6px;
   font-size: 13px; font-weight: 400; color: var(--text); cursor: pointer; }
 .secao-dobra span { font-size: 10px; color: var(--muted); }
+
+/* Divisores da fila: a seção (cadência × extras) manda mais que o grupo por
+   passo, então tem peso e cor diferentes. */
+.queue-secao { display: flex; align-items: center; gap: 8px; padding: 12px 20px 8px;
+  font-size: 13px; font-weight: 500; color: var(--text); background: var(--body);
+  border-top: 1px solid var(--line); }
+.queue-secao span { padding: 1px 6px; font-size: 11px; font-weight: 400; color: #fff;
+  background: #888; border-radius: 10px; }
