@@ -51,6 +51,10 @@ BACKUP_DIR = "/var/backups/distribuidor-pg"
 BACKUP_BANCOS = ("global_america", "distribuidor_leads")
 BACKUP_MAX_HORAS = 30      # roda 1x/dia; 30h da folga para um atraso sem virar alerta falso
 
+# Portao de CI do auto-deploy do distribuidor: o arquivo existe enquanto o ultimo commit da main
+# estiver REPROVADO no CI local (e portanto nao publicado no Hetzner).
+CI_BLOQUEADO = "/var/lib/distribuidor/auto-deploy/ci-bloqueado"
+
 # Quando avisar. Os numeros vem do incidente: o limite antigo era 1024 e a
 # queda veio sem aviso nenhum. 60% da margem para varios dias de folga --
 # o vazamento levou tres dias para encher, entao um alerta aos 60% chegaria
@@ -124,6 +128,11 @@ def medir() -> dict:
             dados["servicos"][s] = {"ativo": True, "desligado_de_proposito": True}
     dados["backups"] = _backups() if _habilitado("distribuidor-backup-pg.timer") else {}
     try:
+        with open(CI_BLOQUEADO) as f:
+            dados["ci_bloqueado"] = f.read().strip()
+    except FileNotFoundError:
+        dados["ci_bloqueado"] = ""
+    try:
         uso = shutil.disk_usage("/")
         dados["disco"] = {"total_gb": uso.total / 1e9, "livre_gb": uso.free / 1e9,
                           "fracao": uso.used / uso.total}
@@ -190,8 +199,20 @@ def verificar(silencioso: bool = False) -> dict:
               % (BACKUP_DIR, BACKUP_MAX_HORAS),
               "nenhum dump" if horas is None else "último há %.0fh" % horas)
 
+    sha = d.get("ci_bloqueado") or ""
+    avisa("ci:distribuidor", not sha,
+          "Merge na main do distribuidor reprovado no CI local",
+          "O commit %s da main do joaoBLU/distribuidor-leads falhou no CI local do Hetzner e NÃO foi "
+          "publicado: o distribuidor segue no commit anterior. Um commit novo na main é testado "
+          "sozinho.\n\nO que falhou: /var/log/distribuidor-ci/%s.log\n"
+          "Publicar mesmo assim (hotfix): echo %s > /etc/distribuidor-leads/ci-liberar"
+          % (sha[:7], sha, sha),
+          "commit %s reprovado" % sha[:7])
+
     if not silencioso:
         print("verificado em %s" % time.strftime("%d/%m %H:%M"))
+        if sha:
+            print("  %-14s commit %s REPROVADO (nao publicado)" % ("ci distribuid", sha[:7]))
         for s, i in d["servicos"].items():
             if i.get("desligado_de_proposito"):
                 print("  %-14s desligado (fora da vigia ate o enable)" % s)
