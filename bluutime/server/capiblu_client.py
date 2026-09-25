@@ -39,9 +39,15 @@ def capiblu_error() -> str | None:
 # de produção (app_online/main.py). Caminhos do serviço de dados, sem o
 # prefixo `/capiblu` do mount.
 CONSULTA_PREFIXES = ("/api/person", "/api/phone", "/api/assertiva", "/api/company",
-                     "/api/dossie", "/api/enrich/run")
+                     "/api/dossie", "/api/enrich/run", "/api/funil", "/api/prospeccao/cobertura",
+                     # Bright Data (cobra por perfil entregue) e Casa dos Dados
+                     "/api/linkedin/buscar-fora", "/api/linkedin/funcionarios",
+                     "/api/linkedin/empresa", "/api/empresas/brightdata",
+                     "/api/prospeccao/pessoas", "/api/companies/search")
 GRATUITAS = ("/api/person/name-search", "/api/person/resolve", "/api/cnpj/lookup",
-             "/api/prospeccao/modelo")
+             "/api/prospeccao/modelo",
+             # consulta do protocolo já pago e base local de empresas do LinkedIn
+             "/api/linkedin/funcionarios/", "/api/linkedin/empresas")
 
 
 def custa(caminho: str) -> bool:

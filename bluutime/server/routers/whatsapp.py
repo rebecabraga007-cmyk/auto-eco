@@ -40,11 +40,11 @@ def conversations(q: str | None = None, user_id: int | None = None,
     if not ator.pelo_menos("gestor"):
         empresa = db.query(Company).first()
         if not (empresa and empresa.leads_visible_all):
-            # Conversa sem lead (telefone avulso) não tem dono pra restringir;
-            # conversa de lead só aparece pra quem é dono dele.
+            # SDR vê as conversas dos próprios leads. Conversa sem lead (número
+            # desconhecido que escreveu) é da gestão: antes ela aparecia para
+            # todo SDR, que lia e respondia pelo número da empresa.
             minhas = db.query(Lead.id).filter(Lead.sdr_id == (ator.user_id or -1))
-            query = query.filter(or_(Conversation.lead_id.is_(None),
-                                     Conversation.lead_id.in_(minhas)))
+            query = query.filter(Conversation.lead_id.in_(minhas))
     if q:
         alvo = f"%{q.strip()}%"
         query = query.filter(or_(Conversation.title.ilike(alvo), Conversation.phone.ilike(alvo)))
@@ -81,7 +81,7 @@ def conversation(cid: int, limit: int = 60, before: int | None = None,
     c = db.get(Conversation, cid)
     if not c:
         raise HTTPException(404, "Conversa não encontrada.")
-    perm.exigir_dono_lead(db, perm.ator(db), c.lead)
+    perm.exigir_dono_lead(db, perm.ator(db), c.lead, escrita=False)
     limit = max(10, min(200, limit))
     q = db.query(Message).filter_by(conversation_id=cid)
     if before:
@@ -115,6 +115,10 @@ def update_conversation(cid: int, payload: dict = Body(...), db: Session = Depen
         uid = payload["assignedUserId"]
         if uid and not db.get(User, int(uid)):
             raise HTTPException(400, "Usuário inválido.")
+        # SDR só assume para si ou devolve para a fila; repassar para outra
+        # pessoa é distribuição, decisão de gestor.
+        if uid and int(uid) != ator.user_id and not ator.pelo_menos("gestor"):
+            raise HTTPException(403, "Só gestor repassa a conversa para outra pessoa.")
         c.assigned_user_id = int(uid) if uid else None
     db.commit()
     return _conv(c)

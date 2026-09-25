@@ -149,6 +149,11 @@ class User(Base):
     # quem assina — em domínio já verificado, senão o provedor recusa.
     email_from: Mapped[str] = mapped_column(String(180), default="")
     avatar_url: Mapped[str] = mapped_column(String(300), default="")
+    # Telefonia (Zenvia Voice): a chamada toca primeiro no SDR — no ramal (o
+    # webphone aberto no navegador) ou, sem ramal, no celular dele. O ramal é
+    # atribuído pelo gestor; o celular, o próprio usuário informa.
+    zenvia_ramal: Mapped[str] = mapped_column(String(20), default="")
+    phone_ramal: Mapped[str] = mapped_column(String(30), default="")
     team: Mapped["Team | None"] = relationship(back_populates="users")
 
     @property
@@ -416,6 +421,11 @@ class Call(Base):
     price: Mapped[float] = mapped_column(Float, default=0.0)
     important: Mapped[bool] = mapped_column(Boolean, default=False)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Chamada discada pela Zenvia: o id dela e a gravação. Ligação registrada à
+    # mão (softphone por fora) fica com os dois vazios.
+    provider: Mapped[str] = mapped_column(String(20), default="")
+    provider_id: Mapped[str] = mapped_column(String(40), default="", index=True)
+    recording_url: Mapped[str] = mapped_column(String(500), default="")
     user: Mapped["User | None"] = relationship()
     lead: Mapped["Lead | None"] = relationship()
 

@@ -55,7 +55,10 @@ _SKIP_REQ_HEADERS = {"host", "content-length", "connection", "authorization", "a
 _SKIP_RESP_HEADERS = {"content-length", "transfer-encoding", "connection", "content-encoding"}
 
 # /docs é a documentação que escrevemos; o Swagger automático fica em /swagger.
-app = FastAPI(title="CapiBLU — App Online", version="1.0.0", docs_url="/swagger")
+# O Swagger automático saiu: listava as 300+ rotas para qualquer visitante. A
+# documentação da API pública continua em /docs (escrita à mão).
+app = FastAPI(title="CapiBLU — App Online", version="1.0.0",
+              docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 _auth.init()

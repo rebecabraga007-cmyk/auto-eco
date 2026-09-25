@@ -10,7 +10,7 @@ import asyncio
 import io
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import (APIRouter, Body, Depends, File, HTTPException, Query,
                      Request, UploadFile)
@@ -39,6 +39,28 @@ def _proxy_erro(code: int, data, fallback: str) -> HTTPException:
     return HTTPException(status, msg or fallback)
 
 
+# Status que o serviço de dados usa para "a consulta não aconteceu". Todos
+# chegam com HTTP 200; `not_found` fica de fora de propósito — é resposta
+# legítima ("ninguém atrelado"), não falha.
+FALHAS_CONSULTA = ("error", "invalid", "auth_error", "no_access", "unavailable")
+
+
+def _unwrap(code: int, data: dict, fallback: str, falhas=("error",)) -> dict:
+    """Converte o erro silencioso do CapiBLU em erro HTTP de verdade.
+
+    Várias rotas do serviço de dados devolvem 200 com `{"status": "error"}` —
+    "upload expirado", "selecione ao menos um campo", "Assertiva fora do ar".
+    Repassado assim, o front trata como sucesso e mostra "0 atrelados" ou
+    "Nenhum vínculo" sem dizer o porquê — e o SDR conclui que o número não
+    tem dono quando na verdade a consulta nem rodou.
+    """
+    if code >= 400:
+        raise _proxy_erro(code, data, fallback)
+    if isinstance(data, dict) and data.get("status") in falhas:
+        raise HTTPException(422, data.get("message") or data.get("detail") or fallback)
+    return data
+
+
 TOOLS = [
     {"key": "empresas", "name": "Prospecção B2B", "area": "Empresas",
      "path": "/api/companies/search", "cost": "grátis (base RFB local)",
@@ -65,7 +87,9 @@ TOOLS = [
      "path": "/api/person/{cpf}", "cost": "grátis",
      "what": "Identidade por CPF: nome, nascimento, sexo."},
     {"key": "pessoa-mk", "name": "Perfil completo (Mk)", "area": "Pessoas",
-     "path": "/api/person/{cpf}/mk", "cost": "gasta consulta",
+     # Conta no limite diário sempre, e vira consulta paga da Assertiva
+     # quando a contingência "Work API Suspenso" está ligada.
+     "path": "/api/person/{cpf}/mk", "cost": "conta 1 consulta",
      "what": "Telefones, endereços, renda, score, parentes e vizinhos."},
     {"key": "parentes", "name": "Parentes e conexões", "area": "Pessoas",
      "path": "/api/person/{cpf}/parentes", "cost": "gasta 2 consultas",
@@ -160,9 +184,7 @@ async def empresa_bloco(cnpj: str, bloco: str, request: Request):
         raise HTTPException(404, f"Bloco desconhecido. Use: {', '.join(EMPRESA_BLOCOS)}")
     code, data = await get(f"/api/company/{cnpj}/{path}",
                            params=dict(request.query_params), timeout=180.0)
-    if code >= 400:
-        raise _proxy_erro(code, data, "Falha na consulta.")
-    return data
+    return _unwrap(code, data, "Falha na consulta.", FALHAS_CONSULTA)
 
 
 @router.get("/pessoas")
@@ -199,25 +221,19 @@ async def pessoa_bloco(cpf: str, bloco: str, teto_brl: float = 3.0):
     if bloco not in {"mk", "parentes", "vinculos", "contacts"}:
         raise HTTPException(404, "Bloco desconhecido.")
     code, data = await get(f"/api/person/{cpf}/{bloco}")
-    if code >= 400:
-        raise _proxy_erro(code, data, "Falha na consulta.")
-    return data
+    return _unwrap(code, data, "Falha na consulta.", FALHAS_CONSULTA)
 
 
 @router.get("/telefones/{numero}")
 async def telefone(numero: str):
     code, data = await get(f"/api/phone/{numero}/reverse")
-    if code >= 400:
-        raise _proxy_erro(code, data, "Falha na consulta reversa.")
-    return data
+    return _unwrap(code, data, "Falha na consulta reversa.", FALHAS_CONSULTA)
 
 
 @router.get("/telefones/{numero}/pertence/{documento}")
 async def telefone_pertence(numero: str, documento: str):
     code, data = await get(f"/api/phone/{numero}/pertence/{documento}")
-    if code >= 400:
-        raise _proxy_erro(code, data, "Falha na validação.")
-    return data
+    return _unwrap(code, data, "Falha na validação.", FALHAS_CONSULTA)
 
 
 @router.get("/telefones/{numero}/donodozap")
@@ -242,9 +258,7 @@ async def assertiva_status():
 @router.post("/assertiva/nome")
 async def assertiva_nome(payload: dict = Body(default={})):
     code, data = await post("/api/assertiva/nome", json=payload)
-    if code >= 400:
-        raise _proxy_erro(code, data, "Falha na busca por nome.")
-    return data
+    return _unwrap(code, data, "Falha na busca por nome.", FALHAS_CONSULTA)
 
 
 @router.get("/assertiva/{tipo}")
@@ -253,9 +267,7 @@ async def assertiva_consulta(tipo: str, q: str = Query(...)):
     if not campo:
         raise HTTPException(404, "Tipo de consulta Assertiva desconhecido.")
     code, data = await get(f"/api/assertiva/{tipo}", params={campo: q})
-    if code >= 400:
-        raise _proxy_erro(code, data, "Falha na consulta Assertiva.")
-    return data
+    return _unwrap(code, data, "Falha na consulta Assertiva.", FALHAS_CONSULTA)
 
 
 @router.get("/lookups/{tipo}")
@@ -318,7 +330,7 @@ def _contact_to_lead(company: dict, contact: dict) -> dict:
         "phone": " / ".join(p for p in phones if p),
         "email": emails[0] if emails else "",
         "city": company.get("municipio") or "", "state": company.get("uf") or "",
-        "decisionLevel": int(contact.get("nivel") or 0),
+        "decisionLevel": _as_int(contact.get("nivel"), 0),
         "contactKind": contact.get("tipo") or "",
         "phoneKind": best.get("categoria") or "",
         "whatsapp": bool(best.get("whatsapp")),
@@ -363,6 +375,9 @@ EXPORTS = {
     "vinculos": ("POST", "/api/vinculos/export", "vinculos.xlsx"),
     "modelo": ("POST", "/api/prospeccao/modelo/exportar", "modelo.xlsx"),
     "planilha": ("POST", "/api/enrich/export", "planilha-enriquecida.xlsx"),
+    # "Procurar pessoa" e os vínculos por CPF não têm export próprio no serviço
+    # de dados; o da planilha aceita qualquer `{columns, rows}`, então serve.
+    "pessoas": ("POST", "/api/enrich/export", "pessoas.xlsx"),
 }
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -452,18 +467,6 @@ async def modelo_analisar(file: UploadFile = File(...)):
 # O resto do ciclo de "Minha planilha": catálogo de campos → enriquecer →
 # exportar. Só o upload e o export são binários; estes três são JSON.
 
-def _unwrap(code: int, data: dict, fallback: str) -> dict:
-    """Converte o erro silencioso do CapiBLU em erro HTTP de verdade.
-
-    Várias rotas do serviço de dados devolvem 200 com `{"status": "error"}` —
-    "upload expirado", "selecione ao menos um campo". Repassado assim, o front
-    trata como sucesso e mostra tabela vazia sem dizer o porquê.
-    """
-    if code >= 400:
-        raise _proxy_erro(code, data, fallback)
-    if isinstance(data, dict) and data.get("status") == "error":
-        raise HTTPException(422, data.get("message") or fallback)
-    return data
 @router.get("/planilha/catalogo")
 async def planilha_catalogo():
     """Os campos que dá para preencher, agrupados por fonte e custo."""
@@ -554,9 +557,7 @@ async def prospect_cobertura(payload: dict = Body(...)):
     code, data = await post("/api/prospeccao/cobertura-decisores",
                             json={"cnpjs": cnpjs, "cargos": payload.get("cargos", "")},
                             timeout=300.0)
-    if code >= 400:
-        raise _proxy_erro(code, data, "Falha ao medir cobertura.")
-    return data
+    return _unwrap(code, data, "Falha ao medir cobertura.", FALHAS_CONSULTA)
 
 
 @router.post("/prospect/import")
@@ -596,17 +597,42 @@ async def prospect_import(payload: dict = Body(...), db: Session = Depends(get_d
     # default de `fonte_tel` é `assertiva`, como no CapiBLU.
     params = {"decisores": bool(payload.get("incluirDecisores", True)),
               "modo_tel": payload.get("tipoTelefone", "celular"),
-              "max_tel": int(payload.get("maxTelefones", 3)),
+              "max_tel": _as_int(payload.get("maxTelefones"), 3),
               "fonte_tel": payload.get("fonteTelefone", "assertiva"),
               "socios_modo": payload.get("sociosModo", "todos"),
-              "max_socios": int(payload.get("maxSocios", 0)),
+              "max_socios": _as_int(payload.get("maxSocios"), 0),
               "decisores_fonte": payload.get("decisoresFonte", "assertiva"),
               "decisores_cargos": payload.get("cargos", ""),
-              "max_decisores": int(payload.get("maxDecisores", 3)),
+              "max_decisores": _as_int(payload.get("maxDecisores"), 3),
               "pular_sem_decisor": bool(payload.get("pularSemDecisor", False)),
-              "fallback_hierarquia": int(payload.get("fallbackHierarquia", 0)),
+              "fallback_hierarquia": _as_int(payload.get("fallbackHierarquia"), 0),
               "apenas_cargo": bool(payload.get("apenasCargo", False)),
               "modelo_id": payload.get("modeloId", "")}
+
+    # Duzentos CNPJs passam dos 100 s em que o Cloudflare corta a resposta —
+    # o servidor segue trabalhando, mas a tela recebe erro e o usuário clica de
+    # novo, pagando a mesma lista duas vezes. A base nasce ANTES do trabalho
+    # lento (PROCESSING, visível em "Bases de leads", que a tela acompanha), e
+    # uma segunda montagem com o mesmo nome enquanto a primeira roda é recusada.
+    recente = datetime.utcnow() - timedelta(minutes=30)
+    em_andamento = (db.query(LeadBase)
+                    .filter(LeadBase.name == name, LeadBase.source == "CAPIBLU",
+                            LeadBase.status == "PROCESSING",
+                            LeadBase.created_at >= recente)
+                    .first())
+    if em_andamento:
+        raise HTTPException(409, f'A base "{name}" ainda está sendo montada. '
+                                 'Acompanhe em Bases de leads antes de tentar de novo.')
+
+    base = LeadBase(name=name, source="CAPIBLU", status="PROCESSING",
+                    client_id=payload.get("clientId"),
+                    created_by_id=ator.user_id,
+                    source_query=json.dumps({"cnpjs": cnpjs, "params": params,
+                                             "filtros": payload.get("filtros") or {}},
+                                            ensure_ascii=False))
+    db.add(base)
+    db.commit()
+    base_id = base.id
 
     sem = asyncio.Semaphore(6)
 
@@ -614,16 +640,14 @@ async def prospect_import(payload: dict = Body(...), db: Session = Depends(get_d
         async with sem:
             return await get(f"/api/company/{cnpj}/leads", params=params, timeout=180.0)
 
-    results = await asyncio.gather(*(fetch(c) for c in cnpjs), return_exceptions=True)
-
-    base = LeadBase(name=name, source="CAPIBLU", status="PROCESSING",
-                    client_id=payload.get("clientId"),
-                    created_by_id=payload.get("createdById"),
-                    source_query=json.dumps({"cnpjs": cnpjs, "params": params,
-                                             "filtros": payload.get("filtros") or {}},
-                                            ensure_ascii=False))
-    db.add(base)
-    db.flush()
+    try:
+        results = await asyncio.gather(*(fetch(c) for c in cnpjs), return_exceptions=True)
+    except BaseException:
+        # Cancelada no meio: sem isto a base ficava PROCESSING para sempre e
+        # bloqueava o nome pelos 30 minutos da trava acima.
+        base.status = "FAILED"
+        db.commit()
+        raise
 
     imported = discarded = 0
     failures: list[str] = []
@@ -632,7 +656,7 @@ async def prospect_import(payload: dict = Body(...), db: Session = Depends(get_d
     if not ator.pelo_menos("gestor"):
         sdr_id = ator.user_id
     defaults = {"cadenceId": cadence_id, "sdrId": sdr_id,
-                "clientId": payload.get("clientId"), "leadBaseId": base.id}
+                "clientId": payload.get("clientId"), "leadBaseId": base_id}
     from .flow import _build_lead
 
     for cnpj, res in zip(cnpjs, results):
@@ -661,7 +685,7 @@ async def prospect_import(payload: dict = Body(...), db: Session = Depends(get_d
                 discarded += 1
                 continue
             lead = _build_lead(db, row, defaults)
-            lead.lead_base_id = base.id
+            lead.lead_base_id = base_id
             db.add(lead)
             db.flush()
             if cadence_id:
@@ -687,10 +711,14 @@ async def enrich_lead(lid: int, db: Session = Depends(get_db)):
     perm.exigir_dono_lead(db, perm.ator(db), lead)
     if not lead.cnpj:
         raise HTTPException(400, "O lead não tem CNPJ para consultar.")
-    code, data = await get(f"/api/company/{lead.cnpj}/leads",
+    # Mesma trava do import: `00000000000000` resolve para a matriz do Banco do
+    # Brasil e gasta os 42 contatos dela.
+    cnpj = _valid_cnpj(lead.cnpj)
+    if not cnpj:
+        raise HTTPException(400, f"O CNPJ do lead ({lead.cnpj}) é inválido — corrija antes de enriquecer.")
+    code, data = await get(f"/api/company/{cnpj}/leads",
                            params={"decisores": True, "max_decisores": 5}, timeout=180.0)
-    if code >= 400:
-        raise _proxy_erro(code, data, "Falha ao enriquecer.")
+    data = _unwrap(code, data, "Falha ao enriquecer.", FALHAS_CONSULTA)
     company = data.get("empresa") or {}
     contacts = data.get("contatos") or []
     changed = []
@@ -743,7 +771,8 @@ async def dedup(payload: dict = Body(...), db: Session = Depends(get_db)):
     cnpjs = {"".join(ch for ch in str(c) if ch.isdigit()) for c in payload.get("cnpjs") or []}
     if not cnpjs:
         return {"existing": [], "new": []}
-    rows = db.query(Lead.cnpj, Lead.name, Lead.status).filter(Lead.cnpj.in_(cnpjs)).all()
+    base = perm.escopo_leads(db, db.query(Lead).filter(Lead.cnpj.in_(cnpjs)), perm.ator(db), Lead.sdr_id)
+    rows = base.with_entities(Lead.cnpj, Lead.name, Lead.status).all()
     existing = {r[0] for r in rows}
     return {"existing": [{"cnpj": c, "name": n, "status": s} for c, n, s in rows],
             "new": sorted(cnpjs - existing),

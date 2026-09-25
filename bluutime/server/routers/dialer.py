@@ -1,17 +1,20 @@
 """Ligações: lista, estatísticas, extrato e click-to-call."""
 import csv
+import hmac
 import io
+import os
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Call, CallFeedback, Company, Lead, Team, User
-from .. import agenda, perm, serial
+from .. import agenda, perm, ratelimit, serial, telefonia
+from ..planilha_segura import linhas_csv
 from .analytics import ids_de, usuarios_do_time
 
 router = APIRouter(prefix="/api/dialer")
@@ -166,7 +169,7 @@ def _pode_ver_ligacao(db: Session, c: Call) -> None:
     if ator.pelo_menos("gestor"):
         return
     empresa = db.query(Company).first()
-    if c.user_id != ator.user_id and not (empresa and empresa.leads_visible_all):
+    if (ator.user_id is None or c.user_id != ator.user_id) and not (empresa and empresa.leads_visible_all):
         raise HTTPException(403, "Esta ligação é de outro usuário.")
 
 
@@ -222,7 +225,7 @@ def update_call_feedback(fid: int, payload: dict = Body(...), db: Session = Depe
         raise HTTPException(404, "Feedback não encontrado.")
     ator = perm.ator(db)
     if "text" in payload:
-        if f.author_id != ator.user_id:
+        if ator.user_id is None or f.author_id != ator.user_id:
             raise HTTPException(403, "Só o autor edita o próprio feedback.")
         texto = (payload["text"] or "").strip()
         if not texto:
@@ -230,7 +233,7 @@ def update_call_feedback(fid: int, payload: dict = Body(...), db: Session = Depe
         f.text = texto
         f.updated_at = datetime.utcnow()
     if payload.get("read"):
-        if f.call.user_id != ator.user_id:
+        if ator.user_id is None or f.call.user_id != ator.user_id:
             raise HTTPException(403, "Quem marca como lido é quem recebeu o feedback.")
         f.read_at = f.read_at or datetime.utcnow()
     db.commit()
@@ -248,10 +251,20 @@ def update_call(cid: int, payload: dict = Body(...), db: Session = Depends(get_d
     if not c:
         raise HTTPException(404, "Ligação não encontrada.")
     ator = perm.ator(db)
-    if not ator.pelo_menos("gestor") and c.user_id != ator.user_id:
+    if not ator.pelo_menos("gestor") and (ator.user_id is None or c.user_id != ator.user_id):
         raise HTTPException(403, "Só dá para alterar as próprias ligações.")
     if "important" in payload:
         c.important = bool(payload["important"])
+    if "classificacao" in payload:
+        # A classificação do fim da ligação discada pela Zenvia: o SDR diz como
+        # foi, com o mesmo vocabulário do registro manual. Ocupado é status.
+        cls = (payload["classificacao"] or "").strip().upper()
+        if cls == "BUSY":
+            c.status, c.output = "BUSY", ""
+        elif cls in ("MEANINGFUL", "NOT_MEANINGFUL", "NO_CONTACT"):
+            c.status, c.output = "CONNECTED", cls
+        elif cls:
+            raise HTTPException(400, f"Classificação desconhecida: {cls}.")
     if "output" in payload:
         valor = (payload["output"] or "").strip()
         if valor and valor not in ("MEANINGFUL", "NOT_MEANINGFUL", "NO_CONTACT"):
@@ -288,7 +301,7 @@ def export_calls(user_id: str | None = None, status: str | None = None,
     w = csv.writer(buf, delimiter=";")
     w.writerow(["Data", "Usuário", "Lead", "Empresa", "Origem", "Destino", "Tipo",
                 "Situação", "Resultado", "Duração (s)", "Custo (R$)", "Importante"])
-    w.writerows(linhas)
+    w.writerows(linhas_csv(linhas))  # sem fórmula injetada
     buf.seek(0)
     return StreamingResponse(iter([buf.getvalue().encode("utf-8-sig")]),
                              media_type="text/csv",
@@ -566,7 +579,7 @@ def register_call(payload: dict = Body(...), db: Session = Depends(get_db)):
         raise HTTPException(404, "Lead não encontrado.")
     # Ligação em lead alheio sujava o histórico do colega e tirava o lead da
     # lista de "aguardando primeira ligação" dele.
-    perm.exigir_dono_lead(db, ator, lead)
+    perm.exigir_dono_lead(db, ator, lead, sem_lead_ok=True)
     # O sinal de "não perturbe" vinha da Assertiva, era guardado e nunca
     # consultado — dava para registrar ligação para quem pediu para não ser
     # incomodado.
@@ -685,3 +698,189 @@ def statement(since: str | None = None, until: str | None = None,
                                    "totalCost": round(total_cost, 2),
                                    "pricePerMinute": preco,
                                    "startDate": serial.iso(start), "endDate": serial.iso(end)}}
+
+
+# ── Telefonia de verdade: Zenvia Voice ──────────────────────────────────────
+# A chamada toca primeiro no SDR (ramal no webphone, ou o celular dele) e só
+# depois no lead. Ver server/telefonia.py.
+def _origem_do_sdr(u: User | None) -> tuple[str, str]:
+    """(modo, número de origem) de quem vai ligar."""
+    if u and u.zenvia_ramal:
+        return "ramal", u.zenvia_ramal
+    if u and u.phone_ramal:
+        return "celular", u.phone_ramal
+    return "", ""
+
+
+@router.get("/zenvia/estado")
+async def zenvia_estado(db: Session = Depends(get_db)):
+    """A conta pode ligar, e como EU ligo (ramal/celular). Saldo, números e
+    ramais só vão para gestor."""
+    ator = perm.ator(db)
+    u = db.get(User, ator.user_id) if ator.user_id else None
+    modo, origem = _origem_do_sdr(u)
+    e = await telefonia.estado()
+    out = {"configurado": e.get("configurado"), "podeLigar": bool(e.get("podeLigar")) and bool(modo),
+           "contaPronta": bool(e.get("podeLigar")), "motivo": e.get("motivo") or "",
+           "modo": modo, "origem": origem}
+    if e.get("podeLigar") and not modo:
+        out["motivo"] = ("Você ainda não tem ramal nem celular para ligar. Peça um ramal ao gestor "
+                         "ou informe seu celular em Meu perfil.")
+    if ator.pelo_menos("gestor"):
+        out.update({"saldo": e.get("saldo"), "dids": e.get("dids") or [], "ramais": e.get("ramais") or []})
+    return out
+
+
+@router.get("/zenvia/webphone")
+async def zenvia_webphone(db: Session = Depends(get_db)):
+    """URL assinada do webphone do MEU ramal."""
+    ator = perm.ator(db)
+    u = db.get(User, ator.user_id) if ator.user_id else None
+    if not u or not u.zenvia_ramal:
+        raise HTTPException(400, "Você não tem ramal. Peça um ao gestor.")
+    try:
+        return {"url": await telefonia.webphone_url(u.zenvia_ramal), "ramal": u.zenvia_ramal}
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc))
+
+
+@router.post("/zenvia/chamadas")
+async def zenvia_discar(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Disca para o lead pela Zenvia. Custa dinheiro: só com clique, com a conta pronta,
+    com o lead sendo do SDR e sem "não perturbe"."""
+    ator = perm.ator(db)
+    u = db.get(User, ator.user_id) if ator.user_id else None
+    modo, origem = _origem_do_sdr(u)
+    if not modo:
+        raise HTTPException(400, "Você não tem ramal nem celular para ligar.")
+    lead = db.get(Lead, payload.get("leadId")) if payload.get("leadId") else None
+    if not lead:
+        raise HTTPException(400, "Informe o lead.")
+    perm.exigir_dono_lead(db, ator, lead)
+    if lead.do_not_call:
+        raise HTTPException(403, "Lead marcado como \"não perturbe\". Remova a marca no cadastro do lead.")
+    destino = telefonia.numero_destino(payload.get("destino") or lead.phone)
+    if not destino:
+        raise HTTPException(400, "Número incompleto: informe DDD + número (10 ou 11 dígitos).")
+    # Uma ligação por vez por pessoa, e freio contra clique repetido: cada
+    # chamada criada é cobrada.
+    em_curso = (db.query(Call).filter(Call.user_id == u.id, Call.provider == "zenvia",
+                                      Call.status == "DIALING",
+                                      Call.started_at >= datetime.utcnow() - timedelta(minutes=3)).first())
+    if em_curso:
+        raise HTTPException(409, "Você já tem uma ligação em andamento. Encerre-a antes de discar outra.")
+    if not ratelimit.permitir(f"zenvia:{u.id}", 20, 60):
+        raise HTTPException(429, "Muitas ligações em pouco tempo.")
+    e = await telefonia.estado()
+    if not e.get("podeLigar"):
+        raise HTTPException(409, e.get("motivo") or "A conta da Zenvia não está pronta para ligar.")
+    try:
+        pid = await telefonia.criar_chamada(origem, destino, gravar=bool(payload.get("gravar", True)),
+                                            tags=f"bluutime lead:{lead.id} user:{u.id}")
+    except RuntimeError as exc:
+        raise HTTPException(502, f"A Zenvia recusou a ligação: {exc}")
+    c = Call(user_id=u.id, lead_id=lead.id, origin_phone=origem, receiver_phone=destino,
+             status="DIALING", provider="zenvia", provider_id=pid)
+    db.add(c)
+    db.commit()
+    return {"id": c.id, "providerId": pid, "modo": modo, "fase": "chamando-origem"}
+
+
+def _atualizar(db: Session, c: Call, t: dict) -> None:
+    """Estado da operadora no Call — sem desfazer a classificação do SDR."""
+    if c.output or (c.status == "BUSY" and t["status"] != "CONNECTED"):
+        pass
+    elif t["fase"] == "encerrada":
+        c.status = t["status"] if t["status"] != "DIALING" else "NOT_PERFORMED"
+    elif t["status"] in ("CONNECTED", "BUSY"):
+        c.status = t["status"]
+    c.duration = max(c.duration or 0, t["duracao"])
+    if t["preco"]:
+        c.price = t["preco"]
+    if t["gravacao"]:
+        c.recording_url = t["gravacao"]
+
+
+def _minha_chamada(db: Session, cid: int) -> Call:
+    c = db.get(Call, cid)
+    if not c or c.provider != "zenvia":
+        raise HTTPException(404, "Ligação não encontrada.")
+    ator = perm.ator(db)
+    if not ator.pelo_menos("gestor") and (ator.user_id is None or c.user_id != ator.user_id):
+        raise HTTPException(403, "Esta ligação não é sua.")
+    return c
+
+
+@router.get("/zenvia/chamadas/{cid}")
+async def zenvia_acompanhar(cid: int, db: Session = Depends(get_db)):
+    """Em que pé está a ligação — a tela consulta a cada poucos segundos."""
+    c = _minha_chamada(db, cid)
+    try:
+        t = telefonia.traduzir(await telefonia.consultar(c.provider_id))
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc))
+    _atualizar(db, c, t)
+    db.commit()
+    return {"id": c.id, "fase": t["fase"], "status": c.status, "duracao": c.duration,
+            "motivo": t["motivo"], "temGravacao": bool(c.recording_url)}
+
+
+@router.delete("/zenvia/chamadas/{cid}")
+async def zenvia_desligar(cid: int, db: Session = Depends(get_db)):
+    c = _minha_chamada(db, cid)
+    try:
+        await telefonia.encerrar(c.provider_id)
+    except RuntimeError:
+        pass  # já encerrada do outro lado: segue e lê o estado final
+    try:
+        t = telefonia.traduzir(await telefonia.consultar(c.provider_id))
+        _atualizar(db, c, {**t, "fase": "encerrada"})
+    except RuntimeError:
+        if c.status == "DIALING":
+            c.status = "NOT_PERFORMED"
+    db.commit()
+    return {"id": c.id, "status": c.status, "duracao": c.duration}
+
+
+@router.post("/zenvia/webhook")
+async def zenvia_webhook(request: Request, db: Session = Depends(get_db)):
+    """Aviso da Zenvia quando a chamada muda/termina. Público (quem chama é a
+    Zenvia), autenticado pelo token na URL: `?token=<ZENVIA_WEBHOOK_TOKEN>`."""
+    esperado = os.environ.get("ZENVIA_WEBHOOK_TOKEN", "")
+    if not esperado:
+        raise HTTPException(503, "ZENVIA_WEBHOOK_TOKEN não configurado no servidor.")
+    if not hmac.compare_digest(request.query_params.get("token", ""), esperado):
+        raise HTTPException(401, "Token inválido.")
+    try:
+        dados = await request.json()
+    except ValueError:
+        return {"ok": True, "ignored": "corpo inválido"}
+    dados = dados.get("dados", dados) if isinstance(dados, dict) else {}
+    pid = str(dados.get("id") or "")
+    c = db.query(Call).filter(Call.provider == "zenvia", Call.provider_id == pid).first() if pid else None
+    if not c:
+        return {"ok": True, "ignored": "chamada desconhecida"}
+    _atualizar(db, c, telefonia.traduzir(dados))
+    db.commit()
+    return {"ok": True, "callId": c.id}
+
+
+@router.get("/calls/{cid}/gravacao")
+async def gravacao(cid: int, db: Session = Depends(get_db)):
+    """Ouvir a gravação: dono da ligação ou gestor. A URL da Zenvia é pública,
+    por isso nunca aparece nas listas — só sai por aqui, depois da checagem."""
+    c = db.get(Call, cid)
+    if not c:
+        raise HTTPException(404, "Ligação não encontrada.")
+    ator = perm.ator(db)
+    if not ator.pelo_menos("gestor") and (ator.user_id is None or c.user_id != ator.user_id):
+        raise HTTPException(403, "Só o dono da ligação ou um gestor ouve a gravação.")
+    if not c.recording_url and c.provider == "zenvia" and c.provider_id:
+        try:
+            c.recording_url = await telefonia.gravacao(c.provider_id)
+            db.commit()
+        except RuntimeError:
+            pass
+    if not c.recording_url:
+        raise HTTPException(404, "Esta ligação não tem gravação.")
+    return RedirectResponse(c.recording_url, status_code=302)

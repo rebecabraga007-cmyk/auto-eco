@@ -4,6 +4,7 @@ Serve a API (busca, dados da empresa, funcionarios do LinkedIn) e tambem os
 arquivos estaticos do frontend, tudo em http://localhost:8010.
 """
 
+from planilha_segura import sanear_workbook  # noqa: E402
 import json
 import os
 
@@ -102,7 +103,10 @@ def _cnpj_local() -> bool:
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 
-app = FastAPI(title="Lupa de Empresas", version="1.0.0")
+# Sem Swagger/OpenAPI públicos: o serviço de dados fica atrás de proxy, e o
+# mapa das rotas (admin e pagas) aberto só ajudava quem procura por onde entrar.
+app = FastAPI(title="Lupa de Empresas", version="1.0.0",
+              docs_url=None, redoc_url=None, openapi_url=None)
 
 try:
     linkedin_cache.init()      # cria o SQLite do cache na primeira subida
@@ -1538,6 +1542,7 @@ async def vinculos_export(payload: dict = Body(default={})):
         ws.column_dimensions[get_column_letter(c)].width = largura
 
     buf = io.BytesIO()
+    sanear_workbook(wb)  # sem fórmula injetada vinda dos dados
     wb.save(buf)
     buf.seek(0)
     nome_arquivo = f"vinculos-{cnpj or 'empresa'}.xlsx"
@@ -2957,6 +2962,7 @@ def _prospeccao_xlsx(payload: dict) -> bytes:
     wf.column_dimensions["B"].width = 66
 
     buf = io.BytesIO()
+    sanear_workbook(wb)  # sem fórmula injetada vinda dos dados
     wb.save(buf)
     return buf.getvalue()
 
@@ -3091,7 +3097,11 @@ def _extrai_modelo(lead: dict, campo: str, idx: int = 1):
 async def modelo_analisar(file: UploadFile = File(...)):
     """Lê os cabeçalhos da planilha-modelo e diz qual campo/fonte preenche cada um."""
     try:
-        content = await file.read()
+        # Teto antes de ler tudo: o processo é compartilhado, e uma planilha
+        # enorme (ou um XLSX "zip bomb") derrubava o serviço inteiro.
+        content = await file.read(30 * 1024 * 1024 + 1)
+        if len(content) > 30 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Arquivo maior que 30 MB. Divida a planilha.")
         parsed, _aviso = sheet_reader.read_table(file.filename or "", content)
     except ValueError as exc:
         return {"status": "error", "message": str(exc)}
@@ -3164,6 +3174,7 @@ async def modelo_exportar(payload: dict = Body(default={})):
         wf.column_dimensions[col].width = w
 
     buf = io.BytesIO()
+    sanear_workbook(wb)  # sem fórmula injetada vinda dos dados
     wb.save(buf)
     buf.seek(0)
     return StreamingResponse(
@@ -4812,6 +4823,7 @@ def _enrich_xlsx(columns: list, rows: list) -> bytes:
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(max(len(columns),1))}{max(len(rows)+1,1)}"
     buf = io.BytesIO()
+    sanear_workbook(wb)  # sem fórmula injetada vinda dos dados
     wb.save(buf)
     return buf.getvalue()
 

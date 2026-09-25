@@ -10,6 +10,7 @@ A ligação entre os dois é o e-mail. Aqui eles viram um nível efetivo, e é e
 nível que as rotas exigem.
 """
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .deps import session_user
@@ -63,7 +64,13 @@ def ator(db: Session) -> Ator:
     sessao = session_user()
     user = None
     if sessao and sessao.get("email"):
-        user = db.query(User).filter(User.email == sessao["email"]).first()
+        user = (db.query(User)
+                .filter(func.lower(User.email) == sessao["email"].strip().lower()).first())
+        # Desativado no Bluutime perde o papel operacional na hora. Antes só o
+        # "ativo" do login do CapiBLU contava: um gestor desativado em Usuários
+        # e times seguia vendo e exportando a carteira de todo mundo.
+        if user is not None and user.active is False:
+            user = None
     return Ator(sessao, user)
 
 
@@ -84,7 +91,8 @@ def escopo_leads(db: Session, query, a: Ator, coluna):
     return query.filter(coluna == (a.user_id or -1))
 
 
-def exigir_dono_lead(db: Session, a: Ator, lead) -> None:
+def exigir_dono_lead(db: Session, a: Ator, lead, *, escrita: bool = True,
+                     sem_lead_ok: bool = False) -> None:
     """Mesma regra de `escopo_leads`, mas para acesso por ID direto.
 
     A listagem já filtrava a carteira do SDR; o acesso por ID (`GET/PATCH
@@ -96,13 +104,25 @@ def exigir_dono_lead(db: Session, a: Ator, lead) -> None:
     lead associado (conversa de WhatsApp por telefone avulso, sem lead) — não
     há dono nenhum pra violar, então não há o que bloquear.
     """
-    if lead is None or a.pelo_menos("gestor"):
+    if a.pelo_menos("gestor"):
         return
-    empresa = db.query(Company).first()
-    if empresa and empresa.leads_visible_all:
+    if lead is None:
+        # Recurso sem lead (conversa de WhatsApp de número desconhecido, por
+        # exemplo) não tem dono para conferir — e por isso é de gestor. Antes
+        # passava direto e qualquer SDR lia e respondia pelo número da empresa.
+        if sem_lead_ok:
+            return
+        raise HTTPException(403, "Só gestor acessa o que não está ligado a um lead seu.")
+    # Sem cadastro de SDR (user_id None) nada é "seu": antes `None == None`
+    # dava acesso a todo lead sem dono.
+    if a.user_id is not None and lead.sdr_id == a.user_id:
         return
-    if lead.sdr_id == a.user_id:
-        return
+    # "Ver leads de outros usuários" é VER: editar, dar ganho, executar, enviar
+    # ou discar continua sendo só do dono (ou de gestor).
+    if not escrita:
+        empresa = db.query(Company).first()
+        if empresa and empresa.leads_visible_all:
+            return
     raise HTTPException(403, "Este lead não é seu.")
 
 

@@ -76,6 +76,40 @@ def _migrar_limite_diario(con) -> None:
         con.commit()
 
 
+def _migrar_token_version(con) -> None:
+    """users.token_version: sobe a cada troca de senha e a cada "sair", e todo
+    JWT carrega o valor de quando foi emitido. Token de versão antiga é recusado
+    — antes um token vazado valia até expirar, e se renovava sozinho."""
+    cols = [r["name"] for r in con.execute("PRAGMA table_info(users)").fetchall()]
+    if "token_version" not in cols:
+        con.execute("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0")
+        con.commit()
+
+
+def _versao(uid: int) -> int:
+    con = _conn()
+    try:
+        r = con.execute("SELECT token_version FROM users WHERE id=?", (uid,)).fetchone()
+        return int(r["token_version"] or 0) if r else 0
+    except sqlite3.OperationalError:
+        return 0
+    finally:
+        con.close()
+
+
+def invalidar_sessoes(uid: int) -> None:
+    """Derruba todas as sessões e tokens de login da pessoa, em todo aparelho."""
+    con = _conn()
+    con.execute("UPDATE users SET token_version = COALESCE(token_version, 0) + 1 WHERE id=?", (uid,))
+    con.commit()
+    con.close()
+
+
+# Sessão desliza enquanto há uso, mas não passa disto desde o login: um token
+# roubado não se renova para sempre.
+_SESSAO_MAXIMA = 7 * 24 * 3600
+
+
 def _conn():
     con = sqlite3.connect(_DB_PATH)
     con.row_factory = sqlite3.Row
@@ -141,6 +175,7 @@ def init() -> None:
     con.commit()
     _migrar_grupo_id(con)
     _migrar_limite_diario(con)
+    _migrar_token_version(con)
     n = con.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
     if n == 0:
         email = (os.environ.get("ADMIN_EMAIL") or "rebeca@blusalesgroup.com.br").strip().lower()
@@ -178,11 +213,12 @@ def authenticate(email: str, senha: str) -> Optional[dict]:
     return u
 
 
-def make_token(user: dict) -> str:
+def make_token(user: dict, desde: Optional[int] = None) -> str:
     con = _conn(); secret = _get_secret(con); con.close()
     now = int(time.time())
     payload = {"sub": str(user["id"]), "email": user["email"], "role": user["role"],
-               "iat": now, "exp": now + _TOKEN_TTL}
+               "iat": now, "exp": now + _TOKEN_TTL,
+               "tv": _versao(int(user["id"])), "orig": int(desde or now)}
     return jwt.encode(payload, secret, algorithm=_JWT_ALG)
 
 
@@ -285,11 +321,18 @@ def set_password(uid: int, senha: str) -> None:
     con = _conn()
     con.execute("UPDATE users SET senha_hash=? WHERE id=?", (_hash(senha), uid))
     con.commit(); con.close()
+    # Senha nova derruba as sessões antigas: é o que se espera ao trocar a
+    # senha depois de suspeitar de acesso indevido.
+    invalidar_sessoes(uid)
 
 
 def delete_user(uid: int) -> None:
     con = _conn()
     con.execute("DELETE FROM users WHERE id=?", (uid,))
+    try:  # os tokens de API da pessoa morrem com ela
+        con.execute("UPDATE api_tokens SET ativo=0 WHERE user_id=?", (uid,))
+    except sqlite3.OperationalError:
+        pass  # tabela de tokens ainda não criada
     con.commit(); con.close()
 
 
@@ -371,6 +414,11 @@ def _user_from_token(token: str) -> Optional[dict]:
     r = con.execute("SELECT * FROM users WHERE id=?", (int(payload.get("sub", 0)),)).fetchone()
     con.close()
     if not r or not r["ativo"]:
+        return None
+    versao = int(r["token_version"] or 0) if "token_version" in r.keys() else 0
+    if int(payload.get("tv", 0) or 0) != versao:
+        return None  # senha trocada, "sair" ou sessões derrubadas depois da emissão
+    if int(time.time()) - int(payload.get("orig") or payload.get("iat") or 0) > _SESSAO_MAXIMA:
         return None
     return _row_to_user(r)
 
@@ -456,9 +504,17 @@ def set_cookie_sessao(response, token: str, seguro: bool = True) -> None:
 
 
 def renovar_sessao(response, user: dict, request: Request = None) -> None:
-    """Emite um cookie novo pro mesmo usuário, esticando a sessão."""
+    """Emite um cookie novo pro mesmo usuário, esticando a sessão — sem mexer
+    na hora do login, que é o que limita a sessão a _SESSAO_MAXIMA."""
     try:
-        set_cookie_sessao(response, make_token(user),
+        desde = None
+        if request is not None:
+            try:
+                desde = int(_decode(_token_from_request(request, request.headers.get("authorization", "")))
+                            .get("orig") or 0) or None
+            except Exception:
+                desde = None
+        set_cookie_sessao(response, make_token(user, desde),
                           seguro=_https(request) if request is not None else True)
     except Exception:
         pass
@@ -509,13 +565,17 @@ async def emergency_reset(payload: dict = Body(default={})):
 # chega como 127.0.0.1 e um atacante trancaria a empresa inteira.
 _FALHAS: dict[str, list[float]] = {}
 _JANELA_S, _MAX_FALHAS = 15 * 60, 8
+_MAX_FALHAS_IP = 30   # um IP tentando muitos e-mails diferentes
 
 
 def _bloqueado(chave: str) -> bool:
     agora = time.time()
     recentes = [t for t in _FALHAS.get(chave, []) if agora - t < _JANELA_S]
-    _FALHAS[chave] = recentes
-    return len(recentes) >= _MAX_FALHAS
+    if recentes:
+        _FALHAS[chave] = recentes
+    else:
+        _FALHAS.pop(chave, None)
+    return len(recentes) >= (_MAX_FALHAS_IP if chave.startswith("ip:") else _MAX_FALHAS)
 
 
 def _falhou(chave: str) -> None:
@@ -526,9 +586,15 @@ def _falhou(chave: str) -> None:
 async def login(request: Request, response: Response, payload: dict = Body(default={})):
     email = str(payload.get("email", "") or "").strip().lower()
     chaves = [f"email:{email}"]
-    ip_real = request.headers.get("cf-connecting-ip", "")
-    if ip_real and request.client and request.client.host in ("127.0.0.1", "::1"):
-        chaves.append(f"ip:{ip_real}")
+    # O uvicorn já troca o cliente pelo IP real (proxy headers do túnel); o
+    # cf-connecting-ip é o do Cloudflare quando vier. Antes a trava por IP só
+    # ligava para 127.0.0.1 e nunca executava — sobrava tentar uma senha comum
+    # contra todos os e-mails sem limite.
+    ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "")
+    if ip and ip not in ("127.0.0.1", "::1"):
+        chaves.append(f"ip:{ip}")
+    if len(_FALHAS) > 5000:
+        _FALHAS.clear()
     if any(_bloqueado(c) for c in chaves):
         raise HTTPException(status_code=429, detail="Muitas tentativas erradas. Aguarde 15 minutos e tente de novo.")
     u = authenticate(payload.get("email", ""), payload.get("senha", "") or payload.get("password", ""))
@@ -544,7 +610,12 @@ async def login(request: Request, response: Response, payload: dict = Body(defau
 
 
 @router.post("/api/auth/logout")
-async def logout(response: Response):
+async def logout(request: Request, response: Response):
+    # "Sair" invalida o token de verdade (em todo aparelho), não só apaga o
+    # cookie deste navegador: uma cópia roubada deixa de valer na hora.
+    u = user_from_request(request)
+    if u:
+        invalidar_sessoes(int(u["id"]))
     response.delete_cookie(COOKIE_NAME, path="/")
     return {"ok": True}
 
@@ -555,7 +626,8 @@ async def me(user: dict = Depends(current_user)):
 
 
 @router.post("/api/auth/change-password")
-async def change_password(payload: dict = Body(default={}), user: dict = Depends(current_user)):
+async def change_password(request: Request, response: Response, payload: dict = Body(default={}),
+                          user: dict = Depends(current_user)):
     atual = payload.get("senha_atual", "")
     nova = payload.get("nova_senha", "")
     full = get_by_email(user["email"])
@@ -565,7 +637,10 @@ async def change_password(payload: dict = Body(default={}), user: dict = Depends
         set_password(user["id"], nova)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"ok": True}
+    # As outras sessões caíram com a troca; esta continua, com um token novo.
+    token = make_token(user)
+    set_cookie_sessao(response, token, seguro=_https(request))
+    return {"ok": True, "token": token}
 
 
 @router.get("/api/admin/users")

@@ -11,6 +11,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from .. import agenda, perm, serial
+from ..planilha_segura import linhas_csv, sanear_workbook
 from ..db import get_db
 from ..models import (Cadence, CadenceStep, Call, Client, Company, Delivery,
                       Goal, Lead, LeadActivity, LeadBase, LostReason, Team,
@@ -196,6 +197,11 @@ def goal_progress(ref: str, user_id: str | None = None, cadence_id: str | None =
                         "conversion": round(len(uwon) / (len(uwon) + len(ulost)) * 100, 1)
                         if (uwon or ulost) else 0})
     ranking.sort(key=lambda r: r["won"], reverse=True)
+    # O desempenho de cada colega é de gestor; o SDR vê a própria linha (os
+    # totais da empresa continuam, como no Dashboard do Meetime).
+    ator_rk = perm.ator(db)
+    if not ator_rk.pelo_menos("gestor"):
+        ranking = [r for r in ranking if r["user"] and r["user"]["id"] == ator_rk.user_id]
 
     # Indicadores que o original mostra como cartões próprios.
     ativ_feitas = sum(r["activities"] for r in ranking)
@@ -877,7 +883,7 @@ def _csv_response(name: str, header: list[str], rows: list[list]) -> StreamingRe
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=";")
     writer.writerow(header)
-    writer.writerows(rows)
+    writer.writerows(linhas_csv(rows))
     buf.seek(0)
     return StreamingResponse(iter([buf.getvalue().encode("utf-8-sig")]),
                              media_type="text/csv",
@@ -903,6 +909,7 @@ def _xlsx_response(name: str, header: list[str], rows: list[list]) -> StreamingR
         largura = max([len(str(titulo))] + [len(str(l[i - 1])) for l in rows[:200]] or [0])
         aba.column_dimensions[aba.cell(row=1, column=i).column_letter].width = min(48, largura + 2)
     buf = io.BytesIO()
+    sanear_workbook(wb)  # sem fórmula injetada vinda dos dados
     wb.save(buf)
     buf.seek(0)
     return StreamingResponse(

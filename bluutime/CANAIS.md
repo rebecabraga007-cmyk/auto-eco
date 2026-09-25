@@ -147,8 +147,43 @@ guarda canal, destino, status, provedor e o erro.
 | `SIMULATED` | Envio desligado ou sem credencial — nada saiu |
 | `BLOCKED` | Recusado aqui dentro (não perturbe, fora da janela, sem destino) |
 
-## Telefonia
+## Telefonia — Zenvia Voice
 
-Continua só registrando o resultado da ligação (`POST /api/dialer/calls`), agora
-respeitando o não perturbe. Discagem pelo provedor depende de escolher um —
-é decisão comercial, não técnica.
+```bash
+ZENVIA_VOICE_TOKEN=...        # Access-Token da conta Zenvia Voice (antiga TotalVoice)
+ZENVIA_WEBHOOK_TOKEN=...      # segredo nosso, vai na URL do webhook de chamada
+```
+
+Como a ligação sai (click-to-call da Zenvia):
+
+1. O SDR clica **Ligar** no discador. O Bluutime pede `POST /chamada` com a origem = o
+   **ramal** dele (ou o **celular**, se não tiver ramal) e o destino = o lead.
+2. A Zenvia toca primeiro na origem. Com ramal, quem toca é o **webphone**, que abre
+   num painel flutuante dentro do Bluutime com o microfone do navegador; com celular,
+   o telefone do SDR.
+3. Atendida a origem, a Zenvia disca para o lead e junta as pontas. O estado vem por
+   consulta a cada 2,5 s (e pelo webhook), e a duração e a gravação ficam na ligação.
+4. Ao encerrar, o SDR classifica (significativa, não significativa, cliente ocupado,
+   sem contato) e a classificação vai para a mesma ligação.
+
+| O que configurar | Onde |
+|---|---|
+| Ramal de cada SDR | Integrações → Usuários e times → editar usuário → **Ramal Zenvia** (admin) |
+| Celular do SDR (sem ramal) | Meu perfil → **Celular para ligar** |
+| Gravação | chave **Salvar gravação** no discador; ouvir pelo ▶ na Lista de Ligações (dono ou gestor) |
+
+**Travas:** lead de outro SDR (403), não perturbe (403), número incompleto (400), uma
+ligação por vez por pessoa e 20 por minuto. A conta precisa ter número (DID) e estar
+ativa. Sem conta pronta, o discador volta ao modo antigo: entrega o número ao softphone
+e registra o resultado à mão, mostrando o motivo.
+
+**A conta da BLU é pós-paga (pay as you go):** a Zenvia cobra depois, e o "saldo" que a
+API devolve (R$ 0,01) não é crédito nem decide nada. Se um dia a conta virar pré-paga,
+`ZENVIA_PREPAGO=1` liga a trava de saldo mínimo de R$ 1.
+
+**Estado da conta em 25/09/2026:** ativa, 2 números DID (Curitiba e Joinville), 1 ramal
+(4000, com webphone). Pronta para ligar assim que o ramal for atribuído a um SDR.
+
+**Webhook de chamada (opcional):** cadastrar na Zenvia
+`https://bluu.capiblu.net/api/dialer/zenvia/webhook?token=<ZENVIA_WEBHOOK_TOKEN>`.
+Sem ele o estado vem só pela consulta, que já basta para a tela.

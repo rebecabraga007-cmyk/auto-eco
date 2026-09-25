@@ -439,9 +439,12 @@ function abrirExecucaoTela(itens, i, { rapido = false, aoFechar = null } = {}) {
 
 function fecharExecucaoTela(silencioso) {
   if (Exec._timer) clearInterval(Exec._timer);
+  if (Exec._poll) clearInterval(Exec._poll);
   if (Exec._tecla) document.removeEventListener("keydown", Exec._tecla);
   if (Exec.raiz) Exec.raiz.remove();
   Exec.raiz = null;
+  const wp = document.getElementById("execWebphone");
+  if (wp) wp.remove();
   document.body.classList.remove("exec-aberta");
   if (!silencioso) {
     const cb = Exec.aoFechar;
@@ -468,6 +471,7 @@ function irExec(n) {
 
 async function desenharExec() {
   if (Exec._timer) clearInterval(Exec._timer);
+  if (Exec._poll) clearInterval(Exec._poll);
   const a = Exec.itens[Exec.i];
   const pendentes = Exec.itens.filter((x) => !Exec.feitas.has(x.id));
   const pos = pendentes.findIndex((x) => x.id === a.id) + 1;
@@ -513,7 +517,7 @@ async function desenharLateral(a, aba) {
       ${camposP.length ? camposP.map((f) => `<div class="exec-lat-campo"><label>${h(f.name)}</label><div>${h(cf[f.identifier])}</div></div>`).join("")
         : `<div class="exec-lat-campo"><span class="text-muted">Nenhum campo informado</span></div>`}
       <div class="exec-lat-sec">SOCIAL</div>
-      <div class="exec-lat-campo">${l.linkedIn ? `<a href="${h(l.linkedIn)}" target="_blank" rel="noopener">LinkedIn</a>` : `<span class="text-muted">Nenhuma rede social informada</span>`}</div>
+      <div class="exec-lat-campo">${/^https?:\/\//i.test(l.linkedIn || "") ? `<a href="${h(l.linkedIn)}" target="_blank" rel="noopener">LinkedIn</a>` : `<span class="text-muted">Nenhuma rede social informada</span>`}</div>
       <button class="exec-lapis" id="latEditar" title="Editar lead" aria-label="Editar lead">✎</button>`;
   } else if (aba === "anotacoes") {
     corpo = `<div class="exec-lat-sec">ANOTAÇÕES DO LEAD</div>
@@ -660,6 +664,39 @@ function fmtTel(t) {
   return t;
 }
 
+/* ── telefonia Zenvia ─────────────────────────────────────────────────
+   Com a conta pronta (saldo, DID e ramal ou celular do SDR), o "Ligar" disca
+   pela Zenvia: toca primeiro no webphone do ramal (ou no celular) e depois no
+   lead, e o estado da chamada vem da operadora. Sem ela, o discador segue
+   entregando o número ao softphone e registrando o resultado à mão. */
+const treinando = () => typeof Treino !== "undefined" && Treino.ativo;
+
+async function zenviaEstado() {
+  if (treinando()) return { podeLigar: false, motivo: "" };
+  const agora = Date.now();
+  if (state.zenvia && agora - state.zenvia.em < 60000) return state.zenvia.dados;
+  const dados = await api("/api/dialer/zenvia/estado").catch(() => ({ podeLigar: false, motivo: "" }));
+  state.zenvia = { em: agora, dados };
+  return dados;
+}
+
+/** Abre (uma vez por sessão de execução) o webphone do ramal, que é onde a
+ *  Zenvia toca primeiro. Fica num painel flutuante, com o microfone liberado. */
+async function abrirWebphone() {
+  let painel = document.getElementById("execWebphone");
+  if (painel) return painel;
+  const r = await api("/api/dialer/zenvia/webphone");
+  painel = document.createElement("div");
+  painel.id = "execWebphone";
+  painel.className = "exec-webphone";
+  painel.innerHTML = `<div class="exec-webphone-topo">Webphone · ramal ${h(r.ramal)}
+      <button type="button" aria-label="Minimizar webphone" data-min>–</button></div>
+    <iframe title="Webphone Zenvia" src="${h(r.url)}" allow="microphone; autoplay"></iframe>`;
+  document.body.appendChild(painel);
+  painel.querySelector("[data-min]").onclick = () => painel.classList.toggle("min");
+  return painel;
+}
+
 function cartaoLigacao(centro, a, estado = { fase: "discar", numero: "", notas: "", seg: 0 }) {
   const cfg = state.dialerConfig || {};
   const origens = cfg.callerIdList || (cfg.callerIds || []).map((n) => ({ number: n, label: "" }));
@@ -681,6 +718,7 @@ function cartaoLigacao(centro, a, estado = { fase: "discar", numero: "", notas: 
         <div class="exec-num-erro" id="dErro" hidden></div>
         <div class="exec-teclado">${[["1", ""], ["2", "ABC"], ["3", "DEF"], ["4", "GHI"], ["5", "JKL"], ["6", "MNO"], ["7", "PQRS"], ["8", "TUV"], ["9", "WXYZ"], ["*", ""], ["0", "+"], ["#", ""]]
           .map(([n, l]) => `<button type="button" data-tecla="${n}"><b>${n}</b><small>${l}</small></button>`).join("")}</div>
+        <div class="exec-modo" id="dModo"></div>
         <button class="exec-ligar" id="dLigar">Ligar</button>
         <button class="exec-cancelar" id="dCancelar">Cancelar</button>
         ${script ? `<details class="exec-roteiro" open><summary>Roteiro da ligação</summary><div>${h(script)}</div></details>` : ""}
@@ -689,7 +727,22 @@ function cartaoLigacao(centro, a, estado = { fase: "discar", numero: "", notas: 
     centro.querySelector("[data-fechar]").onclick = () => fecharExecucaoTela();
     centro.querySelectorAll("[data-tecla]").forEach((b) => { b.onclick = () => { inp.value += b.dataset.tecla; inp.focus(); }; });
     centro.querySelector("#dCancelar").onclick = () => fecharExecucaoTela();
-    centro.querySelector("#dLigar").onclick = () => {
+    let z = null;
+    zenviaEstado().then((e) => {
+      z = e;
+      const modo = centro.querySelector("#dModo");
+      if (!modo) return;
+      if (e.podeLigar) {
+        modo.innerHTML = e.modo === "ramal"
+          ? `☎ Pela Zenvia: o seu <b>ramal ${h(e.origem)}</b> toca primeiro (webphone), depois o lead.`
+          : `☎ Pela Zenvia: o seu <b>celular</b> toca primeiro; atenda para conectar com o lead.`;
+        modo.className = "exec-modo ok";
+      } else if (e.configurado && e.motivo) {
+        modo.textContent = `Telefonia Zenvia indisponível: ${e.motivo} Por enquanto a ligação sai pelo seu telefone.`;
+        modo.className = "exec-modo";
+      }
+    });
+    centro.querySelector("#dLigar").onclick = async () => {
       const d = soDigitos(inp.value).replace(/^55(?=\d{10,11}$)/, "");
       const erro = centro.querySelector("#dErro");
       // O discador não completa com um dígito a menos — melhor dizer antes.
@@ -698,6 +751,24 @@ function cartaoLigacao(centro, a, estado = { fase: "discar", numero: "", notas: 
         erro.textContent = "Número incompleto: informe DDD + número (10 ou 11 dígitos).";
         inp.focus();
         return;
+      }
+      if (z && z.podeLigar) {
+        const ligar = centro.querySelector("#dLigar");
+        ligar.disabled = true;
+        ligar.textContent = "Discando…";
+        try {
+          if (z.modo === "ramal") await abrirWebphone();
+          const gravar = !(Exec.gravar === false);
+          const r = await api("/api/dialer/zenvia/chamadas", { method: "POST",
+            body: { leadId: a.lead.id, destino: d, gravar } });
+          return cartaoLigacao(centro, a, { ...estado, fase: "chamada", numero: fmtTel(d), inicio: Date.now(), seg: 0,
+            zenvia: { id: r.id, modo: r.modo, fase: r.fase } });
+        } catch (err) {
+          toast(err.message, "err");
+          ligar.disabled = false;
+          ligar.textContent = "Ligar";
+          return;
+        }
       }
       const tel = document.createElement("a");
       tel.href = `tel:+55${d}`;
@@ -716,7 +787,9 @@ function cartaoLigacao(centro, a, estado = { fase: "discar", numero: "", notas: 
             ? origens.map((n) => `<option value="${h(n.number)}"${n.default ? " selected" : ""}>${h(n.label || "Bina inteligente")} · ${h(n.number)}</option>`).join("")
             : `<option value="">Bina inteligente</option>`}</select></div>
           <div class="exec-sinais">Áudio ◉ · Internet ▂▄▆</div>
-          <div class="exec-sub">Chamando telefone destino</div>
+          <div class="exec-sub" id="cFase">${estado.zenvia
+            ? (estado.zenvia.modo === "ramal" ? "Atenda no webphone: seu ramal toca primeiro" : "Atenda o seu celular para conectar")
+            : "Chamando telefone destino"}</div>
           <div class="exec-destino">${h(estado.numero)}</div>
           <div class="exec-tempo" id="cTempo">00:00</div>
           <div class="exec-botoes-chamada">
@@ -724,7 +797,7 @@ function cartaoLigacao(centro, a, estado = { fase: "discar", numero: "", notas: 
             <button type="button" title="Teclado" aria-label="Teclado" disabled>⌗</button>
             <button type="button" id="cMudo" title="Mudo" aria-label="Mudo">🎤</button>
           </div>
-          <label class="exec-gravar">Salvar gravação <input type="checkbox" id="cGravar" checked><span class="exec-chave"></span></label>
+          <label class="exec-gravar">Salvar gravação <input type="checkbox" id="cGravar"${Exec.gravar === false ? "" : " checked"}${estado.zenvia ? " disabled" : ""}><span class="exec-chave"></span></label>
         </div>
         <div class="exec-chamada-dir">
           <b>Bloco de anotações</b>
@@ -735,14 +808,51 @@ function cartaoLigacao(centro, a, estado = { fase: "discar", numero: "", notas: 
       </div>`;
     const tempo = centro.querySelector("#cTempo");
     const fmt = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-    Exec._timer = setInterval(() => { estado.seg = Math.round((Date.now() - estado.inicio) / 1000); tempo.textContent = fmt(estado.seg); }, 500);
+    const gravar = centro.querySelector("#cGravar");
+    gravar.onchange = () => { Exec.gravar = gravar.checked; };
+    const irClassificar = () => {
+      clearInterval(Exec._timer);
+      clearInterval(Exec._poll);
+      cartaoLigacao(centro, a, { ...estado, fase: "classificar", notas: centro.querySelector("#cNotas").value,
+        origem: centro.querySelector("#cOrigem").value });
+    };
+    if (estado.zenvia) {
+      // O cronômetro só conta a conversa; a fase e a duração vêm da Zenvia.
+      const fase = centro.querySelector("#cFase");
+      const TEXTO = { "chamando-origem": fase.textContent, "chamando-destino": "Chamando o lead…",
+                      conversando: "Em conversa", encerrada: "Ligação encerrada" };
+      let conversaDesde = 0;
+      Exec._timer = setInterval(() => {
+        if (conversaDesde) { estado.seg = Math.round((Date.now() - conversaDesde) / 1000); tempo.textContent = fmt(estado.seg); }
+      }, 500);
+      Exec._poll = setInterval(async () => {
+        try {
+          const st = await api(`/api/dialer/zenvia/chamadas/${estado.zenvia.id}`);
+          fase.textContent = TEXTO[st.fase] || st.fase;
+          if (st.fase === "conversando" && !conversaDesde) conversaDesde = Date.now();
+          if (st.fase === "encerrada") {
+            estado.seg = Math.max(estado.seg, st.duracao || 0);
+            estado.zenvia.status = st.status;
+            if (st.motivo) toast(`Ligação encerrada: ${st.motivo}`);
+            irClassificar();
+          }
+        } catch { /* rede instável: tenta de novo no próximo ciclo */ }
+      }, 2500);
+    } else {
+      Exec._timer = setInterval(() => { estado.seg = Math.round((Date.now() - estado.inicio) / 1000); tempo.textContent = fmt(estado.seg); }, 500);
+    }
     const mudo = centro.querySelector("#cMudo");
     mudo.onclick = () => mudo.classList.toggle("ativo");
     centro.querySelector("#cRelatar").onclick = () => toast("Problema registrado. Informe o suporte se persistir.");
-    centro.querySelector("#cEncerrar").onclick = () => {
-      clearInterval(Exec._timer);
-      cartaoLigacao(centro, a, { ...estado, fase: "classificar", notas: centro.querySelector("#cNotas").value,
-        origem: centro.querySelector("#cOrigem").value });
+    centro.querySelector("#cEncerrar").onclick = async () => {
+      if (estado.zenvia) {
+        try {
+          const r = await api(`/api/dialer/zenvia/chamadas/${estado.zenvia.id}`, { method: "DELETE" });
+          estado.seg = Math.max(estado.seg, r.duracao || 0);
+          estado.zenvia.status = r.status;
+        } catch (err) { toast(err.message, "err"); }
+      }
+      irClassificar();
     };
     return;
   }
@@ -755,7 +865,7 @@ function cartaoLigacao(centro, a, estado = { fase: "discar", numero: "", notas: 
   const fmt = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
   centro.innerHTML = `<div class="exec-chamada">
       <div class="exec-chamada-esq">
-        <div class="exec-origem">Origem: Bina inteligente</div>
+        <div class="exec-origem">Origem: ${estado.zenvia ? `Zenvia · ${estado.zenvia.modo === "ramal" ? "ramal" : "celular"}` : "Bina inteligente"}</div>
         <div class="exec-tempo fim">${fmt(estado.seg)}</div>
         <div class="exec-finalizada">⊘ Ligação finalizada</div>
         <div class="exec-destino peq">${h(estado.numero)}</div>
@@ -794,6 +904,10 @@ function cartaoLigacao(centro, a, estado = { fase: "discar", numero: "", notas: 
   });
   centro.querySelector("#cRelatar").onclick = () => toast("Problema registrado. Informe o suporte se persistir.");
   const registrar = async (cls) => {
+    if (estado.zenvia) {
+      // Já existe um registro da ligação (criado ao discar): só ganha a classificação.
+      return cls ? api(`/api/dialer/calls/${estado.zenvia.id}`, { method: "PATCH", body: { classificacao: cls } }) : null;
+    }
     const body = { leadId: a.lead.id, userId: state.me.id, duration: estado.seg, receiverPhone: estado.numero, originPhone: estado.origem || "" };
     if (cls === "BUSY") Object.assign(body, { status: "BUSY", output: "" });
     else if (cls) Object.assign(body, { status: "CONNECTED", output: cls });

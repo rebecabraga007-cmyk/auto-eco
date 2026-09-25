@@ -45,7 +45,8 @@ def user_full(u):
             "team": {"id": u.team.id, "name": u.team.name} if u.team else None,
             "active": u.active, "online": u.online, "created": iso(u.created_at),
             "emailSignature": u.email_signature or "",
-            "emailFrom": u.email_from or ""}
+            "emailFrom": u.email_from or "",
+            "zenviaRamal": u.zenvia_ramal or ""}
 
 
 def client(c):
@@ -134,7 +135,10 @@ def call(c):
         "receiverType": c.receiver_type, "status": c.status, "output": c.output,
         "receiverConnectedDuration": c.duration, "receiverPrice": c.price,
         "important": c.important, "originStarted": iso(c.started_at),
-        "flowLeadId": c.lead_id,
+        "flowLeadId": c.lead_id, "provider": c.provider or "",
+        # A URL da gravação não sai daqui: ela é pública na Zenvia. Quem pode
+        # ouvir pede por GET /api/dialer/calls/{id}/gravacao, que confere o dono.
+        "temGravacao": bool(c.recording_url),
         "flowLeadName": c.lead.name if c.lead else None,
         "flowLeadCompany": c.lead.company if c.lead else None,
     }

@@ -13,7 +13,7 @@ from .. import webhooks as webhooks_engine
 from ..config import WEB
 from ..db import get_db
 from ..deps import session_email
-from ..models import (Client, Company, CustomField, FitscoreRule, Goal, Holiday,
+from ..models import (USER_ROLES, Client, Company, CustomField, FitscoreRule, Goal, Holiday,
                       Integration, Lead, LeadActivity, LostReason, Team, User, Webhook)
 from ..serial import client as ser_client
 from ..serial import iso, user_full
@@ -68,6 +68,9 @@ def me(db: Session = Depends(get_db)):
                 "initials": (email[:2] or "?").upper(), "avatarUrl": "",
                 "roles": [], "dailyGoal": 0, "team": None, "active": True,
                 "online": False, "created": None, "emailSignature": ""}
+    # Celular de ligar é dado pessoal: sai só no /me, nunca na lista de usuários.
+    if u:
+        base["telefoneLigacao"] = u.phone_ramal or ""
     return {**base, "companyId": c.id, "nivel": perm.ator(db).nivel,
             "modules": c.modules.split(","), "addOns": c.add_ons.split(",") if c.add_ons else []}
 
@@ -86,6 +89,14 @@ def update_me(payload: dict = Body(...), db: Session = Depends(get_db)):
         u.name = name
     if "emailSignature" in payload:
         u.email_signature = payload["emailSignature"] or ""
+    if "telefoneLigacao" in payload:
+        # Celular que toca primeiro quando o SDR liga sem ramal (webphone).
+        tel = "".join(ch for ch in str(payload["telefoneLigacao"] or "") if ch.isdigit())
+        if tel.startswith("55") and len(tel) in (12, 13):
+            tel = tel[2:]
+        if tel and len(tel) not in (10, 11):
+            raise HTTPException(400, "Telefone inválido: informe DDD + número.")
+        u.phone_ramal = tel
     if "emailFrom" in payload:
         # Endereço fora de domínio verificado é recusado pelo provedor na hora
         # do envio — melhor barrar aqui, com o motivo, do que descobrir na
@@ -105,6 +116,11 @@ def update_me(payload: dict = Body(...), db: Session = Depends(get_db)):
             if padrao and dominio != padrao:
                 raise HTTPException(400, f"O domínio precisa ser {padrao} — é o verificado "
                                          "para envio.")
+            # O nome antes do @ é o da própria pessoa: sem isso o SDR assinava
+            # a cadência como diretoria@ ou financeiro@.
+            meu = (session_email() or "").split("@")[0].lower()
+            if meu and novo.split("@")[0] != meu and not perm.ator(db).pelo_menos("gestor"):
+                raise HTTPException(400, f"O remetente precisa ser {meu}@{dominio}.")
         u.email_from = novo
     db.commit()
     return user_full(u)
@@ -145,8 +161,10 @@ def my_company(db: Session = Depends(get_db)):
     return {"id": c.id, "name": c.name, "phone": c.phone, "site": c.site,
             "modules": c.modules.split(","),
             "addOns": c.add_ons.split(",") if c.add_ons else [],
-            "status": c.status, "monthlyValue": c.monthly_value,
-            "seatPrice": c.seat_price, "minutePrice": c.minute_price}
+            "status": c.status,
+            # Valores do contrato só para admin, como em Financeiro.
+            **({"monthlyValue": c.monthly_value, "seatPrice": c.seat_price,
+                "minutePrice": c.minute_price} if perm.ator(db).pelo_menos("admin") else {})}
 
 
 @router.get("/users/me/permissions")
@@ -530,6 +548,10 @@ def create_user(payload: dict = Body(...), db: Session = Depends(get_db)):
              roles=",".join(payload.get("roles") or ["SDR"]),
              team_id=payload.get("teamId"),
              daily_goal=int(payload.get("dailyGoal") or _company(db).default_daily_goal))
+    ramal = "".join(ch for ch in str(payload.get("zenviaRamal") or "") if ch.isdigit())[:10]
+    if ramal and db.query(User).filter(User.zenvia_ramal == ramal).first():
+        raise HTTPException(400, f"O ramal {ramal} já está com outra pessoa.")
+    u.zenvia_ramal = ramal
     db.add(u)
     db.commit()
     return user_full(u)
@@ -546,7 +568,15 @@ def update_user(uid: int, payload: dict = Body(...), db: Session = Depends(get_d
         if key in payload:
             setattr(u, attr, payload[key])
     if "roles" in payload:
+        invalidos = [r for r in payload["roles"] or [] if r not in USER_ROLES]
+        if invalidos:
+            raise HTTPException(400, f"Papel desconhecido: {', '.join(invalidos)}.")
         u.roles = ",".join(payload["roles"])
+    if "zenviaRamal" in payload:
+        ramal = "".join(ch for ch in str(payload["zenviaRamal"] or "") if ch.isdigit())[:10]
+        if ramal and db.query(User).filter(User.zenvia_ramal == ramal, User.id != u.id).first():
+            raise HTTPException(400, f"O ramal {ramal} já está com outra pessoa.")
+        u.zenvia_ramal = ramal
     db.commit()
     return user_full(u)
 
@@ -638,7 +668,10 @@ def update_company(payload: dict = Body(...), db: Session = Depends(get_db)):
 
 @router.get("/flow/users")
 def flow_users(db: Session = Depends(get_db)):
-    return [{"id": u.id, "name": u.name, "email": u.email, "dailyGoal": u.daily_goal}
+    ator = perm.ator(db)
+    gestor = ator.pelo_menos("gestor")
+    return [{"id": u.id, "name": u.name,
+             **({"email": u.email, "dailyGoal": u.daily_goal} if gestor or u.id == ator.user_id else {})}
             for u in db.query(User).filter(User.active).all()]
 
 
@@ -710,8 +743,10 @@ def flow_config(db: Session = Depends(get_db)):
             "leadStageFieldId": c.lead_stage_field_id,
             "responseTimeGoalHours": c.response_time_goal_hours,
             "fitscoreEnabled": c.fitscore_enabled,
-            "minutePrice": c.minute_price, "seatPrice": c.seat_price,
-            "usersGoals": [{"userId": u.id, "dailyGoal": u.daily_goal} for u in users]}
+            **({"minutePrice": c.minute_price, "seatPrice": c.seat_price}
+               if perm.ator(db).pelo_menos("gestor") else {}),
+            "usersGoals": [{"userId": u.id, "dailyGoal": u.daily_goal} for u in users
+                           if perm.ator(db).pelo_menos("gestor") or u.id == perm.ator(db).user_id]}
 
 
 @router.patch("/flow/configuration")
@@ -1013,13 +1048,14 @@ def integrations(db: Session = Depends(get_db)):
 
 
 @router.get("/integrations/zenvia/status")
-async def zenvia_status():
+async def zenvia_status(db: Session = Depends(get_db)):
     """Saldo e números da conta Zenvia Voice, lidos na hora.
 
     É o que decide se a telefonia pode ligar: sem DID comprado não há de onde
     sair a chamada, e sem saldo ela não completa. Guardar esse estado no banco
     só criaria uma cópia velha de um número que muda a cada ligação.
     """
+    perm.ator(db).exigir("gestor", "ver saldo e números da telefonia")
     token = os.environ.get("ZENVIA_VOICE_TOKEN") or ""
     if not token:
         return {"configurado": False, "motivo": "Falta ZENVIA_VOICE_TOKEN no .env."}
@@ -1033,10 +1069,12 @@ async def zenvia_status():
         return {"configurado": True, "erro": f"Não consegui falar com a Zenvia: {e}"}
     saldo = (saldo_r.json().get("dados") or {}).get("saldo") if saldo_r.status_code == 200 else None
     dids = ((did_r.json().get("dados") or {}).get("dids") or []) if did_r.status_code == 200 else []
-    # Um centavo é saldo positivo e não paga ligação nenhuma: o corte útil é
-    # um real, senão a tela diria "pronto para ligar" e a chamada cairia.
-    return {"configurado": True, "saldo": saldo, "dids": dids, "saldoMinimo": 1,
-            "podeLigar": bool(dids) and (saldo or 0) >= 1,
+    # Conta pós-paga (pay as you go, a da BLU): o saldo não é crédito e não
+    # decide nada. Só numa conta pré-paga (ZENVIA_PREPAGO=1) ele vira trava.
+    pre = (os.environ.get("ZENVIA_PREPAGO") or "").strip() == "1"
+    return {"configurado": True, "saldo": saldo, "dids": dids, "prePaga": pre,
+            "saldoMinimo": 1 if pre else None,
+            "podeLigar": bool(dids) and (not pre or (saldo or 0) >= 1),
             "erro": "" if saldo_r.status_code == 200 else f"HTTP {saldo_r.status_code} ao ler o saldo"}
 
 
@@ -1054,6 +1092,9 @@ def toggle_integration(key: str, payload: dict = Body(...), db: Session = Depend
 
 @router.get("/webhooks")
 def webhooks(db: Session = Depends(get_db)):
+    # A URL de destino costuma levar token (Zapier, n8n): é de gestor, como o
+    # mesmo recurso em /api/integracoes/webhooks.
+    perm.ator(db).exigir("gestor", "ver webhooks")
     return [{"id": w.id, "events": w.events.split(","), "targetUrl": w.target_url,
              "enabled": w.enabled, "created": iso(w.created_at)}
             for w in db.query(Webhook).order_by(Webhook.id.desc())]
@@ -1141,9 +1182,11 @@ def goals(ref: str, db: Session = Depends(get_db)):
             "company": {"opportunitiesGoal": total,
                         "conversionRateGoal": (round(sum(g.conversion_rate_goal for g in rows)
                                                      / len(rows), 4) if rows else 0.15)},
+            # SDR vê a própria meta; a do time inteiro é assunto de gestor.
             "usersGoals": [{"user": {"id": g.user.id, "name": g.user.name},
                             "opportunitiesGoal": g.opportunities_goal,
-                            "conversionRateGoal": g.conversion_rate_goal} for g in rows],
+                            "conversionRateGoal": g.conversion_rate_goal} for g in rows
+                           if perm.ator(db).pelo_menos("gestor") or g.user_id == perm.ator(db).user_id],
             # Insumos da "Estimativa de esforço" do original. O número que
             # falta para fechar a conta é quantas atividades custa levar um
             # lead até o fim — e isso não é chute, é a média histórica desta

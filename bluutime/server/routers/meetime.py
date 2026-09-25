@@ -260,9 +260,13 @@ async def sync(payload: dict = Body(default={}), db: Session = Depends(get_db)):
         row.meetime_id = str(u["id"])
         row.name = u.get("name") or email
         row.email = email
-        row.roles = ROLE_MAP.get(u.get("role") or "", "SDR")
+        # Papel e situação só vêm do Meetime para quem está chegando: depois,
+        # quem manda é o admin daqui (um sync de gestor desfazia rebaixamentos
+        # e desativações).
+        if row.id is None:
+            row.roles = ROLE_MAP.get(u.get("role") or "", "SDR")
+            row.active = bool(u.get("active"))
         row.team_id = team_id
-        row.active = bool(u.get("active"))
         if row.id is None:
             db.add(row)
     db.flush()
@@ -382,8 +386,13 @@ async def sync(payload: dict = Body(default={}), db: Session = Depends(get_db)):
     if skipped_calls:
         warnings["calls_sem_data"] = f"{skipped_calls} ligações ignoradas por não terem data."
 
+    from .. import webhooks as webhooks_engine
     for w in webhooks_raw:
         if w.get("deleted"):
+            continue
+        if webhooks_engine.url_publica_valida(w.get("target_url") or ""):
+            warnings.setdefault("webhooks_recusados", 0)
+            warnings["webhooks_recusados"] += 1
             continue
         _upsert(db, Webhook, w["id"], events=",".join(w.get("events") or []),
                 target_url=w.get("target_url") or "", secret=w.get("secret") or "",

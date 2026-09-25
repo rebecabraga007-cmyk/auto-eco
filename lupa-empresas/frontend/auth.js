@@ -392,6 +392,8 @@
       });
       const j = await r.json();
       if (!r.ok) { err.textContent = j.detail || 'Falha.'; return; }
+      // Trocar a senha derruba as sessões antigas; esta segue com o token novo.
+      if (j.token) setToken(j.token);
       alert('Senha alterada com sucesso.'); modal.hidden = true;
       document.getElementById('pass-form').reset();
     });

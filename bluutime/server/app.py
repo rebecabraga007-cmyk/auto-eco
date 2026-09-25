@@ -33,6 +33,45 @@ from .seed import seed_if_empty  # noqa: E402
 
 app = FastAPI(title="Bluutime", version="0.1.0", docs_url="/swagger")
 
+# Documentação da API: só para quem está logado. Aberta, entregava o mapa das
+# 300+ rotas (admin e pagas inclusive) a qualquer visitante.
+_DOCS = ("/swagger", "/openapi.json", "/redoc", "/capiblu/docs", "/capiblu/openapi.json",
+         "/capiblu/redoc")
+
+# Cabeçalhos de segurança de toda resposta. A SPA não tem script inline nem CDN,
+# então script é só 'self'; estilo inline (atributo style) continua permitido.
+# O único iframe de fora é o webphone da Zenvia.
+_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; "
+        "frame-src https://voice-app.zenvia.com; media-src 'self' https:; object-src 'none'; "
+        "base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+
+
+def _mascarar(texto: str) -> str:
+    """Tira de logs e da trilha o que não pode ficar lá: tokens e CPFs inteiros."""
+    import re
+    texto = re.sub(r"(token|secret|senha|password)=[^&\s\"]+", r"\1=***", texto, flags=re.I)
+    return re.sub(r"(?<!\d)(\d{3})\d{5}(\d{3})(?!\d)", r"\1*****\2", texto)
+
+
+class _LogSemSegredo:
+    """Filtro do access log do uvicorn: a URL do webhook leva o token na query
+    e as rotas de pessoa levam CPF no caminho — os dois iam em claro para
+    /var/log."""
+    def filter(self, record):
+        try:
+            if isinstance(record.args, tuple):
+                record.args = tuple(_mascarar(a) if isinstance(a, str) else a for a in record.args)
+            elif isinstance(record.msg, str):
+                record.msg = _mascarar(record.msg)
+        except Exception:
+            pass
+        return True
+
+
+import logging  # noqa: E402
+logging.getLogger("uvicorn.access").addFilter(_LogSemSegredo())
+
 capiblu_auth.init()
 _migrated = run_migrations()
 if _migrated:
@@ -66,7 +105,7 @@ app.include_router(api_v1.router)             # /api/v1/* — token de API, não
 
 _PUBLIC = {"/api/auth/login", "/api/auth/logout", "/api/auth/emergency-reset",
            # Chamado pelo provedor, nao pelo navegador — autentica por token proprio.
-           "/api/whatsapp/webhook"}
+           "/api/whatsapp/webhook", "/api/dialer/zenvia/webhook"}
 
 _IDENTIDADE = {b"x-user-email", b"x-user-role", b"x-user-grupo", b"x-proxy-secret"}
 
@@ -75,7 +114,7 @@ _IDENTIDADE = {b"x-user-email", b"x-user-role", b"x-user-grupo", b"x-proxy-secre
 async def sessao(request: Request, call_next):
     """Exige login em tudo que não é tela pública e publica o usuário no contexto."""
     path = request.url.path
-    protected = path.startswith(("/api/", "/capiblu/api/"))
+    protected = path.startswith(("/api/", "/capiblu/api/")) or path in _DOCS
     user = capiblu_auth.user_from_request(request) if protected or path == "/" else None
     set_session_user(user)
 
@@ -107,7 +146,7 @@ async def sessao(request: Request, call_next):
             await asyncio.to_thread(
                 auditoria.registrar, path=path, acao=acao, ator=perm.ator(db),
                 status=response.status_code,
-                detail=request.method + " " + (request.url.query or "")[:120])
+                detail=request.method + " " + _mascarar(request.url.query or "")[:120])
         finally:
             db.close()
 
@@ -115,6 +154,11 @@ async def sessao(request: Request, call_next):
         capiblu_auth.renovar_sessao(response, user, request)
     if path == "/" or path.endswith((".html", ".js", ".css")):
         response.headers["Cache-Control"] = "no-store, must-revalidate"
+    response.headers.setdefault("Content-Security-Policy", _CSP)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Permissions-Policy", "camera=(), geolocation=(), microphone=(self)")
     return response
 
 

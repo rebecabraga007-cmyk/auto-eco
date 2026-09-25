@@ -16,7 +16,20 @@ async function api(path, options = {}) {
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = { detail: text.slice(0, 300) }; }
-  if (!res.ok) throw new Error((data && (data.detail || data.message)) || `Erro ${res.status}`);
+  if (!res.ok) {
+    let detail = data && (data.detail || data.message);
+    // Erro de validação do FastAPI (422) vem como lista de objetos — virava
+    // "[object Object]" na tela. Cada item diz o campo e o motivo.
+    if (Array.isArray(detail)) {
+      detail = detail.map((d) => {
+        const campo = Array.isArray(d && d.loc) ? d.loc[d.loc.length - 1] : "";
+        return `${campo ? `${campo}: ` : ""}${(d && d.msg) || JSON.stringify(d)}`;
+      }).join("; ");
+    } else if (detail && typeof detail === "object") {
+      detail = detail.message || JSON.stringify(detail);
+    }
+    throw new Error(detail || `Erro ${res.status}`);
+  }
   return data;
 }
 
@@ -4007,7 +4020,7 @@ PAGES["lista-ligacoes"] = {
         h(c.originPhone || "—"),
         h(c.receiverPhone), fmtDateTime(c.originStarted), fmtDuration(c.receiverConnectedDuration),
         c.receiverType === "MOBILE" ? "Celular" : "Fixo",
-        `<button class="btn btn-default btn-xs" data-det="${c.id}">Detalhes</button>`,
+        `${c.temGravacao ? `<a class="btn btn-default btn-xs" href="/api/dialer/calls/${c.id}/gravacao" target="_blank" rel="noopener" title="Ouvir a gravação">▶</a> ` : ""}<button class="btn btn-default btn-xs" data-det="${c.id}">Detalhes</button>`,
       ] };
     });
     view.innerHTML = `
@@ -4148,13 +4161,14 @@ PAGES["dialer-ajustes"] = {
       // para dizer isso e para não inventar um botão que não grava nada.
       body.innerHTML = panel("Gravação de ligações", `
         <div class="alert alert-info alert-styled-left">
-          O Bluutime não grava ligações: a gravação nasce na operadora, e o
-          discador ainda não está ligado à Zenvia — falta um DID comprado e
-          saldo na conta.
+          As ligações discadas pela Zenvia são gravadas na operadora quando
+          "Salvar gravação" está ligado no discador. Quem ouve: o dono da ligação
+          e os gestores, pelo botão ▶ na Lista de Ligações. O link da operadora
+          nunca aparece na tela — sai por uma rota que confere a permissão.
         </div>
         <p class="text-muted text-size-small">
-          Quando a telefonia entrar, é aqui que ficam quem pode ouvir, quem pode
-          apagar e por quanto tempo o áudio é guardado.</p>`);
+          Ligações feitas por fora (softphone) e só registradas aqui não têm gravação.
+          O tempo de guarda do áudio é o da conta Zenvia.</p>`);
       return;
     }
 
@@ -5351,7 +5365,9 @@ async function abrirFormFeedback(f) {
 PAGES["capiblu-ferramentas"] = {
   area: "CapiBLU", title: "Todas as ferramentas",
   async render() {
+    const senha = go.senha;
     const s = await api("/api/capiblu/status");
+    if (!naVez(senha)) return;
     const byArea = {};
     s.tools.forEach((t) => { (byArea[t.area] = byArea[t.area] || []).push(t); });
     view.innerHTML = `
@@ -5394,9 +5410,11 @@ const picked = (id) => [...(document.getElementById(id)?.selectedOptions || [])]
 PAGES["capiblu-empresas"] = {
   area: "CapiBLU", title: "Prospecção B2B",
   async render() {
+    const senha = go.senha;
     const f = state.b2bFilters || { situacao: ["ATIVA"], com_telefone: true };
     const [cnaes, naturezas, municipios] = await Promise.all([
       lookup("cnae"), lookup("natureza"), lookup("municipio")]);
+    if (!naVez(senha)) return;
     state.municipios = municipios;
 
     const perfil = state.b2bPerfil || "empresas";
@@ -5775,28 +5793,65 @@ async function runB2B(offset) {
   try {
     const res = await api("/api/capiblu/prospect/preview",
       { method: "POST", body: { filtros, limite, offset } });
+    if (!out.isConnected) return; // saiu da tela no meio da busca
     state.b2bResult = res;
     renderB2B(res);
   } catch (e) {
-    out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
+    if (out.isConnected) out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
   }
 }
 
-async function testarCobertura() {
+/** Mede cobertura de decisores na página carregada.
+ *
+ * Gasta 2 consultas por empresa (teto de 60 no servidor = até 120), então
+ * pergunta antes com a conta feita. O resultado re-renderiza a tabela em vez
+ * de restaurar o `innerHTML` antigo: HTML restaurado volta sem os handlers,
+ * e os botões da tabela paravam de responder. */
+function testarCobertura() {
   const res = state.b2bResult;
-  if (!res || !res.empresas.length) return toast("Busque as empresas primeiro.", "err");
+  if (!res || !(res.empresas || []).length) return toast("Busque as empresas primeiro.", "err");
   const cnpjs = res.empresas.map((e) => (e.cnpj || "").replace(/\D/g, "")).filter(Boolean).slice(0, 60);
-  const out = document.getElementById("b2bOut");
-  const prev = out.innerHTML;
-  out.innerHTML = `<div class="alert alert-info alert-styled-left"><span class="spinner"></span>
-    Medindo cobertura em ${cnpjs.length} CNPJs — 2 consultas por empresa, sem puxar telefone.</div>` + prev;
-  try {
-    const r = await api("/api/capiblu/prospect/cobertura", { method: "POST", body: { cnpjs } });
-    modal({ title: "Cobertura de decisores", wide: true,
-      body: `<div class="json-box">${h(JSON.stringify(r, null, 2))}</div>` });
-    out.innerHTML = prev;
-  } catch (e) { out.innerHTML = prev; toast(e.message, "err"); }
+  confirmDialog("Testar cobertura de decisores",
+    `Vai consultar ${cnpjs.length} empresa(s) na Assertiva — 2 consultas por empresa, ` +
+    `até ${cnpjs.length * 2} consultas no total, contando no seu limite diário. Não puxa telefone.`,
+    async () => {
+      const btn = document.getElementById("doCobertura");
+      if (btn) { btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> medindo…`; }
+      try {
+        const r = await api("/api/capiblu/prospect/cobertura", { method: "POST", body: { cnpjs } });
+        mostrarCobertura(r);
+      } catch (e) { toast(e.message, "err"); }
+      if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = "Testar cobertura de decisores"; }
+    });
 }
+
+function mostrarCobertura(r) {
+  const cargos = Object.entries(r.cargos_encontrados || {}).slice(0, 12);
+  const detalhe = (r.detalhe || []).map((d) => ({ cells: [
+    fmtCNPJ(d.cnpj),
+    d.tem ? `<span class="pill green">tem decisor</span>` : `<span class="pill grey">sem decisor</span>`,
+    h(d.total ?? 0),
+    h((d.cargos || []).join(", ") || "—"),
+    d.motivo && d.motivo !== "ok" ? h(d.motivo) : "",
+  ] }));
+  modal({ title: "Cobertura de decisores", wide: true, body: `
+    ${kpis([
+      { value: `${r.taxa ?? 0}%`, label: `com decisor (${r.com_decisor ?? 0} de ${r.testadas ?? 0})`, tone: "success" },
+      { value: r.media_decisores ?? 0, label: "decisores por empresa (quando tem)", tone: "info" },
+      { value: r.consultas_gastas ?? "—", label: "consultas gastas", tone: "warning" },
+    ])}
+    ${cargos.length ? `<div class="sub-block"><h4>Cargos mais comuns</h4><div class="tag-wrap">
+      ${cargos.map(([c, n]) => `<span class="pill grey">${h(c)} · ${h(n)}</span>`).join(" ")}</div></div>` : ""}
+    <div class="sub-block"><h4>Empresa por empresa</h4>
+      ${table(["CNPJ", "Decisor", "Quantos", "Cargos", "Observação"], detalhe, { scroll: true })}</div>` });
+}
+
+/** A busca devolve a empresa "achatada"; os exports do serviço de dados
+ *  esperam `{empresa, contatos}` com os nomes de campo do export. */
+const empresaParaExport = (e) => ({
+  empresa: { ...e, telefone_empresa: e.telefone_1 || "", telefone_empresa_2: e.telefone_2 || "" },
+  contatos: [],
+});
 
 function renderB2B(res) {
   const empresas = res.empresas || [];
@@ -5870,12 +5925,16 @@ function renderB2B(res) {
     btn.disabled = true;
     btn.innerHTML = `<span class="spinner"></span> gerando…`;
     try {
-      // Reenvia os filtros, não as linhas da tela: o XLSX sai com a consulta
-      // inteira, não só com a página que está à vista.
+      // O export do serviço de dados não refaz a consulta: ele só formata as
+      // empresas que recebe. Mandar os filtros gerava planilha vazia — então
+      // vão as empresas carregadas (selecionadas, ou a página inteira).
+      const marcados = new Set(selected());
+      const lista = empresas.filter((x) => marcados.has(x.cnpj || ""));
+      const alvo = lista.length ? lista : empresas;
       await apiDownload("/api/capiblu/export/empresas", {
-        body: { filtros: state.b2bFilters || {}, limite: Math.min(res.total || 1000, 5000) },
+        body: { empresas: alvo.map(empresaParaExport) },
         fallbackName: "empresas.xlsx" });
-      toast("Arquivo baixado.", "ok");
+      toast(`${alvo.length} empresa(s) exportada(s).`, "ok");
     } catch (err) { toast(err.message, "err"); }
     btn.disabled = false;
     btn.textContent = "Baixar XLSX";
@@ -6039,6 +6098,13 @@ function openProspectImport(cnpjs) {
     if (!name) return toast("Dê um nome à base.", "err");
     ok.disabled = true;
     ok.innerHTML = `<span class="spinner"></span> montando…`;
+    const aviso = document.createElement("div");
+    aviso.className = "alert alert-info alert-styled-left";
+    aviso.innerHTML = `<span class="spinner"></span> Montando ${cnpjs.length} empresa(s) — pode levar
+      alguns minutos. Não clique de novo: se a tela disser que demorou demais, a montagem
+      continua no servidor e aparece em <strong>Bases de leads</strong>.`;
+    m.root.querySelector(".modal-body").prepend(aviso);
+    const inicio = Date.now();
     try {
       const res = await api("/api/capiblu/prospect/import", { method: "POST", body: {
         cnpjs, name,
@@ -6055,8 +6121,47 @@ function openProspectImport(cnpjs) {
       toast(`${res.imported} leads criados${res.failureCount ? ` · ${res.failureCount} CNPJs falharam` : ""}.`, "ok");
       if (res.semDecisorCount) showSemDecisor(res);
       go("bases");
-    } catch (e) { toast(e.message, "err"); ok.disabled = false; ok.textContent = "Montar base"; }
+    } catch (e) {
+      // O corte de 100 s do Cloudflare chega aqui como erro, mas o servidor
+      // segue montando. Se a base com este nome já existe, acompanha ela em
+      // vez de devolver o botão — reenviar pagaria a mesma lista duas vezes.
+      const seguiu = await acompanharBase(name, inicio, aviso);
+      if (seguiu) { m.close(); go("bases"); return; }
+      aviso.remove();
+      toast(e.message, "err"); ok.disabled = false; ok.textContent = "Montar base";
+    }
   };
+}
+
+/** Acompanha pela lista de bases uma montagem que a tela perdeu de vista.
+ *  Devolve true se achou a base (e esperou ela sair de PROCESSING). */
+async function acompanharBase(nome, desde, aviso) {
+  const achar = async () => {
+    try {
+      const r = await api("/api/flow/lead-bases?source=CAPIBLU");
+      return (r.data || []).find((b) => b.name === nome
+        && (!b.created || new Date(b.created.endsWith("Z") ? b.created : `${b.created}Z`) >= new Date(desde - 60000)));
+    } catch { return null; }
+  };
+  let base = await achar();
+  if (!base) return false;
+  // Até 15 minutos, de 5 em 5 segundos: 200 CNPJs levam uns 4.
+  for (let i = 0; i < 180 && base && base.status === "PROCESSING"; i += 1) {
+    if (aviso && aviso.isConnected) {
+      aviso.innerHTML = `<span class="spinner"></span> A tela parou de esperar, mas o servidor segue
+        montando <strong>${h(nome)}</strong>. Acompanhando — não precisa clicar de novo.`;
+    }
+    await new Promise((ok) => setTimeout(ok, 5000));
+    base = (await achar()) || base;
+  }
+  if (base.status === "PROCESSING") {
+    toast("A base ainda está sendo montada — acompanhe em Bases de leads.", "ok");
+  } else {
+    toast(base.status === "COMPLETED" ? `Base montada: ${base.numberOfLeads} lead(s).`
+      : "A montagem terminou sem leads — veja o detalhe em Bases de leads.",
+      base.status === "COMPLETED" ? "ok" : "err");
+  }
+  return true;
 }
 
 function showSemDecisor(res) {
@@ -6072,37 +6177,65 @@ function showSemDecisor(res) {
 
 /* ── Procurar pessoa ────────────────────────────────────────────────────
  *
- * Três coisas que a versão anterior não fazia e que vinham do CapiBLU:
- *  · exato e amplo são buscados **juntos** e viram abas com contagem, em vez
- *    de um checkbox que substitui o resultado;
+ * Um campo só, que entende o que foi digitado: 11 dígitos com dígito
+ * verificador válido é CPF (vai direto), 10–11 dígitos com DDD é telefone
+ * (abre "De quem é este telefone"), o resto é nome. Antes eram duas abas que
+ * apagavam uma à outra — trocar de aba jogava fora a busca feita.
+ *
+ * Do CapiBLU vieram:
+ *  · exato e amplo são buscados **juntos** e viram abas com contagem;
  *  · filtros de sexo e faixa de nascimento rodam no cliente, sem nova consulta;
- *  · o ranking pontua cada candidato contra as pistas que o SDR já tem — e a
- *    fonte paga só é chamada para quem passou do limiar.
+ *  · a pontuação compara cada candidato com as pistas que o SDR já tem.
+ *
+ * Custo: a busca por nome é base local e não gasta. Pontuar, abrir a pessoa
+ * ou buscar por CPF consulta o perfil (Mk) — que conta no limite diário e
+ * vira consulta paga quando a contingência "Work API Suspenso" liga a
+ * Assertiva por baixo. Por isso a pontuação automática nasce desligada.
  */
-const gente = {
-  q: "", sexo: "", anoMin: 0, anoMax: 0, pistas: "",
-  aba: "exatos",
-  exatos: [], exatosCpf: new Set(),
-  amplos: [], total: 0, buscados: 0,
-  scores: {},          // cpf -> { pct, bateu: [] }
-  mk: {},              // cpf -> payload do /mk (cache da sessão)
-  abertos: new Set(),  // cpf expandido
-  sel: new Set(),      // cpf selecionado
-  limiar: 40,
-  cpfDireto: "",       // busca direta por CPF, sem passar pelo nome
-  cpfAba: "mk",        // fonte ativa: mk (grátis) ou assertiva (paga)
-  cpfDados: {},        // fonte -> payload já consultado
-  modo: "nome",        // aba ativa do painel de busca: nome | cpf
-};
-
 const PAGINA_GENTE = 10;
 const CHAVE_RECENTES = "bluutime.gente.recentes";
 const CHAVE_AUTORANK = "bluutime.gente.autorank";
 
-/* O Mk não cobra, então pontuar os dez primeiros ao buscar é de graça e
-   poupa um clique. Fica ligado por padrão e desligável — em conexão ruim são
-   dez requisições que o SDR pode não querer esperar. */
-const autoRankLigado = () => localStorage.getItem(CHAVE_AUTORANK) !== "off";
+const gente = {
+  q: "",               // o que está no campo único agora
+  buscou: "",          // nome da última busca feita (o campo pode ter mudado depois)
+  seq: 0,              // número da busca: resposta atrasada não sobrescreve a nova
+  sexo: "", anoMin: 0, anoMax: 0, pistas: "",
+  aba: "exatos",
+  exatos: [], exatosCpf: new Set(), verExatos: PAGINA_GENTE,
+  amplos: [], total: 0, buscados: 0, carregando: false,
+  scores: {},          // cpf -> { pct, bateu: [] }
+  mk: {},              // cpf -> payload do /mk (cache da sessão)
+  blocos: {},          // cpf -> { bloco -> payload | {loading} | {status:"error"} }
+  blocoAtivo: {},      // cpf -> bloco aberto no detalhe
+  abertos: new Set(),  // cpf expandido
+  sel: new Set(),      // cpf selecionado
+  rankQtd: PAGINA_GENTE,
+  cpfDireto: "",       // busca direta por CPF, sem passar pelo nome
+  cpfAba: "mk",        // fonte ativa: mk ou assertiva
+  cpfDados: {},        // fonte -> payload já consultado
+  modo: "nome",        // aba de resultado visível: nome | cpf — cada uma guarda o seu
+};
+
+/* Pedido do /mk em voo, por CPF. A pontuação automática, o "Pontuar" e o
+   "Abrir" pediam o mesmo perfil ao mesmo tempo — e cada pedido conta uma
+   consulta. Com a promessa compartilhada, o segundo espera o primeiro. */
+const mkEmVoo = {};
+function pedirMk(cpf) {
+  if (gente.mk[cpf]) return Promise.resolve(gente.mk[cpf]);
+  if (!mkEmVoo[cpf]) {
+    mkEmVoo[cpf] = api(`/api/capiblu/pessoas/${cpf}/mk`)
+      .then((r) => { gente.mk[cpf] = r; return r; })
+      .finally(() => { delete mkEmVoo[cpf]; });
+  }
+  return mkEmVoo[cpf];
+}
+
+/* Desligada por padrão: cada candidato pontuado é uma consulta ao Mk. Quem
+   liga, liga sabendo — a escolha fica no navegador. */
+const autoRankLigado = () => {
+  try { return localStorage.getItem(CHAVE_AUTORANK) === "on"; } catch (e) { return false; }
+};
 const definirAutoRank = (on) => {
   try { localStorage.setItem(CHAVE_AUTORANK, on ? "on" : "off"); } catch (e) {}
 };
@@ -6121,6 +6254,82 @@ function guardarRecente(q, total) {
   catch (e) { /* modo privado: segue sem histórico */ }
 }
 
+function cpfValido(d) {
+  if (!/^\d{11}$/.test(d) || /^(\d)\1{10}$/.test(d)) return false;
+  for (const n of [9, 10]) {
+    let soma = 0;
+    for (let i = 0; i < n; i += 1) soma += Number(d[i]) * (n + 1 - i);
+    if ((soma * 10) % 11 % 10 !== Number(d[n])) return false;
+  }
+  return true;
+}
+
+/** O que foi digitado no campo único. CPF ganha do telefone quando os dois
+ *  servem: celular com DDD também tem 11 dígitos, mas só um em cada onze
+ *  números passa no dígito verificador por acaso. */
+function lerEntrada(txt) {
+  const bruto = String(txt || "").trim();
+  if (!bruto) return { tipo: "vazio" };
+  if (/^[\d\s.()/+-]+$/.test(bruto)) {
+    let d = bruto.replace(/\D/g, "");
+    if (d.length === 13 && d.startsWith("55")) d = d.slice(2); // +55 colado
+    const pareceTel = /^[1-9][1-9]/.test(d) && (d.length === 10 || (d.length === 11 && d[2] === "9"));
+    if (d.length === 11 && cpfValido(d)) return { tipo: "cpf", valor: d, tambemTel: pareceTel };
+    if (pareceTel) return { tipo: "telefone", valor: d };
+    if (d.length === 11) {
+      return { tipo: "invalido", msg: "Tem 11 dígitos, mas não é um CPF válido (o dígito verificador não bate) nem um celular com DDD." };
+    }
+    return { tipo: "invalido", msg: "Só números vale como CPF (11 dígitos) ou telefone com DDD (10 ou 11 dígitos)." };
+  }
+  if (bruto.length < 3) return { tipo: "curto" };
+  return { tipo: "nome", valor: bruto };
+}
+
+function dicaEntrada(e) {
+  switch (e.tipo) {
+    case "cpf": return `Parece um CPF (${h(fmtCPF(e.valor))}) — buscando direto. O perfil conta 1 consulta.` +
+      (e.tambemTel ? ` Se for telefone, use <a data-page="capiblu-telefone">De quem é este telefone</a>.` : "");
+    case "telefone": return "Parece um telefone — vamos abrir “De quem é este telefone” com o número preenchido.";
+    case "invalido": return h(e.msg);
+    case "curto": return "Ao menos 3 letras para buscar por nome.";
+    case "nome": return "Busca por nome na base local: exata e ampla saem juntas. Não gasta consulta.";
+    default: return "Digite um nome (3 letras ou mais), um CPF ou um telefone com DDD.";
+  }
+}
+
+/** Abas acessíveis: `<button role="tab">`, setas ←/→, Home e End. `itens` é
+ *  `[valor, rótulo-html]`; o rótulo já deve vir escapado. */
+function abasHtml(id, itens, ativo, extra = "") {
+  return `<ul class="nav nav-tabs" role="tablist" id="${h(id)}"${extra}>${itens.map(([v, rot]) => `
+    <li role="presentation"${v === ativo ? ' class="active"' : ""}><button type="button" role="tab"
+      data-v="${h(v)}" aria-selected="${v === ativo}" tabindex="${v === ativo ? 0 : -1}">${rot}</button></li>`).join("")}
+  </ul>`;
+}
+
+/** Liga as abas. `aoEscolher` pode re-renderizar tudo: o foco volta para a
+ *  aba escolhida pelo id da lista, senão o teclado se perdia a cada seta. */
+function ligarAbas(lista, aoEscolher) {
+  if (!lista) return;
+  const id = lista.id;
+  const abas = [...lista.querySelectorAll('[role="tab"]')];
+  const escolher = (b, focar) => {
+    aoEscolher(b.dataset.v);
+    if (!focar) return;
+    const nova = document.getElementById(id);
+    const alvo = nova && [...nova.querySelectorAll('[role="tab"]')].find((x) => x.dataset.v === b.dataset.v);
+    if (alvo) alvo.focus();
+  };
+  abas.forEach((b, i) => {
+    b.onclick = () => escolher(b, true);
+    b.onkeydown = (e) => {
+      const pos = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: abas.length - 1 }[e.key];
+      if (pos === undefined) return;
+      e.preventDefault();
+      escolher(abas[(pos + abas.length) % abas.length], true);
+    };
+  });
+}
+
 const pessoaFiltrada = (lista) => lista.filter((p) => {
   if (gente.sexo && !String(p.sexo || "").toUpperCase().startsWith(gente.sexo)) return false;
   const ano = parseInt(String(p.nascimento || "").slice(-4), 10);
@@ -6131,97 +6340,73 @@ const pessoaFiltrada = (lista) => lista.filter((p) => {
 
 const amplosSemExatos = () => pessoaFiltrada(gente.amplos.filter((p) => !gente.exatosCpf.has(p.cpf)));
 const listaAtual = () => gente.aba === "exatos" ? pessoaFiltrada(gente.exatos) : amplosSemExatos();
+const pessoaPorCpf = (cpf) => gente.exatos.find((x) => x.cpf === cpf)
+  || gente.amplos.find((x) => x.cpf === cpf) || {};
 
 PAGES["capiblu-gente"] = {
   area: "CapiBLU", title: "Procurar pessoa",
   async render() {
+    const entrada = lerEntrada(gente.q);
     view.innerHTML = `
       ${panel("Procurar pessoa", `
-        <ul class="nav nav-tabs" id="pModo">
-          <li${gente.modo === "nome" ? ' class="active"' : ""}><a data-modo="nome">Não sei o CPF — buscar pelo nome</a></li>
-          <li${gente.modo === "cpf" ? ' class="active"' : ""}><a data-modo="cpf">Sei o CPF — buscar direto</a></li>
-        </ul>
-        <div id="buscaNome" class="main-search mt-10"${gente.modo === "nome" ? "" : " hidden"}>
-          <div class="form-group has-feedback has-feedback-left">
-            <input class="form-control input-xlg" id="pName" placeholder="Nome completo ou parcial"
-                   value="${h(gente.q)}">
-            <div class="form-control-feedback">⌕</div>
-            <div class="help-block" id="pHelp">Ao menos 3 caracteres. Busca exata e ampla saem juntas.</div>
+        <div class="gente-busca">
+          <label for="pBusca">Nome, CPF ou telefone</label>
+          <div class="gente-campo">
+            <input class="form-control input-xlg" id="pBusca" autocomplete="off"
+                   aria-describedby="pHelp" value="${h(gente.q)}">
+            <button class="btn btn-main" id="pSearch"${["nome", "cpf", "telefone"].includes(entrada.tipo) ? "" : " disabled"}>Buscar</button>
           </div>
-          <div class="filter-row" style="grid-template-columns:repeat(4,minmax(140px,1fr))">
-            <div><label class="text-muted text-size-small">Sexo</label>
-              <div class="chip-grid" id="pSexo">
-                ${[["", "Todos"], ["F", "Feminino"], ["M", "Masculino"]].map(([v, t]) =>
-                  `<button type="button" class="chip${gente.sexo === v ? " active" : ""}" data-v="${v}">${t}</button>`).join("")}
-              </div></div>
-            <div><label class="text-muted text-size-small">Nascido de</label>
-              <input class="form-control input-sm" id="pAnoMin" type="number" placeholder="1970"
-                     value="${gente.anoMin || ""}"></div>
-            <div><label class="text-muted text-size-small">até</label>
-              <input class="form-control input-sm" id="pAnoMax" type="number" placeholder="1990"
-                     value="${gente.anoMax || ""}"></div>
-            <div><label class="text-muted text-size-small">Pistas <span class="text-grey">— para o ranking</span></label>
-              <input class="form-control input-sm" id="pPistas" placeholder="cidade, telefone ou empresa"
-                     value="${h(gente.pistas)}"></div>
-          </div>
+          <div class="help-block" id="pHelp" aria-live="polite">${dicaEntrada(entrada)}</div>
           <div class="recentes" id="pRecentes"></div>
-          <div class="toolbar mt-10" style="border:0;padding:0;background:none">
-            <span class="text-muted text-size-small">Base local JBR — não gasta consulta.</span>
-            <span class="spacer"></span>
-            <button class="btn btn-main btn-sm" id="pSearch" ${gente.q.trim().length < 3 ? "disabled" : ""}>Buscar</button>
+          <div class="filter-row gente-filtros" id="pFiltros"${gente.modo === "nome" ? "" : " hidden"}>
+            <div><span class="text-muted text-size-small" id="pSexoRot">Sexo</span>
+              <div class="chip-grid" id="pSexo" role="group" aria-labelledby="pSexoRot">
+                ${[["", "Todos"], ["F", "Feminino"], ["M", "Masculino"]].map(([v, t]) =>
+                  `<button type="button" class="chip${gente.sexo === v ? " active" : ""}" data-v="${v}"
+                     aria-pressed="${gente.sexo === v}">${t}</button>`).join("")}
+              </div></div>
+            <div><label class="text-muted text-size-small" for="pAnoMin">Nascido a partir de (ano)</label>
+              <input class="form-control input-sm" id="pAnoMin" type="number" inputmode="numeric"
+                     placeholder="1970" value="${gente.anoMin || ""}"></div>
+            <div><label class="text-muted text-size-small" for="pAnoMax">Nascido até (ano)</label>
+              <input class="form-control input-sm" id="pAnoMax" type="number" inputmode="numeric"
+                     placeholder="1990" value="${gente.anoMax || ""}"></div>
+            <div><label class="text-muted text-size-small" for="pPistas">Pistas para pontuar</label>
+              <input class="form-control input-sm" id="pPistas" placeholder="cidade, telefone ou empresa"
+                     aria-describedby="pPistasDica" value="${h(gente.pistas)}">
+              <span class="text-grey text-size-small" id="pPistasDica">Separe por vírgula.</span></div>
           </div>
-          <div id="genteOut">${gente.exatos.length || gente.amplos.length ? "" : emptyState("Digite um nome para começar.")}</div>
-        </div>
-        <div id="buscaCpf" class="main-search mt-10"${gente.modo === "cpf" ? "" : " hidden"}>
-          <div class="form-group has-feedback has-feedback-left">
-            <input class="form-control input-xlg" id="pCpf" placeholder="CPF — só números" maxlength="14"
-                   value="${h(gente.cpfDireto)}">
-            <div class="form-control-feedback">⌕</div>
-          </div>
-          <div class="toolbar mt-10" style="border:0;padding:0;background:none">
-            <span class="text-muted text-size-small">Mk é grátis · Assertiva cobra por CPF</span>
-            <span class="spacer"></span>
-            <button class="btn btn-main btn-sm" id="pCpfGo">Consultar</button>
-          </div>
-          <div id="cpfDiretoOut"></div>
-        </div>`, { subtitle: "Recursos do CapiBLU dentro do fluxo de prospecção" })}`;
+        </div>`, { subtitle: "Busca por nome não gasta. Perfil (Mk), pontuação e verificação contam como consulta no seu limite diário." })}
+      ${abasHtml("pModo", [["nome", "Resultado pelo nome"], ["cpf", "Resultado pelo CPF"]], gente.modo)}
+      <div id="buscaNome" role="tabpanel" aria-labelledby="pModo"${gente.modo === "nome" ? "" : " hidden"}>
+        <div id="genteOut">${gente.exatos.length || gente.amplos.length ? "" : emptyState("Digite um nome para começar.")}</div>
+      </div>
+      <div id="buscaCpf" role="tabpanel" aria-labelledby="pModo"${gente.modo === "cpf" ? "" : " hidden"}>
+        <div id="cpfDiretoOut">${gente.cpfDireto ? "" : emptyState("Digite um CPF no campo acima para ver o perfil.")}</div>
+      </div>`;
 
-    document.getElementById("pModo").onclick = (e) => {
-      const a = e.target.closest("[data-modo]"); if (!a) return;
-      const novo = a.dataset.modo;
-      if (novo === gente.modo) return;
-      gente.modo = novo;
-      document.querySelectorAll("#pModo > li").forEach((li) => li.classList.remove("active"));
-      a.closest("li").classList.add("active");
-      document.getElementById("buscaNome").hidden = gente.modo !== "nome";
-      document.getElementById("buscaCpf").hidden = gente.modo !== "cpf";
-      if (gente.modo === "cpf") {
-        // limpa os restos da busca por nome
-        gente.exatos = []; gente.amplos = []; gente.exatosCpf = new Set();
-        gente.abertos = new Set(); gente.sel = new Set(); gente.scores = {};
-        gente.q = ""; document.getElementById("pName").value = "";
-        document.getElementById("genteOut").innerHTML = emptyState("Digite um nome para começar.");
-      } else {
-        // limpa os restos da busca por CPF
-        gente.cpfDireto = ""; gente.cpfDados = {};
-        document.getElementById("pCpf").value = "";
-        document.getElementById("cpfDiretoOut").innerHTML = "";
-      }
-    };
+    ligarAbas(document.getElementById("pModo"), (v) => { gente.modo = v; mostrarModo(); });
 
-    document.getElementById("pCpfGo").onclick = buscarCpfDireto;
-    document.getElementById("pCpf").onkeydown = (e) => { if (e.key === "Enter") buscarCpfDireto(); };
-    if (gente.cpfDireto) renderCpfDireto();
-
-    const nome = document.getElementById("pName");
+    const campoBusca = document.getElementById("pBusca");
     const btn = document.getElementById("pSearch");
-    nome.oninput = () => { gente.q = nome.value; btn.disabled = gente.q.trim().length < 3; };
-    nome.onkeydown = (e) => { if (e.key === "Enter" && !btn.disabled) buscarGente(); };
-    btn.onclick = buscarGente;
+    campoBusca.oninput = () => {
+      gente.q = campoBusca.value;
+      const e = lerEntrada(gente.q);
+      document.getElementById("pHelp").innerHTML = dicaEntrada(e);
+      btn.disabled = !["nome", "cpf", "telefone"].includes(e.tipo);
+    };
+    campoBusca.onkeydown = (e) => { if (e.key === "Enter" && !btn.disabled) buscarEntrada(); };
+    btn.onclick = buscarEntrada;
 
     document.getElementById("pSexo").onclick = (e) => {
       const b = e.target.closest(".chip"); if (!b) return;
-      gente.sexo = b.dataset.v; go("capiblu-gente");
+      gente.sexo = b.dataset.v;
+      document.querySelectorAll("#pSexo .chip").forEach((c) => {
+        const on = c === b;
+        c.classList.toggle("active", on);
+        c.setAttribute("aria-pressed", String(on));
+      });
+      if (gente.exatos.length || gente.amplos.length) renderGente();
     };
     const num = (id, key) => {
       document.getElementById(id).onchange = (e) => {
@@ -6230,12 +6415,51 @@ PAGES["capiblu-gente"] = {
       };
     };
     num("pAnoMin", "anoMin"); num("pAnoMax", "anoMax");
-    document.getElementById("pPistas").onchange = (e) => { gente.pistas = e.target.value; };
+    document.getElementById("pPistas").onchange = (e) => {
+      gente.pistas = e.target.value.trim();
+      repontuar();
+    };
     renderRecentes();
 
     if (gente.exatos.length || gente.amplos.length) renderGente();
+    if (gente.cpfDireto) renderCpfDireto();
   },
 };
+
+/** Mostra o resultado do modo ativo sem apagar o outro. */
+function mostrarModo() {
+  const lista = document.getElementById("pModo");
+  if (!lista) return;
+  lista.querySelectorAll('[role="tab"]').forEach((b) => {
+    const on = b.dataset.v === gente.modo;
+    b.setAttribute("aria-selected", String(on));
+    b.tabIndex = on ? 0 : -1;
+    b.closest("li").classList.toggle("active", on);
+  });
+  document.getElementById("buscaNome").hidden = gente.modo !== "nome";
+  document.getElementById("buscaCpf").hidden = gente.modo !== "cpf";
+  const filtros = document.getElementById("pFiltros");
+  if (filtros) filtros.hidden = gente.modo !== "nome";
+}
+
+function buscarEntrada() {
+  const campoBusca = document.getElementById("pBusca");
+  const e = lerEntrada(campoBusca ? campoBusca.value : gente.q);
+  if (e.tipo === "cpf") {
+    // Máscara na hora: o SDR vê que o número foi entendido como CPF.
+    gente.q = fmtCPF(e.valor);
+    if (campoBusca) campoBusca.value = gente.q;
+    return buscarCpfDireto(e.valor);
+  }
+  if (e.tipo === "telefone") {
+    state.telPhone = e.valor;
+    state.telAba = "reverso";
+    toast("Parece um telefone — abrindo “De quem é este telefone”.", "ok");
+    return go("capiblu-telefone");
+  }
+  if (e.tipo === "nome") return buscarGente(e.valor);
+  toast(e.tipo === "invalido" ? e.msg : "Digite ao menos 3 letras, um CPF ou um telefone.", "err");
+}
 
 function renderRecentes() {
   const alvo = document.getElementById("pRecentes");
@@ -6244,37 +6468,45 @@ function renderRecentes() {
   alvo.innerHTML = lista.length
     ? `<span class="text-muted text-size-small">Últimas buscas:</span>
        ${lista.map((x) => `<button type="button" class="chip" data-rec="${h(x.q)}"
-          title="${x.total} resultado(s)">${h(x.q)}</button>`).join("")}`
+          title="${h(x.total)} resultado(s)">${h(x.q)}</button>`).join("")}`
     : "";
   alvo.querySelectorAll("[data-rec]").forEach((b) => {
     b.onclick = () => {
-      document.getElementById("pName").value = b.dataset.rec;
-      gente.q = b.dataset.rec;
-      document.getElementById("pSearch").disabled = false;
-      buscarGente();
+      const campoBusca = document.getElementById("pBusca");
+      campoBusca.value = b.dataset.rec;
+      campoBusca.dispatchEvent(new Event("input"));
+      buscarEntrada();
     };
   });
 }
 
-async function buscarGente() {
-  const q = document.getElementById("pName").value.trim();
-  if (q.length < 3) return;
-  gente.q = q;
-  gente.pistas = document.getElementById("pPistas").value.trim();
+async function buscarGente(q) {
+  const seq = (gente.seq += 1);
+  gente.q = q; gente.buscou = q;
+  gente.pistas = (document.getElementById("pPistas")?.value || "").trim();
   gente.exatos = []; gente.amplos = []; gente.exatosCpf = new Set();
-  gente.total = 0; gente.buscados = 0; gente.scores = {};
+  // `pontuando` volta a falso: a pontuação da busca anterior se aposenta
+  // sozinha no próximo passo (confere `seq`), e pedidos repetidos ao mesmo
+  // perfil são deduplicados por `pedirMk`.
+  gente.total = 0; gente.buscados = 0; gente.scores = {}; gente.carregando = false;
+  gente.pontuando = false;
+  gente.verExatos = PAGINA_GENTE;
   gente.abertos = new Set(); gente.sel = new Set(); gente.aba = "exatos";
+  gente.modo = "nome";
+  mostrarModo();
 
   const out = document.getElementById("genteOut");
-  out.innerHTML = LOADING;
+  if (out) out.innerHTML = LOADING;
   const pedir = (broad, limite, offset) =>
     api(`/api/capiblu/pessoas?q=${encodeURIComponent(q)}&broad=${broad}&limit=${limite}&offset=${offset}`)
       .catch((e) => ({ status: "error", message: e.message, pessoas: [] }));
 
   // As duas buscas saem juntas: a exata é curta, a ampla vem paginada.
   const [ex, am] = await Promise.all([pedir(false, 100, 0), pedir(true, PAGINA_GENTE, 0)]);
+  if (seq !== gente.seq) return; // outra busca começou enquanto esta voava
   if (ex.status === "error" && am.status === "error") {
-    out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(ex.message || am.message)}</div>`;
+    const alvo = document.getElementById("genteOut");
+    if (alvo) alvo.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(ex.message || am.message)}</div>`;
     return;
   }
   gente.exatos = ex.pessoas || [];
@@ -6286,36 +6518,56 @@ async function buscarGente() {
   guardarRecente(q, gente.exatos.length + gente.total);
   renderRecentes();
   renderGente();
-  if (autoRankLigado()) calcularRanking(10, true);
+  if (autoRankLigado()) calcularRanking(gente.rankQtd, true);
 }
 
+/** Mais resultados da busca ampla. A rota aceita no máximo 200 por pedido
+ *  (acima disso devolvia 422), então "Todos" vem em lotes de 200. */
 async function carregarMaisAmplos(qtd) {
-  const restante = gente.total - gente.buscados;
-  const n = qtd === "todos" ? restante : Math.min(qtd, restante);
-  if (n <= 0) return;
-  const info = document.getElementById("gPagInfo");
-  if (info) info.innerHTML = `<span class="spinner"></span> carregando…`;
+  if (gente.carregando) return;
+  const seq = gente.seq;
+  let falta = qtd === "todos" ? gente.total - gente.buscados : Math.min(qtd, gente.total - gente.buscados);
+  if (falta <= 0) return;
+  gente.carregando = true;
   try {
-    const r = await api(`/api/capiblu/pessoas?q=${encodeURIComponent(gente.q)}&broad=true&limit=${n}&offset=${gente.buscados}`);
-    const novos = (r.pessoas || []).filter((p) => !gente.amplos.some((x) => x.cpf === p.cpf));
-    gente.amplos = gente.amplos.concat(novos);
-    gente.buscados += (r.pessoas || []).length;
-    if (r.total) gente.total = r.total;
-    if (!novos.length) gente.total = gente.buscados; // servidor sem offset: para de prometer mais
-    renderGente();
-  } catch (e) { toast(e.message, "err"); renderGente(); }
+    while (falta > 0) {
+      const info = document.getElementById("gPagInfo");
+      if (info) info.innerHTML = `<span class="spinner"></span> carregando… ${gente.buscados} de ${gente.total}`;
+      const n = Math.min(200, falta);
+      const r = await api(`/api/capiblu/pessoas?q=${encodeURIComponent(gente.buscou)}&broad=true&limit=${n}&offset=${gente.buscados}`);
+      if (seq !== gente.seq) return;
+      const vieram = r.pessoas || [];
+      const vistos = new Set(gente.amplos.map((x) => x.cpf));
+      const novos = vieram.filter((p) => !vistos.has(p.cpf));
+      gente.amplos = gente.amplos.concat(novos);
+      gente.buscados += vieram.length;
+      if (r.total) gente.total = r.total;
+      if (!novos.length) { gente.total = gente.buscados; break; } // servidor sem offset: para de prometer mais
+      falta -= vieram.length;
+      if (vieram.length < n) break;
+    }
+  } catch (e) {
+    if (seq === gente.seq) toast(e.message, "err");
+  }
+  if (seq !== gente.seq) return;
+  gente.carregando = false;
+  renderGente();
 }
 
-/* Pontuação: quanto do que o SDR já sabe aparece no perfil do candidato.
-   Tudo vem do Mk, que é grátis — a Assertiva só entra acima do limiar. */
+/* Pontuação: quanto do que o SDR já sabe aparece no perfil do candidato. */
 function normalizar(s) {
-  return String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 }
 function achatar(obj, nivel = 0) {
   if (obj == null || nivel > 4) return "";
   if (typeof obj !== "object") return " " + obj;
   return Object.values(obj).map((v) => achatar(v, nivel + 1)).join(" ");
 }
+/* O integrax-cpf devolve em `data`, com os básicos em DadosBasicos; a
+   contingência da Assertiva devolve no mesmo formato. Lê como o renderMk lê. */
+const corpoMk = (payload) => (payload && (payload.pessoa || payload.data || payload.dados || payload)) || {};
+const telefonesMk = (payload) => corpoMk(payload).telefones || (payload && payload.telefones) || [];
+
 function pontuarPessoa(pessoa, payload) {
   const texto = normalizar(achatar(payload));
   const soDigitos = texto.replace(/[^0-9]/g, "");
@@ -6329,149 +6581,208 @@ function pontuarPessoa(pessoa, payload) {
     if (alvo && onde.includes(alvo)) { pontos += 30; bateu.push(pista); }
   });
   // Sinais que não dependem de pista: ter telefone, ter e-mail, cadastro ativo.
-  const p = payload.pessoa || payload.dados || payload || {};
-  if ((p.telefones || payload.telefones || []).length) { pontos += 14; bateu.push("tem telefone"); }
+  const p = corpoMk(payload);
+  const situacao = ((p.DadosBasicos || {}).situacaoCadastral || {}).descricaoSituacaoCadastral
+    || p.situacao_cpf || p.situacao;
+  if (telefonesMk(payload).length) { pontos += 14; bateu.push("tem telefone"); }
   if ((p.emails || payload.emails || []).length) { pontos += 6; bateu.push("tem e-mail"); }
-  if (/ativ/.test(normalizar(p.situacao_cpf || p.situacao))) { pontos += 6; bateu.push("CPF ativo"); }
+  if (/(^|\s)(ativ|regular)/.test(normalizar(situacao))) { pontos += 6; bateu.push("CPF ativo"); }
   if (gente.exatosCpf.has(pessoa.cpf)) { pontos += 14; bateu.push("nome exato"); }
   const max = pistas.length * 30 + 40;
   return { pct: Math.min(100, Math.round((pontos / (max || 40)) * 100)), bateu };
 }
 
-async function calcularRanking(quantos, silencioso) {
-  const lista = listaAtual().slice(0, quantos);
-  if (!lista.length) return;
-  const b = document.getElementById("gRank");
-  if (b) { b.disabled = true; b.innerHTML = `<span class="spinner"></span> pontuando…`; }
-  for (const p of lista) {
-    if (gente.scores[p.cpf]) continue;
-    try {
-      const r = gente.mk[p.cpf] || await api(`/api/capiblu/pessoas/${p.cpf}/mk`);
-      gente.mk[p.cpf] = r;
-      gente.scores[p.cpf] = pontuarPessoa(p, r);
-    } catch (e) { gente.scores[p.cpf] = { pct: null, bateu: [] }; }
-  }
-  renderGente();
-  if (!silencioso) toast(`${lista.length} candidato(s) pontuado(s) — sem custo.`, "ok");
+/** Melhor pontuação primeiro; quem não foi pontuado mantém a ordem da base. */
+function ordenarPorPontuacao() {
+  const peso = (p) => { const s = gente.scores[p.cpf]; return s && s.pct != null ? s.pct : -1; };
+  const ordenar = (lista) => lista.map((p, i) => [p, i])
+    .sort((a, b) => peso(b[0]) - peso(a[0]) || a[1] - b[1]).map(([p]) => p);
+  gente.exatos = ordenar(gente.exatos);
+  gente.amplos = ordenar(gente.amplos);
 }
 
+/** Pistas mudaram: a pontuação antiga mentiria. Recalcula na hora com os
+ *  perfis já baixados (sem consulta nova) e descarta o resto. */
+function repontuar() {
+  Object.keys(gente.scores).forEach((cpf) => {
+    if (gente.mk[cpf]) gente.scores[cpf] = pontuarPessoa(pessoaPorCpf(cpf), gente.mk[cpf]);
+    else delete gente.scores[cpf];
+  });
+  ordenarPorPontuacao();
+  if (gente.exatos.length || gente.amplos.length) renderGente();
+}
+
+async function calcularRanking(quantos, silencioso) {
+  if (gente.pontuando) return;
+  const seq = gente.seq;
+  const lista = listaAtual().slice(0, quantos);
+  if (!lista.length) return;
+  gente.pontuando = true;
+  const b = document.getElementById("gRank");
+  if (b) { b.disabled = true; b.innerHTML = `<span class="spinner"></span> pontuando…`; }
+  let novas = 0;
+  for (const p of lista) {
+    if (seq !== gente.seq) return; // busca nova: ela já zerou `pontuando`
+    if (gente.scores[p.cpf] && gente.scores[p.cpf].pct != null) continue;
+    const jaTinha = !!gente.mk[p.cpf];
+    try {
+      const r = await pedirMk(p.cpf);
+      gente.scores[p.cpf] = pontuarPessoa(p, r);
+      if (!jaTinha) novas += 1;
+    } catch (e) { gente.scores[p.cpf] = { pct: null, bateu: [], erro: e.message }; }
+  }
+  if (seq !== gente.seq) return;
+  gente.pontuando = false;
+  ordenarPorPontuacao();
+  renderGente();
+  if (!silencioso) {
+    toast(`${lista.length} candidato(s) pontuado(s) · ${novas ? `${novas} consulta(s) ao perfil` : "nenhuma consulta nova"}.`, "ok");
+  }
+}
+
+/* Texto junto da cor: "alto/médio/baixo" é lido por leitor de tela e por quem
+   não distingue verde de âmbar. */
 const scorePill = (sc) => {
-  if (!sc || sc.pct == null) return `<span class="pill grey">—</span>`;
-  const tom = sc.pct >= 70 ? "green" : sc.pct >= 40 ? "amber" : "grey";
-  return `<span class="pill ${tom}">${sc.pct}%</span>`;
+  if (!sc || sc.pct == null) {
+    return `<span class="pill grey" title="${h(sc && sc.erro ? sc.erro : "Ainda não pontuado")}">—</span>`;
+  }
+  const [tom, rot] = sc.pct >= 70 ? ["green", "alto"] : sc.pct >= 40 ? ["amber", "médio"] : ["grey", "baixo"];
+  return `<span class="pill ${tom}">${rot} · ${sc.pct}%</span>`;
 };
 
 const primeiroTelefone = (payload) => {
-  const p = (payload && (payload.pessoa || payload.dados || payload)) || {};
-  const t = (p.telefones || (payload && payload.telefones) || [])[0];
+  const t = telefonesMk(payload)[0];
   return t ? (t.display || t.numero || t.telefone || "") : "";
 };
 
+/** O que o perfil (Mk) já trouxe e o cadastro de lead aceita. Nada disso é
+ *  consulta nova: só aproveita o que foi pago na pontuação ou no "Abrir". */
+function dadosDoMk(payload) {
+  if (!payload || payload.status === "error") return {};
+  const p = corpoMk(payload);
+  const t = telefonesMk(payload)[0] || {};
+  const mails = p.emails || payload.emails || [];
+  const end = (p.enderecos || payload.enderecos || [])[0] || {};
+  const out = {
+    phone: t.display || t.numero || t.telefone || "",
+    whatsapp: !!t.whatsapp,
+    email: mails.length ? (typeof mails[0] === "string" ? mails[0] : mails[0].email || "") : "",
+    city: typeof end === "object" ? (end.cidade || end.municipio || "") : "",
+    state: typeof end === "object" ? (end.uf || "") : "",
+  };
+  Object.keys(out).forEach((k) => { if (!out[k]) delete out[k]; });
+  return out;
+}
+
 function renderGente() {
   const out = document.getElementById("genteOut");
+  if (!out) return; // o usuário saiu da tela antes da resposta chegar
   const lista = listaAtual();
-  const visiveis = lista.slice(0, Math.max(PAGINA_GENTE, gente.buscados));
   const nExatos = pessoaFiltrada(gente.exatos).length;
+  const exatos = gente.aba === "exatos";
+  const visiveis = exatos ? lista.slice(0, gente.verExatos) : lista;
 
-  const linhas = visiveis.map((p) => {
+  const rows = [];
+  visiveis.forEach((p) => {
     const sc = gente.scores[p.cpf];
     const mk = gente.mk[p.cpf];
     const tel = primeiroTelefone(mk);
     const aberto = gente.abertos.has(p.cpf);
+    const nome = p.nome || "—";
     const conf = mk
-      ? (tel ? `<span class="pill blue" data-verif="${h(p.cpf)}">verificar</span>`
+      ? (tel ? `<button type="button" class="btn btn-default btn-xs" data-verif="${h(p.cpf)}"
+                 title="Confere se o número é desta pessoa — conta 1 consulta">Verificar · 1 consulta</button>`
              : `<span class="pill grey">sem telefone</span>`)
-      : `<span class="text-muted">—</span>`;
-    return `
-      <tr${aberto ? ' class="row-open"' : ""}>
-        <td class="check-cell"><input type="checkbox" data-sel="${h(p.cpf)}"${gente.sel.has(p.cpf) ? " checked" : ""}></td>
-        <td>${scorePill(sc)}</td>
-        <td>
-          <div class="lead-media">
-            <span class="lead-avatar-dot${sc && sc.pct >= 70 ? " success" : ""}">${h((p.nome || "?").slice(0, 2).toUpperCase())}</span>
-            <div style="min-width:0">
-              <strong>${h(p.nome || "—")}</strong>
-              <div class="text-muted text-size-small">${h(p.sexo === "F" ? "feminino" : p.sexo === "M" ? "masculino" : p.sexo || "—")} · ${h(p.nascimento || "—")}</div>
-            </div>
-          </div>
-        </td>
-        <td class="nowrap">${fmtCPF(p.cpf)}</td>
-        <td class="nowrap">${tel ? h(tel) : '<span class="text-muted">—</span>'}</td>
-        <td id="conf-${h(p.cpf)}">${conf}</td>
-        <td class="nowrap">
-          <button class="btn btn-main btn-xs" data-plead="${h(p.cpf)}" data-pnome="${h(p.nome || "")}">Virar lead</button>
-          <button class="btn btn-default btn-xs" data-pabrir="${h(p.cpf)}">${aberto ? "Fechar ▴" : "Abrir ▾"}</button>
-        </td>
-      </tr>
-      ${aberto ? `<tr class="row-detail"><td colspan="7">${detalhePessoa(p)}</td></tr>` : ""}`;
-  }).join("");
+      : `<span class="text-muted" title="Pontue ou abra a pessoa para ver o telefone">—</span>`;
+    rows.push({ attrs: aberto ? ' class="row-open"' : "", cells: [
+      { html: `<input type="checkbox" data-sel="${h(p.cpf)}" aria-label="Selecionar ${h(nome)}"${gente.sel.has(p.cpf) ? " checked" : ""}>`,
+        attrs: ' class="check-cell"' },
+      scorePill(sc),
+      `<div class="lead-media">
+        <span class="lead-avatar-dot${sc && sc.pct >= 70 ? " success" : ""}" aria-hidden="true">${h(nome.slice(0, 2).toUpperCase())}</span>
+        <div style="min-width:0">
+          <strong>${h(nome)}</strong>
+          <div class="text-muted text-size-small">${h(p.sexo === "F" ? "feminino" : p.sexo === "M" ? "masculino" : p.sexo || "—")} · ${h(p.nascimento || "—")}</div>
+          ${sc && sc.bateu && sc.bateu.length
+            ? `<div class="text-muted text-size-small">Coincidências: ${sc.bateu.map(h).join(" · ")}</div>` : ""}
+        </div>
+      </div>`,
+      { html: fmtCPF(p.cpf), attrs: ' class="nowrap"' },
+      { html: tel ? h(tel) : '<span class="text-muted">—</span>', attrs: ' class="nowrap"' },
+      { html: conf, attrs: ` id="conf-${h(p.cpf)}"` },
+      { html: `<button type="button" class="btn btn-main btn-xs" data-plead="${h(p.cpf)}">Virar lead</button>
+          <button type="button" class="btn btn-default btn-xs" data-pabrir="${h(p.cpf)}"
+                  aria-expanded="${aberto}">${aberto ? "Fechar ▴" : "Abrir ▾"}</button>`,
+        attrs: ' class="nowrap"' },
+    ] });
+    if (aberto) rows.push({ attrs: ' class="row-detail"', cells: [{ html: detalhePessoa(p), attrs: ' colspan="7"' }] });
+  });
 
-  const restante = gente.aba === "amplos" ? gente.total - gente.buscados : 0;
+  // Nome exato: até 100 já vieram, a paginação é só de exibição.
+  // Outros sobrenomes: cada "+N" busca mais na base.
+  const restante = exatos ? lista.length - visiveis.length : gente.total - gente.buscados;
+  const totalAba = exatos ? lista.length : gente.total;
   const paginacao = `
     <div class="table-foot">
-      <span class="text-muted text-size-small" id="gPagInfo">
-        Mostrando ${visiveis.length}${gente.aba === "amplos" ? ` de ${gente.total}` : ""}
-        ${nExatos ? ` · ${nExatos} com nome exato` : ""}
-      </span>
+      <span class="text-muted text-size-small" id="gPagInfo">Mostrando ${visiveis.length} de ${totalAba}</span>
       <span class="nowrap">
         ${restante > 0 ? [10, 25, 50].filter((n) => n <= restante)
-            .map((n) => `<button class="btn btn-default btn-xs" data-mais="${n}">+${n}</button>`).join(" ") : ""}
-        ${restante > 0 ? `<button class="btn btn-default btn-xs" data-mais="todos">Todos os ${gente.total}</button>` : ""}
+            .map((n) => `<button type="button" class="btn btn-default btn-xs" data-mais="${n}">+${n}</button>`).join(" ") : ""}
+        ${restante > 0 ? `<button type="button" class="btn btn-default btn-xs" data-mais="todos">Todos os ${totalAba}</button>` : ""}
       </span>
     </div>`;
 
-  out.innerHTML = `
-    <div class="panel panel-flat">
-      <ul class="nav nav-tabs">
-        <li${gente.aba === "exatos" ? ' class="active"' : ""}><a data-aba="exatos">Nome exato
-          <span class="badge${gente.aba === "exatos" ? " badge-success" : " bg-grey-400"}">${nExatos}</span></a></li>
-        <li${gente.aba === "amplos" ? ' class="active"' : ""}><a data-aba="amplos">Outros sobrenomes
-          <span class="badge${gente.aba === "amplos" ? " badge-success" : " bg-grey-400"}">${gente.total}</span></a></li>
-      </ul>
-      <div class="toolbar" style="margin:0;border-width:0 0 1px;border-radius:0">
-        <button class="btn btn-default btn-xs" id="gRank">Calcular ranking</button>
-        <span class="text-muted text-size-small">puxar</span>
-        <input class="form-control input-sm" id="gRankQtd" type="number" value="20" min="1" max="200" style="width:64px;min-width:0">
-        <span class="text-muted text-size-small">Assertiva só acima de</span>
-        <input class="form-control input-sm" id="gLimiar" type="number" value="${gente.limiar}" min="0" max="100" style="width:58px;min-width:0">
-        <span class="text-muted text-size-small">%</span>
-        <label class="text-muted text-size-small" title="Pontua os 10 primeiros ao buscar — o Mk não cobra">
-          <input type="checkbox" id="gAuto"${autoRankLigado() ? " checked" : ""}> automático</label>
-        <span class="spacer"></span>
-        <button class="btn btn-default btn-xs" id="gExport">Exportar XLSX</button>
-        <span class="text-muted text-size-small">Mk é grátis · Assertiva cobra por CPF</span>
-      </div>
-      <div class="selbar${gente.sel.size ? " on" : ""}">
-        <strong>${gente.sel.size}</strong> selecionada(s)
-        <span class="spacer"></span>
-        <button class="btn btn-main btn-xs" id="gLote">Virar leads</button>
-        <button class="btn btn-default btn-xs" id="gLimpar">Limpar</button>
-      </div>
-      ${lista.length ? `<div class="table-responsive"><table class="table table-striped table-hover">
-        <thead><tr>
-          <th class="check-cell"><input type="checkbox" id="gTodas"></th>
-          <th style="width:64px">SCORE</th><th style="min-width:260px">PESSOA</th>
-          <th>CPF</th><th>TELEFONE</th><th>CONFIANÇA</th><th></th>
-        </tr></thead>
-        <tbody>${linhas}</tbody></table></div>${paginacao}`
-        : emptyState("Nenhum resultado com esses filtros.")}
-    </div>`;
+  const nSel = gente.sel.size;
+  out.innerHTML = panel(`Resultados para “${gente.buscou}”`, `
+    ${abasHtml("gAbas", [
+      ["exatos", `Nome exato <span class="badge${exatos ? " badge-success" : " bg-grey-400"}">${nExatos}</span>`],
+      ["amplos", `Outros sobrenomes <span class="badge${!exatos ? " badge-success" : " bg-grey-400"}">${gente.total}</span>`],
+    ], gente.aba)}
+    <div class="toolbar gente-toolbar">
+      <label for="gRankQtd" class="text-size-small">Pontuar os primeiros</label>
+      <input class="form-control input-sm gente-num" id="gRankQtd" type="number" value="${gente.rankQtd}" min="1" max="50">
+      <button type="button" class="btn btn-default btn-xs" id="gRank"${gente.pontuando ? " disabled" : ""}>${gente.pontuando ? `<span class="spinner"></span> pontuando…` : "Pontuar"}</button>
+      <label class="text-size-small"><input type="checkbox" id="gAuto"${autoRankLigado() ? " checked" : ""}> Pontuar ao buscar</label>
+      <span class="spacer"></span>
+      <span class="text-muted text-size-small">Cada pessoa pontuada consulta o perfil (Mk): conta 1 consulta no limite diário.</span>
+    </div>
+    <div class="selbar on" role="region" aria-label="Ações com as selecionadas">
+      <span>${nSel ? `<strong>${nSel}</strong> selecionada(s)` : "Nenhuma selecionada"}</span>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-main btn-xs" id="gLote"${nSel ? "" : " disabled"}>Virar leads</button>
+      <button type="button" class="btn btn-default btn-xs" id="gExport"
+              title="${nSel ? "Exporta as selecionadas" : "Sem seleção, exporta o que está na tela"}">Exportar XLSX${nSel ? "" : " (da tela)"}</button>
+      <button type="button" class="btn btn-default btn-xs" id="gLimpar"${nSel ? "" : " disabled"}>Limpar</button>
+    </div>
+    ${lista.length ? table([
+        { html: `<input type="checkbox" id="gTodas" aria-label="Selecionar todas as visíveis">`, attrs: ' class="check-cell"' },
+        "Pontuação", "Pessoa", "CPF", "Telefone", "Confiança", "",
+      ], rows) + paginacao
+      : emptyState("Nenhum resultado com esses filtros.")}`);
 
-  out.querySelectorAll("[data-aba]").forEach((a) => {
-    a.onclick = () => { gente.aba = a.dataset.aba; renderGente(); };
-  });
+  ligarAbas(document.getElementById("gAbas"), (v) => { gente.aba = v; renderGente(); });
   out.querySelectorAll("[data-mais]").forEach((b) => {
-    b.onclick = () => carregarMaisAmplos(b.dataset.mais === "todos" ? "todos" : Number(b.dataset.mais));
+    b.onclick = () => {
+      const qtd = b.dataset.mais === "todos" ? "todos" : Number(b.dataset.mais);
+      if (gente.aba === "exatos") {
+        gente.verExatos = qtd === "todos" ? Infinity : gente.verExatos + qtd;
+        return renderGente();
+      }
+      carregarMaisAmplos(qtd);
+    };
   });
   document.getElementById("gRank").onclick = () => {
-    gente.limiar = Number(document.getElementById("gLimiar").value) || 0;
-    calcularRanking(Number(document.getElementById("gRankQtd").value) || 20);
+    gente.rankQtd = Math.min(50, Math.max(1, Number(document.getElementById("gRankQtd").value) || PAGINA_GENTE));
+    calcularRanking(gente.rankQtd);
   };
   out.querySelectorAll("[data-pabrir]").forEach((b) => {
     b.onclick = () => abrirPessoa(b.dataset.pabrir);
   });
   out.querySelectorAll("[data-plead]").forEach((b) => {
-    b.onclick = () => openLeadForm({ name: b.dataset.pnome, cpf: b.dataset.plead });
+    b.onclick = () => {
+      const cpf = b.dataset.plead;
+      openLeadForm({ name: pessoaPorCpf(cpf).nome || "", cpf, ...dadosDoMk(gente.mk[cpf]) });
+    };
   });
   out.querySelectorAll("[data-sel]").forEach((c) => {
     c.onchange = () => {
@@ -6480,120 +6791,125 @@ function renderGente() {
     };
   });
   const todas = document.getElementById("gTodas");
-  if (todas) todas.onchange = () => {
-    visiveis.forEach((p) => todas.checked ? gente.sel.add(p.cpf) : gente.sel.delete(p.cpf));
-    renderGente();
-  };
+  if (todas) {
+    todas.checked = visiveis.length > 0 && visiveis.every((p) => gente.sel.has(p.cpf));
+    todas.onchange = () => {
+      visiveis.forEach((p) => todas.checked ? gente.sel.add(p.cpf) : gente.sel.delete(p.cpf));
+      renderGente();
+    };
+  }
   const auto = document.getElementById("gAuto");
   if (auto) auto.onchange = () => definirAutoRank(auto.checked);
   const exportar = document.getElementById("gExport");
   if (exportar) exportar.onclick = async () => {
-    // Exporta o que está na tela — com score e telefone quando já pontuado.
-    const alvo = gente.sel.size
-      ? [...gente.exatos, ...gente.amplos].filter((p) => gente.sel.has(p.cpf))
-      : visiveis;
+    // Exporta a seleção, ou o que está na tela — com pontuação e telefone
+    // quando já pontuado.
+    const alvo = nSel ? [...gente.sel].map(pessoaPorCpf).filter((p) => p.cpf) : visiveis;
     if (!alvo.length) return toast("Nada para exportar.", "err");
     exportar.disabled = true;
     try {
       await apiDownload("/api/capiblu/export/pessoas", {
         method: "POST",
         body: {
-          columns: ["Nome", "CPF", "Nascimento", "Sexo", "Score", "Telefone"],
+          columns: ["Nome", "CPF", "Nascimento", "Sexo", "Pontuação", "Telefone"],
           rows: alvo.map((p) => ({
             Nome: p.nome || "", CPF: fmtCPF(p.cpf), Nascimento: p.nascimento || "",
             Sexo: p.sexo || "",
-            Score: gente.scores[p.cpf] && gente.scores[p.cpf].pct != null
+            "Pontuação": gente.scores[p.cpf] && gente.scores[p.cpf].pct != null
               ? `${gente.scores[p.cpf].pct}%` : "",
             Telefone: primeiroTelefone(gente.mk[p.cpf]) || "",
           })),
         },
-        fallbackName: `pessoas-${gente.q.replace(/\s+/g, "-").toLowerCase()}.xlsx`,
+        fallbackName: `pessoas-${gente.buscou.replace(/\s+/g, "-").toLowerCase()}.xlsx`,
       });
       toast(`${alvo.length} linha(s) exportada(s).`, "ok");
     } catch (e) { toast(e.message, "err"); }
-    exportar.disabled = false;
+    if (exportar.isConnected) exportar.disabled = false;
   };
   const limpar = document.getElementById("gLimpar");
   if (limpar) limpar.onclick = () => { gente.sel = new Set(); renderGente(); };
   const lote = document.getElementById("gLote");
   if (lote) lote.onclick = () => {
-    const nomes = [...gente.sel].map((cpf) => {
-      const p = [...gente.exatos, ...gente.amplos].find((x) => x.cpf === cpf) || {};
-      return { name: p.nome, cpf };
-    });
-    if (!nomes.length) return toast("Selecione ao menos uma pessoa.", "err");
-    openLeadLote(nomes);
+    const pessoas = [...gente.sel].map((cpf) => ({ name: pessoaPorCpf(cpf).nome, cpf, ...dadosDoMk(gente.mk[cpf]) }));
+    if (!pessoas.length) return toast("Selecione ao menos uma pessoa.", "err");
+    openLeadLote(pessoas);
   };
   out.querySelectorAll("[data-verif]").forEach((s) => {
     s.onclick = () => verificarPosse(s.dataset.verif);
   });
+  out.querySelectorAll("[data-pabas]").forEach((l) => {
+    const cpf = l.dataset.pabas;
+    ligarAbas(l, (bloco) => {
+      gente.blocoAtivo[cpf] = bloco;
+      renderGente();
+      // Só o perfil carrega sozinho (foi o "Abrir" que pediu). Os outros
+      // blocos custam e esperam o clique em "Consultar agora".
+      if (bloco === "mk") carregarBlocoPessoa(cpf, "mk");
+    });
+  });
 }
 
 /** Abre a pessoa na própria linha — sem modal, sem rolagem aninhada. */
-async function abrirPessoa(cpf) {
+function abrirPessoa(cpf) {
   if (gente.abertos.has(cpf)) { gente.abertos.delete(cpf); return renderGente(); }
   gente.abertos.add(cpf);
-  gente.blocoAtivo = gente.blocoAtivo || {};
   gente.blocoAtivo[cpf] = gente.blocoAtivo[cpf] || "mk";
+  carregarBlocoPessoa(cpf, "mk");
   renderGente();
-  if (!gente.mk[cpf]) {
-    try {
-      gente.mk[cpf] = await api(`/api/capiblu/pessoas/${cpf}/mk`);
-    } catch (e) { gente.mk[cpf] = { status: "error", message: e.message }; }
-    renderGente();
-  }
 }
 
+// [bloco, rótulo, custo]. Custo vazio = não há; o resto só carrega no clique.
 const BLOCOS_PESSOA = [
-  ["mk", "Perfil (Mk)", false],
-  ["vinculos", "Vínculos (RAIS)", false],
-  ["parentes", "Parentes", false],
-  ["contacts", "Contatos (Serasa)", true],
-  ["dossie", "Assertiva (telefone e sinais)", true],
+  ["mk", "Perfil (Mk)", "1 consulta"],
+  ["vinculos", "Vínculos (RAIS)", "1 consulta"],
+  ["parentes", "Parentes", "2 consultas"],
+  ["contacts", "Contatos (Serasa)", "paga"],
+  ["dossie", "Assertiva (telefone e sinais)", "paga"],
 ];
 
 function detalhePessoa(p) {
   const cpf = p.cpf;
-  gente.blocoAtivo = gente.blocoAtivo || {};
   const ativo = gente.blocoAtivo[cpf] || "mk";
-  const dados = (gente.blocos && gente.blocos[cpf] && gente.blocos[cpf][ativo])
-    || (ativo === "mk" ? gente.mk[cpf] : null);
-  const pago = (BLOCOS_PESSOA.find(([k]) => k === ativo) || [])[2];
+  // Perfil já em cache (da pontuação) vale mais que um erro antigo do bloco.
+  const dados = (ativo === "mk" && gente.mk[cpf]) || (gente.blocos[cpf] && gente.blocos[cpf][ativo]) || null;
+  const custo = (BLOCOS_PESSOA.find(([k]) => k === ativo) || [])[2];
+  let corpo;
+  if (!dados) {
+    corpo = `<div class="alert alert-info alert-styled-left">
+        Este bloco <strong>gasta ${h(custo)}</strong>. Carrega só quando você pedir.
+        <button type="button" class="btn btn-main btn-xs ml-5" data-pbloco="${h(ativo)}" data-cpf="${h(cpf)}">Consultar agora</button>
+      </div>`;
+  } else if (dados.loading) {
+    corpo = `<span class="spinner"></span> <span class="text-muted ml-5">consultando…</span>`;
+  } else if (dados.status === "error") {
+    corpo = `<div class="alert alert-danger alert-styled-left">${h(dados.message || "Falha na consulta.")}
+        <button type="button" class="btn btn-default btn-xs ml-5" data-pbloco="${h(ativo)}" data-cpf="${h(cpf)}">Tentar de novo</button>
+      </div>`;
+  } else {
+    corpo = ativo === "dossie" ? renderDossieRico(dados) : renderPessoa(dados, ativo);
+  }
   return `
     <div class="detail-box">
-      <ul class="nav nav-tabs">
-        ${BLOCOS_PESSOA.map(([k, t, cobra]) => `<li${ativo === k ? ' class="active"' : ""}>
-          <a data-bloco="${k}" data-cpf="${h(cpf)}">${t}${cobra ? ' <span class="pill amber">paga</span>' : ""}</a></li>`).join("")}
-        <li><a data-dossie="${h(cpf)}">Dossiê PDF <span class="pill amber">paga</span></a></li>
-      </ul>
-      <div class="detail-body">
-        ${pago && !dados ? `<div class="alert alert-info alert-styled-left">
-            Este bloco <strong>gasta consulta</strong>. Carrega só quando você pedir.
-            <button class="btn btn-main btn-xs ml-5" data-carregar="${h(cpf)}">Consultar agora</button>
-          </div>` : dados ? (ativo === "dossie" ? renderDossieRico(dados) : renderPessoa(dados, ativo === "mk" ? "mk" : ativo))
-                          : `<span class="spinner"></span> <span class="text-muted ml-5">consultando…</span>`}
+      ${abasHtml(`pb-${cpf}`, BLOCOS_PESSOA.map(([k, t, c]) =>
+        [k, `${h(t)} <span class="pill ${k === "mk" ? "grey" : "amber"}">${h(c)}</span>`]), ativo,
+        ` data-pabas="${h(cpf)}" aria-label="Blocos de ${h(p.nome || cpf)}"`)}
+      <div class="detail-body" role="tabpanel">
+        <div class="detail-acoes"><button type="button" class="btn btn-default btn-xs" data-dossie="${h(cpf)}">Dossiê PDF · pago</button></div>
+        ${corpo}
         ${ativo === "mk" && gente.scores[cpf] && gente.scores[cpf].bateu.length
-          ? `<div class="detail-note">Bateu em: ${gente.scores[cpf].bateu.map(h).join(" · ")}.</div>` : ""}
+          ? `<div class="detail-note">Coincidências: ${gente.scores[cpf].bateu.map(h).join(" · ")}.</div>` : ""}
       </div>
     </div>`;
 }
 
-/* Delegação: as abas do detalhe são recriadas a cada render. */
-document.addEventListener("click", async (e) => {
-  const aba = e.target.closest("[data-bloco]");
-  if (aba) {
-    const { bloco, cpf } = aba.dataset;
-    gente.blocoAtivo = gente.blocoAtivo || {};
-    gente.blocoAtivo[cpf] = bloco;
-    renderGente();
-    const cobra = (BLOCOS_PESSOA.find(([k]) => k === bloco) || [])[2];
-    if (!cobra) carregarBlocoPessoa(cpf, bloco);
-    return;
-  }
-  const carregar = e.target.closest("[data-carregar]");
+/* Delegação: o detalhe é recriado a cada render. `data-pbloco` é só da
+   pessoa — o `data-bloco` da ficha da empresa tem os próprios handlers, e um
+   listener global nele disparava também lá. */
+document.addEventListener("click", (e) => {
+  const carregar = e.target.closest("[data-pbloco]");
   if (carregar) {
-    const cpf = carregar.dataset.carregar;
-    carregarBlocoPessoa(cpf, gente.blocoAtivo[cpf]);
+    carregar.disabled = true;
+    carregarBlocoPessoa(carregar.dataset.cpf, carregar.dataset.pbloco);
     return;
   }
   const dossie = e.target.closest("[data-dossie]");
@@ -6604,82 +6920,89 @@ document.addEventListener("click", async (e) => {
 });
 
 async function carregarBlocoPessoa(cpf, bloco) {
-  gente.blocos = gente.blocos || {};
   gente.blocos[cpf] = gente.blocos[cpf] || {};
-  if (gente.blocos[cpf][bloco]) return;
+  const atual = gente.blocos[cpf][bloco];
+  if (atual && atual.status !== "error") return; // já veio, ou está vindo
   if (bloco === "mk" && gente.mk[cpf]) { gente.blocos[cpf].mk = gente.mk[cpf]; return renderGente(); }
+  // Marca antes do await: o re-render some com o botão "Consultar agora" e
+  // um segundo clique não paga a mesma consulta de novo.
+  gente.blocos[cpf][bloco] = { loading: true };
+  renderGente();
   try {
-    const r = await api(`/api/capiblu/pessoas/${cpf}/${bloco}`);
-    gente.blocos[cpf][bloco] = r;
-    if (bloco === "mk") gente.mk[cpf] = r;
+    gente.blocos[cpf][bloco] = bloco === "mk"
+      ? await pedirMk(cpf) : await api(`/api/capiblu/pessoas/${cpf}/${bloco}`);
   } catch (e) {
     gente.blocos[cpf][bloco] = { status: "error", message: e.message };
   }
   renderGente();
 }
 
-/** Busca direta por CPF — a contraparte de "procure pelo nome" para quem já
- *  tem o documento em mãos. A fonte é escolhida na aba: Mk carrega na hora
- *  (grátis), Assertiva só quando pedida (gasta consulta). */
-async function buscarCpfDireto() {
-  const cpf = document.getElementById("pCpf").value.replace(/\D/g, "");
-  if (cpf.length !== 11) return toast("CPF precisa ter 11 dígitos.", "err");
+/** Busca direta por CPF — para quem já tem o documento em mãos. O perfil
+ *  (Mk) carrega na hora porque o SDR pediu; a Assertiva só no clique. */
+async function buscarCpfDireto(cpf) {
   gente.cpfDireto = cpf;
   gente.cpfAba = "mk";
   gente.cpfDados = {};
-  renderCpfDireto();
+  gente.modo = "cpf";
+  mostrarModo();
   await carregarCpfDireto("mk");
 }
 
 async function carregarCpfDireto(fonte) {
-  if (gente.cpfDados[fonte]) return renderCpfDireto();
+  const cpf = gente.cpfDireto;
+  if (gente.cpfDados[fonte] && gente.cpfDados[fonte].status !== "error") return renderCpfDireto();
   gente.cpfDados[fonte] = { loading: true };
   renderCpfDireto();
+  let r;
   try {
-    const r = fonte === "assertiva"
-      ? await api(`/api/capiblu/pessoas/${gente.cpfDireto}/dossie`)
-      : await api(`/api/capiblu/pessoas/${gente.cpfDireto}/mk`);
-    gente.cpfDados[fonte] = r;
+    r = fonte === "assertiva"
+      ? await api(`/api/capiblu/pessoas/${cpf}/dossie`)
+      : await pedirMk(cpf);
   } catch (e) {
-    gente.cpfDados[fonte] = { status: "error", message: e.message };
+    r = { status: "error", message: e.message };
   }
+  if (gente.cpfDireto !== cpf) return; // outro CPF foi buscado no meio
+  gente.cpfDados[fonte] = r;
   renderCpfDireto();
 }
 
 function renderCpfDireto() {
   const out = document.getElementById("cpfDiretoOut");
   if (!out) return;
-  if (!gente.cpfDireto) { out.innerHTML = ""; return; }
+  if (!gente.cpfDireto) { out.innerHTML = emptyState("Digite um CPF no campo acima para ver o perfil."); return; }
   const ativo = gente.cpfAba;
   const dados = gente.cpfDados[ativo];
-  const carregando = dados && dados.loading;
-  out.innerHTML = `
-    <div class="detail-box mt-10">
-      <ul class="nav nav-tabs">
-        <li${ativo === "mk" ? ' class="active"' : ""}><a data-cpfaba="mk">Perfil (Mk)</a></li>
-        <li${ativo === "assertiva" ? ' class="active"' : ""}><a data-cpfaba="assertiva">Assertiva <span class="pill amber">paga</span></a></li>
-      </ul>
-      <div class="detail-body">
-        ${ativo === "assertiva" && !dados
-          ? `<div class="alert alert-info alert-styled-left">
-               Esta consulta <strong>gasta crédito</strong> na Assertiva.
-               <button class="btn btn-main btn-xs ml-5" id="cpfCarregarAssertiva">Consultar agora</button>
-             </div>`
-          : carregando
-            ? `<span class="spinner"></span> <span class="text-muted ml-5">consultando…</span>`
-            : dados
-              ? (ativo === "mk" ? renderPessoa(dados, "mk") : renderDossieRico(dados))
-              : `<span class="spinner"></span> <span class="text-muted ml-5">consultando…</span>`}
-      </div>
-    </div>`;
-  out.querySelectorAll("[data-cpfaba]").forEach((a) => {
-    a.onclick = () => {
-      gente.cpfAba = a.dataset.cpfaba;
-      renderCpfDireto();
-    };
+  let corpo;
+  if (ativo === "assertiva" && !dados) {
+    corpo = `<div class="alert alert-info alert-styled-left">
+        Esta consulta <strong>é paga</strong> na Assertiva.
+        <button type="button" class="btn btn-main btn-xs ml-5" id="cpfCarregarAssertiva">Consultar agora</button>
+      </div>`;
+  } else if (!dados || dados.loading) {
+    corpo = `<span class="spinner"></span> <span class="text-muted ml-5">consultando…</span>`;
+  } else if (dados.status === "error") {
+    corpo = `<div class="alert alert-danger alert-styled-left">${h(dados.message || "Falha na consulta.")}
+        <button type="button" class="btn btn-default btn-xs ml-5" id="cpfTentar">Tentar de novo</button></div>`;
+  } else {
+    corpo = ativo === "mk" ? renderPessoa(dados, "mk") : renderDossieRico(dados);
+  }
+  out.innerHTML = panel(`CPF ${fmtCPF(gente.cpfDireto)}`, `
+    <div class="detail-box">
+      ${abasHtml("cpfAbas", [
+        ["mk", `Perfil (Mk) <span class="pill grey">1 consulta</span>`],
+        ["assertiva", `Assertiva <span class="pill amber">paga</span>`],
+      ], ativo)}
+      <div class="detail-body" role="tabpanel">${corpo}</div>
+    </div>`, { actions: `<button type="button" class="btn btn-default btn-xs" data-dossie="${h(gente.cpfDireto)}">Dossiê PDF · pago</button>` });
+  ligarAbas(document.getElementById("cpfAbas"), (v) => {
+    gente.cpfAba = v;
+    renderCpfDireto();
+    if (v === "mk") carregarCpfDireto("mk");
   });
   const btnAssertiva = document.getElementById("cpfCarregarAssertiva");
-  if (btnAssertiva) btnAssertiva.onclick = () => carregarCpfDireto("assertiva");
+  if (btnAssertiva) btnAssertiva.onclick = () => { btnAssertiva.disabled = true; carregarCpfDireto("assertiva"); };
+  const tentar = document.getElementById("cpfTentar");
+  if (tentar) tentar.onclick = () => { tentar.disabled = true; carregarCpfDireto(ativo); };
 }
 
 /** Confiança do telefone na própria linha: pertence + linha compartilhada. */
@@ -6689,8 +7012,7 @@ async function verificarPosse(cpf) {
   if (!tel) return;
   if (cel) cel.innerHTML = `<span class="spinner"></span>`;
   try {
-    const pessoa = [...gente.exatos, ...gente.amplos].find((x) => x.cpf === cpf) || {};
-    await posseNaCelula(tel, cpf, `conf-${cpf}`, pessoa.nome || "");
+    await posseNaCelula(tel, cpf, `conf-${cpf}`, pessoaPorCpf(cpf).nome || "");
   } catch (e) {
     if (cel) cel.innerHTML = `<span class="pill grey" title="${h(e.message)}">n/d</span>`;
   }
@@ -6698,10 +7020,12 @@ async function verificarPosse(cpf) {
 
 /** Vira várias pessoas em leads de uma vez, na mesma cadência. */
 function openLeadLote(pessoas) {
+  const comTel = pessoas.filter((p) => p.phone).length;
   const m = modal({
     title: `Virar ${pessoas.length} pessoa(s) em lead`,
     body: `<div class="alert alert-info alert-styled-left">
-        Os leads entram sem telefone confirmado; a validação continua disponível na ficha de cada um.
+        ${comTel ? `${comTel} de ${pessoas.length} entram com o primeiro telefone do perfil já consultado` : "Os leads entram sem telefone"}
+        — ainda sem posse confirmada. Nada aqui gasta consulta nova.
       </div>
       <div class="field"><label for="loteClient">Cliente</label>
         <select class="form-control" id="loteClient">${options(state.clients, "", { blank: "— sem cliente —" })}</select></div>
@@ -6709,29 +7033,40 @@ function openLeadLote(pessoas) {
         <select class="form-control" id="loteCad">${options(state.cadences, "", { blank: "— sem cadência —" })}</select></div>
       <div class="field"><label for="loteSdr">SDR responsável</label>
         <select class="form-control" id="loteSdr">${options(state.users, state.me && state.me.id)}</select></div>`,
-    footer: `<button class="btn btn-default" id="loteCancel">Cancelar</button>
-             <button class="btn btn-main" id="loteOk">Criar leads</button>`,
+    footer: `<button type="button" class="btn btn-default" id="loteCancel">Cancelar</button>
+             <button type="button" class="btn btn-main" id="loteOk">Criar leads</button>`,
   });
   m.root.querySelector("#loteCancel").onclick = () => m.close();
   m.root.querySelector("#loteOk").onclick = async () => {
-    const body = {
-      client_id: m.root.querySelector("#loteClient").value || null,
-      cadence_id: m.root.querySelector("#loteCad").value || null,
-      sdr_id: m.root.querySelector("#loteSdr").value || null,
-    };
+    // A rota de criação lê camelCase e número (`_build_lead`); snake_case e
+    // texto passavam batido e o lead nascia sem cadência, SDR nem cliente.
+    const numero = (id) => Number(m.root.querySelector(id).value) || null;
+    const body = { clientId: numero("#loteClient"), cadenceId: numero("#loteCad"), sdrId: numero("#loteSdr") };
     const btn = m.root.querySelector("#loteOk");
     btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> criando…`;
-    let ok = 0;
+    const criados = [];
+    const falhas = [];
     for (const p of pessoas) {
       try {
-        await api("/api/flow/leads", { method: "POST", body: { name: p.name, cpf: p.cpf, ...body } });
-        ok += 1;
-      } catch (e) { /* segue: o relatório final diz quantos entraram */ }
+        const lead = await api("/api/flow/leads", { method: "POST", body: { ...p, ...body } });
+        criados.push(lead);
+      } catch (e) { falhas.push(`${p.name || fmtCPF(p.cpf)}: ${e.message}`); }
     }
-    m.close();
-    toast(`${ok} de ${pessoas.length} lead(s) criado(s).`, ok ? "ok" : "err");
     gente.sel = new Set();
     renderGente();
+    const r = modal({
+      title: `${criados.length} de ${pessoas.length} lead(s) criado(s)`,
+      body: `${criados.length ? `<div class="alert alert-success alert-styled-left">
+          ${body.cadenceId ? "Os leads já estão na cadência escolhida." : "Os leads entraram sem cadência."}</div>` : ""}
+        ${falhas.length ? `<div class="alert alert-danger alert-styled-left"><strong>Não entraram:</strong>
+          <ul class="mb-0">${falhas.slice(0, 10).map((f) => `<li>${h(f)}</li>`).join("")}</ul></div>` : ""}`,
+      footer: `${criados.length === 1 ? `<button type="button" class="btn btn-default btn-sm" data-ir="lead/${h(criados[0].id)}">Abrir o lead</button>` : ""}
+        <button type="button" class="btn btn-default btn-sm" data-ir="leads">Abrir em Leads</button>
+        <button type="button" class="btn btn-main btn-sm" data-ir="execucao">Ir para Execução</button>`,
+    });
+    r.root.querySelectorAll("[data-ir]").forEach((b) => {
+      b.onclick = () => { r.close(); go(b.dataset.ir); };
+    });
   };
 }
 
@@ -6781,6 +7116,7 @@ PAGES["capiblu-vinculos"] = {
       };
     });
 
+    const senha = go.senha;
     const consultar = async () => {
       const limpo = document.getElementById("vinDoc").value.replace(/\D/g, "");
       const minimo = porEmpresa ? 14 : 11;
@@ -6789,64 +7125,100 @@ PAGES["capiblu-vinculos"] = {
       }
       state.vinDoc = limpo;
       const out = document.getElementById("vinOut");
+      const btn = document.getElementById("vinGo");
+      btn.disabled = true; // cada clique é uma consulta paga
       out.innerHTML = LOADING;
       try {
+        // Pelo CNPJ é o bloco "vinculos" (RAIS). O "employees" que estava
+        // aqui é o scraping pago do LinkedIn — outra fonte, outro custo, e
+        // devolvia name/title, que a tabela nem lia.
         const r = porEmpresa
-          ? await api(`/api/capiblu/empresas/${limpo}/employees`)
+          ? await api(`/api/capiblu/empresas/${limpo}/vinculos`)
           : await api(`/api/capiblu/pessoas/${limpo}/vinculos`);
+        if (!naVez(senha)) return;
         state.vinDados = r;
         out.innerHTML = porEmpresa ? renderQuadro(r, limpo) : panel("Vínculos da pessoa", renderVinculos(r),
           { subtitle: `CPF ${fmtCPF(limpo)} · consulta paga` });
         const exp = document.getElementById("vinExport");
-        if (exp) exp.hidden = false;
+        if (exp) exp.hidden = !(r.vinculos || []).length;
       } catch (e) {
-        out.innerHTML = `<div class="alert alert-warning alert-styled-left">${h(e.message)}</div>`;
+        if (naVez(senha)) out.innerHTML = `<div class="alert alert-warning alert-styled-left">${h(e.message)}</div>`;
       }
+      if (btn.isConnected) btn.disabled = false;
     };
     document.getElementById("vinGo").onclick = consultar;
     document.getElementById("vinDoc").onkeydown = (e) => { if (e.key === "Enter") consultar(); };
-    document.getElementById("vinExport").onclick = async () => {
+    document.getElementById("vinExport").onclick = async (e) => {
       const r = state.vinDados || {};
-      const lista = r.funcionarios || r.employees || r.vinculos || r.data || [];
+      const lista = r.vinculos || [];
       if (!lista.length) return toast("Nada para exportar.", "err");
+      const btn = e.currentTarget;
+      btn.disabled = true;
       try {
-        await apiDownload("/api/capiblu/export/vinculos", {
-          method: "POST", body: { rows: lista },
-          fallbackName: `vinculos-${state.vinDoc}.xlsx`,
-        });
+        if (porEmpresa) {
+          // O export de vínculos do serviço de dados é o do quadro da empresa
+          // e lê estes nomes — `{rows}` saía como planilha só com cabeçalho.
+          await apiDownload("/api/capiblu/export/vinculos", {
+            method: "POST",
+            body: { vinculos: lista, cnpj: r.cnpj || state.vinDoc,
+                    razao_social: r.razao_social || "", referencia_br: r.referencia_br || "" },
+            fallbackName: `vinculos-${state.vinDoc}.xlsx`,
+          });
+        } else {
+          // Pelo CPF a linha é uma empresa, não uma pessoa: o layout do quadro
+          // não serve, então vai pelo export genérico de colunas.
+          await apiDownload("/api/capiblu/export/pessoas", {
+            method: "POST",
+            body: {
+              columns: ["Empresa", "CNPJ", "Admissão", "Saída", "Situação", "Tempo de casa"],
+              rows: lista.map((v) => ({
+                Empresa: v.razao_social || "", CNPJ: v.cnpj ? fmtCNPJ(v.cnpj) : "",
+                "Admissão": v.admissao_br || v.admissao || "",
+                "Saída": v.desligamento_br || v.desligamento || "",
+                "Situação": v.ativo ? "Ainda na empresa" : "Já saiu",
+                "Tempo de casa": v.tempo_casa || "",
+              })),
+            },
+            fallbackName: `vinculos-${state.vinDoc}.xlsx`,
+          });
+        }
         toast(`${lista.length} linha(s) exportada(s).`, "ok");
-      } catch (e) { toast(e.message, "err"); }
+      } catch (err) { toast(err.message, "err"); }
+      if (btn.isConnected) btn.disabled = false;
     };
     if (doc) consultar();
   },
 };
 
-/** Quadro de funcionários declarado pela empresa. Cada linha é uma pessoa
- *  que pode virar lead — é isso que o CapiBLU não fazia. */
+/** Quadro da empresa pela RAIS. Cada linha é uma pessoa que pode virar lead
+ *  — é isso que o CapiBLU não fazia. A RAIS não traz cargo: o cargo e o
+ *  nível que aparecem vêm do quadro de sócios, cruzado por CPF no servidor. */
 function renderQuadro(r, cnpj) {
-  const lista = r.funcionarios || r.employees || r.data || r.registros || [];
+  const lista = r.vinculos || [];
   if (!lista.length) {
     return panel("Quadro de funcionários",
-      emptyState("Nada declarado na RAIS para este CNPJ — comum em micro empresa."),
+      emptyState(r.message || "Nada declarado na RAIS para este CNPJ — comum em micro empresa."),
       { subtitle: `CNPJ ${fmtCNPJ(cnpj)}` });
   }
   const rows = lista.map((f) => {
-    const cpf = String(f.cpf || f.documento || "").replace(/\D/g, "");
-    const adm = f.admissao || f.data_admissao || f.inicio;
+    const cpf = String(f.cpf || "").replace(/\D/g, "");
+    const [cor, rot] = NIVEL_ROTULO[f.nivel] || [];
     return { cells: [
-      `<strong>${h(f.nome || "—")}</strong>`,
-      cpf ? fmtCPF(cpf) : '<span class="text-muted">—</span>',
-      h(f.cargo || f.ocupacao || f.funcao || "—"),
-      h(adm ? (fmtDate(adm) === "—" ? adm : fmtDate(adm)) : "—"),
-      h(f.salario ? fmtMoney(Number(f.salario)) : "—"),
-      cpf ? `<button class="btn btn-default btn-xs" data-vinpessoa="${h(cpf)}">Ver pessoa</button>
+      `<strong>${h(f.nome || "—")}</strong>${f.socio ? ' <span class="pill grey">sócio</span>' : ""}`,
+      cpf.length === 11 ? fmtCPF(cpf) : h(f.cpf || "—"),
+      `${h(f.cargo || "—")}${rot ? `<br><span class="pill ${cor}">nível ${h(f.nivel)} · ${h(rot)}</span>` : ""}`,
+      h(f.admissao_br || f.admissao || "—"),
+      f.ativo ? `<span class="pill green">na empresa</span>`
+              : h(f.desligamento_br || "saiu"),
+      h(f.tempo_casa || "—"),
+      cpf.length === 11 ? `<button class="btn btn-default btn-xs" data-vinpessoa="${h(cpf)}">Ver vínculos</button>
              <button class="btn btn-main btn-xs" data-vinlead="${h(cpf)}"
                      data-vinnome="${h(f.nome || "")}">Virar lead</button>` : "",
     ] };
   });
-  const painel = panel(`${lista.length} pessoa(s) no quadro`,
-    table(["Nome", "CPF", "Cargo", "Admissão", "Salário", ""], rows, { scroll: true }),
-    { subtitle: `CNPJ ${fmtCNPJ(cnpj)} · declarado na RAIS · consulta paga` });
+  const painel = panel(`${lista.length} pessoa(s) no quadro${r.ativos != null ? ` · ${r.ativos} ainda na empresa` : ""}`,
+    table(["Nome", "CPF", "Cargo (do QSA)", "Admissão", "Saída", "Tempo de casa", ""], rows, { scroll: true }),
+    { subtitle: `${r.razao_social ? `${r.razao_social} · ` : ""}CNPJ ${fmtCNPJ(cnpj)} · RAIS${r.referencia_br ? ` entregue em ${r.referencia_br}` : ""} · consulta paga` });
   setTimeout(() => {
     document.querySelectorAll("[data-vinpessoa]").forEach((b) => {
       b.onclick = () => {
@@ -6908,13 +7280,14 @@ PAGES["capiblu-assertiva"] = {
       a.onclick = () => { state.asTipo = a.dataset.astipo; go("capiblu-assertiva"); };
     });
 
+    const senha = go.senha;
     api("/api/capiblu/assertiva/status").then((s) => {
       const el = document.getElementById("asStatus");
-      if (!el) return;
-      const ok = s.status === "ok" || s.ativo || s.autenticado;
-      el.innerHTML = ok
+      if (!el || !naVez(senha)) return;
+      // A rota devolve `{enabled, finalidade_padrao}` — sem status/ativo.
+      el.innerHTML = s.enabled
         ? `<span class="pill green">credencial ativa</span>`
-        : `<span class="pill amber">${h(s.message || s.detail || "credencial indisponível")}</span>`;
+        : `<span class="pill amber">${h(s.message || s.detail || "Assertiva não configurada")}</span>`;
     }).catch(() => {
       const el = document.getElementById("asStatus");
       if (el) el.innerHTML = `<span class="pill grey">status desconhecido</span>`;
@@ -6923,16 +7296,22 @@ PAGES["capiblu-assertiva"] = {
     const consultar = async () => {
       const q = document.getElementById("asQ").value.trim();
       if (!q) return toast("Informe o que consultar.", "err");
+      const btn = document.getElementById("asGo");
+      if (btn.disabled) return; // Enter repetido não paga duas vezes
+      btn.disabled = true;
       const out = document.getElementById("asOut");
       out.innerHTML = LOADING;
       try {
+        // A busca por nome do Localize exige `nomeOuRazaoSocial`; `{nome}`
+        // voltava "Informe ao menos o nome" sem consultar nada.
         const r = tipo === "nome"
-          ? await api("/api/capiblu/assertiva/nome", { method: "POST", body: { nome: q } })
+          ? await api("/api/capiblu/assertiva/nome", { method: "POST", body: { nomeOuRazaoSocial: q } })
           : await api(`/api/capiblu/assertiva/${tipo}?q=${encodeURIComponent(q)}`);
-        out.innerHTML = renderAssertiva(r, tipo, q);
+        if (naVez(senha)) out.innerHTML = renderAssertiva(r, tipo, q);
       } catch (e) {
-        out.innerHTML = `<div class="alert alert-warning alert-styled-left">${h(e.message)}</div>`;
+        if (naVez(senha)) out.innerHTML = `<div class="alert alert-warning alert-styled-left">${h(e.message)}</div>`;
       }
+      if (btn.isConnected) btn.disabled = false;
     };
     document.getElementById("asGo").onclick = consultar;
     document.getElementById("asQ").onkeydown = (e) => { if (e.key === "Enter") consultar(); };
@@ -6961,7 +7340,7 @@ function renderAssertiva(r, tipo, q) {
     : `${renderPessoa(r, "mk") || ""}
        <div class="sub-block"><h4>Resposta completa</h4>
          <div class="json-box">${h(JSON.stringify(r, null, 2))}</div></div>`;
-  const painel = panel(`Assertiva · ${h(tipo)} · ${h(q)}`, corpo,
+  const painel = panel(`Assertiva · ${tipo} · ${q}`, corpo,
     { subtitle: "Consulta paga · registrada no consumo" });
   setTimeout(() => {
     document.querySelectorAll("[data-pdet]").forEach((b) => {
@@ -7007,18 +7386,25 @@ PAGES["capiblu-telefone"] = {
       };
     });
 
-    document.getElementById("tGo").onclick = async () => {
+    const senha = go.senha;
+    document.getElementById("tGo").onclick = async (e) => {
+      const btn = e.currentTarget;
       const phone = document.getElementById("tPhone").value.replace(/\D/g, "");
       const doc = (document.getElementById("tDoc")?.value || "").replace(/\D/g, "");
       if (phone.length < 10) return toast("Informe o telefone com DDD.", "err");
       if (aba === "posse" && doc.length < 11) return toast("Informe o CPF ou CNPJ.", "err");
+      state.telPhone = phone;
+      btn.disabled = true; // cada clique é uma consulta paga
       const out = document.getElementById("telOut");
       out.innerHTML = LOADING;
       try {
         const r = await api(aba === "posse" ? `/api/capiblu/telefones/${phone}/pertence/${doc}`
                                            : `/api/capiblu/telefones/${phone}`);
-        out.innerHTML = aba === "posse" ? renderPertence(r, phone, doc) : renderReverso(r, phone);
-      } catch (e) { out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`; }
+        if (naVez(senha)) out.innerHTML = aba === "posse" ? renderPertence(r, phone, doc) : renderReverso(r, phone);
+      } catch (err) {
+        if (naVez(senha)) out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(err.message)}</div>`;
+      }
+      if (btn.isConnected) btn.disabled = false;
     };
   },
 };
@@ -7037,9 +7423,19 @@ PAGES["capiblu-enriquecimento"] = {
       </div>
       <div id="etapa1"></div><div id="etapa2"></div>
       <div id="etapa3"></div><div id="etapa4"></div>`;
+    const senha = go.senha;
     renderUploadStep();
     if (planilha.upload) { await renderCamposStep(); }
-    if (planilha.run) renderResultado();
+    if (!naVez(senha)) return;
+    if (planilha.rodando) {
+      // Voltou para a tela com o laço ainda rodando: ele segue sozinho e
+      // desenha o resultado quando terminar; aqui só trava os botões.
+      ["pPrevia", "pRodar", "pTrocar"].forEach((id) => {
+        const b = document.getElementById(id); if (b) b.disabled = true;
+      });
+      document.getElementById("etapa3").innerHTML = `<div class="alert alert-info alert-styled-left">
+        <span class="spinner"></span> Enriquecimento em andamento — o resultado aparece aqui ao terminar.</div>`;
+    } else if (planilha.run) renderResultado();
   },
 };
 
@@ -7111,9 +7507,10 @@ async function renderCamposStep() {
   try {
     planilha.catalogo = planilha.catalogo || await api("/api/capiblu/planilha/catalogo");
   } catch (e) {
-    el.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
+    if (el.isConnected) el.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
     return;
   }
+  if (!el.isConnected) return; // saiu da tela enquanto o catálogo chegava
   const grupos = planilha.catalogo.grupos || [];
   const pago = (g) => /assertiva|integralx|workapi/i.test(g.fonte || "");
   el.innerHTML = panel("2 · O que preencher", `
@@ -7162,21 +7559,60 @@ async function renderCamposStep() {
     rodarEnriquecimento(marcados(), Number(document.getElementById("pLimite").value) || 50, false);
 }
 
+/** Enriquece em lotes até terminar.
+ *
+ * O serviço de dados para cada lote em ~55 s (antes do corte de 100 s do
+ * Cloudflare) e diz em `proximo` onde retomar. A tela ignorava isso e
+ * mostrava o primeiro lote como se fosse a planilha inteira — o resto ficava
+ * sem enriquecer e o XLSX saía pela metade. Aqui o laço segue `proximo`,
+ * acumula as linhas e só libera os botões no fim. */
 async function rodarEnriquecimento(fields, limite, previa) {
   if (!fields.length) return toast("Escolha ao menos um campo.", "err");
-  const el = document.getElementById("etapa3");
-  el.innerHTML = `<div class="alert alert-info alert-styled-left"><span class="spinner"></span>
-    Enriquecendo ${limite} linha${limite > 1 ? "s" : ""}…</div>`;
+  if (planilha.rodando) return;
+  planilha.rodando = true;
+  const botoes = () => ["pPrevia", "pRodar", "pTrocar", "pBaixar"]
+    .map((id) => document.getElementById(id)).filter(Boolean);
+  botoes().forEach((b) => { b.disabled = true; });
+  const alvo = previa ? 1 : limite;
+  let feitas = 0;
+  let offset = 0;
+  let total = alvo;
+  const progresso = () => {
+    const el = document.getElementById("etapa3");
+    if (el) el.innerHTML = `<div class="alert alert-info alert-styled-left"><span class="spinner"></span>
+      Enriquecendo — linha ${Math.min(feitas, total)} de ${total}. Cada lote leva até um minuto e o
+      próximo começa sozinho; deixe esta tela aberta até terminar.</div>`;
+  };
+  planilha.run = null;
+  let erro = "";
   try {
-    const r = await api("/api/capiblu/planilha/enriquecer", { method: "POST", body: {
-      upload_id: planilha.upload.upload_id, sheet: planilha.sheet,
-      cnpj_col: planilha.cnpjCol, fields, limite } });
-    planilha.run = { ...r, previa };
-    el.innerHTML = "";
-    renderResultado();
-  } catch (e) {
-    el.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
+    while (feitas < alvo) {
+      progresso();
+      const r = await api("/api/capiblu/planilha/enriquecer", { method: "POST", body: {
+        upload_id: planilha.upload.upload_id, sheet: planilha.sheet,
+        cnpj_col: planilha.cnpjCol, fields, limite: alvo - feitas, offset } });
+      const linhas = r.rows || [];
+      planilha.run = planilha.run
+        ? { ...planilha.run, rows: planilha.run.rows.concat(linhas) }
+        : { ...r, rows: linhas, previa };
+      feitas += linhas.length;
+      planilha.run.enriquecidas = feitas;
+      if (r.total_aba) total = Math.min(alvo, r.total_aba);
+      if (r.proximo == null || !linhas.length) break;
+      offset = r.proximo;
+    }
+  } catch (e) { erro = e.message; }
+  planilha.rodando = false;
+  if (planilha.run) planilha.run.parcial = !!erro;
+  const el = document.getElementById("etapa3");
+  if (!el) return; // saiu da tela: o resultado fica em `planilha.run` para a volta
+  el.innerHTML = "";
+  if (planilha.run) renderResultado();
+  if (erro) {
+    el.insertAdjacentHTML("afterbegin", `<div class="alert alert-danger alert-styled-left">
+      Parou na linha ${feitas}: ${h(erro)}${feitas ? " — o que já foi enriquecido está abaixo e pode ser baixado." : ""}</div>`);
   }
+  botoes().forEach((b) => { b.disabled = false; });
 }
 
 function renderResultado() {
@@ -7190,10 +7626,13 @@ function renderResultado() {
     return s ? h(s.slice(0, 42)) : `<span class="text-muted">—</span>`;
   };
   const rows = (r.rows || []).map((row) => ({ cells: cols.map((c) => cell(row[c.key])) }));
-  document.getElementById("etapa3").innerHTML = panel(
+  const alvo = document.getElementById("etapa3");
+  if (!alvo) return;
+  // Cabeçalho vem da planilha do cliente — `table()` não escapa cabeçalho.
+  alvo.innerHTML = panel(
     `${r.previa ? "Prévia" : "3 · Resultado"}`,
-    table(cols.map((c) => c.label), rows, { scroll: true }),
-    { subtitle: `${r.enriquecidas} de ${r.total_aba} linhas · coluna de CNPJ: ${h(r.cnpj_col)}`,
+    table(cols.map((c) => h(c.label)), rows, { scroll: true }),
+    { subtitle: `${r.enriquecidas} de ${r.total_aba} linhas${r.parcial ? " (interrompido)" : ""} · coluna de CNPJ: ${r.cnpj_col}`,
       actions: r.previa
         ? `<span class="text-muted text-size-small">Confira e rode a planilha inteira.</span>`
         : `<button class="btn btn-main btn-xs" id="pBaixar">Baixar XLSX</button>` });
@@ -7237,9 +7676,9 @@ PAGES["capiblu-modelos"] = {
       out.innerHTML = LOADING;
       try {
         const r = await apiUpload("/api/capiblu/modelo/analisar", file);
-        renderAnalise(r, file.name);
+        if (out.isConnected) renderAnalise(r, file.name);
       } catch (e) {
-        out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
+        if (out.isConnected) out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
       }
     };
     await listarModelos();
@@ -7257,9 +7696,9 @@ function renderAnalise(r, fileName) {
   ] }));
   const reconhecidas = cols.filter((c) => c.fillable).length;
   document.getElementById("mAnalise").innerHTML = panel(
-    `Colunas de ${h(fileName)}`,
+    `Colunas de ${fileName}`,
     table(["Cabeçalho na planilha", "Campo do CapiBLU", "Fonte"], rows, { scroll: true }),
-    { subtitle: `${reconhecidas} de ${cols.length} colunas reconhecidas · aba ${h(r.aba || "—")}`,
+    { subtitle: `${reconhecidas} de ${cols.length} colunas reconhecidas · aba ${r.aba || "—"}`,
       actions: `<input class="form-control" id="mNome" placeholder="Nome do modelo"
                   style="width:200px;display:inline-block">
                 <button class="btn btn-main btn-xs ml-5" id="mSalvar">Salvar modelo</button>` });
@@ -7281,7 +7720,9 @@ async function listarModelos() {
   const el = document.getElementById("mLista");
   try {
     const r = await api("/api/capiblu/modelos");
+    if (!el.isConnected) return;
     const modelos = r.modelos || r.data || (Array.isArray(r) ? r : []);
+    modelosSalvos = modelos;
     if (!modelos.length) {
       el.innerHTML = panel("Modelos salvos", emptyState("Nenhum modelo ainda."));
       return;
@@ -7298,9 +7739,11 @@ async function listarModelos() {
       b.onclick = () => exportarPorModelo(b.dataset.id);
     });
   } catch (e) {
-    el.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
+    if (el.isConnected) el.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
   }
 }
+
+let modelosSalvos = [];
 
 async function exportarPorModelo(modeloId) {
   // Exporta o resultado da última busca da Prospecção B2B no layout do modelo.
@@ -7308,11 +7751,19 @@ async function exportarPorModelo(modeloId) {
   if (!res || !res.empresas?.length) {
     return toast("Faça uma busca em Prospecção B2B primeiro — é o resultado dela que sai no modelo.", "err");
   }
+  // O export não conhece `modelo_id`: ele recebe as colunas prontas e cada
+  // empresa como `{empresa, contatos}`. Mandar só o id gerava planilha vazia.
+  const modelo = modelosSalvos.find((m) => String(m.id) === String(modeloId));
+  const colunas = modelo && (modelo.colunas || modelo.columns);
+  if (!colunas || !colunas.length) return toast("Esse modelo não tem colunas salvas.", "err");
   try {
     await apiDownload("/api/capiblu/export/modelo", {
-      body: { modelo_id: modeloId, empresas: res.empresas },
+      body: {
+        colunas: colunas.map((c) => ({ header: c.header, campo: c.campo || "", idx: c.idx || 1 })),
+        empresas: res.empresas.map(empresaParaExport),
+      },
       fallbackName: "lista-no-modelo.xlsx" });
-    toast(`${res.empresas.length} empresas exportadas.`, "ok");
+    toast(`${res.empresas.length} empresas exportadas. Colunas de contato saem vazias: contatos só existem depois de montar a base.`, "ok");
   } catch (e) { toast(e.message, "err"); }
 }
 
@@ -7380,13 +7831,15 @@ PAGES["capiblu-consumo"] = {
     };
 
     const out = document.getElementById("cdOut");
+    const senha = go.senha;
     let r;
     try {
       r = await api(`/api/capiblu/consumo?dias=${dias}`);
     } catch (e) {
-      out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
+      if (naVez(senha)) out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
       return;
     }
+    if (!naVez(senha)) return;
     if (r.status === "unavailable") {
       out.innerHTML = `<div class="alert alert-info alert-styled-left">${h(r.detail || "Relatório indisponível.")}</div>`;
       return;
@@ -7505,6 +7958,13 @@ PAGES["meu-perfil"] = {
                  placeholder="seunome@capiblu.net">
           <span class="help-block">Precisa ser do domínio verificado para envio. Em branco, sai
             com o remetente da empresa. A resposta continua vindo para ${h(me.email)}.</span></div>
+        <div class="field"><label for="perfTelLigacao">Celular para ligar
+          <span class="text-muted text-size-small">— toca primeiro quando você liga pela Zenvia</span></label>
+          <input class="form-control" id="perfTelLigacao" value="${h(me.telefoneLigacao || "")}"
+                 placeholder="(41) 99999-8888" inputmode="tel">
+          <span class="help-block">${me.zenviaRamal
+            ? `Você tem o ramal <b>${h(me.zenviaRamal)}</b>: as ligações tocam no webphone e este celular fica de reserva.`
+            : "Sem ramal, a ligação toca neste celular; atendeu, a Zenvia conecta com o lead."}</span></div>
         <div class="field"><label title="Assinatura de email utilizada nos envios via cadência.">
           Assinatura de email:</label>
           <div class="editor-barra">
@@ -7605,7 +8065,9 @@ PAGES["meu-perfil"] = {
           name: document.getElementById("perfNome").value.trim(),
           emailSignature: document.getElementById("perfAssinatura").value,
           emailFrom: document.getElementById("perfRemetente").value.trim(),
+          telefoneLigacao: document.getElementById("perfTelLigacao").value.trim(),
         } });
+        state.zenvia = null; // o modo de ligar pode ter mudado
         state.me = { ...state.me, ...atualizado };
         document.getElementById("navUser").textContent = state.me.name;
         toast("Perfil atualizado.", "ok");
@@ -7850,6 +8312,9 @@ function openUserForm(user) {
       <div class="field-row">
         <div class="field"><label for="uGoal">Meta diária</label>
           <input class="form-control" type="number" id="uGoal" value="${u.dailyGoal || 170}"></div>
+        <div class="field"><label for="uRamal">Ramal Zenvia</label>
+          <input class="form-control" id="uRamal" value="${h(u.zenviaRamal || "")}" placeholder="4000" inputmode="numeric">
+          <span class="help-block">A ligação toca no webphone deste ramal.</span></div>
         <div class="field"><label for="uActive">Situação</label>
           <select class="form-control" id="uActive">
             <option value="true"${u.active !== false ? " selected" : ""}>Ativo</option>
@@ -7889,6 +8354,7 @@ function openUserForm(user) {
       name: m.root.querySelector("#uName").value.trim(),
       roles: [...m.root.querySelector("#uRoles").selectedOptions].map((o) => o.value),
       dailyGoal: Number(m.root.querySelector("#uGoal").value),
+      zenviaRamal: m.root.querySelector("#uRamal").value.trim(),
       active: m.root.querySelector("#uActive").value === "true",
       // Vazio é "Nenhum agrupamento": manda null para tirar do time, não "".
       teamId: Number(m.root.querySelector("#uTeam").value) || null,
@@ -8149,10 +8615,7 @@ async function detalheIntegracao(chave, ctx) {
           ${z.podeLigar
             ? `<div class="alert alert-success alert-styled-left mt-10">Conta pronta para ligar.</div>`
             : `<div class="alert alert-info alert-styled-left mt-10">
-                Falta ${[!(z.dids || []).length && "comprar um número (DID)",
-                         !(z.saldo >= (z.saldoMinimo || 1))
-                           && `colocar saldo (hoje R$ ${Number(z.saldo || 0).toFixed(2).replace(".", ",")})`]
-                        .filter(Boolean).join(" e ")}.
+                ${h(z.motivo || "A conta ainda não está pronta para ligar.")}
                 Enquanto isso o discador registra a ligação, mas não disca.</div>`}`,
         { subtitle: "Lido da Zenvia na hora" })}`;
     return fechar();
@@ -9783,11 +10246,13 @@ async function abaTrilha() {
 const fmtCNPJ = (v) => {
   const d = String(v || "").replace(/\D/g, "").padStart(14, "0");
   return d.length === 14
-    ? `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5,8)}/${d.slice(8,12)}-${d.slice(12)}` : v;
+    ? `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5,8)}/${d.slice(8,12)}-${d.slice(12)}` : h(v);
 };
+/* Fora do formato, o valor volta escapado: ele é interpolado direto em HTML
+   e vem de fonte externa (Assertiva, RAIS, CSV do cliente). */
 const fmtCPF = (v) => {
   const d = String(v || "").replace(/\D/g, "");
-  return d.length === 11 ? `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9)}` : (v || "—");
+  return d.length === 11 ? `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9)}` : h(v || "—");
 };
 const fone = (ddd, num) => (ddd && num) ? `(${ddd.slice(0,2)}) ${num || ddd.slice(2)}` : (num || ddd || "");
 
@@ -9883,7 +10348,7 @@ async function buscarEmpresaPorNome() {
     fichaEmpresaBusca.resultados = r.empresas || [];
     renderEmpresaBusca();
   } catch (e) {
-    out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
+    if (out.isConnected) out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
   }
 }
 
@@ -9915,9 +10380,11 @@ async function renderFichaEmpresa(cnpj) {
   try {
     c = (await api(`/api/capiblu/empresas/${cnpj}`)).company;
   } catch (e) {
-    out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
+    if (out.isConnected) out.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>`;
     return;
   }
+  if (!out.isConnected) return; // outra navegação já redesenhou a tela
+  if (!c) { out.innerHTML = emptyState("CNPJ não encontrado na base da Receita."); return; }
   const ativa = (c.descricao_situacao_cadastral || "").toUpperCase() === "ATIVA";
   const socios = c.qsa || [];
   out.innerHTML = `
@@ -9973,11 +10440,12 @@ async function renderFichaEmpresa(cnpj) {
     <div id="fcPagos">
       ${panel("Decisores, vínculos e conexões", `
         <div class="alert alert-info alert-styled-left">
-          Estes blocos <strong>gastam consulta</strong> na Assertiva. Carregam só quando você pedir.
+          Estes blocos <strong>gastam consulta</strong>. Carregam só quando você pedir.
         </div>
-        <button class="btn btn-main btn-sm mr-10" data-bloco="decisores">Quem manda aqui</button>
-        <button class="btn btn-default btn-sm mr-10" data-bloco="vinculos">Vínculos (RAIS)</button>
-        <button class="btn btn-default btn-sm" data-bloco="conexoes">Conexões</button>`)}
+        <button class="btn btn-main btn-sm mr-10" data-bloco="decisores">Quem manda aqui · 2 consultas</button>
+        <button class="btn btn-default btn-sm mr-10" data-bloco="vinculos">Vínculos (RAIS) · 1 consulta</button>
+        <button class="btn btn-default btn-sm" data-bloco="conexoes">Conexões · 1 consulta</button>`)}
+      <div id="fcPagosOut"></div>
     </div>`;
 
   document.getElementById("fcLead").onclick = () => openLeadForm({
@@ -9990,21 +10458,29 @@ async function renderFichaEmpresa(cnpj) {
   });
 }
 
+/** Bloco pago da ficha. O resultado entra num contêiner próprio em vez de
+ *  regravar o painel dos botões: `innerHTML` restaurado volta sem handler, e
+ *  depois de um erro os botões paravam de responder. Botão desligado durante
+ *  a consulta — clique duplo era consulta paga duplicada. */
 async function carregarBloco(cnpj, bloco) {
-  const alvo = document.getElementById("fcPagos");
-  const antes = alvo.innerHTML;
-  alvo.innerHTML = `<div class="alert alert-info alert-styled-left"><span class="spinner"></span>
-    Consultando ${h(bloco)}…</div>` + antes;
+  const saida = document.getElementById("fcPagosOut");
+  const botao = document.querySelector(`#fcPagos [data-bloco="${bloco}"]`);
+  if (!saida || (botao && botao.disabled)) return;
+  if (botao) botao.disabled = true;
+  const aviso = document.createElement("div");
+  aviso.className = "alert alert-info alert-styled-left";
+  aviso.innerHTML = `<span class="spinner"></span> Consultando ${h(bloco)}…`;
+  saida.prepend(aviso);
   try {
     const r = await api(`/api/capiblu/empresas/${cnpj}/${bloco}`);
-    alvo.innerHTML = ({ decisores: blocoDecisores, vinculos: blocoLista,
-                        conexoes: blocoLista })[bloco](r, bloco) + antes;
-    view.querySelectorAll("[data-bloco]").forEach((b) => {
-      b.onclick = () => carregarBloco(cnpj, b.dataset.bloco);
-    });
+    if (!aviso.isConnected) return; // saiu da ficha no meio da consulta
+    aviso.outerHTML =({ decisores: blocoDecisores, vinculos: (x) => renderQuadro(x, cnpj),
+                         conexoes: blocoLista })[bloco](r, bloco);
   } catch (e) {
-    alvo.innerHTML = `<div class="alert alert-danger alert-styled-left">${h(e.message)}</div>` + antes;
+    aviso.className = "alert alert-danger alert-styled-left";
+    aviso.textContent = e.message;
   }
+  if (botao) botao.disabled = false;
 }
 
 function blocoDecisores(r) {
@@ -10184,13 +10660,15 @@ function renderMk(r) {
             h(t.categoria || t.tipo || "—"),
             t.whatsapp ? `<span class="pill green">sim</span>` : `<span class="text-muted">—</span>`,
             `<span id="tp-${h(cpf)}-${i}">${num && cpf
-              ? `<a data-posse="${h(num)}" data-doc="${h(cpf)}" data-cel="tp-${h(cpf)}-${i}"
-                    data-nome="${h(nome)}">verificar</a>`
+              ? `<button type="button" class="btn btn-default btn-xs" data-posse="${h(num)}" data-doc="${h(cpf)}"
+                    data-cel="tp-${h(cpf)}-${i}" data-nome="${h(nome)}"
+                    title="Confere se o número é desta pessoa — 1 consulta">Verificar</button>`
               : '<span class="text-muted">—</span>'}</span>`,
             h(t.atualizacao || t.data || t.status || "—"),
           ] };
         }), { scroll: true }) : "",
-      tels.length && cpf ? `<button class="btn btn-default btn-xs" data-posse-todos="${h(cpf)}">Verificar todos</button>` : "")}
+      tels.length && cpf ? ` <button type="button" class="btn btn-default btn-xs" data-posse-todos="${h(cpf)}"
+        title="Cada número verificado é 1 consulta">Verificar todos · ${Math.min(tels.length, 12)} consultas</button>` : "")}
     ${bloco("E-mails", mails.length
       ? `<p>${mails.slice(0, 8).map((e) => h(typeof e === "string" ? e : e.email)).join(" · ")}</p>` : "")}
     ${bloco(`Endereços (${ends.length})`, ends.length
@@ -10231,10 +10709,11 @@ document.addEventListener("click", async (e) => {
   if (um) return posseNaCelula(um.dataset.posse, um.dataset.doc, um.dataset.cel, um.dataset.nome);
   const todos = e.target.closest("[data-posse-todos]");
   if (todos) {
+    if (todos.disabled) return;
     const doc = todos.dataset.posseTodos;
     todos.disabled = true;
     for (const a of [...document.querySelectorAll(`[data-posse][data-doc="${doc}"]`)]) {
-      await posseNaCelula(a.dataset.posse, doc, a.dataset.cel);
+      await posseNaCelula(a.dataset.posse, doc, a.dataset.cel, a.dataset.nome);
     }
     todos.disabled = false;
     return;
@@ -10255,12 +10734,18 @@ async function posseNaCelula(phone, doc, celId, nome) {
   let selo = `<span class="pill grey">n/d</span>`;
   try {
     const r = await api(`/api/capiblu/telefones/${phone}/pertence/${doc}`);
-    const ok = r.pertence ?? r.atrelado ?? r.confirmado;
-    const compart = r.compartilhada ?? r.linha_compartilhada;
-    const n = r.total ?? r.vinculos ?? null;
-    selo = compart
-      ? `<span class="pill blue" title="A linha aparece para mais de um documento">compart.${n ? ` (${n})` : ""}</span>`
-      : ok ? `<span class="pill green">confirmado</span>` : `<span class="pill amber">não confirmado</span>`;
+    // `telefone_pertence` (mkbuscas) devolve {status, atrelado, total,
+    // alerta_compartilhado}. Lendo `compartilhada`, a linha com 50+ donos
+    // aparecia como "confirmado".
+    const n = r.total ?? null;
+    if (r.status !== "ok") {
+      selo = `<span class="pill grey" title="${h(r.message || "Sem resposta da base")}">n/d</span>`;
+    } else if (r.alerta_compartilhado) {
+      selo = `<span class="pill blue" title="A linha aparece para ${h(n || "muitos")} documentos — confirme com quem atender">compartilhada${n ? ` (${h(n)})` : ""}</span>`;
+    } else {
+      selo = r.atrelado ? `<span class="pill green">confirmado</span>`
+                        : `<span class="pill amber" title="O número existe, mas não aparece para este documento">não confirmado</span>`;
+    }
   } catch (err) {
     selo = `<span class="pill grey" title="${h(err.message)}">n/d</span>`;
   }
@@ -10280,41 +10765,49 @@ async function posseNaCelula(phone, doc, celId, nome) {
   } catch (err) { /* melhor-esforço: o selo de posse já está na tela */ }
 }
 
+/** Parentes e conexões (Assertiva, 2 consultas). A rota devolve
+ *  `documento` e `relacao`/`tipo_relacao` — a tabela lia `cpf`/`parentesco`
+ *  e mostrava só traços. O documento pode ser CNPJ (sócio, empresa ligada). */
 function renderParentes(r) {
-  const lista = r.parentes || r.conexoes || r.data || [];
-  if (!lista.length) return emptyState("Nenhum parente ou conexão encontrada.");
-  return table(["Nome", "CPF", "Parentesco", "Telefone"], lista.map((p) => ({ cells: [
-    `<strong>${h(p.nome || "—")}</strong>`,
-    fmtCPF(p.cpf),
-    h(p.parentesco || p.vinculo || p.tipo || "—"),
-    h((p.telefones && p.telefones[0] && (p.telefones[0].display || p.telefones[0].numero))
-      || p.telefone || "—"),
-  ] })), { scroll: true });
+  const lista = r.parentes || [];
+  const avisos = (r.avisos || []).length
+    ? `<div class="alert alert-info alert-styled-left">${r.avisos.map(h).join("<br>")}</div>` : "";
+  if (!lista.length) return avisos + emptyState(r.message || "Nenhum parente ou conexão encontrada.");
+  return avisos + table(["Nome", "Documento", "Relação", "Telefone", "Nascimento"], lista.map((p) => {
+    const doc = String(p.documento || "").replace(/\D/g, "");
+    return { cells: [
+      `<strong>${h(p.nome || "—")}</strong>`,
+      doc.length === 14 ? `<a data-ficha="${h(doc)}">${fmtCNPJ(doc)}</a>` : fmtCPF(p.documento),
+      h(p.relacao || p.tipo_relacao || "—"),
+      p.telefone
+        ? `${h(fmtTelefone(p.telefone) || p.telefone)}${p.whatsapp ? ' <span class="pill green">whatsapp</span>' : ""}${p.nao_perturbe ? ' <span class="pill amber">não perturbe</span>' : ""}`
+        : '<span class="text-muted">—</span>',
+      h(p.nascimento || "—"),
+    ] };
+  }), { scroll: true });
 }
 
 /** Vínculos da RAIS: onde a pessoa trabalhou, com admissão e saída.
  *  Antes caía no \`tabelaGenerica\` — dado certo com cara de depuração. */
 function renderVinculos(r) {
-  const lista = r.vinculos || r.empregos || r.data || r.registros || [];
-  if (!lista.length) return emptyState("Nenhum vínculo declarado na RAIS.");
+  const lista = r.vinculos || [];
+  if (!lista.length) return emptyState(r.message || "Nenhum vínculo declarado na RAIS.");
+  // `admissao_br`/`desligamento_br` já vêm formatados pelo serviço de dados;
+  // a data ISO passada por `new Date` voltava um dia antes (fuso UTC).
   const rows = lista.map((v) => {
-    const doc = String(v.cnpj || v.documento || "").replace(/\D/g, "");
-    const admissao = v.admissao || v.data_admissao || v.inicio;
-    const saida = v.desligamento || v.data_desligamento || v.fim;
+    const doc = String(v.cnpj || "").replace(/\D/g, "");
     return { cells: [
-      `<strong>${h(v.razao_social || v.empresa || v.nome_empresa || "—")}</strong>`,
+      `<strong>${h(v.razao_social || "—")}</strong>`,
       doc ? `<a data-ficha="${h(doc)}">${fmtCNPJ(doc)}</a>` : '<span class="text-muted">—</span>',
-      h(v.cargo || v.ocupacao || v.funcao || "—"),
-      h(admissao ? fmtDate(admissao) === "—" ? admissao : fmtDate(admissao) : "—"),
-      saida ? h(fmtDate(saida) === "—" ? saida : fmtDate(saida))
-            : `<span class="pill green">no emprego</span>`,
-      h(v.salario ? fmtMoney(Number(v.salario)) : "—"),
+      h(v.admissao_br || v.admissao || "—"),
+      v.ativo ? `<span class="pill green">no emprego</span>` : h(v.desligamento_br || v.desligamento || "saiu"),
+      h(v.tempo_casa || "—"),
     ] };
   });
   return `
     <div class="help-block">Declarado pela empresa na RAIS — o vínculo pode estar
-      encerrado sem que a base registre a saída.</div>
-    ${table(["Empresa", "CNPJ", "Cargo", "Admissão", "Saída", "Salário"], rows, { scroll: true })}`;
+      encerrado sem que a base registre a saída.${r.referencia_br ? ` RAIS entregue em ${h(r.referencia_br)}.` : ""}</div>
+    ${table(["Empresa", "CNPJ", "Admissão", "Saída", "Tempo de casa"], rows, { scroll: true })}`;
 }
 
 /** Contatos do bureau: telefone e e-mail com a origem declarada. */
@@ -10331,14 +10824,15 @@ function renderContatos(r) {
       h(t.origem || t.fonte || "Serasa"),
       t.whatsapp ? `<span class="pill green">sim</span>` : '<span class="text-muted">—</span>',
       `<span id="cc-${h(cpf)}-${i}">${num && cpf
-        ? `<a data-posse="${h(num)}" data-doc="${h(cpf)}" data-cel="cc-${h(cpf)}-${i}">verificar</a>`
+        ? `<button type="button" class="btn btn-default btn-xs" data-posse="${h(num)}" data-doc="${h(cpf)}"
+             data-cel="cc-${h(cpf)}-${i}" title="Confere se o número é desta pessoa — 1 consulta">Verificar</button>`
         : '<span class="text-muted">—</span>'}</span>`,
     ] };
   });
   return `
     <div class="alert alert-info alert-styled-left">
       Consulta paga. Os contatos vêm do bureau e não passaram por validação de posse —
-      use <strong>verificar</strong> antes de tratar como número da pessoa.
+      use <strong>Verificar</strong> (1 consulta por número) antes de tratar como número da pessoa.
     </div>
     ${tels.length ? `<div class="sub-block"><h4>Telefones (${tels.length})</h4>
       ${table(["Número", "Tipo", "Origem", "WhatsApp", "Confiança"], linhaTel, { scroll: true })}</div>` : ""}
@@ -10397,9 +10891,11 @@ function renderReverso(r, phone) {
         ? `<button class="btn btn-default btn-xs rv-emp" data-cnpj="${h(doc)}">Abrir ficha</button>` : "",
     ] };
   });
-  const painel = panel(`${regs.length} atrelado(s) a ${h(phone)}`,
+  // Falha de verdade já chega como erro (o servidor desembrulha); aqui só
+  // resta `not_found`, que tem mensagem própria e não é "0 atrelados".
+  const painel = panel(`${regs.length} atrelado(s) a ${fmtTelefone(phone)}`,
     rows.length ? table(["Nome", "Documento", "Tipo", "Endereço", ""], rows, { scroll: true })
-                : emptyState("Nenhum registro para este número."),
+                : emptyState(r.message || "Nenhum registro para este número."),
     { subtitle: `Consulta paga${r.remaining_daily != null
         ? ` · restam ${r.remaining_daily} hoje` : ""}` });
   setTimeout(() => {
@@ -10413,20 +10909,30 @@ function renderReverso(r, phone) {
 /** Validação telefone × documento: o número é mesmo daquela pessoa?
  *  Verde confirma, âmbar nega — azul aqui seria confundido com explicação. */
 function renderPertence(r, phone, doc) {
-  const pertence = r.pertence ?? r.atrelado ?? r.confirmado;
-  const compartilhada = r.compartilhada ?? r.linha_compartilhada;
-  const vinculos = r.total ?? r.vinculos ?? null;
+  // Campos de `telefone_pertence` (mkbuscas): atrelado, total, nome,
+  // alerta_compartilhado. Sem status "ok" não há resposta — nem sim nem não.
+  if (r.status !== "ok") {
+    return panel("Validação", `<div class="alert alert-info alert-styled-left">
+      <strong>Sem resposta (n/d)</strong> — ${h(r.message || "a base não trouxe dados para este número.")}</div>`,
+      { subtitle: "Consulta paga" });
+  }
+  const pertence = !!r.atrelado;
+  const compartilhada = !!r.alerta_compartilhado;
+  const docFmt = doc.length === 14 ? fmtCNPJ(doc) : fmtCPF(doc);
   return panel("Validação", `
-    <div class="alert ${pertence ? "alert-success" : "alert-warning"} alert-styled-left">
-      <strong>${pertence ? "Confirmado" : "Não confirmado"}</strong> —
-      ${h(phone)} ${pertence ? "está atrelado a" : "não aparece atrelado a"} ${h(doc)}.
-    </div>
-    ${compartilhada ? `<div class="alert alert-info alert-styled-left">
+    ${compartilhada ? `<div class="alert alert-warning alert-styled-left">
         <strong>Linha compartilhada</strong> — este número aparece para
-        ${vinculos ? `<strong>${h(vinculos)}</strong> documentos` : "mais de um documento"}.
-        Confirme com quem atender antes de tratar como contato direto.
-      </div>` : ""}
-    ${tabelaGenerica(r)}`, { subtitle: "Consulta paga" });
+        <strong>${h(r.total || "muitos")}</strong> documentos. Mesmo atrelado, não dá para
+        tratar como contato direto: confirme com quem atender.
+      </div>` : `<div class="alert ${pertence ? "alert-success" : "alert-warning"} alert-styled-left">
+      <strong>${pertence ? "Confirmado" : "Não confirmado"}</strong> —
+      ${h(fmtTelefone(phone))} ${pertence ? "está atrelado a" : "não aparece atrelado a"} ${docFmt}.
+    </div>`}
+    ${grade([
+      campo("Nome no registro", r.nome || ""),
+      campo("Documentos neste número", r.total ?? ""),
+      campo("Atrelado ao documento", pertence ? "sim" : "não"),
+    ], 3)}`, { subtitle: "Consulta paga" });
 }
 
 /** Pareia o WhatsApp: abre a sessão, mostra o QR e acompanha até conectar.

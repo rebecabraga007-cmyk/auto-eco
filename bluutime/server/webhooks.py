@@ -101,7 +101,14 @@ def _entregar(hook: Webhook, entrega: WebhookDelivery) -> tuple[bool, int, str]:
     if hook.secret:
         headers["X-Bluutime-Signature"] = assinar(hook.secret, corpo)
     try:
-        r = httpx.post(hook.target_url, content=corpo, headers=headers, timeout=TIMEOUT)
+        # Revalida na hora de entregar: o DNS pode ter passado a apontar para a
+        # rede interna depois do cadastro (DNS rebinding contra o wuzapi em
+        # 127.0.0.1, por exemplo).
+        motivo = url_publica_valida(hook.target_url)
+        if motivo:
+            return False, 0, f"Destino recusado: {motivo}"
+        r = httpx.post(hook.target_url, content=corpo, headers=headers, timeout=TIMEOUT,
+                       follow_redirects=False)
         # 2xx é sucesso. 4xx que não seja 408/429 é erro do payload e não
         # melhora com repique — desistir cedo evita martelar o receptor.
         if 200 <= r.status_code < 300:

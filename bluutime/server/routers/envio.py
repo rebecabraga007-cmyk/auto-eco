@@ -201,7 +201,11 @@ def rastrear_clique(token: str, u: str = "", db: Session = Depends(get_db)):
     # isso, /t/c/qualquer?u=https://golpe virava link de phishing com o
     # domínio da BLU.
     entrega = db.query(Delivery).filter(Delivery.tracking_token == token).first()
-    if not entrega or destino not in (entrega.body or ""):
+    # Igualdade exata com um link do corpo: "contém" aceitava
+    # https://blusales.com quando o e-mail tinha https://blusales.com.br.
+    links = set(re.findall(r"https?://[^\s\"'<>]+", entrega.body or "")) if entrega else set()
+    links |= {l.rstrip(".,;:!?)") for l in links}
+    if not entrega or destino not in links:
         raise HTTPException(404, "Link não encontrado.")
     _marcar(db, token, "click")
     return RedirectResponse(destino, status_code=302)
@@ -214,7 +218,7 @@ def previa_atividade(aid: int, db: Session = Depends(get_db)):
     act = db.get(LeadActivity, aid)
     if not act:
         raise HTTPException(404, "Atividade não encontrada.")
-    perm.exigir_dono_lead(db, perm.ator(db), act.lead)
+    perm.exigir_dono_lead(db, perm.ator(db), act.lead, escrita=False)
     lead = act.lead
     canal = channel_of(act.type, act.social_network)
     step = db.get(CadenceStep, act.cadence_step_id) if act.cadence_step_id else None

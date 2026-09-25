@@ -111,7 +111,9 @@ def autenticar(token: str) -> Optional[dict]:
     if not token.startswith(PREFIXO + "_"):
         return None
     con = _conn()
-    r = con.execute("SELECT * FROM api_tokens WHERE token_hash=? AND ativo=1",
+    # O dono precisa existir e estar ativo: desligar alguém desliga os tokens dele.
+    r = con.execute("SELECT t.* FROM api_tokens t JOIN users u ON u.id = t.user_id "
+                    "WHERE t.token_hash=? AND t.ativo=1 AND u.ativo=1",
                     (_hash(token),)).fetchone()
     if not r:
         con.close()

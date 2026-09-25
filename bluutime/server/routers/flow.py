@@ -17,6 +17,7 @@ from ..models import (Activity, Cadence, CadenceStep, CadenceUser, Call, Client,
                       LeadBase, LeadFeedback, LeadFieldValue, LostReason, Message,
                       Template, User, ACTIVITY_TYPES, PRIORITY_WEIGHT, channel_of)
 from .. import agenda, perm, render, serial, webhooks
+from ..planilha_segura import linhas_csv
 
 router = APIRouter(prefix="/api/flow")
 
@@ -228,7 +229,7 @@ def create_template(payload: dict = Body(...), db: Session = Depends(get_db)):
         raise HTTPException(400, "Dê um nome ao modelo.")
     t = Template(name=name, channel=channel, subject=payload.get("subject", ""),
                  body=payload.get("body", ""), client_id=payload.get("clientId"),
-                 created_by_id=payload.get("createdById"))
+                 created_by_id=perm.ator(db).user_id)
     db.add(t)
     db.commit()
     return _template(t)
@@ -282,7 +283,7 @@ def preview_template(tid: int, payload: dict = Body(default={}),
     ator = perm.ator(db)
     if payload.get("leadId"):
         lead = db.get(Lead, payload["leadId"])
-        perm.exigir_dono_lead(db, ator, lead)
+        perm.exigir_dono_lead(db, ator, lead, escrita=False)
     else:
         # Sem leadId, cai no lead mais recente — mas o mais recente DA
         # CARTEIRA de quem pediu, não da empresa inteira (senão a prévia
@@ -459,7 +460,7 @@ def _csv(nome: str, cabecalho: list[str], linhas: list[list]) -> StreamingRespon
     buf = io.StringIO()
     escritor = csv.writer(buf, delimiter=";")
     escritor.writerow(cabecalho)
-    escritor.writerows(linhas)
+    escritor.writerows(linhas_csv(linhas))  # sem fórmula injetada
     buf.seek(0)
     # utf-8-sig porque o Excel pt-BR abre utf-8 puro com acento quebrado.
     return StreamingResponse(iter([buf.getvalue().encode("utf-8-sig")]),
@@ -684,6 +685,10 @@ def _disponiveis(db: Session, ator):
     cadência, e do próprio SDR ou sem dono."""
     com_passos = db.query(CadenceStep.cadence_id).distinct()
     q = db.query(Lead).filter(Lead.status == "WAITING", Lead.cadence_id.in_(com_passos))
+    # Cadência com participantes definidos só entrega lead a quem participa.
+    com_participantes = db.query(CadenceUser.cadence_id).distinct()
+    minhas = db.query(CadenceUser.cadence_id).filter(CadenceUser.user_id == (ator.user_id or -1))
+    q = q.filter(or_(~Lead.cadence_id.in_(com_participantes), Lead.cadence_id.in_(minhas)))
     return q.filter(or_(Lead.sdr_id == (ator.user_id or -1), Lead.sdr_id.is_(None)))
 
 
@@ -866,7 +871,7 @@ def get_lead(lid: int, db: Session = Depends(get_db)):
     l = db.get(Lead, lid)
     if not l:
         raise HTTPException(404, "Lead não encontrado.")
-    perm.exigir_dono_lead(db, perm.ator(db), l)
+    perm.exigir_dono_lead(db, perm.ator(db), l, escrita=False)
     custom = _custom_values(db, lid)
     data = serial.lead(l, custom, _fitscore(db, custom))
     now = datetime.utcnow()
@@ -1096,9 +1101,19 @@ def update_lead(lid: int, payload: dict = Body(...), db: Session = Depends(get_d
                  if k in payload and (payload[k] or None) != getattr(l, attr)]
         if mudou:
             raise HTTPException(403, "Trocar responsável, cliente ou base do lead exige gestor.")
+        # Marcar "não perturbe" qualquer um marca; tirar é decisão de compliance.
+        if "doNotCall" in payload and not payload["doNotCall"] and l.do_not_call:
+            raise HTTPException(403, "Só gestor tira a marca de 'não perturbe'.")
+    dono_antes = l.sdr_id
     for key, attr in fields.items():
         if key in payload:
             setattr(l, attr, payload[key])
+    # Troca de responsável leva as atividades pendentes junto: sem isso a fila
+    # (que escopa por atividade) seguia mostrando o lead ao dono antigo.
+    if l.sdr_id != dono_antes:
+        (db.query(LeadActivity)
+         .filter(LeadActivity.lead_id == lid, LeadActivity.status.in_(["PENDING", "PAUSED"]))
+         .update({"user_id": l.sdr_id}, synchronize_session=False))
     _gravar_campos(db, lid, payload.get("customFields"))
     db.commit()
     return serial.lead(l, _custom_values(db, lid))
@@ -1123,9 +1138,11 @@ def bulk_action(payload: dict = Body(...), db: Session = Depends(get_db)):
         empresa = db.query(Company).first()
         if action != "delete" or not getattr(empresa, "leads_delete", False):
             raise HTTPException(403, "Ação em massa sobre leads exige gestor.")
-        alheios = [l.id for l in leads if l.sdr_id != ator.user_id]
+        alheios = [l.id for l in leads if ator.user_id is None or l.sdr_id != ator.user_id]
         if alheios:
             raise HTTPException(403, f"{len(alheios)} lead(s) não são seus.")
+    if action == "delete" and len(ids) > 200 and not ator.pelo_menos("admin"):
+        raise HTTPException(403, "Apagar mais de 200 leads de uma vez exige admin.")
     if action == "transfer":
         uid = payload.get("sdrId")
         if not db.get(User, uid):
@@ -1247,7 +1264,10 @@ def get_base(bid: int, db: Session = Depends(get_db)):
 @router.post("/lead-bases/preview")
 async def preview_csv(file: UploadFile = File(...)):
     """Passo 1 do wizard: lê o CSV e devolve colunas + amostra."""
-    raw = (await file.read()).decode("utf-8-sig", errors="replace")
+    bruto = await file.read(20 * 1024 * 1024 + 1)
+    if len(bruto) > 20 * 1024 * 1024:
+        raise HTTPException(413, "Arquivo maior que 20 MB. Divida a lista em partes.")
+    raw = bruto.decode("utf-8-sig", errors="replace")
     sample = raw[:4096]
     try:
         dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
@@ -1331,7 +1351,7 @@ def import_base(payload: dict = Body(...), db: Session = Depends(get_db)):
     reader = csv.DictReader(io.StringIO(content), delimiter=delim)
 
     base = LeadBase(name=name, source="CSV", client_id=payload.get("clientId"),
-                    created_by_id=payload.get("createdById"), status="PROCESSING")
+                    created_by_id=perm.ator(db).user_id, status="PROCESSING")
     db.add(base)
     db.flush()
 
@@ -1384,10 +1404,14 @@ def delete_base(bid: int, com_leads: bool = False, db: Session = Depends(get_db)
     de quem já foi trabalhado. Quem quiser mesmo pede explicitamente, e a tela
     mostra quantos leads vão embora antes de perguntar.
     """
-    perm.ator(db).exigir("gestor", "excluir base de leads")
+    ator = perm.ator(db)
     b = db.get(LeadBase, bid)
     if not b:
         raise HTTPException(404, "Base não encontrada.")
+    # Rascunho de importação é de quem o criou: o SDR descarta o próprio
+    # (antes tomava 403 no "Descartar rascunho"). Base importada é de gestor.
+    if not (b.status == "DRAFT" and ator.user_id is not None and b.created_by_id == ator.user_id):
+        ator.exigir("gestor", "excluir base de leads")
     quantos = db.query(func.count(Lead.id)).filter_by(lead_base_id=bid).scalar()
     if quantos and not com_leads:
         raise HTTPException(400, f"A base tem {quantos} leads vinculados. "
@@ -1751,7 +1775,7 @@ def get_deal_feedback(fid: int, db: Session = Depends(get_db)):
     if not fb:
         raise HTTPException(404, "Feedback não encontrado.")
     ator = perm.ator(db)
-    if not ator.pelo_menos("gestor") and fb.user_id != ator.user_id:
+    if not ator.pelo_menos("gestor") and (ator.user_id is None or fb.user_id != ator.user_id):
         raise HTTPException(403, "Este feedback não é seu.")
     company = db.query(Company).first()
     perguntas = [t.strip() for t in ((company.deal_feedback_tags or "").splitlines()
@@ -1786,7 +1810,8 @@ def fill_deal_feedback(fid: int, payload: dict = Body(...), db: Session = Depend
     if not fb:
         raise HTTPException(404, "Feedback não encontrado.")
     ator = perm.ator(db)
-    if fb.user_id and fb.user_id != ator.user_id and not ator.pelo_menos("gestor"):
+    # Feedback sem dono é da gestão: antes qualquer um preenchia (e reiniciava a cadência).
+    if (not fb.user_id or ator.user_id is None or fb.user_id != ator.user_id) and not ator.pelo_menos("gestor"):
         raise HTTPException(403, "Este feedback não é seu.")
     fb.meeting_happened = bool(payload.get("meetingHappened"))
     fb.qualification = json.dumps(

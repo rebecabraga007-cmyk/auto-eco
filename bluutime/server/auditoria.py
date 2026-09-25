@@ -24,7 +24,11 @@ ACOES = [
                 r"|/capiblu/api/person/[^/]+/(mk|parentes|vinculos)"), "PESSOA_PERFIL"),
     (re.compile(r"/api/capiblu/pessoas|/capiblu/api/person"), "PESSOA"),
     (re.compile(r"/api/capiblu/telefones|/capiblu/api/phone"), "TELEFONE_REVERSO"),
-    (re.compile(r"/capiblu/api/assertiva"), "ASSERTIVA"),
+    (re.compile(r"/api/capiblu/assertiva|/capiblu/api/assertiva"), "ASSERTIVA"),
+    (re.compile(r"/api/capiblu/leads/\d+/(enrich|validate-phone)"), "ENRIQUECIMENTO"),
+    (re.compile(r"/api/capiblu/prospect/pessoas"), "PESSOA"),
+    (re.compile(r"/api/flow/leads/export|/api/capiblu/export/"), "EXPORTACAO"),
+    (re.compile(r"/api/admin/(users|tokens)|/api/users(/\d+)?$|/api/flow/permissions"), "ADMINISTRACAO"),
     (re.compile(r"/api/capiblu/planilha/(enriquecer|linha)"
                 r"|/capiblu/api/enrich/(run|linha)"), "ENRIQUECIMENTO"),
     (re.compile(r"/api/capiblu/empresas/\d+/(decisores|conexoes|contacts|employees|vinculos)"
