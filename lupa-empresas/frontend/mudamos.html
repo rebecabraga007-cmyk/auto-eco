@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>CapiBLU — mudamos de endereço</title>
+  <!-- Servida no lugar do login pelo app antigo do Render (www.capiblu.net)
+       quando CAPIBLU_ENDERECO_NOVO está definida — ver app_online/main.py.
+       Só CSS, sem script: quem abre aqui não pode depender de nada do app
+       antigo funcionando. {{ENDERECO}} e {{HOST}} são trocados na hora. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --azul-escuro: #0F2E4A;
+      --azul: #12385C;
+      --azul-claro: #EAF0F5;
+      --terracota: #A85A2C;
+      --texto: #1A1D21;
+      --cinza: #55595F;
+      --linha: #DBD4C6;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", system-ui, -apple-system, Arial, sans-serif;
+      background: var(--azul-escuro);
+      color: var(--texto);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+      min-height: 100vh;
+    }
+    .cartao {
+      background: #fff;
+      border-radius: 6px;
+      width: 440px;
+      max-width: 100%;
+      padding: 36px 32px 30px;
+      box-shadow: 0 18px 32px -22px rgba(26, 29, 33, .45);
+      text-align: center;
+      animation: entra .35s ease-out;
+    }
+    @keyframes entra { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { .cartao { animation: none; } }
+    .marca { font-size: 1.5rem; margin: 0 0 22px; }
+    .marca strong { font-weight: 700; }
+    .selo {
+      display: inline-block;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 11px;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--terracota);
+      background: #FBEFE7;
+      border-radius: 999px;
+      padding: 5px 12px;
+      margin-bottom: 14px;
+    }
+    h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 12px; color: var(--azul-escuro); }
+    p { margin: 0 0 14px; line-height: 1.55; color: var(--cinza); font-size: .97rem; }
+    .endereco {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin: 20px 0 18px;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: .9rem;
+      flex-wrap: wrap;
+    }
+    .endereco .antigo { color: #9A9488; text-decoration: line-through; }
+    .endereco .seta { color: var(--terracota); font-weight: 700; }
+    .endereco .novo { color: var(--azul-escuro); font-weight: 600; }
+    .botao {
+      display: block;
+      background: var(--azul);
+      color: #fff;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 1rem;
+      padding: 14px 20px;
+      border-radius: 4px;
+      transition: background .15s, transform .1s;
+    }
+    .botao:hover, .botao:focus-visible { background: var(--azul-escuro); }
+    .botao:focus-visible { outline: 3px solid #9CC3E6; outline-offset: 2px; }
+    .botao:active { transform: scale(.98); }
+    .dicas {
+      text-align: left;
+      margin: 22px 0 0;
+      padding: 16px 18px;
+      background: var(--azul-claro);
+      border-radius: 4px;
+      list-style: none;
+      font-size: .88rem;
+      color: #2A2E34;
+      line-height: 1.5;
+    }
+    .dicas li + li { margin-top: 8px; }
+    .dicas li::before { content: "→ "; color: var(--terracota); font-weight: 700; }
+    .rodape { margin-top: 18px; font-size: .78rem; color: #9A9488; }
+    @media (max-width: 420px) {
+      .cartao { padding: 28px 20px 24px; }
+      h1 { font-size: 1.35rem; }
+    }
+  </style>
+</head>
+<body>
+  <main class="cartao">
+    <div class="marca">🦫 Capi<strong>BLU</strong></div>
+    <span class="selo">Novo endereço</span>
+    <h1>O CapiBLU mudou de endereço</h1>
+    <p>Este endereço não é mais usado. A plataforma é a mesma, agora em um
+      servidor novo.</p>
+
+    <div class="endereco" aria-label="Endereço antigo e endereço novo">
+      <span class="antigo">{{HOST}}</span>
+      <span class="seta" aria-hidden="true">→</span>
+      <span class="novo">{{ENDERECO_CURTO}}</span>
+    </div>
+
+    <a class="botao" href="{{ENDERECO}}">Acessar o CapiBLU em {{ENDERECO_CURTO}}</a>
+
+    <ul class="dicas">
+      <li>Entre com o seu e-mail e senha de sempre.</li>
+      <li>Salve o novo endereço nos favoritos do navegador.</li>
+      <li>Se o acesso não funcionar, fale com um administrador do CapiBLU.</li>
+    </ul>
+
+    <div class="rodape">BLU Sales Group</div>
+  </main>
+</body>
+</html>

@@ -118,6 +118,50 @@ async def _auth_guard(request: Request, call_next):
     return resp
 
 
+# ── MUDAMOS DE ENDEREÇO ──
+# O mesmo código roda em dois lugares: no Hetzner (app.capiblu.net, o de verdade)
+# e no Render (www.capiblu.net, o antigo). Com CAPIBLU_ENDERECO_NOVO definida --
+# SÓ no Render -- este app deixa de ser usado: toda página vira o aviso de
+# mudança (frontend/mudamos.html) e o login é recusado com o novo endereço.
+#
+# Por que recusar o login e não só trocar a página: o Render tem o PRÓPRIO
+# cadastro de usuários (capiblu_auth.db no disco dele). Enquanto alguém ainda
+# entrasse aqui, senha trocada ou usuário criado de um lado não existiria do
+# outro -- a divergência que motivou a mudança.
+#
+# /api/v1/* continua respondendo: é a API de máquina, e uma integração que
+# ainda aponte para cá não pode quebrar sem aviso só porque a tela mudou.
+_ENDERECO_NOVO = os.environ.get("CAPIBLU_ENDERECO_NOVO", "").strip().rstrip("/")
+
+
+def _pagina_mudamos(host: str) -> str:
+    with open(os.path.join(_FRONTEND, "mudamos.html"), encoding="utf-8") as f:
+        html = f.read()
+    curto = _ENDERECO_NOVO.split("://", 1)[-1]
+    return (html.replace("{{ENDERECO_CURTO}}", curto)
+                .replace("{{ENDERECO}}", _ENDERECO_NOVO)
+                .replace("{{HOST}}", (host or "endereço antigo").split(":")[0]))
+
+
+@app.middleware("http")
+async def _mudamos_de_endereco(request: Request, call_next):
+    if not _ENDERECO_NOVO:
+        return await call_next(request)
+    path = request.url.path
+    if path.startswith("/api/v1/") or request.method == "OPTIONS":
+        return await call_next(request)
+    sem_cache = {"Cache-Control": "no-store, must-revalidate"}
+    if path.startswith("/api/"):
+        # Aba antiga ainda aberta: a mensagem aparece onde a tela mostraria o erro.
+        return JSONResponse(
+            {"detail": "O CapiBLU mudou de endereço. Acesse %s e entre por lá."
+                       % _ENDERECO_NOVO,
+             "endereco_novo": _ENDERECO_NOVO},
+            status_code=410, headers=sem_cache)
+    return Response(_pagina_mudamos(request.headers.get("host", "")),
+                    media_type="text/html; charset=utf-8", headers=sem_cache)
+
+
 # Rotas de auth/admin são tratadas AQUI (router acima). O resto de /api é PROXEADO.
 _LOCAL_PREFIXES = ("/api/auth/", "/api/admin/", "/api/v1/")
 
