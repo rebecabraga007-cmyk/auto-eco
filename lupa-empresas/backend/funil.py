@@ -594,8 +594,18 @@ async def _pelo_mk(candidatos: list[dict[str, Any]], cidade: str, uf: str,
         elif uf_bate:
             forca = 25
             motivos.append("mora no estado do perfil")
+        # MESMA ORDEM DE CONFIANÇA DO RESTO DO FUNIL. Estes telefones saem
+        # direto na tela da consulta profunda quando o caso fecha de graça (a
+        # tela só pede a Assertiva quando o funil volta SEM telefone), e iam
+        # na ordem crua da ficha. Com a WorkAPI suspensa a ficha é da
+        # Assertiva -- fixos antes dos celulares, e um número em "não
+        # perturbe" podia sair em primeiro. `_ordem_telefone` é a regra que o
+        # B2B e a busca por CPF já usam.
+        tels = sorted(mkbuscas._extract_phones(dd), key=_ordem_telefone)
+        for t in tels:
+            t["porque"] = _rotulo_telefone(t)
         saida.append({**c, "forca": forca, "elimina": False, "motivos": motivos,
-                      "telefones": mkbuscas._extract_phones(dd),
+                      "telefones": tels,
                       "cidade_bate": cidade_bate, "empresa_bate": empresa_bate})
     return saida
 
