@@ -2,11 +2,11 @@
 import csv
 import io
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, contains_eager, joinedload
 
 from fastapi.responses import StreamingResponse
 
@@ -15,7 +15,7 @@ from ..models import (Activity, Cadence, CadenceStep, CadenceUser, Call, Client,
                       Company, Conversation, CustomField, Delivery, FitscoreRule,
                       CadenceRun, Lead, LeadActivity,
                       LeadBase, LeadFeedback, LeadFieldValue, LostReason, Message,
-                      Template, User, ACTIVITY_TYPES, channel_of)
+                      Template, User, ACTIVITY_TYPES, PRIORITY_WEIGHT, channel_of)
 from .. import agenda, perm, render, serial, webhooks
 
 router = APIRouter(prefix="/api/flow")
@@ -642,7 +642,7 @@ def execution_overall(db: Session = Depends(get_db)):
     estou tocando, quantos ainda dá para puxar, e quanto já andei da meta.
     """
     ator = perm.ator(db)
-    hoje = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    hoje = _meia_noite_local()
 
     meus = perm.escopo_leads(db, db.query(Lead), ator, Lead.sdr_id)
     por_situacao = dict(meus.with_entities(Lead.status, func.count(Lead.id))
@@ -672,6 +672,142 @@ def execution_overall(db: Session = Depends(get_db)):
                      "percentual": round(feitas / meta * 100, 1) if meta else 0,
                      "porTipo": porTipo},
             "bateuMeta": bool(meta and feitas >= meta)}
+
+
+def _meia_noite_local() -> datetime:
+    """Começo do dia de hoje no fuso da operação, em UTC (como o banco guarda)."""
+    return agenda.to_utc(datetime.combine(agenda.now_local().date(), datetime.min.time()))
+
+
+def _disponiveis(db: Session, ator):
+    """Leads que o botão "Iniciar novos leads" consegue puxar: em espera, com
+    cadência, e do próprio SDR ou sem dono."""
+    com_passos = db.query(CadenceStep.cadence_id).distinct()
+    q = db.query(Lead).filter(Lead.status == "WAITING", Lead.cadence_id.in_(com_passos))
+    return q.filter(or_(Lead.sdr_id == (ator.user_id or -1), Lead.sdr_id.is_(None)))
+
+
+def _distribuir(por_cadencia: dict[int, int], pesos: dict[int, int], quantidade: int) -> dict[int, int]:
+    """Reparte `quantidade` entre as cadências na proporção da prioridade, sem
+    passar do que cada uma tem disponível — como o Meetime faz."""
+    alvo = {c: 0 for c in por_cadencia}
+    restante = min(quantidade, sum(por_cadencia.values()))
+    while restante > 0:
+        abertas = [c for c in por_cadencia if alvo[c] < por_cadencia[c]]
+        if not abertas:
+            break
+        total_peso = sum(pesos[c] for c in abertas)
+        distribuiu = 0
+        for c in sorted(abertas, key=lambda c: -pesos[c]):
+            fatia = max(1, round(restante * pesos[c] / total_peso)) if restante else 0
+            fatia = min(fatia, por_cadencia[c] - alvo[c], restante - distribuiu)
+            alvo[c] += fatia
+            distribuiu += fatia
+            if distribuiu >= restante:
+                break
+        restante -= distribuiu
+        if not distribuiu:
+            break
+    return alvo
+
+
+@router.get("/execution/start-preview")
+def start_preview(quantidade: int = Query(0, ge=0, le=500), cadence_ids: str = "",
+                  db: Session = Depends(get_db)):
+    """O modal "Iniciar novos leads": o que há para puxar em cada cadência,
+    quantas atividades isso cria hoje e a previsão dos próximos dias úteis
+    (fila atual + os leads que seriam iniciados)."""
+    ator = perm.ator(db)
+    disp = dict(_disponiveis(db, ator).with_entities(Lead.cadence_id, func.count(Lead.id))
+                .group_by(Lead.cadence_id).all())
+    cadencias = {c.id: c for c in db.query(Cadence).filter(Cadence.id.in_(list(disp) or [-1])).all()}
+    escolhidas = {int(x) for x in cadence_ids.split(",") if x.strip().isdigit()} or set(disp)
+    base = {c: n for c, n in disp.items() if c in escolhidas and c in cadencias}
+    pesos = {c: PRIORITY_WEIGHT.get(cadencias[c].priority, 2) for c in base}
+    alvo = _distribuir(base, pesos, quantidade)
+
+    holidays = agenda.holiday_dates(db)
+    hoje = agenda.now_local().date()
+    dias = [agenda.add_business_days(hoje, i, holidays) for i in range(5)]
+    previsao = {d.isoformat(): {t: 0 for t in ACTIVITY_TYPES} for d in dias}
+    # Fila atual do SDR: o que já está agendado para esses dias.
+    ini = agenda.to_utc(datetime.combine(dias[0], datetime.min.time()))
+    fim = agenda.to_utc(datetime.combine(dias[-1], datetime.max.time()))
+    pend = (db.query(LeadActivity).filter(LeadActivity.status == "PENDING",
+                                          LeadActivity.user_id == (ator.user_id or -1),
+                                          LeadActivity.scheduled_at >= ini,
+                                          LeadActivity.scheduled_at <= fim).all())
+    for a in pend:
+        chave = agenda.to_local(a.scheduled_at).date().isoformat()
+        if chave in previsao and a.type in previsao[chave]:
+            previsao[chave][a.type] += 1
+    hoje_novas = 0
+    linhas = []
+    for cid, cad in cadencias.items():
+        n = alvo.get(cid, 0)
+        passos = sorted(cad.steps, key=lambda s: (s.day, s.order_in_day))
+        hoje_cad = sum(1 for p in passos if p.day == 1) * n
+        hoje_novas += hoje_cad
+        for p in passos:
+            if p.day - 1 < len(dias) and n:
+                previsao[dias[p.day - 1].isoformat()][p.activity.type] += n
+        linhas.append({"id": cid, "name": cad.name, "priority": cad.priority,
+                       "disponiveis": disp.get(cid, 0), "selecionados": n,
+                       "atividadesHoje": hoje_cad, "marcada": cid in escolhidas})
+    linhas.sort(key=lambda l: (-PRIORITY_WEIGHT.get(l["priority"], 2), l["name"]))
+    usuario = db.get(User, ator.user_id) if ator.user_id else None
+    meta = (usuario.daily_goal if usuario else 0) or 0
+    feitas_hoje = db.query(func.count(LeadActivity.id)).filter(
+        LeadActivity.user_id == (ator.user_id or -1), LeadActivity.status == "DONE",
+        LeadActivity.done_at >= _meia_noite_local()).scalar()
+    return {"quantidade": sum(alvo.values()), "novasAtividadesHoje": hoje_novas,
+            "totalDisponiveis": sum(disp.values()), "cadencias": linhas,
+            "previsao": [{"dia": d, **v} for d, v in previsao.items()],
+            "objetivoDiario": meta, "feitasHoje": feitas_hoje,
+            "pendentesHoje": sum(previsao[dias[0].isoformat()].values())}
+
+
+@router.post("/execution/start-leads")
+def start_leads(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Inicia N leads em espera, repartidos pela prioridade das cadências
+    marcadas. O SDR vira dono dos que estavam sem dono."""
+    ator = perm.ator(db)
+    if not ator.user_id:
+        raise HTTPException(400, "Seu usuário não tem cadastro de SDR para receber leads.")
+    try:
+        quantidade = int(payload.get("quantidade") or 0)
+        escolhidas = {int(x) for x in (payload.get("cadenceIds") or [])}
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Quantidade ou cadências inválidas.")
+    if not 0 < quantidade <= 500:
+        raise HTTPException(400, "Informe de 1 a 500 leads.")
+    q = _disponiveis(db, ator)
+    if escolhidas:
+        q = q.filter(Lead.cadence_id.in_(escolhidas))
+    disp = dict(q.with_entities(Lead.cadence_id, func.count(Lead.id)).group_by(Lead.cadence_id).all())
+    cadencias = {c.id: c for c in db.query(Cadence).filter(Cadence.id.in_(list(disp) or [-1])).all()}
+    alvo = _distribuir({c: n for c, n in disp.items() if c in cadencias},
+                       {c: PRIORITY_WEIGHT.get(cadencias[c].priority, 2) for c in cadencias}, quantidade)
+    iniciados, atividades = 0, 0
+    for cid, n in alvo.items():
+        if not n:
+            continue
+        # Os mais antigos primeiro: lead que espera há mais tempo esfria antes.
+        for l in q.filter(Lead.cadence_id == cid).order_by(Lead.created_at).limit(n).all():
+            # Reserva condicional: dois SDRs clicando juntos liam os mesmos
+            # leads em espera e o lead ficava com a cadência agendada em dobro.
+            pegou = (db.query(Lead)
+                     .filter(Lead.id == l.id, Lead.status == "WAITING",
+                             or_(Lead.sdr_id.is_(None), Lead.sdr_id == ator.user_id))
+                     .update({"status": "EXECUTING", "sdr_id": ator.user_id, "current_step": 0},
+                             synchronize_session=False))
+            if not pegou:
+                continue
+            db.refresh(l)
+            atividades += _schedule_cadence(db, l)
+            iniciados += 1
+    db.commit()
+    return {"ok": True, "iniciados": iniciados, "atividades": atividades}
 
 
 @router.get("/hot-leads")
@@ -858,7 +994,9 @@ def _apagar_atividades(db: Session, *, lead_ids: list[int] | None = None,
     if lead_id is not None:
         alvo = alvo.filter(LeadActivity.lead_id == lead_id)
     if apenas_pendentes:
-        alvo = alvo.filter(LeadActivity.status == "PENDING")
+        # PAUSED também é "em aberto": ficava órfã e ressuscitava o lead num
+        # "retomar cadência" depois de uma troca de cadência ou de um desfecho.
+        alvo = alvo.filter(LeadActivity.status.in_(["PENDING", "PAUSED"]))
     ids = [r[0] for r in alvo.with_entities(LeadActivity.id).all()]
     if not ids:
         return 0
@@ -950,6 +1088,14 @@ def update_lead(lid: int, payload: dict = Body(...), db: Session = Depends(get_d
         raise HTTPException(400, f"Campo desconhecido: {', '.join(sorted(unknown))}")
     if payload.get("cadenceId") and not db.get(Cadence, payload["cadenceId"]):
         raise HTTPException(400, "Cadência inexistente.")
+    # Transferir lead é ação de gestor (o bulk já exigia; o PATCH individual
+    # deixava o SDR tomar o lead de um colega ou despejar leads na carteira
+    # de outro). Reenviar o mesmo valor, como o formulário faz, continua ok.
+    if not perm.ator(db).pelo_menos("gestor"):
+        mudou = [k for k, attr in (("sdrId", "sdr_id"), ("clientId", "client_id"), ("leadBaseId", "lead_base_id"))
+                 if k in payload and (payload[k] or None) != getattr(l, attr)]
+        if mudou:
+            raise HTTPException(403, "Trocar responsável, cliente ou base do lead exige gestor.")
     for key, attr in fields.items():
         if key in payload:
             setattr(l, attr, payload[key])
@@ -991,8 +1137,11 @@ def bulk_action(payload: dict = Body(...), db: Session = Depends(get_db)):
             {"user_id": uid}, synchronize_session=False)
     elif action == "switch_cadence":
         cid = payload.get("cadenceId")
-        if not db.get(Cadence, cid):
+        cad = db.get(Cadence, cid)
+        if not cad:
             raise HTTPException(400, "Cadência inválida.")
+        if not cad.steps:
+            raise HTTPException(400, "A cadência não tem passos: o lead ficaria parado fora da fila.")
         for l in leads:
             _apagar_atividades(db, lead_id=l.id, apenas_pendentes=True)
             l.cadence_id = cid
@@ -1006,12 +1155,21 @@ def bulk_action(payload: dict = Body(...), db: Session = Depends(get_db)):
             l.status = "WAITING"
     elif action == "lost":
         reason_id = payload.get("lostReasonId")
+        if reason_id and not db.get(LostReason, reason_id):
+            raise HTTPException(400, "Motivo de perda inválido.")
         for l in leads:
+            if l.status == "LOST":
+                continue
             l.status = "LOST"
             l.lost_at = datetime.utcnow()
             l.lost_reason_id = reason_id
-            db.query(LeadActivity).filter_by(lead_id=l.id, status="PENDING").update(
-                {"status": "SKIPPED", "done_at": datetime.utcnow()})
+            l.won_at = None
+            l.reprospect_at, l.reprospect_cadence_id = None, None
+            (db.query(LeadActivity)
+             .filter(LeadActivity.lead_id == l.id, LeadActivity.status.in_(["PENDING", "PAUSED"]))
+             .update({"status": "SKIPPED", "done_at": datetime.utcnow()}, synchronize_session=False))
+            _fechar_prospeccao(db, l, "LOST")
+            _fire_webhooks(db, "LEAD.LOST", serial.lead(l))
     elif action == "delete":
         _apagar_atividades(db, lead_ids=ids)
         # A conversa é conteúdo do lead e vai junto; a ligação fica, sem o
@@ -1080,8 +1238,9 @@ def get_base(bid: int, db: Session = Depends(get_db)):
     if not b:
         raise HTTPException(404, "Base não encontrada.")
     data = serial.lead_base(b)
-    data["leads"] = [serial.lead(l) for l in
-                     db.query(Lead).filter_by(lead_base_id=bid).limit(500)]
+    # A amostra de leads segue o mesmo escopo da lista: o SDR só vê os dele.
+    q = perm.escopo_leads(db, db.query(Lead).filter_by(lead_base_id=bid), perm.ator(db), Lead.sdr_id)
+    data["leads"] = [serial.lead(l) for l in q.limit(500)]
     return data
 
 
@@ -1126,6 +1285,8 @@ def salvar_rascunho(payload: dict = Body(...), db: Session = Depends(get_db)):
         db.add(base)
     elif base.status != "DRAFT":
         raise HTTPException(400, "Esta base já foi importada.")
+    elif base.created_by_id != ator.user_id and not ator.pelo_menos("gestor"):
+        raise HTTPException(403, "Este rascunho é de outra pessoa.")
     base.name = (payload.get("name") or base.name).strip()
     base.draft_content = conteudo
     base.draft_mapping = json.dumps(payload.get("mapping") or {}, ensure_ascii=False)
@@ -1139,7 +1300,9 @@ def ler_rascunho(bid: int, db: Session = Depends(get_db)):
     base = db.get(LeadBase, bid)
     if not base or base.status != "DRAFT":
         raise HTTPException(404, "Rascunho não encontrado.")
-    perm.ator(db)                            # exige sessão; a base em si não tem dono
+    ator = perm.ator(db)
+    if base.created_by_id != ator.user_id and not ator.pelo_menos("gestor"):
+        raise HTTPException(404, "Rascunho não encontrado.")
     try:
         mapa = json.loads(base.draft_mapping or "{}")
     except ValueError:
@@ -1200,8 +1363,10 @@ def import_base(payload: dict = Body(...), db: Session = Depends(get_db)):
     rascunho = payload.get("draftId")
     if rascunho:
         # O rascunho vira histórico: a base recém-criada é que fica.
-        antigo = db.get(LeadBase, int(rascunho))
-        if antigo is not None and antigo.status == "DRAFT" and antigo.id != base.id:
+        antigo = db.get(LeadBase, int(rascunho)) if str(rascunho).isdigit() else None
+        ator_imp = perm.ator(db)
+        if (antigo is not None and antigo.status == "DRAFT" and antigo.id != base.id
+                and (antigo.created_by_id == ator_imp.user_id or ator_imp.pelo_menos("gestor"))):
             db.delete(antigo)
     base.discarded_sample = json.dumps(descartadas, ensure_ascii=False)
     base.status = "COMPLETED"
@@ -1243,12 +1408,18 @@ def queue(sdr_id: int | None = None, client_id: int | None = None,
           cadence_id: int | None = None, type: str | None = None,
           q: str | None = None, field_id: int | None = None,
           field_op: str = "EQUALS", field_value: str | None = None,
-          escopo: str = "todas", limit: int = Query(60, le=300),
-          db: Session = Depends(get_db)):
+          escopo: str = "todas", lead_base_id: int | None = None,
+          limit: int = Query(60, le=300), db: Session = Depends(get_db)):
     """Fila priorizada. Ordena por atraso × prioridade × janela de melhor contato —
     em vez da ordem cronológica pura do Meetime."""
     now = datetime.utcnow()
+    # Lead, cadência, cliente, base e atividade vêm na mesma consulta: antes
+    # cada cartão da fila buscava os seus um por um (centenas de idas ao banco).
     query = (db.query(LeadActivity).join(Lead, LeadActivity.lead_id == Lead.id)
+             .options(contains_eager(LeadActivity.lead).joinedload(Lead.cadence),
+                      contains_eager(LeadActivity.lead).joinedload(Lead.client),
+                      contains_eager(LeadActivity.lead).joinedload(Lead.lead_base),
+                      joinedload(LeadActivity.activity), joinedload(LeadActivity.user))
              .filter(LeadActivity.status == "PENDING",
                      Lead.status.in_(["EXECUTING", "WAITING", "ON_EXTRA_ACTIVITY"]),
                      LeadActivity.scheduled_at <= now + timedelta(days=1)))
@@ -1261,6 +1432,8 @@ def queue(sdr_id: int | None = None, client_id: int | None = None,
         query = query.filter(Lead.cadence_id == cadence_id)
     if type:
         query = query.filter(LeadActivity.type == type)
+    if lead_base_id:
+        query = query.filter(Lead.lead_base_id == lead_base_id)
     if q:
         like = f"%{q.strip()}%"
         query = query.filter(or_(Lead.name.ilike(like), Lead.company.ilike(like),
@@ -1321,7 +1494,8 @@ def execute_activity(aid: int, payload: dict = Body(default={}),
     if payload.get("notes"):                 # não apaga anotação ao executar sem texto
         a.notes = payload["notes"]
     lead = a.lead
-    lead.current_step += 1
+    if a.cadence_step_id and a.status == "DONE":   # extra e pulada não são passo cumprido
+        lead.current_step += 1
     if lead.status == "WAITING":
         lead.status = "EXECUTING"
 
@@ -1361,6 +1535,8 @@ def resume_cadence(lid: int, payload: dict = Body(default={}),
     if not lead:
         raise HTTPException(404, "Lead não encontrado.")
     perm.exigir_dono_lead(db, perm.ator(db), lead)
+    if lead.status in ("WON", "LOST"):
+        raise HTTPException(400, "Lead encerrado: reabra o lead antes de retomar a cadência.")
     paused = (db.query(LeadActivity)
               .filter(LeadActivity.lead_id == lid, LeadActivity.status == "PAUSED")
               .order_by(LeadActivity.scheduled_at).all())
@@ -1391,12 +1567,18 @@ def lead_outcome(lid: int, payload: dict = Body(...), db: Session = Depends(get_
     perm.exigir_dono_lead(db, perm.ator(db), lead)
     outcome = payload.get("outcome")
     now = datetime.utcnow()
+    # Clique duplo em "Ganho" gerava dois feedbacks e dois webhooks LEAD.WON.
+    if outcome in ("WON", "LOST") and lead.status == outcome:
+        raise HTTPException(409, "O lead já está " + ("ganho." if outcome == "WON" else "perdido."))
     if outcome == "WON":
         faltando = _campos_faltando(db, lid, "won_mandatory")
         if faltando:
             raise HTTPException(422, "Preencha os campos obrigatórios para marcar como "
                                      f"ganho: {', '.join(faltando)}.")
         lead.status, lead.won_at = "WON", now
+        # Ganho depois de perdido (reaberto) não pode contar nos dois lados.
+        lead.lost_at, lead.lost_reason_id = None, None
+        lead.reprospect_at, lead.reprospect_cadence_id = None, None
         _fechar_prospeccao(db, lead, "WON")
         company = db.query(Company).first()
         if company and company.deal_feedback_enabled:
@@ -1409,14 +1591,32 @@ def lead_outcome(lid: int, payload: dict = Body(...), db: Session = Depends(get_
         reason_id = payload.get("lostReasonId")
         if reason_id and not db.get(LostReason, reason_id):
             raise HTTPException(400, "Motivo de perda inválido.")
+        nova = payload.get("reprospect") or None
+        if nova is not None and not isinstance(nova, dict):
+            raise HTTPException(400, "reprospect deve ser um objeto {date, cadenceId}.")
+        if nova:
+            try:
+                quando = date.fromisoformat(str(nova.get("date") or "")[:10])
+            except ValueError:
+                raise HTTPException(400, "Data da nova prospecção inválida.")
+            if quando <= agenda.now_local().date():
+                raise HTTPException(400, "A nova prospecção precisa começar depois de hoje.")
+            cad_id = nova.get("cadenceId")
+            if not cad_id or not db.get(Cadence, cad_id):
+                raise HTTPException(400, "Escolha a cadência da nova prospecção.")
+            lead.reprospect_at, lead.reprospect_cadence_id = quando, int(cad_id)
+        else:
+            lead.reprospect_at, lead.reprospect_cadence_id = None, None
         lead.status, lead.lost_at, lead.lost_reason_id = "LOST", now, reason_id
+        lead.won_at = None
         _fechar_prospeccao(db, lead, "LOST")
     else:
         raise HTTPException(400, "outcome deve ser WON ou LOST.")
     if payload.get("annotations"):
         lead.annotations = payload["annotations"]
-    db.query(LeadActivity).filter_by(lead_id=lid, status="PENDING").update(
-        {"status": "SKIPPED", "done_at": now})
+    (db.query(LeadActivity)
+     .filter(LeadActivity.lead_id == lid, LeadActivity.status.in_(["PENDING", "PAUSED"]))
+     .update({"status": "SKIPPED", "done_at": now}, synchronize_session=False))
     # Enfileira ANTES do commit: `_fire_webhooks` agora só grava na fila, então
     # precisa entrar na mesma transação — depois do commit a linha se perderia.
     _fire_webhooks(db, f"LEAD.{outcome}", serial.lead(lead))
@@ -1679,6 +1879,10 @@ def reschedule(aid: int, payload: dict = Body(...), db: Session = Depends(get_db
     if not a:
         raise HTTPException(404, "Atividade não encontrada.")
     perm.exigir_dono_lead(db, perm.ator(db), a.lead)
+    if a.status not in ("PENDING", "PAUSED"):
+        # Reagendar uma atividade feita a devolvia para PENDING e a tirava das
+        # estatísticas do dia em que foi feita.
+        raise HTTPException(400, "Só dá para adiar atividade pendente.")
     wanted = serial.instante(payload.get("scheduledAt"))
     if wanted is None:
         raise HTTPException(400, "scheduledAt inválido.")

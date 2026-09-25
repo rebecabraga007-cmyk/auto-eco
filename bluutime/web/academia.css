@@ -1,0 +1,195 @@
+/* ── Academia BLU: tour guiado, modo treino e wiki gamificada ──────────
+   Tudo nos tokens do app.css; a única cor própria é o âmbar do XP, que
+   precisa se destacar do azul da marca sem virar "alerta". */
+:root {
+  --acad-xp: #C98A1B;
+  --acad-xp-bg: #FBF3E2;
+  --acad-veu: rgba(10, 24, 38, .62);
+}
+
+/* modo treino */
+.acad-faixa {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 10030;
+  background: var(--acad-xp); color: #fff; text-align: center;
+  font-size: 13px; padding: 6px 16px; letter-spacing: .01em;
+}
+body.acad-treinando { padding-top: 28px; }
+
+/* tour: quatro véus em volta do alvo + anel + balão */
+#acadTour { position: fixed; inset: 0; z-index: 10010; pointer-events: none; }
+.acad-bloco { position: fixed; background: var(--acad-veu); pointer-events: auto; cursor: not-allowed; }
+.acad-anel {
+  position: fixed; pointer-events: none; border-radius: 6px;
+  box-shadow: 0 0 0 3px var(--acad-xp), 0 0 0 9px rgba(201, 138, 27, .28);
+  animation: acad-pulso 1.6s ease-in-out infinite;
+}
+@keyframes acad-pulso {
+  0%, 100% { box-shadow: 0 0 0 3px var(--acad-xp), 0 0 0 7px rgba(201, 138, 27, .30); }
+  50% { box-shadow: 0 0 0 3px var(--acad-xp), 0 0 0 14px rgba(201, 138, 27, .08); }
+}
+.acad-balao {
+  position: fixed; pointer-events: auto; width: min(360px, calc(100vw - 24px));
+  background: var(--panel); color: var(--text); border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .28); padding: 14px 16px 12px;
+  display: grid; gap: 8px; border-top: 4px solid var(--acad-xp);
+}
+.acad-balao-topo { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.acad-balao-missao { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.acad-sair { border: 0; background: none; font-size: 20px; line-height: 1; color: var(--muted); cursor: pointer; padding: 0 2px; }
+.acad-sair:hover, .acad-sair:focus-visible { color: var(--text); outline: none; }
+.acad-pontos { display: flex; gap: 4px; }
+.acad-pontos i { height: 4px; flex: 1; border-radius: 2px; background: var(--line); }
+.acad-pontos i.feito { background: var(--blu-mid); }
+.acad-pontos i.atual { background: var(--acad-xp); }
+.acad-balao-titulo { margin: 2px 0 0; font-size: 16px; font-weight: 600; color: var(--blu-dark); }
+.acad-balao-texto { font-size: 13.5px; line-height: 1.55; }
+.acad-balao-texto p { margin: 0 0 6px; }
+.acad-balao-texto p:last-child { margin-bottom: 0; }
+.acad-sumiu { color: var(--warn); }
+.acad-dica {
+  display: grid; gap: 2px; background: var(--acad-xp-bg); border-radius: 6px;
+  padding: 8px 10px; font-size: 12.5px; line-height: 1.5;
+}
+.acad-dica-rot { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--acad-xp); }
+.acad-balao kbd { font: 11px/1 ui-monospace, Consolas, monospace; background: var(--line-soft); border: 1px solid var(--line); border-radius: 3px; padding: 1px 4px; }
+.acad-balao-pe { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.acad-espera { flex: 1; text-align: center; font-size: 11.5px; color: var(--acad-xp); font-weight: 600; }
+.dropdown.acad-aberto > .dropdown-menu { display: block; }
+
+/* XP e conquistas */
+.acad-xp-voa {
+  position: fixed; left: 50%; top: 42%; z-index: 10040; pointer-events: none;
+  background: var(--acad-xp); color: #fff; font-weight: 700; font-size: 20px;
+  padding: 8px 18px; border-radius: 999px; box-shadow: 0 10px 30px rgba(201, 138, 27, .45);
+}
+.acad-confete { position: fixed; z-index: 10050; width: 8px; height: 12px; border-radius: 2px; pointer-events: none; }
+.acad-nivel-up { text-align: center; display: grid; justify-items: center; gap: 6px; padding: 6px 0; }
+.acad-medalha {
+  width: 76px; height: 76px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 34px; color: #fff; background: radial-gradient(circle at 35% 30%, #E5B04E, var(--acad-xp));
+  box-shadow: 0 8px 24px rgba(201, 138, 27, .4);
+}
+.acad-nivel-nome { font-size: 19px; font-weight: 600; color: var(--blu-dark); margin: 4px 0 0; }
+.acad-resumo { background: var(--blu-soft); border-radius: 6px; padding: 10px 12px; font-size: 13px; text-align: left; }
+
+/* chip no menu */
+.acad-chip { display: inline-flex; align-items: center; gap: 6px; }
+.acad-chip b { color: #F2C66D; }
+.acad-chip-nivel { font-size: 11px; opacity: .8; }
+
+/* página */
+.acad-topo {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 18px 20px; margin-bottom: 14px;
+}
+.acad-perfil { display: flex; align-items: center; gap: 16px; min-width: 0; flex: 1; }
+.acad-avatar {
+  width: 58px; height: 58px; border-radius: 50%; flex: none; display: grid; place-items: center;
+  background: var(--blu); color: #fff; font-weight: 700; font-size: 20px;
+  box-shadow: 0 0 0 4px var(--acad-xp-bg), 0 0 0 6px var(--acad-xp);
+}
+.acad-perfil-txt { display: grid; gap: 4px; min-width: 0; flex: 1; max-width: 520px; }
+.acad-perfil-txt h1 { margin: 0; font-size: 22px; color: var(--blu-dark); }
+.acad-eyebrow { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.acad-barra { height: 10px; border-radius: 5px; background: var(--line-soft); overflow: hidden; }
+.acad-barra span { display: block; height: 100%; background: linear-gradient(90deg, var(--blu-mid), var(--acad-xp)); border-radius: 5px; }
+.acad-abas { margin-bottom: 14px; }
+.acad-intro { color: var(--muted); max-width: 70ch; margin: 0 0 14px; }
+
+.acad-trilha { list-style: none; margin: 0; padding: 0 0 0 26px; position: relative; display: grid; gap: 10px; }
+.acad-trilha::before { content: ""; position: absolute; left: 44px; top: 20px; bottom: 20px; width: 2px; background: var(--line); }
+.acad-no {
+  position: relative; display: grid; grid-template-columns: 38px 1fr auto; gap: 14px; align-items: center;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; cursor: pointer;
+}
+.acad-no:hover { border-color: var(--blu-mid); }
+.acad-no-icone {
+  width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; font-size: 16px;
+  background: var(--panel); border: 2px solid var(--line); color: var(--muted); z-index: 1;
+}
+.acad-no.atual .acad-no-icone { border-color: var(--acad-xp); color: var(--acad-xp); box-shadow: 0 0 0 4px var(--acad-xp-bg); }
+.acad-no.andamento .acad-no-icone { border-color: var(--blu-mid); color: var(--blu-mid); }
+.acad-no.completo .acad-no-icone { background: var(--ok); border-color: var(--ok); color: #fff; }
+.acad-no-txt h3 { margin: 2px 0 6px; font-size: 15px; }
+.acad-selos { display: flex; flex-wrap: wrap; gap: 5px; }
+.acad-selo {
+  font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line);
+  color: var(--muted); background: var(--panel-2); white-space: nowrap;
+}
+.acad-selo.ok { border-color: var(--ok-line); background: var(--ok-bg); color: var(--ok); }
+
+.acad-cap { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 20px 24px; max-width: 860px; }
+.acad-cap h2 { margin: 4px 0 14px; font-size: 22px; color: var(--blu-dark); }
+.acad-voltar-trilha { display: inline-block; margin-bottom: 8px; cursor: pointer; font-size: 13px; }
+.acad-cap-corpo { font-size: 14.5px; line-height: 1.65; max-width: 72ch; }
+.acad-cap-corpo h5 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--blu-mid); margin: 18px 0 6px; }
+.acad-cap-corpo ul, .acad-cap-corpo ol { padding-left: 1.2em; }
+.acad-passos li { margin-bottom: 6px; }
+.acad-dupla { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 12px 0; }
+.acad-dupla > div { background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 6px; padding: 12px 14px; }
+.acad-dupla h5 { margin-top: 0; }
+.acad-tabela { width: 100%; border-collapse: collapse; margin: 8px 0 12px; font-size: 13.5px; }
+.acad-tabela th, .acad-tabela td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+.acad-tabela th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); background: var(--panel-2); }
+.acad-azul { color: var(--blu-mid); font-weight: 600; }
+.acad-vermelho { color: var(--red); font-weight: 600; }
+.acad-armadilhas li { margin-bottom: 8px; }
+.acad-cap-acoes { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; padding-top: 14px; border-top: 1px solid var(--line-soft); }
+.acad-cap-nav { display: flex; justify-content: space-between; gap: 12px; margin-top: 18px; font-size: 13px; }
+.acad-cap-nav a { cursor: pointer; }
+
+.acad-quiz { border-top: 1px solid var(--line-soft); padding-top: 14px; display: grid; gap: 12px; max-width: 72ch; }
+.acad-quiz h3 { margin: 0; font-size: 16px; display: flex; gap: 8px; align-items: center; }
+.acad-q { border: 1px solid var(--line-soft); border-radius: 6px; padding: 10px 14px 12px; margin: 0; }
+.acad-q legend { font-weight: 600; font-size: 14px; padding: 0 4px; width: auto; border: 0; margin: 0; }
+.acad-op { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border-radius: 5px; cursor: pointer; font-weight: 400; margin: 0; }
+.acad-op:hover { background: var(--creme); }
+.acad-op.certa { background: var(--ok-bg); color: var(--ok); font-weight: 600; }
+.acad-op.errada { background: var(--red-bg); color: var(--red); text-decoration: line-through; }
+.acad-resultado { background: var(--acad-xp-bg); border-radius: 6px; padding: 10px 14px; }
+.acad-resultado a { cursor: pointer; }
+
+.acad-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.acad-card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px;
+  display: grid; gap: 6px; align-content: start;
+}
+.acad-card h3 { margin: 0; font-size: 15px; }
+.acad-card p { margin: 0 0 6px; font-size: 13px; }
+.acad-card .btn { justify-self: start; }
+.acad-card-icone {
+  width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; font-size: 18px;
+  background: var(--blu-soft); color: var(--blu);
+}
+.acad-card.feita .acad-card-icone { background: var(--ok-bg); color: var(--ok); }
+
+.acad-medalhas { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+.acad-conquista {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px 12px;
+  display: grid; justify-items: center; text-align: center; gap: 6px; filter: grayscale(1); opacity: .6;
+}
+.acad-conquista.ok { filter: none; opacity: 1; border-color: var(--acad-xp); }
+.acad-conquista-icone {
+  width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; font-size: 22px;
+  color: #fff; background: radial-gradient(circle at 35% 30%, #E5B04E, var(--acad-xp));
+}
+
+.acad-glossario { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin: 0; }
+.acad-glossario > div { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; }
+.acad-glossario dt { font-weight: 600; color: var(--blu-dark); }
+.acad-glossario dd { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+
+@media (max-width: 640px) {
+  .acad-no { grid-template-columns: 38px 1fr; }
+  .acad-no > .btn { display: none; }
+  .acad-trilha { padding-left: 0; }
+  .acad-trilha::before { left: 32px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .acad-anel { animation: none; }
+}
+
+/* O `display` dos botões e da caixa de sugestão vencia o atributo `hidden`:
+   "Voltar", "Próximo" e a sugestão vazia apareciam em passo que não os tem. */
+#acadTour [hidden], .acad-cap [hidden] { display: none !important; }
+.acad-subiu { margin: 2px 0 0; background: var(--acad-xp-bg); color: var(--acad-xp); border-radius: 999px; padding: 4px 14px; font-size: 13px; }

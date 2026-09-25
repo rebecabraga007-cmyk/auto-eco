@@ -6,6 +6,7 @@ no Render pode apontar pra um disco persistente ou trocar por Postgres depois.
 Cadastro é SÓ por admin: não há auto-registro público. O 1º admin é criado no
 bootstrap a partir de ADMIN_EMAIL/ADMIN_PASSWORD (ou um default logado uma vez).
 """
+import hmac
 import os
 import re
 import secrets
@@ -487,7 +488,10 @@ async def emergency_reset(payload: dict = Body(default={})):
     setado no ambiente. Uso único: remover esta rota e a env var depois de usar.
     """
     secret_env = os.environ.get("EMERGENCY_RESET_SECRET")
-    if not secret_env or payload.get("secret") != secret_env:
+    if not secret_env or _bloqueado("reset"):
+        raise HTTPException(status_code=404)
+    if not hmac.compare_digest(str(payload.get("secret") or ""), secret_env):
+        _falhou("reset")
         raise HTTPException(status_code=404)
     u = get_by_email(payload.get("email", ""))
     if not u:
@@ -499,11 +503,40 @@ async def emergency_reset(payload: dict = Body(default={})):
     return {"ok": True}
 
 
+# Tentativas de login erradas por chave (e-mail; e IP real quando vem do
+# Cloudflare). Em memória: reiniciar o processo zera, o que é aceitável para
+# segurar força bruta. Não usa o IP do socket porque atrás do túnel todo mundo
+# chega como 127.0.0.1 e um atacante trancaria a empresa inteira.
+_FALHAS: dict[str, list[float]] = {}
+_JANELA_S, _MAX_FALHAS = 15 * 60, 8
+
+
+def _bloqueado(chave: str) -> bool:
+    agora = time.time()
+    recentes = [t for t in _FALHAS.get(chave, []) if agora - t < _JANELA_S]
+    _FALHAS[chave] = recentes
+    return len(recentes) >= _MAX_FALHAS
+
+
+def _falhou(chave: str) -> None:
+    _FALHAS.setdefault(chave, []).append(time.time())
+
+
 @router.post("/api/auth/login")
 async def login(request: Request, response: Response, payload: dict = Body(default={})):
+    email = str(payload.get("email", "") or "").strip().lower()
+    chaves = [f"email:{email}"]
+    ip_real = request.headers.get("cf-connecting-ip", "")
+    if ip_real and request.client and request.client.host in ("127.0.0.1", "::1"):
+        chaves.append(f"ip:{ip_real}")
+    if any(_bloqueado(c) for c in chaves):
+        raise HTTPException(status_code=429, detail="Muitas tentativas erradas. Aguarde 15 minutos e tente de novo.")
     u = authenticate(payload.get("email", ""), payload.get("senha", "") or payload.get("password", ""))
     if not u:
+        for c in chaves:
+            _falhou(c)
         raise HTTPException(status_code=401, detail="E-mail ou senha incorretos.")
+    _FALHAS.pop(f"email:{email}", None)
     token = make_token(u)
     # Cookie de sessão httpOnly — robusto (não depende de localStorage do navegador).
     set_cookie_sessao(response, token, seguro=_https(request))

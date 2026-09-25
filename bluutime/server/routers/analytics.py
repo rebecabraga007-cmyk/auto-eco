@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from .. import perm, serial
+from .. import agenda, perm, serial
 from ..db import get_db
 from ..models import (Cadence, CadenceStep, Call, Client, Company, Delivery,
                       Goal, Lead, LeadActivity, LeadBase, LostReason, Team,
@@ -37,10 +37,13 @@ def control_panel(client_id: int | None = None, since: str | None = None,
     """
     perm.ator(db).exigir("gestor", "ver o painel de controle")
     now = datetime.utcnow()
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # "Hoje" e as datas do filtro são dias locais (Brasília); o banco guarda
+    # UTC. A meia-noite UTC é 21h daqui: o painel zerava às 21h.
+    meia_noite = lambda d: agenda.to_utc(datetime.combine(d, datetime.min.time()))
+    day_start = meia_noite(agenda.now_local().date())
     if since:
-        day_start = datetime.fromisoformat(since[:10])
-    fim = (datetime.fromisoformat(until[:10]) + timedelta(days=1)
+        day_start = meia_noite(datetime.fromisoformat(since[:10]).date())
+    fim = (meia_noite(datetime.fromisoformat(until[:10]).date() + timedelta(days=1))
            if until else now + timedelta(days=1))
     rows = []
     for u in db.query(User).filter(User.active).order_by(User.name).all():
@@ -179,7 +182,12 @@ def goal_progress(ref: str, user_id: str | None = None, cadence_id: str | None =
             LeadActivity.done_at.between(start, end),
             LeadActivity.done_at > LeadActivity.scheduled_at + timedelta(hours=1)).scalar()
         meta_u = (u.daily_goal or 0) * uteis_total
+        # "Prospectando" do cartão Leads Finalizados do original: a carteira
+        # aberta de cada vendedor agora, ao lado do que ele fechou no mês.
+        uprosp = db.query(func.count(Lead.id)).filter(
+            Lead.sdr_id == u.id, Lead.status.in_(["EXECUTING", "ON_EXTRA_ACTIVITY"])).scalar()
         ranking.append({"user": serial.user_min(u), "won": len(uwon), "lost": len(ulost),
+                        "prospecting": uprosp,
                         "activities": udone, "late": uatrasadas,
                         "activityGoal": meta_u,
                         "activityPercent": round(udone / meta_u * 100, 1) if meta_u else 0,

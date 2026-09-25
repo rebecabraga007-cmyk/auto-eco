@@ -35,4 +35,25 @@ def run() -> list[str]:
                     f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" '
                     f"{kind} DEFAULT {default}"))
                 applied.append(f"{table.name}.{column.name}")
+        # Índices das colunas que a fila, a lista de leads e as estatísticas
+        # filtram a toda hora. `index=True` no modelo não cria índice em tabela
+        # que já existe, por isso vão aqui, idempotentes.
+        for nome, tabela, colunas in _INDICES:
+            if tabela in existing_tables or tabela in Base.metadata.tables:
+                conn.execute(text(f'CREATE INDEX IF NOT EXISTS "{nome}" ON "{tabela}" ({colunas})'))
     return applied
+
+
+_INDICES = [
+    ("ix_lead_status_sdr", "lead", "status, sdr_id"),
+    ("ix_lead_sdr_status", "lead", "sdr_id, status"),
+    ("ix_lead_cadence", "lead", "cadence_id"),
+    ("ix_lead_base", "lead", "lead_base_id"),
+    ("ix_lead_reprospect", "lead", "reprospect_at"),
+    ("ix_la_status_sched", "lead_activity", "status, scheduled_at"),
+    ("ix_la_user_status_done", "lead_activity", "user_id, status, done_at"),
+    ("ix_la_lead", "lead_activity", "lead_id"),
+    ("ix_call_user_started", "call", "user_id, started_at"),
+    ("ix_call_lead", "call", "lead_id"),
+    ("ix_delivery_token", "delivery", "tracking_token"),
+]

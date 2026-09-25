@@ -75,4 +75,8 @@ quanto do CapiBLU já está utilizável aqui dentro, e o que falta.
 | [`RELATORIO-MEETIME.md`](RELATORIO-MEETIME.md) | Engenharia reversa do Meetime: stack, mapa de funcionalidades, modelo de dados, números reais da operação |
 | [`MEETIME-DESIGN-SYSTEM.md`](MEETIME-DESIGN-SYSTEM.md) | O design system extraído do ZIP — navbar, painéis, tabelas, cores, tipografia |
 | [`COBERTURA-CAPIBLU.md`](COBERTURA-CAPIBLU.md) | Nota 0–10 por função do CapiBLU e plano para 100% |
+| [`AUDITORIA-TELAS-REUNIAO.md`](AUDITORIA-TELAS-REUNIAO.md) | As 16 telas da demonstração do Meetime (22/09/2026) contra o Bluutime, e o que foi refeito |
+| [`AUDITORIA-BACKEND.md`](AUDITORIA-BACKEND.md) | Segurança, permissões, corretude e desempenho do backend: o que foi corrigido e o que ficou |
+| `web/academia.js` | Academia BLU: tour guiado em modo treino (lead de mentira, nada é salvo) e wiki gamificada do SDR/BDR |
+| `web/execucao.js` | Execução no layout do Meetime: tela dividida, discador, barra pós-atividade, ganho/perdido, Iniciar novos leads |
 | `bluutime-meetime-fusion.html` | Protótipo estático que originou a SPA (mantido como referência visual) |

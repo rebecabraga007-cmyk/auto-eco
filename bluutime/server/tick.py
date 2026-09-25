@@ -10,7 +10,9 @@ verdade (cron, worker separado) seria melhor num deploy multi-instância; para
 uma instância local, um `asyncio.Task` basta e não acrescenta dependência.
 """
 import asyncio
+import threading
 import traceback
+from datetime import datetime, timedelta
 
 from sqlalchemy import func
 
@@ -28,7 +30,7 @@ def _lost_reason_id(db) -> int | None:
     r = db.query(LostReason).filter(func.lower(LostReason.name)
                                     == FIM_DE_CADENCIA.lower()).first()
     if not r:
-        r = LostReason(name=FIM_DE_CADENCIA, active=True)
+        r = LostReason(name=FIM_DE_CADENCIA)
         db.add(r)
         db.flush()
     return r.id
@@ -51,13 +53,29 @@ def close_finished_cadences(db) -> int:
              .all())
     if not leads:
         return 0
+    from .routers.flow import _fechar_prospeccao  # evita import circular
+    from . import serial
     reason = _lost_reason_id(db)
     now = agenda.to_utc(agenda.now_local())
     for lead in leads:
         lead.status = "LOST"
         lead.lost_reason_id = reason
         lead.lost_at = now
+        lead.reprospect_at, lead.reprospect_cadence_id = None, None
+        # Fecha a passagem pela cadência e avisa quem assina LEAD.LOST: é o
+        # maior motivo de perda e nenhum CRM integrado ficava sabendo.
+        _fechar_prospeccao(db, lead, "LOST")
+        webhooks.enfileirar(db, "LEAD.LOST", serial.lead(lead))
     return len(leads)
+
+
+def release_stuck_sends(db) -> int:
+    """Envio que ficou reservado (SENDING) por mais de 10 min volta para a
+    fila — o processo caiu no meio do envio e ninguém concluiu."""
+    limite = datetime.utcnow() - timedelta(minutes=10)
+    return (db.query(LeadActivity)
+            .filter(LeadActivity.status == "SENDING", LeadActivity.done_at < limite)
+            .update({"status": "PENDING", "done_at": None}, synchronize_session=False))
 
 
 def expire_stale_activities(db) -> int:
@@ -81,23 +99,57 @@ def expire_stale_activities(db) -> int:
     return len(stale)
 
 
+def restart_reprospects(db) -> int:
+    """Perdido por reaproveitamento cuja data chegou → volta a ser prospectado
+    na cadência escolhida, com o mesmo responsável."""
+    from .routers.flow import _apagar_atividades, _schedule_cadence  # evita import circular
+    hoje = agenda.now_local().date()
+    leads = (db.query(Lead).filter(Lead.status == "LOST", Lead.reprospect_at.isnot(None),
+                                   Lead.reprospect_at <= hoje).all())
+    for lead in leads:
+        cad = db.get(Cadence, lead.reprospect_cadence_id) if lead.reprospect_cadence_id else None
+        lead.reprospect_at, lead.reprospect_cadence_id = None, None
+        if not cad:
+            continue
+        lead.cadence_id = cad.id
+        lead.lost_reason_id, lead.lost_at = None, None
+        lead.status, lead.current_step = "WAITING", 0
+        _apagar_atividades(db, lead_id=lead.id, apenas_pendentes=True)
+        _schedule_cadence(db, lead)
+    return len(leads)
+
+
+_trava = threading.Lock()
+
+
 def run_once() -> dict:
-    """Uma passada. Devolve o que mudou — é o corpo de `POST /api/admin/tick`."""
-    db = SessionLocal()
+    """Uma passada. Devolve o que mudou — é o corpo de `POST /api/admin/tick`.
+
+    Cada etapa tem a própria transação: antes, um erro em qualquer uma (um
+    motivo de perda que não dava para criar, por exemplo) desfazia todas e
+    parava o despacho de webhooks para sempre. A trava impede o laço e o
+    `POST /api/admin/tick` de rodarem juntos e entregarem o mesmo webhook duas
+    vezes ou agendarem a mesma cadência em dobro."""
+    if not _trava.acquire(blocking=False):
+        return {"ocupado": True}
+    report = {}
     try:
-        report = {"expired": expire_stale_activities(db)}
-        db.flush()
-        report["closed"] = close_finished_cadences(db)
-        db.commit()
-        # Entrega o que estiver vencido na fila de webhooks — inclusive os
-        # eventos que o próprio fechamento de cadência acabou de gerar.
-        report["webhooks"] = webhooks.despachar(db)
+        for nome, etapa in (("sendsLiberados", release_stuck_sends), ("expired", expire_stale_activities),
+                            ("reprospected", restart_reprospects), ("closed", close_finished_cadences),
+                            ("webhooks", webhooks.despachar)):
+            db = SessionLocal()
+            try:
+                report[nome] = etapa(db)
+                db.commit()
+            except Exception:
+                db.rollback()
+                traceback.print_exc()
+                report[nome] = "erro"
+            finally:
+                db.close()
         return report
-    except Exception:
-        db.rollback()
-        raise
     finally:
-        db.close()
+        _trava.release()
 
 
 async def loop() -> None:

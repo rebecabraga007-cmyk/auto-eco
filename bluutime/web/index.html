@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Bluutime</title>
   <link rel="stylesheet" href="app.css?v=1">
+  <link rel="stylesheet" href="execucao.css?v=1">
+  <link rel="stylesheet" href="academia.css?v=1">
 </head>
 <body class="app-loading">
 
@@ -109,10 +111,12 @@
         </li>
       </ul>
       <ul class="nav navbar-nav navbar-right">
+        <li><a data-page="academia" title="Academia: tour guiado e trilha do SDR/BDR"><span class="nav-icon position-left">🎓</span><span class="acad-chip" id="acadChip"><span class="text-semibold">Academia</span></span></a></li>
         <li class="dropdown dropdown-user">
           <a><span class="avatar" id="navAvatar">·</span><span class="navbar-user-name" id="navUser">…</span><span class="caret"></span></a>
           <ul class="dropdown-menu dropdown-menu-right">
             <li><a data-page="meu-perfil">Meu perfil</a></li>
+            <li><a data-tour-iniciar="execucao">Tour guiado</a></li>
             <li data-min="admin"><a data-page="usuarios">Usuários</a></li>
             <li><a data-page="contas">Contas de acesso</a></li>
             <li><a data-page="migracao">Migração do Meetime</a></li>
@@ -154,6 +158,9 @@
 <div class="toast-stack" id="toasts"></div>
 <div id="modalRoot"></div>
 
+<script src="vendor/motion.js"></script>
 <script src="app.js?v=1"></script>
+<script src="execucao.js?v=1"></script>
+<script src="academia.js?v=1"></script>
 </body>
 </html>

@@ -1,4 +1,5 @@
 """Conversas de WhatsApp — o módulo WHATSAPP do Meetime."""
+import re
 from datetime import datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
@@ -121,14 +122,29 @@ def update_conversation(cid: int, payload: dict = Body(...), db: Session = Depen
 
 @router.post("/conversations")
 def open_conversation(payload: dict = Body(...), db: Session = Depends(get_db)):
+    ator = perm.ator(db)
     lead = db.get(Lead, payload["leadId"]) if payload.get("leadId") else None
+    if payload.get("leadId") and not lead:
+        raise HTTPException(404, "Lead não encontrado.")
     if lead:
-        perm.exigir_dono_lead(db, perm.ator(db), lead)
+        perm.exigir_dono_lead(db, ator, lead)
+    elif not ator.pelo_menos("gestor"):
+        # Conversa avulsa, sem lead, pulava o dono e o "não perturbe": bastava
+        # digitar o telefone de um lead alheio em outro formato.
+        raise HTTPException(403, "Abra a conversa a partir de um lead seu.")
     phone = payload.get("phone") or (lead.phone if lead else "")
     if not phone:
         raise HTTPException(400, "Informe o telefone ou um lead com telefone.")
-    existing = db.query(Conversation).filter_by(phone=phone).first()
+    digitos = re.sub(r"\D", "", phone)[-11:]
+    if len(digitos) < 10:
+        raise HTTPException(400, "Telefone incompleto: informe DDD + número.")
+    if lead and lead.do_not_call:
+        raise HTTPException(403, "Lead marcado como 'não perturbe'.")
+    # O mesmo número em outro formato ("+55 (41) ..." × "41...") é a mesma pessoa.
+    existing = next((c for c in db.query(Conversation).all()
+                     if re.sub(r"\D", "", c.phone or "")[-11:] == digitos), None)
     if existing:
+        perm.exigir_dono_lead(db, ator, existing.lead if existing.lead_id else None)
         return _conv(existing)
     c = Conversation(lead_id=lead.id if lead else None, phone=phone,
                      title=lead.name if lead else phone)

@@ -334,6 +334,11 @@ class Lead(Base):
     won_at: Mapped[datetime | None] = mapped_column(DateTime)
     lost_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Reaproveitamento: perdido com nova prospecção agendada. Na data, o tick
+    # reabre o lead nesta cadência, com o mesmo responsável — é o "Agendar
+    # nova prospecção" do modal de perda do Meetime.
+    reprospect_at: Mapped[date | None] = mapped_column(Date)
+    reprospect_cadence_id: Mapped[int | None] = mapped_column(Integer)
 
     cadence: Mapped["Cadence | None"] = relationship()
     sdr: Mapped["User | None"] = relationship()
@@ -601,3 +606,18 @@ class LeadFeedback(Base):
     filled_at: Mapped[datetime | None] = mapped_column(DateTime)
     lead: Mapped["Lead"] = relationship()
     user: Mapped["User | None"] = relationship()
+
+
+class AcademiaProgresso(Base):
+    """Progresso de cada pessoa na Academia (wiki gamificada + tours).
+
+    A chave é o e-mail da sessão, não o `User` operacional: quem acabou de
+    entrar ainda pode não ter cadastro de SDR, e é justamente quem mais
+    precisa do treinamento. O XP é recalculado no servidor a partir do que foi
+    concluído — o navegador só diz o que fez, nunca quanto vale."""
+    __tablename__ = "academia_progresso"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    data: Mapped[str] = mapped_column(Text, default="{}")  # JSON
+    xp: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -21,10 +21,13 @@ capiblu_on_path()
 import auth as capiblu_auth  # noqa: E402  — vive em lupa-empresas/backend
 
 from .capiblu_client import capiblu_app, capiblu_error  # noqa: E402
+from .capiblu_client import cota_estourada as capiblu_cota_estourada  # noqa: E402
+from .capiblu_client import custa as capiblu_custa  # noqa: E402
+from .capiblu_client import identidade as capiblu_client_identidade  # noqa: E402
 from .migrate import run as run_migrations  # noqa: E402
 from . import agenda, auditoria, feriados, perm, tick  # noqa: E402
 from .db import SessionLocal  # noqa: E402
-from .routers import (analytics, capiblu, core, dialer, envio,  # noqa: E402
+from .routers import (academia, analytics, capiblu, core, dialer, envio,  # noqa: E402
                       flow, integracoes, meetime, whatsapp)
 from .seed import seed_if_empty  # noqa: E402
 
@@ -58,24 +61,13 @@ app.include_router(envio.router)
 app.include_router(envio.publico)            # /t/o/*, /t/c/* — abertos pelo lead
 app.include_router(integracoes.router)
 app.include_router(meetime.router)
+app.include_router(academia.router)
 
 _PUBLIC = {"/api/auth/login", "/api/auth/logout", "/api/auth/emergency-reset",
            # Chamado pelo provedor, nao pelo navegador — autentica por token proprio.
            "/api/whatsapp/webhook"}
 
-# Rotas do serviço de dados que realmente gastam consulta paga — mesmo recorte
-# do proxy de produção (app_online/main.py).
-_CONSULTA_PREFIXES = ("/capiblu/api/person", "/capiblu/api/phone",
-                      "/capiblu/api/assertiva", "/capiblu/api/company",
-                      "/capiblu/api/dossie", "/capiblu/api/enrich/run")
-_GRATUITAS = ("/capiblu/api/person/name-search", "/capiblu/api/person/resolve",
-              "/capiblu/api/cnpj/lookup", "/capiblu/api/prospeccao/modelo")
-
-
-def _custa(path: str) -> bool:
-    if any(path.startswith(g) for g in _GRATUITAS):
-        return False
-    return any(path.startswith(p) for p in _CONSULTA_PREFIXES)
+_IDENTIDADE = {b"x-user-email", b"x-user-role", b"x-user-grupo", b"x-proxy-secret"}
 
 
 @app.middleware("http")
@@ -90,13 +82,18 @@ async def sessao(request: Request, call_next):
         if not user:
             return JSONResponse({"detail": "Não autenticado."}, status_code=401)
         request.state.user = user
-        if user.get("role") != "admin" and _custa(path):
-            limite = capiblu_auth.limite_efetivo(user)
-            if capiblu_auth.consumo_hoje(user["id"]) >= limite:
-                return JSONResponse(
-                    {"detail": f"Limite diário de {limite} consultas atingido. "
-                               "Fale com um admin para aumentar."}, status_code=429)
-            capiblu_auth.registrar_consumo(user["id"])
+        if path.startswith("/capiblu/"):
+            # O serviço de dados montado aqui decide admin e grupo pelos headers
+            # X-User-*. Os que vieram do navegador são descartados e trocados
+            # pelos da sessão — antes, um SDR mandava "X-User-Role: admin".
+            limpos = [(k, v) for k, v in request.scope["headers"] if k.lower() not in _IDENTIDADE]
+            limpos += [(k.lower().encode(), str(v).encode())
+                       for k, v in capiblu_client_identidade(user).items()]
+            request.scope["headers"] = limpos
+            if capiblu_custa(path[len("/capiblu"):]):
+                bloqueio = capiblu_cota_estourada(user)
+                if bloqueio:
+                    return JSONResponse({"detail": bloqueio}, status_code=429)
 
     response = await call_next(request)
 

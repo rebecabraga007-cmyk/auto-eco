@@ -305,6 +305,7 @@ def funnel(since: str | None = None, until: str | None = None,
     O "anterior" é a janela de mesmo tamanho imediatamente antes: comparar um
     mês com a semana passada diria qualquer coisa.
     """
+    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
     inicio, fim = _range(since, until)
     duracao = fim - inicio
     atual = _etapas(db, inicio, fim, team_id, user_id)
@@ -324,6 +325,7 @@ def funnel(since: str | None = None, until: str | None = None,
 def grouped(since: str | None = None, until: str | None = None,
             by: str = "user", db: Session = Depends(get_db)):
     """Volume de ligações por usuário ou por time."""
+    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
     inicio, fim = _range(since, until)
     linhas = (db.query(Call.user_id, Call.status, func.count(Call.id))
               .filter(Call.started_at.between(inicio, fim))
@@ -353,6 +355,7 @@ def history(since: str | None = None, until: str | None = None,
             interval: str = "day", team_id: str | None = None,
             status: str | None = None, db: Session = Depends(get_db)):
     """Série temporal de ligações por dia, semana ou mês."""
+    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
     inicio, fim = _range(since, until)
     q = _escopo(db, db.query(Call).filter(Call.started_at.between(inicio, fim)),
                 team_id, None)
@@ -378,6 +381,7 @@ def distribution(since: str | None = None, until: str | None = None,
     O funil responde quantas conectaram; isto responde o que aconteceu com as
     que não conectaram, que é onde mora o problema de lista ruim.
     """
+    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
     inicio, fim = _range(since, until)
     q = _escopo(db, db.query(Call).filter(Call.started_at.between(inicio, fim)),
                 team_id, user_id)
@@ -432,6 +436,7 @@ def cumulative(since: str | None = None, until: str | None = None,
     A série diária diz se hoje foi bom; a acumulada diz se o mês está no
     ritmo, que é a pergunta de quem acompanha meta.
     """
+    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
     inicio, fim = _range(since, until)
     q = _escopo(db, db.query(Call).filter(Call.started_at.between(inicio, fim)),
                 team_id, None)
@@ -472,6 +477,7 @@ def best_hour(since: str | None = None, until: str | None = None,
     Sai das ligações que já aconteceram, não de palpite: a hora com mais
     conexão é a que merece a fila de amanhã.
     """
+    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
     inicio, fim = _range(since, until)
     q = _escopo(db, db.query(Call).filter(Call.started_at.between(inicio, fim)),
                 team_id, user_id)
@@ -558,6 +564,9 @@ def register_call(payload: dict = Body(...), db: Session = Depends(get_db)):
     lead = db.get(Lead, payload["leadId"]) if payload.get("leadId") else None
     if payload.get("leadId") and not lead:
         raise HTTPException(404, "Lead não encontrado.")
+    # Ligação em lead alheio sujava o histórico do colega e tirava o lead da
+    # lista de "aguardando primeira ligação" dele.
+    perm.exigir_dono_lead(db, ator, lead)
     # O sinal de "não perturbe" vinha da Assertiva, era guardado e nunca
     # consultado — dava para registrar ligação para quem pediu para não ser
     # incomodado.
@@ -583,6 +592,7 @@ def register_call(payload: dict = Body(...), db: Session = Depends(get_db)):
 def overview(since: str | None = None, until: str | None = None,
              user_id: str | None = None, team_id: str | None = None,
              db: Session = Depends(get_db)):
+    perm.exigir_ou_permissao(db, perm.ator(db), "statistics_access", "acessar estatísticas")
     start, end = _range(since, until)
     query = db.query(Call).filter(Call.started_at.between(start, end))
     pessoas = ids_de(user_id)
@@ -633,12 +643,16 @@ def overview(since: str | None = None, until: str | None = None,
 def dropped(since: str | None = None, until: str | None = None,
             team_id: str | None = None, db: Session = Depends(get_db)):
     """Relatório de ligações derrubadas: conectadas e encerradas em até 10s."""
+    ator = perm.ator(db)
     start, end = _range(since, until)
     q = db.query(Call).filter(Call.started_at.between(start, end),
                               Call.status == "CONNECTED", Call.duration <= 10)
     do_time = usuarios_do_time(db, team_id)
     if do_time is not None:
         q = q.filter(Call.user_id.in_(do_time))
+    # SDR vê só as próprias: a lista traz telefone e nome do lead de cada uma.
+    if not ator.pelo_menos("gestor"):
+        q = q.filter(Call.user_id == (ator.user_id or -1))
     rows = q.order_by(Call.started_at.desc()).all()
     return {"data": [serial.call(c) for c in rows], "meta": {"total": len(rows)}}
 
@@ -646,12 +660,16 @@ def dropped(since: str | None = None, until: str | None = None,
 @router.get("/calls/statements")
 def statement(since: str | None = None, until: str | None = None,
               team_id: str | None = None, db: Session = Depends(get_db)):
+    ator = perm.ator(db)
     start, end = _range(since, until)
     q = (db.query(Call.user_id, func.count(Call.id), func.sum(Call.duration))
          .filter(Call.started_at.between(start, end)))
     do_time = usuarios_do_time(db, team_id)
     if do_time is not None:
         q = q.filter(Call.user_id.in_(do_time))
+    # SDR vê o próprio extrato; minutos e custo dos colegas são assunto de gestor.
+    if not ator.pelo_menos("gestor"):
+        q = q.filter(Call.user_id == (ator.user_id or -1))
     preco = _preco_minuto(db)
     rows = q.group_by(Call.user_id).all()
     users = {u.id: u for u in db.query(User).all()}

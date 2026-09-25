@@ -26,6 +26,8 @@ relatorio_automacao_extraido.txt
 
 # banco local do Bluutime (dados reais importados do Meetime)
 bluutime/bluutime.db
+bluutime/bluutime.db-wal
+bluutime/bluutime.db-shm
 
 # fotos de perfil enviadas por usuário — arquivo binário gerado, não código
 bluutime/web/uploads/

@@ -16,6 +16,10 @@ def _liga_chave_estrangeira(dbapi_connection, _record):
     """
     cur = dbapi_connection.cursor()
     cur.execute("PRAGMA foreign_keys=ON")
+    # WAL deixa ler enquanto alguém escreve (o tick, uma importação grande), e
+    # o busy_timeout espera o lock em vez de devolver "database is locked".
+    cur.execute("PRAGMA journal_mode=WAL")
+    cur.execute("PRAGMA busy_timeout=5000")
     cur.close()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 

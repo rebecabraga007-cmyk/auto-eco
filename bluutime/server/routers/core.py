@@ -1091,8 +1091,9 @@ def update_webhook(wid: int, payload: dict = Body(...), db: Session = Depends(ge
         w.enabled = bool(payload["enabled"])
     if payload.get("targetUrl"):
         url = str(payload["targetUrl"]).strip()
-        if not url.startswith(("http://", "https://")):
-            raise HTTPException(400, "A URL precisa comecar com http:// ou https://.")
+        erro = webhooks_engine.url_publica_valida(url)
+        if erro:
+            raise HTTPException(400, erro)
         w.target_url = url
     if payload.get("events"):
         w.events = ",".join(str(e).strip() for e in payload["events"] if str(e).strip())

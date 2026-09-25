@@ -9,6 +9,7 @@ Toda saída passa por aqui, e por três travas antes do provedor:
 3. **Freio de mão.** `BLUUTIME_SEND != 1` faz tudo voltar como `SIMULATED`.
 """
 import base64
+import re
 import secrets
 from datetime import datetime
 from urllib.parse import unquote
@@ -176,8 +177,37 @@ def rastrear_clique(token: str, u: str = "", db: Session = Depends(get_db)):
     # para `javascript:` e afins, assinado pelo nosso domínio.
     if not destino.startswith(("http://", "https://")):
         raise HTTPException(400, "Destino inválido.")
+    # Só redireciona para um link que estava na mensagem daquele token. Sem
+    # isso, /t/c/qualquer?u=https://golpe virava link de phishing com o
+    # domínio da BLU.
+    entrega = db.query(Delivery).filter(Delivery.tracking_token == token).first()
+    if not entrega or destino not in (entrega.body or ""):
+        raise HTTPException(404, "Link não encontrado.")
     _marcar(db, token, "click")
     return RedirectResponse(destino, status_code=302)
+
+
+@router.get("/atividades/{aid}/previa")
+def previa_atividade(aid: int, db: Session = Depends(get_db)):
+    """O que o editor da atividade mostra antes do envio: destinatário, assunto e
+    corpo já com as variáveis do lead, e o que falta ou bloqueia."""
+    act = db.get(LeadActivity, aid)
+    if not act:
+        raise HTTPException(404, "Atividade não encontrada.")
+    perm.exigir_dono_lead(db, perm.ator(db), act.lead)
+    lead = act.lead
+    canal = channel_of(act.type, act.social_network)
+    step = db.get(CadenceStep, act.cadence_step_id) if act.cadence_step_id else None
+    tpl = step.template if step else None
+    user = db.get(User, act.user_id) if act.user_id else lead.sdr
+    valores = render.lead_vars(lead, user)
+    return {"canal": canal, "para": lead.email if canal == "EMAIL" else lead.phone,
+            "temModelo": bool(tpl),
+            "assunto": render.render(tpl.subject, valores) if tpl else "",
+            "corpo": render.render(tpl.body, valores) if tpl else "",
+            "faltando": render.missing(f"{tpl.subject}\n{tpl.body}", valores) if tpl else [],
+            "bloqueio": (_pode_enviar(lead, canal, False) or "")
+                        if canal in ("EMAIL", "WHATSAPP") else ""}
 
 
 @router.post("/atividades/{aid}")
@@ -212,12 +242,17 @@ async def enviar_atividade(aid: int, payload: dict = Body(default={}),
 
     user = db.get(User, act.user_id) if act.user_id else lead.sdr
     valores = render.lead_vars(lead, user)
-    assunto = render.render(tpl.subject, valores)
-    corpo = render.render(tpl.body, valores)
+    # O SDR pode ajustar o texto antes de enviar, como no editor do Meetime. O
+    # texto editado também passa pelo render: quem mantém uma variável no corpo
+    # continua recebendo o valor do lead.
+    modelo_assunto = tpl.subject if payload.get("assunto") is None else str(payload["assunto"])
+    modelo_corpo = tpl.body if payload.get("corpo") is None else str(payload["corpo"])
+    assunto = render.render(modelo_assunto, valores)
+    corpo = render.render(modelo_corpo, valores)
     # Duas permissões distintas de propósito. `forcar` é cosmético — manda mesmo
     # com variável vazia. `foraDaJanela` é uma decisão de horário. Nenhum dos
     # dois fura o "não perturbe".
-    faltando = render.missing(f"{tpl.subject}\n{tpl.body}", valores)
+    faltando = render.missing(f"{modelo_assunto}\n{modelo_corpo}", valores)
     if faltando and not payload.get("forcar"):
         raise HTTPException(422, "O modelo tem variáveis sem valor para este lead: "
                                  f"{', '.join(faltando)}. Reenvie com forcar=true "
@@ -227,6 +262,44 @@ async def enviar_atividade(aid: int, payload: dict = Body(default={}),
         corpo = f"{corpo}\n\n{user.email_signature}"
 
     destino = lead.email if canal == "EMAIL" else lead.phone
+    para = str(payload.get("para") or "").strip()
+    if para:
+        if canal == "EMAIL" and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", para):
+            raise HTTPException(400, "Destinatário inválido.")
+        # O SDR escolhe entre os contatos do lead; mandar para fora dele é
+        # decisão de gestor — senão a atividade vira um relay de mensagens com
+        # o domínio da empresa, furando o "não perturbe" de quem recebe.
+        digitos = lambda t: re.sub(r"\D", "", t or "")[-11:]
+        do_lead = (para.lower() == (lead.email or "").strip().lower() if canal == "EMAIL"
+                   else digitos(para) in {digitos(t) for t in re.split(r"[,;/|]", lead.phone or "") if digitos(t)})
+        if not do_lead and not perm.ator(db).pelo_menos("gestor"):
+            raise HTTPException(403, "Só é possível enviar para os contatos cadastrados no lead. "
+                                     "Atualize o cadastro do lead ou peça a um gestor.")
+        destino = para
+    # Reserva a atividade antes de enviar: dois cliques seguidos em "Enviar"
+    # mandavam a mensagem duas vezes, porque o envio acontece antes do DONE.
+    reservou = (db.query(LeadActivity)
+                .filter(LeadActivity.id == act.id, LeadActivity.status == "PENDING")
+                .update({"status": "SENDING", "done_at": datetime.utcnow()},
+                        synchronize_session=False))
+    db.commit()
+    if not reservou:
+        raise HTTPException(409, "Esta atividade já está sendo enviada.")
+    db.refresh(act)
+    try:
+        return await _enviar_reservada(db, act, lead, canal, destino, assunto, corpo,
+                                       user, tpl, payload)
+    except Exception:
+        db.rollback()
+        act = db.get(LeadActivity, aid)
+        if act and act.status == "SENDING":
+            act.status, act.done_at = "PENDING", None
+            db.commit()
+        raise
+
+
+async def _enviar_reservada(db, act, lead, canal, destino, assunto, corpo, user, tpl, payload):
+    token = ""
     bloqueio = _pode_enviar(lead, canal, bool(payload.get("foraDaJanela")))
     if bloqueio:
         resultado = channels.SendResult("BLOCKED", canal, error=bloqueio)
@@ -268,12 +341,15 @@ async def enviar_atividade(aid: int, payload: dict = Body(default={}),
         conv.last_message_at = resultado.at
 
     # Bloqueio não conclui a atividade: ela continua na fila para o SDR resolver.
+    if resultado.status not in ("SENT", "SIMULATED"):
+        act.status, act.done_at = "PENDING", None
     if resultado.status in ("SENT", "SIMULATED"):
         act.status = "DONE"
         act.done_at = resultado.at
         act.notes = (act.notes + "\n" if act.notes else "") + \
             f"{canal} via {resultado.provider or '—'}: {resultado.status}"
-        lead.current_step += 1
+        if act.cadence_step_id:          # extra não é passo da cadência
+            lead.current_step += 1
         if lead.status == "WAITING":
             lead.status = "EXECUTING"
         webhooks.enfileirar(db, "ACTIVITY.DONE", {**serial.lead_activity(act, resultado.at),

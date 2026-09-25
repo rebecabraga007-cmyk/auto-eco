@@ -105,7 +105,9 @@ async def status(db: Session = Depends(get_db)):
 
 
 @router.get("/preview/{resource}")
-async def preview(resource: str, limit: int = Query(5, le=50)):
+async def preview(resource: str, limit: int = Query(5, le=50), db: Session = Depends(get_db)):
+    # Dados crus da conta Meetime inteira (leads e usuários de todo mundo).
+    perm.ator(db).exigir("gestor", "ver dados crus da Meetime")
     if resource not in meetime_api.RESOURCES:
         raise HTTPException(404, f"Recurso desconhecido. Use: {', '.join(meetime_api.RESOURCES)}")
     try:

@@ -514,8 +514,9 @@ async function boot() {
   // Os campos personalizados alimentam o formulário de lead e o filtro da
   // lista — carregar aqui evita que abrir o formulário por outro caminho
   // (pela página do lead, por exemplo) mostre um cadastro incompleto.
-  state.leadFields = (await api("/api/flow/new-lead-fields").catch(() => []))
-    .filter((c) => c.customField);
+  const todosCampos = await api("/api/flow/new-lead-fields").catch(() => []);
+  state.leadFields = todosCampos.filter((c) => c.customField);
+  state.leadFieldsNativos = todosCampos.filter((c) => !c.customField);
   state.clients = clients;
   state.users = users.data;
   state.cadences = cadences;
@@ -526,6 +527,8 @@ async function boot() {
   // tela chutava pelo nível e errava quando a empresa liberava algo extra.
   state.permissoes = await api("/api/flow/permissions/configuration").catch(() => ({}));
   go(location.hash.slice(1) || "dashboard");
+  // Academia (academia.js): chip de XP no menu e, no primeiro acesso, a oferta do tour.
+  if (typeof acadIniciar === "function") acadIniciar();
 }
 
 api("/api/me").then(boot).catch(showLogin);
@@ -549,9 +552,16 @@ PAGES.dashboard = {
       .map(([k, v]) => [k, Array.isArray(v) ? v.join(",") : v]));
     // O esforço necessário vem junto: a meta sozinha diz onde chegar, o
     // esforço diz quanto trabalho falta para lá — e era o que ninguém via.
-    const [g, esforco] = await Promise.all([
+    const inicioMes = `${ref.slice(0, 7)}-01`;
+    const fimMes = new Date(Number(ref.slice(0, 4)), Number(ref.slice(5, 7)), 0).toISOString().slice(0, 10);
+    const periodo = `since=${inicioMes}T00:00:00&until=${fimMes}T23:59:59`;
+    // Origem e tempo de resposta pedem permissão de estatística: sem ela o
+    // cartão some, em vez de derrubar o Dashboard inteiro.
+    const [g, esforco, resumo, resposta] = await Promise.all([
       api(`/api/flow/goals/${ref}/progress?${qsMeta}`),
       api(`/api/flow/goals/${ref}/calculate-effort`).catch(() => null),
+      api(`/api/flow/statistics/summary?${periodo}`).catch(() => null),
+      api(`/api/flow/statistics/response-time?${periodo}`).catch(() => null),
     ]);
     const pct = g.goal.opportunities ? Math.round((g.actual.won / g.goal.opportunities) * 100) : 0;
     const gapTone = g.gapPercent < 0 ? "var(--red)" : "var(--ganho)";
@@ -588,7 +598,6 @@ PAGES.dashboard = {
             : `<span class="text-muted text-size-small">Só gestor edita metas.</span>`}
         </div>
       </div>
-      ${painelEsforco}
       ${!g.goal.definida && nivelPeloMenos("gestor") && state.convitemeta !== false ? `
         <div class="alert alert-info alert-styled-left convite-meta">
           <button type="button" class="convite-fechar" id="metaAgoraNao" title="Agora não">×</button>
@@ -599,7 +608,7 @@ PAGES.dashboard = {
       <div class="goal-card">
         <div>
           <div class="goal-number">${g.actual.won}</div>
-          <div class="goal-title">Oportunidades no mês</div>
+          <div class="goal-title">Oportunidades em ${new Date(`${g.targetMonth.slice(0, 10)}T12:00:00`).toLocaleDateString("pt-BR", { month: "long" })}</div>
           <div class="goal-info-row">
             <div class="round-icon">◎</div>
             <div>Meta de oportunidades<br>${g.goal.definida
@@ -628,65 +637,11 @@ PAGES.dashboard = {
         </div>
       </div>
 
-      ${(() => {
-        // Os três indicadores que o original tem como cartões próprios:
-        // atividades, leads e conversão, cada um contra a sua meta.
-        const ind = g.indicadores;
-        if (!ind) return "";
-        const a = ind.atividades;
-        const noRitmo = a.feitas >= a.esperadoAteHoje;
-        return `<div class="ranking-title">Indicadores do mês</div>
-        <div class="kpi-row" style="grid-template-columns:repeat(3,1fr)">
-          <div class="kpi">
-            <div class="number">${a.feitas}</div>
-            <div class="caption">Atividades realizadas
-              <span class="pill ${noRitmo ? "green" : "red"}">${noRitmo ? "no ritmo" : "abaixo"}</span></div>
-            <div class="text-muted text-size-small mt-10">
-              Meta do mês ${a.meta} · esperado até hoje ${a.esperadoAteHoje}<br>
-              ${a.mediaDiaria}/dia útil${a.atrasadas ? ` · <span class="text-muted">${a.atrasadas} fora do prazo</span>` : ""}</div>
-            ${g.ranking.length ? `<div class="mini-rank">
-              ${[...g.ranking].sort((x, y) => y.activities - x.activities).slice(0, 3).map((r) => `
-                <div><span>${h(r.user.name)}</span><b>${r.activities}</b></div>`).join("")}
-            </div>` : ""}
-          </div>
-          <div class="kpi">
-            <div class="number">${ind.leads.finalizados}</div>
-            <div class="caption">Leads finalizados
-              ${esforco && esforco.leadsNeeded
-                ? `<span class="pill ${ind.leads.finalizados >= esforco.leadsNeeded ? "green" : "amber"}">
-                     meta ${esforco.leadsNeeded}</span>` : ""}</div>
-            <div class="text-muted text-size-small mt-10">
-              ${ind.leads.prospectando} prospectando · ${ind.leads.aguardando} aguardando início
-              ${esforco && esforco.leadsNeeded ? `<br>a meta de oportunidades exige
-                ${esforco.leadsNeeded} leads finalizados na conversão alvo` : ""}</div>
-          </div>
-          <div class="kpi">
-            <div class="number">${g.actual.conversion}%</div>
-            <div class="caption">Conversão
-              <span class="pill ${g.actual.conversion >= Math.round(g.goal.conversionRate * 100) ? "green" : "amber"}">
-                meta ${Math.round(g.goal.conversionRate * 100)}%</span></div>
-            <div class="text-muted text-size-small mt-10">
-              ${g.actual.won} ganhos de ${g.actual.won + g.actual.lost} finalizados<br>
-              ${g.ranking.length
-                ? `média de ${(g.actual.won / g.ranking.length).toFixed(1)} oportunidade(s) por vendedor`
-                : "sem vendedor com movimento"}</div>
-          </div>
-        </div>`;
-      })()}
+      ${dashRanking(g)}
+      ${dashInsights(g, resumo, resposta)}
+      ${painelEsforco}`;
 
-      <div class="ranking-title">Ranking de SDRs · ${pct}% da meta</div>
-      ${panel("Desempenho no mês", ranking)}
-
-      <div class="insights-grid">
-        <div class="panel panel-flat"><div class="panel-heading has-border">
-          <h2 class="panel-title">Motivos de perda</h2>
-          ${g.lostReasons.length > 6 ? `<div class="heading-elements">
-            <button class="btn btn-default btn-xs" id="motivosMais">Ver mais</button></div>` : ""}</div>
-          <div class="panel-body">${bars(g.lostReasons.slice(0, 6).map((r) => ({ label: r.name, value: r.count, tone: "warning" })))}</div></div>
-        <div class="panel panel-flat"><div class="panel-heading has-border"><h2 class="panel-title">Resultado por cliente</h2></div>
-          <div class="panel-body">${bars(g.byClient.map((c) => ({ label: c.client, value: c.won + c.lost })))}</div></div>
-      </div>`;
-
+    ligarDashInsights(g, resumo);
     const motivosMais = document.getElementById("motivosMais");
     if (motivosMais) motivosMais.onclick = () => verMaisMotivos(
       g.lostReasons.map((r) => ({ label: r.name, count: r.count })));
@@ -711,6 +666,86 @@ PAGES.dashboard = {
     if (hoje) hoje.onclick = () => { state.metaMes = null; go("dashboard"); };
   },
 };
+
+/* ── Dashboard: Ranking e Insights ─────────────────────────────────────
+   Os três cartões do Ranking do original (Leads Finalizados, Atividades
+   Realizadas, Taxa de Conversão), cada um com a linha por vendedor e a média
+   no rodapé, e os três gráficos de Insights (motivos de perda, conversão por
+   origem, tempo de resposta). O SDR vê a própria linha; o gestor vê o time. */
+function dashRanking(g) {
+  const todos = g.ranking || [];
+  const meu = (state.me || {}).id;
+  const linhas = nivelPeloMenos("gestor") ? todos : todos.filter((r) => r.user && r.user.id === meu);
+  const n = Math.max(1, todos.filter((r) => r.won + r.lost + r.activities > 0).length);
+  const finalizados = todos.reduce((s, r) => s + r.won + r.lost, 0);
+  const atividades = todos.reduce((s, r) => s + r.activities, 0);
+  const dias = (g.indicadores && g.indicadores.diasUteis && g.indicadores.diasUteis.ateHoje) || 1;
+  const av = (u) => `<span class="rk-av">${h(((u && u.name) || "?").charAt(0).toUpperCase())}</span>`;
+  const cartao = (titulo, icone, grande, cabecalho, corpo, rodape) => `
+    <div class="rk-card">
+      <div class="rk-tit">${titulo}</div>
+      <div class="rk-ic">${icone}</div>
+      <div class="rk-grande">${grande}</div>
+      <div class="rk-cols">${cabecalho}</div>
+      <div class="rk-linhas">${corpo || `<div class="text-muted text-size-small">Sem movimento no mês.</div>`}</div>
+      <div class="rk-rodape">${rodape}</div>
+    </div>`;
+  return `<div class="ranking-title">Ranking</div>
+    <div class="rk-grade">
+      ${cartao("Leads Finalizados", "👤", finalizados,
+        `<span>prospectando <span class="dica-icone" title="Carteira aberta agora">?</span></span><span>finalizados</span>`,
+        linhas.map((r) => `<div class="rk-linha">${av(r.user)}<span class="rk-nome">${h(r.user.name)}</span><b>${r.prospecting ?? "—"}</b><b>${r.won + r.lost}</b></div>`).join(""),
+        `<span>média<br><small>finalizados/vendedor</small></span><b>${Math.round(finalizados / n)}</b>`)}
+      ${cartao("Atividades Realizadas", "☑", atividades,
+        `<span>média diária <span class="dica-icone" title="Atividades por dia útil do mês até hoje">?</span></span>`,
+        linhas.map((r) => `<div class="rk-linha">${av(r.user)}<span class="rk-nome">${h(r.user.name)}</span><b>${Math.round(r.activities / dias)}</b></div>`).join(""),
+        `<span>média<br><small>atv. diárias/vendedor</small></span><b>${Math.round(atividades / dias / n)}</b>`)}
+      ${cartao("Taxa de Conversão", "↗", `${g.actual.conversion}%`,
+        `<span>oportunidades <span class="dica-icone" title="Ganhos no mês e a conversão de cada vendedor">?</span></span>`,
+        linhas.map((r) => `<div class="rk-linha">${av(r.user)}<span class="rk-nome">${h(r.user.name)}</span><b>${r.won} <small>(${Math.round(r.conversion)}%)</small></b></div>`).join(""),
+        `<span>média<br><small>oportunidades/vendedor</small></span><b>${Math.round(g.actual.won / n)}</b>`)}
+    </div>`;
+}
+
+const DASH_ORIGEM = { channel: "Canais", source: "Fontes", campaign: "Campanhas", base: "Listas de importação" };
+
+function dashInsights(g, resumo, resposta) {
+  const totalPerdas = g.lostReasons.reduce((s, r) => s + r.count, 0) || 1;
+  const motivos = g.lostReasons.slice(0, 6);
+  const maxM = Math.max(1, ...motivos.map((r) => r.count));
+  const dim = state.dashOrigem || "channel";
+  const origens = ((resumo && resumo.originsBy && resumo.originsBy[dim]) || []).slice().sort((a, b) => b.total - a.total).slice(0, 6);
+  const maxO = Math.max(1, ...origens.map((o) => o.total));
+  return `<div class="ranking-title">Insights</div>
+    <div class="ins-grade">
+      <div class="panel panel-flat"><div class="panel-heading has-border"><h2 class="panel-title">Motivos de perda</h2>
+          ${g.lostReasons.length > 6 ? `<div class="heading-elements"><button class="btn btn-default btn-xs" id="motivosMais">Ver mais</button></div>` : ""}</div>
+        <div class="panel-body">${motivos.length ? motivos.map((r) => `
+          <div class="ins-barra"><span class="ins-rot" title="${h(r.name)}">${h(r.name)}</span>
+            <span class="ins-trilho"><i class="perda" style="width:${(r.count / maxM) * 100}%"></i></span>
+            <b>${Math.round((r.count / totalPerdas) * 100)}%</b></div>`).join("") : emptyState("Nenhuma perda no mês.")}</div></div>
+      ${resumo ? `<div class="panel panel-flat"><div class="panel-heading has-border"><h2 class="panel-title">Conversão por origem</h2>
+          <div class="heading-elements"><select class="form-control input-xs" id="dashOrigem" aria-label="Agrupar origem por">
+            ${Object.entries(DASH_ORIGEM).map(([k, v]) => `<option value="${k}"${dim === k ? " selected" : ""}>${v}</option>`).join("")}</select></div></div>
+        <div class="panel-body">${origens.length ? origens.map((o) => `
+          <div class="ins-barra"><span class="ins-rot" title="${h(o.name)}">${h(o.name || "Desconhecido")}</span>
+            <span class="ins-trilho"><i class="perda" style="width:${(o.lost / maxO) * 100}%" title="${o.lost} perdidos"></i><i class="ganho" style="width:${(o.won / maxO) * 100}%" title="${o.won} ganhos"></i></span>
+            <b>${o.won}/${o.total}</b></div>`).join("")
+          + `<div class="ins-legenda"><span><i class="ganho"></i>Ganhos</span><span><i class="perda"></i>Perdidos</span></div>`
+          : emptyState("Nenhum lead finalizado no mês.")}</div></div>` : ""}
+      ${resposta ? `<div class="panel panel-flat"><div class="panel-heading has-border"><h2 class="panel-title">Tempo de resposta</h2></div>
+        <div class="panel-body">${resposta.abordados ? `
+          <div class="ins-resp"><b>${resposta.mediaHoras}h</b><span>tempo médio até a primeira abordagem</span></div>
+          <div class="ins-resp"><b>${resposta.percentual}%</b><span>abordados em até ${resposta.metaHoras}h</span></div>
+          <div class="ins-resp"><b>${resposta.naoAbordados}</b><span>leads ainda sem abordagem</span></div>`
+          : `<p class="text-muted">Nenhuma nova abordagem no período.</p>`}</div></div>` : ""}
+    </div>`;
+}
+
+function ligarDashInsights() {
+  const sel = document.getElementById("dashOrigem");
+  if (sel) sel.onchange = () => { state.dashOrigem = sel.value; go("dashboard"); };
+}
 
 /** Lista completa de motivos de perda — o "ver mais" do original.
  *
@@ -1194,564 +1229,7 @@ PAGES.painel = {
   },
 };
 
-/* ── Execução ────────────────────────────────────────────────────────────
-   O original abre com um check-in ("iniciar atividades") e executa uma
-   atividade por vez, com um menu de preferências do lado. A fila aqui
-   continua priorizada por score, mas ganhou as três coisas que faltavam:
-   o modo rápido, o agrupamento por passo e a separação das extras. */
-const EXEC_PREF_PADRAO = { agrupar: false, quentes: true, avancar: true };
-
-function execPrefs() {
-  try {
-    return { ...EXEC_PREF_PADRAO, ...JSON.parse(localStorage.getItem("bluutime.exec") || "{}") };
-  } catch {
-    // localStorage bloqueado (janela anônima, cookie de terceiro): a tela
-    // funciona com o padrão em vez de quebrar na primeira leitura.
-    return { ...EXEC_PREF_PADRAO };
-  }
-}
-
-function salvarExecPrefs(p) {
-  try { localStorage.setItem("bluutime.exec", JSON.stringify(p)); } catch { /* sem persistência */ }
-}
-
-function passoRotulo(a) {
-  if (a.extra) return "Atividade extra";
-  if (!a.passo) return "Cadência";
-  return `Dia ${a.passo.dia} · ${a.passo.ordem}ª atividade`;
-}
-
-/** Modo rápido: uma atividade por vez, sem voltar para a lista entre elas. */
-function modoRapido(items, i = 0) {
-  if (i >= items.length) {
-    toast("Fila concluída.", "ok");
-    return go("execucao");
-  }
-  const act = items[i];
-  const fila = {
-    indice: i + 1, total: items.length,
-    proximo: () => (execPrefs().avancar ? modoRapido(items, i + 1) : go("execucao")),
-    pular: () => modoRapido(items, i + 1),
-  };
-  if (PRECISA_MODELO.has(act.channel)) return enviarAtividade(act, fila);
-  return openExecuteModal(act, fila);
-}
-
-PAGES.execucao = {
-  area: "Prospecção", title: "Execução",
-  async render() {
-    const f = state.queueFilter || {};
-    const prefs = execPrefs();
-    const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v));
-    const [res, quentes, geral] = await Promise.all([
-      api(`/api/flow/execution/queue?${qs}`),
-      prefs.quentes ? api("/api/flow/hot-leads").catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
-      api("/api/flow/execution/overall").catch(() => null),
-    ]);
-    const items = res.data;
-
-    const cartao = (a, i) => `
-      <div class="queue-item${a.late ? " late" : ""}" data-act="${a.id}">
-        <div class="queue-rank">${i + 1}</div>
-        <div>
-          <strong>${h(a.lead.name)}</strong>
-          <span class="text-muted ml-5">${h(a.lead.company)}</span>
-          ${a.lead.client ? `<span class="pill ml-5" style="border-color:${h(a.lead.client.color)}">${h(a.lead.client.name)}</span>` : ""}
-          <br>
-          <span class="pill ${a.type === "CALL" ? "blue" : a.type === "E_MAIL" ? "grey" : "green"}">${h(TYPE_LABEL[a.type] || a.type)}</span>
-          <span class="text-muted ml-5">${h(a.activity ? a.activity.name : "")}</span>
-          ${a.extra ? `<span class="pill amber ml-5">Extra</span>` : ""}
-          <br>
-          <span class="text-size-small text-muted">
-            ${a.late ? `<span style="color:var(--red)">Atrasada</span> · ` : ""}agendada ${fmtDateTime(a.scheduledAt)}
-            · melhor contato ${a.lead.bestHour}h
-            ${a.lead.cadence ? ` · ${h(a.lead.cadence.name)} (${h(PRIORITY_LABEL[a.lead.cadence.priority])})` : ""}
-            · ${h(passoRotulo(a))}
-            · ${a.tentativas} tentativa${a.tentativas === 1 ? "" : "s"}
-            · score ${a.score}
-          </span>
-        </div>
-        <div class="nowrap">
-          ${PRECISA_MODELO.has(a.channel)
-            // Passo de mensagem tem caminho próprio: o texto sai do modelo e a
-            // entrega fica registrada, em vez de só marcar como feita.
-            ? `<button class="btn btn-main btn-xs" data-enviar="${a.id}">Enviar</button>`
-            : `<button class="btn btn-main btn-xs" data-exec="${a.id}">Executar</button>`}
-          <button class="btn btn-default btn-xs" data-adiar="${a.id}">Adiar</button>
-          <button class="btn btn-default btn-xs" data-skip="${a.id}" title="Ignorar atividade">Ignorar</button>
-          <button class="btn btn-success btn-xs" data-ganho="${a.lead.id}">Ganho</button>
-          <button class="btn btn-danger btn-xs" data-perdido="${a.lead.id}">Perdido</button>
-          ${a.lead.status === "ON_EXTRA_ACTIVITY"
-            // Só aparece para quem teve a cadência pausada por ter respondido —
-            // é o único caso em que existe algo a retomar.
-            ? `<button class="btn btn-default btn-xs" data-retomar="${a.lead.id}">Retomar cadência</button>`
-            : ""}
-          <button class="btn btn-default btn-xs" data-lead="${a.lead.id}">Abrir lead</button>
-        </div>
-      </div>`;
-
-    let list;
-    if (!items.length) {
-      // Três vazios diferentes, como no original: filtrar sem achar não é a
-      // mesma notícia que a fila ter acabado, nem que ela nunca ter enchido.
-      const filtrando = f.q || f.sdr_id || f.client_id || f.cadence_id || f.type || f.field_id;
-      list = filtrando
-        ? emptyState("Não há nada por aqui.", "Tente limpar os filtros de busca.")
-        : (geral && geral.prospectando)
-          ? emptyState("Você completou todas as atividades para hoje!", "Não há pendências por aqui.")
-          : emptyState("Adicione atividades e busque seu objetivo diário",
-                       "Inicie novos leads para adicionar atividades aqui.");
-    } else {
-      // O original separa "Atividades das Cadências" de "Atividades Extras":
-      // uma vem do passo programado, a outra alguém agendou na mão, e
-      // misturá-las esconde quanto do dia é improviso.
-      let n = 0;
-      const desenhar = (linhas) => prefs.agrupar
-        // Agrupar por passo é o jeito do original de mostrar a cadência: a
-        // ordem por score continua dentro de cada grupo.
-        ? [...linhas.reduce((m, a) => {
-            const chave = passoRotulo(a);
-            return m.set(chave, [...(m.get(chave) || []), a]);
-          }, new Map()).entries()].map(([chave, dogrupo]) => `
-            <div class="queue-grupo">${h(chave)} <span>${dogrupo.length}</span></div>
-            ${dogrupo.map((a) => cartao(a, n++)).join("")}`).join("")
-        : linhas.map((a) => cartao(a, n++)).join("");
-      const daCadencia = items.filter((a) => !a.extra);
-      const extras = items.filter((a) => a.extra);
-      list = (daCadencia.length && extras.length)
-        ? `<div class="queue-secao">Atividades das Cadências <span>${daCadencia.length}</span></div>
-           ${desenhar(daCadencia)}
-           <div class="queue-secao">Atividades Extras <span>${extras.length}</span></div>
-           ${desenhar(extras)}`
-        : desenhar(items);
-    }
-
-    // `state.leadFields` já vem filtrado no boot: só os personalizados.
-    const campos = state.leadFields || [];
-
-    view.innerHTML = `
-      <div class="toolbar">
-        <input class="form-control grow" id="qBusca" placeholder="Nome, email ou telefone" value="${h(f.q || "")}">
-        <select class="form-control" id="qSdr">${options(state.users, f.sdr_id, { blank: "Todos os SDRs" })}</select>
-        <select class="form-control" id="qClient">${options(state.clients, f.client_id, { blank: "Todos os clientes" })}</select>
-        <select class="form-control" id="qCad">${options(state.cadences, f.cadence_id, { blank: "Todas as cadências" })}</select>
-        <select class="form-control" id="qType">
-          <option value="">Todos os tipos</option>
-          ${Object.entries(TYPE_LABEL).map(([k, v]) => `<option value="${k}"${f.type === k ? " selected" : ""}>${v}</option>`).join("")}
-        </select>
-        <select class="form-control" id="qEscopo">
-          ${[["todas", "Cadência e extras"], ["cadencia", "Só da cadência"], ["extras", "Só extras"]].map(([v, r]) =>
-            `<option value="${v}"${(f.escopo || "todas") === v ? " selected" : ""}>${r}</option>`).join("")}
-        </select>
-        ${campos.length ? `
-          <select class="form-control" id="qCampo">${options(campos, f.field_id, { blank: "Campo personalizado" })}</select>
-          <input class="form-control" id="qCampoVal" placeholder="valor" value="${h(f.field_value || "")}"${f.field_id ? "" : " disabled"}>` : ""}
-        <span class="spacer"></span>
-        <button class="btn btn-default btn-xs" id="prefs" title="Preferências da execução">⚙ Preferências</button>
-        <button class="btn btn-default btn-xs" id="refresh">Atualizar</button>
-      </div>
-      ${geral ? panel("Meu progresso hoje", `
-        <div class="split" style="grid-template-columns:1fr auto;align-items:center">
-          <div>
-            <div style="font-size:15px">
-              Você está prospectando <strong>${geral.prospectando}</strong> leads
-              ${geral.disponiveis ? `· <strong>${geral.disponiveis}</strong> leads disponíveis para serem iniciados` : ""}
-            </div>
-            <div class="bar mt-10" style="height:22px">
-              <span style="width:${Math.min(100, geral.hoje.percentual)}%;background:${geral.bateuMeta ? "var(--green)" : "var(--blue)"}"></span>
-            </div>
-            <div class="text-muted text-size-small mt-10">
-              Objetivo diário (${geral.hoje.meta || "—"}): ${geral.hoje.feitas} atividades hoje
-              ${geral.hoje.meta ? ` · ${geral.hoje.percentual}%` : " (sem meta definida)"}
-              ${geral.hoje.ignoradas ? ` · ${geral.hoje.ignoradas} ignoradas` : ""}
-              ${geral.hoje.meta && !geral.bateuMeta
-                ? `<br>Finalize atividades para atingir o seu objetivo diário.` : ""}
-            </div>
-          </div>
-          <div style="text-align:center;min-width:150px">
-            ${geral.bateuMeta
-              ? `<div style="font-size:42px;line-height:1">🏆</div>
-                 <div class="pill green">Meta batida</div>`
-              : `<div class="round-icon" style="margin:0 auto">${Math.round(geral.hoje.percentual)}%</div>`}
-            ${items.length ? `<button class="btn btn-main btn-sm mt-10" id="iniciar">▶ Iniciar atividades</button>` : ""}
-            ${geral.disponiveis ? `<button class="btn btn-default btn-sm mt-10" id="puxarLeads">Iniciar novos leads</button>` : ""}
-          </div>
-        </div>`) : ""}
-      ${kpis([
-        { value: res.meta.total, label: "Na fila", tone: "info" },
-        { value: res.meta.late, label: "Atrasadas", tone: "danger" },
-        { value: res.meta.onTime, label: "No prazo", tone: "success" },
-        { value: res.meta.extras, label: "Extras" },
-      ])}
-      ${panel("Fila priorizada",
-        `<div class="alert alert-info alert-styled-left">A ordem combina atraso, prioridade da cadência e janela de melhor contato — não é ordem cronológica.</div>
-         <div style="margin:0 -20px -20px">${list}</div>`,
-        { subtitle: "Atividades pendentes das próximas 24 horas",
-          actions: items.length
-            ? `<button class="btn btn-main btn-xs" id="iniciar2" title="O lead não será puxado no modo de Execução rápida se já estiver com alguém">▶ Modo Execução rápida</button>` : "" })}
-      ${quentes.data.length ? panel(`Leads aguardando primeira ligação (${quentes.data.length})`,
-        `<div class="toolbar" style="border:0;padding:0 0 8px;background:none">
-          <label class="text-size-small"><input type="checkbox" id="hotTodos"> Selecionar todos</label>
-          <span class="spacer"></span>
-          <button class="btn btn-default btn-xs" id="hotTransferir" disabled>Transferir selecionados</button>
-        </div>` +
-        table([`<span class="text-muted">sel.</span>`, "Lead", "Empresa", "Telefone", "Esperando há", ""],
-          quentes.data.map((l) => ({ cells: [
-            `<input type="checkbox" class="hot-check" value="${l.id}">`,
-            `<a data-lead="${l.id}"><strong>${h(l.name)}</strong></a>`,
-            h(l.company || "—"), h(l.phone || "—"),
-            // Minuto importa em lead que acabou de converter: dizer "0h" para
-            // quem entrou há 40 minutos esconde justamente a urgência.
-            l.horasEsperando >= 48 ? `<span class="pill red">${Math.round(l.horasEsperando / 24)} dias</span>`
-              : l.horasEsperando >= 24 ? `<span class="pill amber">${Math.round(l.horasEsperando / 24)} dia</span>`
-              : l.horasEsperando >= 1 ? `<span class="pill">${l.horasEsperando}h</span>`
-              : `<span class="pill green">${Math.max(1, Math.round((l.horasEsperando || 0) * 60))} min</span>`,
-            `<button class="btn btn-default btn-xs" data-lead="${l.id}">Abrir</button>`,
-          ] })), { scroll: true }),
-        { subtitle: "Ninguém ligou para eles ainda. Os mais antigos vêm primeiro — lead novo esfria rápido." }) : ""}`;
-
-    const puxar = document.getElementById("puxarLeads");
-    // Leva para a lista filtrada em vez de iniciar tudo de uma vez: começar
-    // cadência é decisão por lead (qual cadência, qual cliente), e um botão
-    // que dispara em lote esconderia essa escolha.
-    if (puxar) puxar.onclick = () => {
-      state.leadFilter = { page: 1, limit: 50, status: "WAITING" };
-      go("leads");
-    };
-    // Seleção em massa dos hot leads: quem tem trinta esperando não vai abrir
-    // um por um para redistribuir.
-    const hotBtn = document.getElementById("hotTransferir");
-    if (hotBtn) {
-      const hotMarcados = () => [...view.querySelectorAll(".hot-check:checked")].map((c) => Number(c.value));
-      const sincHot = () => {
-        const n = hotMarcados().length;
-        hotBtn.disabled = !n;
-        hotBtn.textContent = n ? `Transferir ${n} selecionado(s)` : "Transferir selecionados";
-      };
-      view.querySelectorAll(".hot-check").forEach((c) => { c.onchange = sincHot; });
-      const hotTodos = document.getElementById("hotTodos");
-      if (hotTodos) hotTodos.onchange = () => {
-        view.querySelectorAll(".hot-check").forEach((c) => { c.checked = hotTodos.checked; });
-        sincHot();
-      };
-      hotBtn.onclick = () => {
-        const ids = hotMarcados();
-        const m = modal({
-          title: `Transferir ${ids.length} lead(s)`,
-          body: `<div class="field"><label for="hotSdr">Novo responsável</label>
-            <select class="form-control" id="hotSdr">${options(
-              (state.users || []).filter((u) => u.active !== false), "", { blank: "—" })}</select></div>`,
-          footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
-                   <button class="btn btn-main btn-sm" data-ok>Transferir</button>`,
-        });
-        m.root.querySelector("[data-cancel]").onclick = m.close;
-        m.root.querySelector("[data-ok]").onclick = async () => {
-          const sdrId = Number(m.root.querySelector("#hotSdr").value);
-          if (!sdrId) return toast("Escolha o responsável.", "err");
-          try {
-            await api("/api/flow/leads/bulk", { method: "POST",
-              body: { leadIds: ids, action: "transfer", sdrId } });
-            m.close(); toast("Leads transferidos.", "ok"); go("execucao");
-          } catch (e) { toast(e.message, "err"); }
-        };
-      };
-    }
-    ["iniciar", "iniciar2"].forEach((id) => {
-      const b = document.getElementById(id);
-      if (b) b.onclick = () => modoRapido(items, 0);
-    });
-    document.getElementById("prefs").onclick = () => abrirPrefsExecucao();
-
-    const setFilter = (key, value) => {
-      state.queueFilter = { ...(state.queueFilter || {}), [key]: value };
-      go("execucao");
-    };
-    let tb;
-    document.getElementById("qBusca").oninput = (e) => {
-      clearTimeout(tb);
-      const v = e.target.value;
-      tb = setTimeout(() => setFilter("q", v), 350);
-    };
-    document.getElementById("qSdr").onchange = (e) => setFilter("sdr_id", e.target.value);
-    document.getElementById("qClient").onchange = (e) => setFilter("client_id", e.target.value);
-    document.getElementById("qCad").onchange = (e) => setFilter("cadence_id", e.target.value);
-    document.getElementById("qType").onchange = (e) => setFilter("type", e.target.value);
-    document.getElementById("qEscopo").onchange = (e) => setFilter("escopo", e.target.value);
-    const qCampo = document.getElementById("qCampo");
-    if (qCampo) {
-      // Trocar de campo zera o valor, como na lista de Leads: manter o valor
-      // antigo devolveria uma fila vazia sem dizer por quê.
-      qCampo.onchange = () => {
-        state.queueFilter = { ...(state.queueFilter || {}), field_id: qCampo.value, field_value: "" };
-        go("execucao");
-      };
-      const val = document.getElementById("qCampoVal");
-      let tv;
-      val.oninput = () => { clearTimeout(tv); tv = setTimeout(() => setFilter("field_value", val.value), 350); };
-    }
-    document.getElementById("refresh").onclick = () => go("execucao");
-
-    view.querySelectorAll("[data-exec]").forEach((b) => {
-      b.onclick = () => openExecuteModal(items.find((a) => String(a.id) === b.dataset.exec));
-    });
-    view.querySelectorAll("[data-skip]").forEach((b) => {
-      b.onclick = async () => {
-        await api(`/api/flow/execution/activities/${b.dataset.skip}/execute`,
-          { method: "POST", body: { skip: true } });
-        toast("Atividade ignorada.");
-        go("execucao");
-      };
-    });
-    view.querySelectorAll("[data-enviar]").forEach((b) => {
-      b.onclick = () => enviarAtividade(items.find((a) => String(a.id) === b.dataset.enviar));
-    });
-    view.querySelectorAll("[data-adiar]").forEach((b) => {
-      b.onclick = () => adiarAtividade(items.find((a) => String(a.id) === b.dataset.adiar));
-    });
-    view.querySelectorAll("[data-ganho]").forEach((b) => {
-      b.onclick = () => confirmDialog("Marcar como ganho",
-        "O lead sai da cadência e as atividades pendentes são descartadas.", async () => {
-          try {
-            await api(`/api/flow/execution/leads/${b.dataset.ganho}/outcome`,
-              { method: "POST", body: { outcome: "WON" } });
-            toast("Lead marcado como ganho.", "ok"); go("execucao");
-          } catch (e) { toast(e.message, "err"); }
-        });
-    });
-    view.querySelectorAll("[data-perdido]").forEach((b) => {
-      b.onclick = () => openLostModal(Number(b.dataset.perdido), () => go("execucao"));
-    });
-    view.querySelectorAll("[data-retomar]").forEach((b) => {
-      b.onclick = async () => {
-        try {
-          const r = await api(`/api/flow/execution/leads/${b.dataset.retomar}/resume`,
-            { method: "POST", body: {} });
-          toast(`${r.resumed} atividade(s) retomada(s).`, "ok");
-          go("execucao");
-        } catch (e) { toast(e.message, "err"); }
-      };
-    });
-    view.querySelectorAll("[data-lead]").forEach((b) => {
-      b.onclick = () => openLeadModal(Number(b.dataset.lead));
-    });
-  },
-};
-
-function abrirPrefsExecucao() {
-  const p = execPrefs();
-  const linha = (id, rotulo, ligado, ajuda) => `
-    <div class="field"><label><input type="checkbox" id="${id}"${ligado ? " checked" : ""}> ${rotulo}</label>
-      <div class="text-muted text-size-small" style="margin-left:22px">${ajuda}</div></div>`;
-  const m = modal({
-    title: "Preferências da execução",
-    body: `
-      ${linha("pAgrupar", "Agrupar a fila por passo da cadência", p.agrupar,
-              "Junta as atividades do mesmo dia da cadência; a ordem por prioridade continua dentro de cada grupo.")}
-      ${linha("pAvancar", "No modo rápido, ir sozinho para a próxima", p.avancar,
-              "Desligado, o modo rápido para depois de cada atividade e volta para a fila.")}
-      ${linha("pQuentes", "Mostrar os leads aguardando a primeira ligação", p.quentes,
-              "Desligado, a tela carrega mais rápido e fica só com a fila.")}
-      <p class="text-muted text-size-small">As preferências ficam só neste navegador.</p>`,
-    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
-             <button class="btn btn-main btn-sm" data-ok>Salvar</button>`,
-  });
-  m.root.querySelector("[data-cancel]").onclick = m.close;
-  m.root.querySelector("[data-ok]").onclick = () => {
-    salvarExecPrefs({
-      agrupar: m.root.querySelector("#pAgrupar").checked,
-      avancar: m.root.querySelector("#pAvancar").checked,
-      quentes: m.root.querySelector("#pQuentes").checked,
-    });
-    m.close();
-    go("execucao");
-  };
-}
-
-/** Envia a mensagem do passo — o texto vem do modelo da etapa.
- *
- * `fila` só chega no modo rápido: é ele que troca o "voltar para a lista"
- * pelo "abrir a próxima atividade" e acrescenta o botão de pular. */
-function enviarAtividade(act, fila = null) {
-  const seguir = fila ? fila.proximo : () => go("execucao");
-  const m = modal({
-    wide: true,
-    title: `${fila ? `${fila.indice}/${fila.total} · ` : ""}Enviar ${act.channel} para ${act.lead.name}`,
-    body: `<div class="alert alert-info alert-styled-left" id="evAviso">
-        O texto vem do modelo da etapa. Nada sai enquanto o envio estiver desligado.
-      </div>
-      <div class="field">
-        <label><input type="checkbox" id="evFora"> Enviar fora da janela de 9h–18h</label>
-      </div>`,
-    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
-             ${fila ? `<button class="btn btn-default btn-sm" data-pular>Pular</button>` : ""}
-             <button class="btn btn-main btn-sm" data-ok>Enviar</button>`,
-  });
-  m.root.querySelector("[data-cancel]").onclick = m.close;
-  if (fila) m.root.querySelector("[data-pular]").onclick = () => { m.close(); fila.pular(); };
-
-  const disparar = async (forcar) => {
-    const ok = m.root.querySelector("[data-ok]");
-    ok.disabled = true;
-    ok.innerHTML = `<span class="spinner"></span> enviando…`;
-    try {
-      const r = await api(`/api/envio/atividades/${act.id}`, { method: "POST", body: {
-        forcar, foraDaJanela: m.root.querySelector("#evFora").checked } });
-      const d = r.delivery;
-      m.close();
-      if (d.status === "BLOCKED") {
-        // Bloqueio não conclui a atividade: ela continua na fila.
-        toast(d.error, "err");
-      } else {
-        toast(d.status === "SENT" ? "Mensagem enviada."
-                                  : "Registrado como SIMULADO — envio está desligado.", "ok");
-      }
-      seguir();
-    } catch (e) {
-      const faltando = /variáveis sem valor/i.test(e.message);
-      m.root.querySelector("#evAviso").className = "alert alert-danger alert-styled-left";
-      m.root.querySelector("#evAviso").innerHTML = h(e.message);
-      ok.disabled = false;
-      ok.textContent = faltando ? "Enviar mesmo assim" : "Enviar";
-      if (faltando) ok.onclick = () => disparar(true);
-    }
-  };
-  m.root.querySelector("[data-ok]").onclick = () => disparar(false);
-}
-
-/** Reagenda a atividade — o servidor encaixa na próxima janela útil. */
-function adiarAtividade(act) {
-  const amanha = new Date(Date.now() + 864e5);
-  const m = modal({
-    title: `Adiar atividade de ${act.lead.name}`,
-    body: `<div class="field"><label for="adQuando">Nova data e hora</label>
-        <input class="form-control" type="datetime-local" id="adQuando"
-               value="${amanha.toISOString().slice(0, 11)}${String(act.lead.bestHour).padStart(2, "0")}:00"></div>
-      <span class="text-muted text-size-small">
-        Fora do expediente, o servidor empurra para a próxima abertura — não existe
-        atividade agendada para domingo de madrugada.</span>`,
-    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
-             <button class="btn btn-main btn-sm" data-ok>Adiar</button>`,
-  });
-  m.root.querySelector("[data-cancel]").onclick = m.close;
-  m.root.querySelector("[data-ok]").onclick = async () => {
-    const v = m.root.querySelector("#adQuando").value;
-    if (!v) return toast("Escolha a data.", "err");
-    try {
-      const r = await api(`/api/flow/execution/activities/${act.id}/reschedule`,
-        { method: "POST", body: { scheduledAt: new Date(v).toISOString() } });
-      m.close();
-      toast(r.adjusted
-        ? `Ajustado para a próxima janela útil: ${r.scheduledLocal.replace("T", " ")}.`
-        : "Atividade adiada.", "ok");
-      go("execucao");
-    } catch (e) { toast(e.message, "err"); }
-  };
-}
-
-function openExecuteModal(act, fila = null) {
-  if (!act) return;
-  const seguir = fila ? fila.proximo : () => go("execucao");
-  const tpl = act.activity && act.activity.emailTemplate;
-  const merge = (text) => (text || "")
-    .replace(/\{\{firstName\}\}/g, act.lead.name.split(" ")[0])
-    .replace(/\{\{company\}\}/g, act.lead.company);
-
-  const script = act.activity ? merge(act.activity.instruction) : "";
-  const callerIds = (state.dialerConfig && state.dialerConfig.callerIdList)
-    || ((state.dialerConfig && state.dialerConfig.callerIds) || []).map((n) => ({ number: n, label: "" }));
-  const callBlock = act.type === "CALL" ? `
-    <div class="field-row">
-      <div class="field"><label for="callOutput">Resultado da ligação</label>
-        <select class="form-control" id="callOutput">
-          <option value="">Não conectou</option>
-          <option value="NO_CONTACT">Conectou · sem contato</option>
-          <option value="NOT_MEANINGFUL">Conectou · não significativa</option>
-          <option value="MEANINGFUL">Conectou · significativa</option>
-        </select></div>
-      <div class="field"><label for="callDuration">Duração (segundos)</label>
-        <input class="form-control" type="number" min="0" id="callDuration" value="0"></div>
-      ${callerIds.length ? `<div class="field"><label for="callOrigin">Número de origem</label>
-        <select class="form-control" id="callOrigin">
-          ${callerIds.map((n) => `<option value="${h(n.number)}"${n.default ? " selected" : ""}>${h(n.number)}${n.label ? ` — ${h(n.label)}` : ""}</option>`).join("")}
-        </select></div>` : ""}
-    </div>` : "";
-
-  const m = modal({
-    title: `${fila ? `${fila.indice}/${fila.total} · ` : ""}${TYPE_LABEL[act.type] || act.type} — ${act.lead.name}`,
-    wide: true,
-    body: `
-      <div class="alert alert-info alert-styled-left">
-        <strong>${h(act.lead.company)}</strong> · ${h(act.lead.phone || "sem telefone")} ·
-        ${h(act.lead.email || "sem e-mail")}
-        ${act.lead.cadence ? ` · cadência ${h(act.lead.cadence.name)}` : ""}
-      </div>
-      ${script ? `<div class="field"><label>Script</label>
-        <div class="json-box" style="max-height:200px">${h(script)}</div></div>` : ""}
-      ${tpl ? `<div class="field"><label>E-mail — ${h(merge(tpl.subject))}</label>
-        <div class="json-box" style="max-height:200px">${h(merge(tpl.html).replace(/<[^>]+>/g, " "))}</div></div>` : ""}
-      ${callBlock}
-      <div class="field"><label for="execNotes">Anotações</label><textarea class="form-control" id="execNotes"></textarea></div>`,
-    footer: `<button class="btn btn-danger btn-sm" data-lost>Marcar perdido</button>
-             <button class="btn btn-success btn-sm" data-won>Marcar ganho</button>
-             <span style="flex:1"></span>
-             <button class="btn btn-default btn-sm" data-cancel>Fechar</button>
-             ${fila ? `<button class="btn btn-default btn-sm" data-pular>Pular</button>` : ""}
-             <button class="btn btn-main btn-sm" data-done>Concluir atividade</button>`,
-  });
-
-  m.root.querySelector("[data-cancel]").onclick = m.close;
-  if (fila) m.root.querySelector("[data-pular]").onclick = () => { m.close(); fila.pular(); };
-  m.root.querySelector("[data-done]").onclick = async () => {
-    try {
-      const notes = m.root.querySelector("#execNotes").value;
-      if (act.type === "CALL") {
-        const output = m.root.querySelector("#callOutput").value;
-        const originSelect = m.root.querySelector("#callOrigin");
-        await api("/api/dialer/calls", { method: "POST", body: {
-          leadId: act.lead.id, userId: state.me.id,
-          status: output ? "CONNECTED" : "NOT_PERFORMED", output,
-          duration: Number(m.root.querySelector("#callDuration").value) || 0,
-          receiverPhone: act.lead.phone,
-          originPhone: originSelect ? originSelect.value : "",
-        } });
-      }
-      await api(`/api/flow/execution/activities/${act.id}/execute`, { method: "POST", body: { notes } });
-      m.close();
-      toast("Atividade concluída.", "ok");
-      seguir();
-    } catch (e) { toast(e.message, "err"); }
-  };
-  m.root.querySelector("[data-won]").onclick = async () => {
-    try {
-      await api(`/api/flow/execution/leads/${act.lead.id}/outcome`,
-        { method: "POST", body: { outcome: "WON" } });
-      m.close(); toast("Lead marcado como ganho.", "ok"); seguir();
-    } catch (e) { toast(e.message, "err"); }
-  };
-  m.root.querySelector("[data-lost]").onclick = () => { m.close(); openLostModal(act.lead.id, seguir); };
-}
-
-function openLostModal(leadId, after) {
-  const m = modal({
-    title: "Marcar como perdido",
-    body: `<div class="field"><label for="lostReason">Motivo da perda</label>
-        <select class="form-control" id="lostReason">${options(state.lostReasons, "", { blank: "Selecione…" })}</select></div>
-      <div class="field"><label for="lostNotes">Anotações</label><textarea class="form-control" id="lostNotes"></textarea></div>`,
-    footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
-             <button class="btn btn-danger btn-sm" data-ok>Confirmar perda</button>`,
-  });
-  m.root.querySelector("[data-cancel]").onclick = m.close;
-  m.root.querySelector("[data-ok]").onclick = async () => {
-    const reason = m.root.querySelector("#lostReason").value;
-    if (!reason) return toast("Escolha o motivo da perda.", "err");
-    try {
-      await api(`/api/flow/execution/leads/${leadId}/outcome`, { method: "POST", body: {
-        outcome: "LOST", lostReasonId: Number(reason),
-        annotations: m.root.querySelector("#lostNotes").value } });
-      m.close(); toast("Lead marcado como perdido."); after && after();
-    } catch (e) { toast(e.message, "err"); }
-  };
-}
+/* ── Execução: web/execucao.js ───────────────────────────────────────── */
 
 /* ── Leads ───────────────────────────────────────────────────────────── */
 /* ── Lista de Leads ──────────────────────────────────────────────────────
@@ -1993,14 +1471,7 @@ PAGES.leads = {
         res.data.find((l) => String(l.id) === a.dataset.kLigar), () => go("leads"));
     });
     view.querySelectorAll("[data-k-ganho]").forEach((a) => {
-      a.onclick = () => confirmDialog("Lead ganho",
-        "O lead sai da cadência e as atividades pendentes são descartadas.", async () => {
-          try {
-            await api(`/api/flow/execution/leads/${a.dataset.kGanho}/outcome`,
-              { method: "POST", body: { outcome: "WON" } });
-            toast("Lead marcado como ganho.", "ok"); go("leads");
-          } catch (e) { toast(e.message, "err"); }
-        });
+      a.onclick = () => openWonFlow(Number(a.dataset.kGanho), () => go("leads"));
     });
     view.querySelectorAll("[data-k-perdido]").forEach((a) => {
       a.onclick = () => openLostModal(Number(a.dataset.kPerdido), () => go("leads"));
@@ -2190,6 +1661,23 @@ function passoTimeline(a) {
  * No Meetime eles ficam acima do bloco "Geral", em caixa alta e com o número
  * grande — não acima da linha do tempo, que foi onde eu tinha posto antes de
  * ver a tela funcionando. */
+/** Barra de passos da cadência — a fileira de ícones do topo da página do
+ *  lead no original: verde no que foi feito, cinza no que falta. Conta só a
+ *  prospecção atual e só os passos da cadência (extras ficam de fora). */
+function barraPassosLead(l) {
+  const prosp = (l.prospeccoes || []).slice(-1)[0];
+  const desde = prosp && prosp.inicio ? prosp.inicio : "";
+  const passos = (l.timeline || []).filter((a) => a.kind !== "CALL" && a.kind !== "DELIVERY" && !a.extra
+    && (!desde || (a.scheduledAt || "") >= desde.slice(0, 10)));
+  if (!passos.length) return "";
+  const icone = { SEARCH: "⌕", E_MAIL: "✉", CALL: "☎", SOCIAL_POINT: "❝", MEETING: "▦" };
+  return `<div class="lead-passos" aria-label="Passos da cadência">${passos.map((a) => {
+    const est = a.status === "DONE" ? "feito" : a.status === "SKIPPED" ? "pulado" : a.late ? "atrasado" : "";
+    return `<span class="lead-passo ${est}" title="${h((a.activity && a.activity.name) || a.type)} · ${
+      a.status === "DONE" ? "feito" : a.status === "SKIPPED" ? "pulado" : "pendente"} · ${fmtDate(a.doneAt || a.scheduledAt)}">${icone[a.type] || "•"}</span>`;
+  }).join("")}</div>`;
+}
+
 function resumoTimeline(c) {
   const n = c || {};
   return `<div class="resumo-lead">
@@ -2355,19 +1843,29 @@ PAGES.lead = {
             <button class="btn btn-default btn-sm" data-edit>Editar</button>
           </div>
         </div>
+        ${barraPassosLead(l)}
       </div></div>
 
       <div class="split">
         <div>
           ${resumoTimeline(l.contadores)}
-          ${panel("Lead", `<table class="table"><tbody>${[
-            ["Situação", statusPill(l.status)],
-            ["Cadência", l.cadence ? h(l.cadence.name) : "—"],
-            ["Responsável", l.sdr ? h(l.sdr.name) : "—"],
+          ${panel("Geral", `<table class="table"><tbody>${[
+            ["Situação", statusPill(l.status) + (l.status === "WON" && l.wonAt ? ` <span class="text-muted text-size-small">(${fmtDate(l.wonAt)})</span>` : "")],
+            ["Cadência", l.cadence ? `⚑ ${h(l.cadence.name)}` : "—"],
+            ["Responsável", l.sdr ? `👤 ${h(l.sdr.name)}` : "—"],
             ["Cliente", l.client ? h(l.client.name) : "—"],
             ["Fit score", String(l.fitscore ?? 0)],
             ...(l.lostReason ? [["Motivo da perda", h(l.lostReason.name)]] : []),
+            ...(l.reprospect ? [["Nova prospecção", `<span class="pill blue">${fmtDate(l.reprospect.date + "T12:00:00")}</span>`]] : []),
           ].map(([k, v]) => `<tr><td class="text-grey">${k}</td><td>${v}</td></tr>`).join("")}</tbody></table>`)}
+          ${panel("Dados", `<table class="table"><tbody>${[
+            ["✉", l.email || "Não informado"], ["▣", l.company || "Não informado"],
+            ["☎", l.phone || "Não informado"], ["🌐", l.site || "Não informado"],
+          ].map(([k, v]) => `<tr><td class="text-grey" style="width:30px">${k}</td><td>${h(v)}</td></tr>`).join("")}</tbody></table>
+            <div class="lead-link"><label>Link do lead</label>
+              <div class="lead-link-linha"><input readonly id="ltLink" value="${h(`${location.origin}${location.pathname}#lead/${l.id}`)}" aria-label="Link do lead">
+              <button class="btn btn-default btn-xs" id="ltCopiar" title="Copiar link">⧉</button></div></div>`,
+            { actions: `<a data-edit2 style="cursor:pointer">Editar</a>` })}
           ${(() => {
             const c = l.contadores;
             if (!c) return "";
@@ -2625,12 +2123,15 @@ PAGES.lead = {
         go(`lead/${l.id}`);
       } catch (e) { toast(e.message, "err"); }
     };
-    view.querySelector("[data-won]").onclick = async () => {
-      try {
-        await api(`/api/flow/execution/leads/${l.id}/outcome`, { method: "POST", body: { outcome: "WON" } });
-        toast("Lead ganho.", "ok"); go(`lead/${id}`);
-      } catch (e) { toast(e.message, "err"); }
+    view.querySelector("[data-won]").onclick = () => openWonFlow(l.id, () => go(`lead/${id}`));
+    const copiar = view.querySelector("#ltCopiar");
+    if (copiar) copiar.onclick = async () => {
+      const campo = view.querySelector("#ltLink");
+      try { await navigator.clipboard.writeText(campo.value); toast("Link copiado.", "ok"); }
+      catch { campo.select(); toast("Selecionei o link: copie com Ctrl+C."); }
     };
+    const editar2 = view.querySelector("[data-edit2]");
+    if (editar2) editar2.onclick = () => openLeadForm(l);
     view.querySelector("[data-lost]").onclick = () => openLostModal(l.id, () => go(`lead/${id}`));
     view.querySelector("[data-wa]").onclick = async () => {
       try {
@@ -2710,12 +2211,7 @@ async function openLeadModal(id) {
 
   m.root.querySelector("[data-close2]").onclick = m.close;
   m.root.querySelector("[data-edit]").onclick = () => { m.close(); openLeadForm(l); };
-  m.root.querySelector("[data-won]").onclick = async () => {
-    try {
-      await api(`/api/flow/execution/leads/${l.id}/outcome`, { method: "POST", body: { outcome: "WON" } });
-      m.close(); toast("Lead ganho.", "ok"); go(state.page);
-    } catch (e) { toast(e.message, "err"); }
-  };
+  m.root.querySelector("[data-won]").onclick = () => { m.close(); openWonFlow(l.id, () => go(state.page)); };
   m.root.querySelector("[data-lost]").onclick = () => { m.close(); openLostModal(l.id, () => go(state.page)); };
   m.root.querySelector("[data-wa]").onclick = async () => {
     try {
@@ -2986,66 +2482,70 @@ function openTeamForm(time, usuarios) {
   };
 }
 
+/* ── Adicionar / editar lead ─────────────────────────────────────────────
+   No formato do "Adicionar lead" do Meetime: Configurações de entrada
+   (inbound, início imediato ou aguardar, responsável, cadência), os quatro
+   campos gerais obrigatórios e "+ Ver mais" com o resto. Os campos que só o
+   Bluutime tem (CNPJ, cliente, melhor horário, origem) moram no "Ver mais". */
 function openLeadForm(lead) {
   const l = lead || {};
+  const novo = !l.id;
+  const obrig = new Set((state.leadFieldsNativos || []).filter((c) => c.required).map((c) => c.identifier));
+  if (!obrig.size) ["firstName", "name", "email", "company"].forEach((k) => obrig.add(k));
+  const est = (k) => (obrig.has(k) ? "* " : "");
+  const campo = (id, rot, chave, valor, extra = "") => `<div class="field"><label for="${id}">${est(chave)}${rot}:</label>
+      <input class="form-control" id="${id}" value="${h(valor || "")}"${extra}></div>`;
   const m = modal({
-    title: l.id ? `Editar ${l.name}` : "Novo lead",
+    title: novo ? "Adicionar lead" : `Editar lead (${l.name})`,
+    wide: true,
     body: `
+      ${novo ? `<div class="lf-sec">CONFIGURAÇÕES DE ENTRADA</div>
+      <label class="lf-check"><input type="checkbox" id="fInbound"${l.inbound ? " checked" : ""}> Adicionar como lead inbound</label>
+      <div class="lf-inicio" id="fInicio">
+        <label class="lf-radio"><input type="radio" name="fInicio" id="fStartNow" value="agora" checked>
+          <span><b>Início imediato</b><small>Disponibilizar a execução do lead imediatamente.</small></span></label>
+        <label class="lf-radio"><input type="radio" name="fInicio" id="fAguardar" value="aguardar">
+          <span><b>Aguardar início</b><small>O vendedor receberá esse lead ao iniciar a prospecção de novos leads (na página de execução).</small></span></label>
+      </div>` : `<div class="lf-sec">CONFIGURAÇÕES</div>
+      <label class="lf-check"><input type="checkbox" id="fInbound"${l.inbound ? " checked" : ""}> Lead inbound</label>`}
       <div class="field-row">
-        <div class="field"><label for="fName">Nome *</label><input class="form-control" id="fName" value="${h(l.name || "")}"></div>
-        <div class="field"><label for="fPosition">Cargo</label><input class="form-control" id="fPosition" value="${h(l.position || "")}"></div>
+        <div class="field"><label for="fSdr">👤 Responsável</label>
+          <select class="form-control" id="fSdr">${options(state.users, (l.sdr && l.sdr.id) || (novo && state.me && state.me.id), { blank: "—" })}</select></div>
+        <div class="field"><label for="fCadence">⚑ ${novo ? "* " : ""}Cadência</label>
+          <select class="form-control" id="fCadence">${options(state.cadences, l.cadence && l.cadence.id, { blank: "Procurar por cadência" })}</select></div>
       </div>
+
+      <div class="lf-sec">INFORMAÇÕES DO LEAD</div>
+      <div class="lf-sub">Geral</div>
       <div class="field-row">
-        <div class="field"><label for="fCompany">Empresa</label><input class="form-control" id="fCompany" value="${h(l.company || "")}"></div>
-        <div class="field"><label for="fCnpj">CNPJ</label><input class="form-control" id="fCnpj" value="${h(l.cnpj || "")}"></div>
-      </div>
-      <div class="field-row">
-        <div class="field"><label for="fPhone">Telefone</label><input class="form-control" id="fPhone" value="${h(l.phone || "")}"></div>
-        <div class="field"><label for="fEmail">E-mail</label><input class="form-control" id="fEmail" value="${h(l.email || "")}"></div>
-      </div>
-      <div class="field-row">
-        <div class="field"><label for="fCity">Cidade</label><input class="form-control" id="fCity" value="${h(l.city || "")}"></div>
-        <div class="field"><label for="fState">UF</label><input class="form-control" id="fState" value="${h(l.state || "")}"></div>
-      </div>
-      <div class="field-row">
-        <div class="field"><label for="fClient">Cliente</label>
-          <select class="form-control" id="fClient">${options(state.clients, l.client && l.client.id, { blank: "—" })}</select></div>
-        <div class="field"><label for="fSdr">SDR</label>
-          <select class="form-control" id="fSdr">${options(state.users, l.sdr && l.sdr.id, { blank: "—" })}</select></div>
-      </div>
-      <div class="field-row">
-        <div class="field"><label for="fCadence">Cadência</label>
-          <select class="form-control" id="fCadence">${options(state.cadences, l.cadence && l.cadence.id, { blank: "—" })}</select></div>
-        <div class="field"><label for="fHour">Melhor horário de contato</label>
-          <input class="form-control" type="number" min="6" max="22" id="fHour" value="${l.bestHour || 18}"></div>
+        ${campo("fEmail", "E-mail", "email", l.email, ' type="email"')}
+        ${campo("fCompany", "Empresa", "company", l.company)}
       </div>
       <div class="field-row">
-        <div class="field"><label for="fSource">Fonte <span class="text-grey">— de onde veio</span></label>
-          <input class="form-control" id="fSource" list="fonteSugestao" value="${h(l.source || "")}"
-                 placeholder="CapiBLU, indicação, evento…">
-          <datalist id="fonteSugestao">
-            ${["CapiBLU", "Indicação", "Site", "Evento", "Lista comprada", "LinkedIn"]
-              .map((o) => `<option value="${o}">`).join("")}
-          </datalist></div>
-        <div class="field"><label for="fChannel">Canal</label>
-          <input class="form-control" id="fChannel" value="${h(l.channel || "")}" placeholder="Outbound, inbound, parceria…"></div>
-        <div class="field"><label for="fCampaign">Campanha</label>
-          <input class="form-control" id="fCampaign" value="${h(l.campaign || "")}"></div>
+        ${campo("fFirst", "Primeiro nome", "firstName", l.firstName)}
+        ${campo("fName", "Nome completo", "name", l.name)}
       </div>
-      <div class="toolbar" style="border:0;padding:0 0 10px;background:none;flex-wrap:wrap;gap:16px">
-        <label><input type="checkbox" id="fInbound"${l.inbound ? " checked" : ""}> Lead inbound
-          <span class="text-muted text-size-small">— procurou a BLU, não o contrário</span></label>
-        ${l.id ? "" : `<label><input type="checkbox" id="fStartNow" checked> Começar a cadência agora
-          <span class="text-muted text-size-small">— desmarcado, o lead entra em espera sem atividade agendada</span></label>`}
-      </div>
-      <div class="field"><label for="fNotes">Anotações</label><textarea class="form-control" id="fNotes">${h(l.annotations || "")}</textarea></div>
-      ${(state.leadFields || []).length ? `<div class="sub-block">
-        <h4>Campos personalizados</h4>
+
+      <div id="lfMais" ${novo ? "hidden" : ""}>
+        <div class="field-row">
+          ${campo("fPosition", "Cargo", "position", l.position)}
+          ${campo("fSite", "Site", "site", l.site)}
+        </div>
+        <div class="field-row">
+          ${campo("fState", "Estado", "state", l.state)}
+          ${campo("fCity", "Cidade", "city", l.city)}
+        </div>
+        <div class="lf-sub">Telefone(s)</div>
+        <div class="field-row">
+          ${campo("fPhone", "Telefone", "phone", l.phone, ' placeholder="(DDD) número — separe vários por vírgula"')}
+          ${campo("fLinkedin", "LinkedIn", "linkedIn", l.linkedIn)}
+        </div>
+        ${(state.leadFields || []).length ? `<div class="lf-sub">Campos personalizados</div>
         <div class="field-row">
           ${(state.leadFields || []).map((c) => {
             const atual = (l.customFields || {})[c.identifier] || "";
             const opcoes = c.options || [];
-            return `<div class="field"><label for="cf-${h(c.identifier)}">${h(c.name)}</label>
+            return `<div class="field"><label for="cf-${h(c.identifier)}">${h(c.name)}${c.wonMandatory ? ` <span class="text-muted text-size-small">(obrigatório no ganho)</span>` : ""}</label>
               ${opcoes.length
                 ? `<select class="form-control" data-cf="${h(c.identifier)}" id="cf-${h(c.identifier)}">
                      <option value="">—</option>
@@ -3054,34 +2554,72 @@ function openLeadForm(lead) {
                 : `<input class="form-control" data-cf="${h(c.identifier)}" id="cf-${h(c.identifier)}" value="${h(atual)}">`}
             </div>`;
           }).join("")}
-        </div></div>` : ""}`,
+        </div>` : ""}
+        <div class="lf-sub">Bluutime</div>
+        <div class="field-row">
+          <div class="field"><label for="fCnpj">CNPJ</label><input class="form-control" id="fCnpj" value="${h(l.cnpj || "")}"></div>
+          <div class="field"><label for="fClient">Cliente</label>
+            <select class="form-control" id="fClient">${options(state.clients, l.client && l.client.id, { blank: "—" })}</select></div>
+          <div class="field"><label for="fHour">Melhor horário de contato</label>
+            <input class="form-control" type="number" min="6" max="22" id="fHour" value="${l.bestHour || 18}"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="fSource">Fonte</label>
+            <input class="form-control" id="fSource" list="fonteSugestao" value="${h(l.source || "")}" placeholder="CapiBLU, indicação, evento…">
+            <datalist id="fonteSugestao">${["CapiBLU", "Indicação", "Site", "Evento", "Lista comprada", "LinkedIn"].map((o) => `<option value="${o}">`).join("")}</datalist></div>
+          <div class="field"><label for="fChannel">Canal</label>
+            <input class="form-control" id="fChannel" value="${h(l.channel || "")}" placeholder="Outbound, inbound, parceria…"></div>
+          <div class="field"><label for="fCampaign">Campanha</label><input class="form-control" id="fCampaign" value="${h(l.campaign || "")}"></div>
+        </div>
+        <div class="field"><label for="fNotes">Anotações</label><textarea class="form-control" id="fNotes">${h(l.annotations || "")}</textarea></div>
+      </div>
+      ${novo ? `<div class="lf-vermais"><a id="lfVerMais">+ Ver mais</a></div>` : ""}`,
     footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
              <button class="btn btn-main btn-sm" data-save>Salvar</button>`,
   });
-  m.root.querySelector("[data-cancel]").onclick = m.close;
-  m.root.querySelector("[data-save]").onclick = async (e) => {
-    const g = (id) => m.root.querySelector(id).value.trim();
+  const q = (sel) => m.root.querySelector(sel);
+  q("[data-cancel]").onclick = m.close;
+  const verMais = q("#lfVerMais");
+  if (verMais) verMais.onclick = () => {
+    const bloco = q("#lfMais");
+    bloco.hidden = !bloco.hidden;
+    verMais.textContent = bloco.hidden ? "+ Ver mais" : "− Ver menos";
+  };
+  // Primeiro nome acompanha o nome completo até alguém mexer nele de propósito.
+  const primeiro = q("#fFirst");
+  let primeiroMexido = !!l.firstName;
+  primeiro.oninput = () => { primeiroMexido = true; };
+  q("#fName").oninput = () => { if (!primeiroMexido) primeiro.value = q("#fName").value.trim().split(/\s+/)[0] || ""; };
+
+  q("[data-save]").onclick = async (e) => {
+    const g = (sel) => (q(sel) ? q(sel).value.trim() : "");
     const body = {
-      name: g("#fName"), position: g("#fPosition"), company: g("#fCompany"),
+      name: g("#fName"), firstName: g("#fFirst"), position: g("#fPosition"), company: g("#fCompany"),
+      site: g("#fSite"), linkedIn: g("#fLinkedin"),
       cnpj: g("#fCnpj"), phone: g("#fPhone"), email: g("#fEmail"),
       city: g("#fCity"), state: g("#fState"), annotations: g("#fNotes"),
       bestHour: Number(g("#fHour")) || 18,
-      customFields: Object.fromEntries(
-        [...m.root.querySelectorAll("[data-cf]")].map((el) => [el.dataset.cf, el.value])),
+      customFields: Object.fromEntries([...m.root.querySelectorAll("[data-cf]")].map((el) => [el.dataset.cf, el.value])),
       clientId: Number(g("#fClient")) || null, sdrId: Number(g("#fSdr")) || null,
       cadenceId: Number(g("#fCadence")) || null,
       source: g("#fSource"), channel: g("#fChannel"), campaign: g("#fCampaign"),
-      inbound: m.root.querySelector("#fInbound").checked,
+      inbound: q("#fInbound").checked,
     };
-    const comecar = m.root.querySelector("#fStartNow");
-    if (comecar) body.startNow = comecar.checked;
-    if (!body.name) return toast("O nome é obrigatório.", "err");
+    if (novo) body.startNow = q("#fStartNow").checked;
+    const rotulos = { firstName: "Primeiro nome", name: "Nome completo", email: "E-mail", company: "Empresa",
+                      position: "Cargo", phone: "Telefone", site: "Site", state: "Estado", city: "Cidade" };
+    const falta = Object.keys(rotulos).filter((k) => obrig.has(k) && !body[k]);
+    if (!body.name) falta.unshift("name");
+    if (falta.length) return toast(`Preencha: ${[...new Set(falta)].map((k) => rotulos[k]).join(", ")}.`, "err");
+    if (body.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(body.email)) return toast("E-mail inválido.", "err");
+    if (novo && !body.cadenceId) return toast("Escolha a cadência.", "err");
     const btn = e.currentTarget;
     btn.disabled = true;
     try {
       if (l.id) await api(`/api/flow/leads/${l.id}`, { method: "PATCH", body });
       else await api("/api/flow/leads", { method: "POST", body });
-      m.close(); toast("Lead salvo.", "ok"); go("leads");
+      m.close(); toast(novo ? "Lead adicionado com sucesso." : "Lead salvo.", "ok");
+      if (novo || rota(state.page).nome === "leads") go("leads"); else go(state.page);
     } catch (err) { toast(err.message, "err"); btn.disabled = false; }
   };
 }

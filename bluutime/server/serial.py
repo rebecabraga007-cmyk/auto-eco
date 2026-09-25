@@ -99,6 +99,8 @@ def lead(l, custom=None, fitscore=None):
         "wonAt": iso(l.won_at), "lostAt": iso(l.lost_at), "createdAt": iso(l.created_at),
         "source": l.source, "channel": l.channel, "campaign": l.campaign,
         "inbound": l.inbound,
+        "reprospect": ({"date": l.reprospect_at.isoformat(), "cadenceId": l.reprospect_cadence_id}
+                       if l.reprospect_at else None),
         "customFields": custom or {}, "fitscore": fitscore or 0,
     }
 
@@ -119,7 +121,9 @@ def lead_activity(la, overdue_ref=None):
                  "bestHour": la.lead.best_hour, "status": la.lead.status,
                  "cadence": {"id": la.lead.cadence.id, "name": la.lead.cadence.name,
                              "priority": la.lead.cadence.priority} if la.lead.cadence else None,
-                 "client": client(la.lead.client)} if la.lead else None,
+                 "client": client(la.lead.client),
+                 "leadBase": ({"id": la.lead.lead_base.id, "name": la.lead.lead_base.name}
+                              if la.lead.lead_base else None)} if la.lead else None,
     }
 
 

@@ -35,8 +35,27 @@ def capiblu_error() -> str | None:
     return _import_error
 
 
-def _headers() -> dict:
-    user = session_user() or {}
+# Rotas do serviço de dados que gastam consulta paga — mesmo recorte do proxy
+# de produção (app_online/main.py). Caminhos do serviço de dados, sem o
+# prefixo `/capiblu` do mount.
+CONSULTA_PREFIXES = ("/api/person", "/api/phone", "/api/assertiva", "/api/company",
+                     "/api/dossie", "/api/enrich/run")
+GRATUITAS = ("/api/person/name-search", "/api/person/resolve", "/api/cnpj/lookup",
+             "/api/prospeccao/modelo")
+
+
+def custa(caminho: str) -> bool:
+    """A rota do serviço de dados consome consulta paga?"""
+    if any(caminho.startswith(g) for g in GRATUITAS):
+        return False
+    return any(caminho.startswith(p) for p in CONSULTA_PREFIXES)
+
+
+def identidade(user: dict | None) -> dict:
+    """Headers de identidade que o serviço de dados usa para decidir admin,
+    grupo e em nome de quem registrar o custo. Sempre saem da SESSÃO: vindos
+    do navegador, qualquer um se declarava admin."""
+    user = user or {}
     headers = {"X-User-Email": user.get("email", ""),
                "X-User-Role": user.get("role", ""),
                "X-User-Grupo": user.get("grupo_id") or ""}
@@ -46,11 +65,35 @@ def _headers() -> dict:
     return headers
 
 
+def _headers() -> dict:
+    return identidade(session_user())
+
+
+def cota_estourada(user: dict | None) -> str:
+    """Confere e registra uma consulta paga. Devolve a mensagem de bloqueio, ou
+    string vazia se pode seguir. Admin não tem limite."""
+    if not user or user.get("role") == "admin":
+        return ""
+    capiblu_on_path()
+    import auth as capiblu_auth  # lupa-empresas/backend/auth.py
+    limite = capiblu_auth.limite_efetivo(user)
+    if capiblu_auth.consumo_hoje(user["id"]) >= limite:
+        return f"Limite diário de {limite} consultas atingido. Fale com um admin para aumentar."
+    capiblu_auth.registrar_consumo(user["id"])
+    return ""
+
+
 async def call(method: str, path: str, *, params=None, json=None, timeout: float = 120.0):
     """Chama uma rota do CapiBLU e devolve (status, payload)."""
     app = capiblu_app()
     if app is None:
         return 503, {"detail": f"Serviço de dados do CapiBLU indisponível. {_import_error}"}
+    # As rotas /api/capiblu/* do Bluutime chegam aqui por dentro e não passam
+    # pela contagem do middleware: a cota é cobrada neste ponto.
+    if custa(path):
+        bloqueio = cota_estourada(session_user())
+        if bloqueio:
+            return 429, {"detail": bloqueio}
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://capiblu",
                                  timeout=timeout) as client:
