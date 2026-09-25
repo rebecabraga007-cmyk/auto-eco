@@ -27,7 +27,7 @@ from .capiblu_client import identidade as capiblu_client_identidade  # noqa: E40
 from .migrate import run as run_migrations  # noqa: E402
 from . import agenda, auditoria, feriados, perm, tick  # noqa: E402
 from .db import SessionLocal  # noqa: E402
-from .routers import (academia, analytics, capiblu, core, dialer, envio,  # noqa: E402
+from .routers import (academia, analytics, api_v1, capiblu, core, dialer, envio,  # noqa: E402
                       flow, integracoes, meetime, whatsapp)
 from .seed import seed_if_empty  # noqa: E402
 
@@ -62,6 +62,7 @@ app.include_router(envio.publico)            # /t/o/*, /t/c/* — abertos pelo l
 app.include_router(integracoes.router)
 app.include_router(meetime.router)
 app.include_router(academia.router)
+app.include_router(api_v1.router)             # /api/v1/* — token de API, não sessão
 
 _PUBLIC = {"/api/auth/login", "/api/auth/logout", "/api/auth/emergency-reset",
            # Chamado pelo provedor, nao pelo navegador — autentica por token proprio.
@@ -78,7 +79,8 @@ async def sessao(request: Request, call_next):
     user = capiblu_auth.user_from_request(request) if protected or path == "/" else None
     set_session_user(user)
 
-    if protected and path not in _PUBLIC:
+    # /api/v1/* é a API externa: autentica por token de API dentro da rota.
+    if protected and path not in _PUBLIC and not path.startswith("/api/v1/"):
         if not user:
             return JSONResponse({"detail": "Não autenticado."}, status_code=401)
         request.state.user = user

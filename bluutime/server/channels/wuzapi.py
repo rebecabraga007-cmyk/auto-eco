@@ -18,6 +18,16 @@ import re
 
 import httpx
 
+
+def _campo(data: dict, *nomes, padrao=None):
+    """Lê o primeiro nome presente. O wuzapi trocou `Connected`/`LoggedIn`/
+    `QRCode`/`Id` por minúsculas entre versões, e a imagem é `latest`: com só
+    um dos formatos, o estado aparecia DISCONNECTED com o número conectado."""
+    for n in nomes:
+        if isinstance(data, dict) and n in data and data[n] not in (None, ""):
+            return data[n]
+    return padrao
+
 from .base import Channel, SendResult
 
 
@@ -71,12 +81,18 @@ class Wuzapi(Channel):
             # `Connected` é o socket com o WhatsApp; `LoggedIn` é a sessão
             # pareada. Conectado sem estar logado significa que o QR expirou ou
             # ninguém escaneou — e é um estado bem diferente de "pronto".
-            conectado, logado = bool(data.get("Connected")), bool(data.get("LoggedIn"))
+            conectado = bool(_campo(data, "connected", "Connected", padrao=False))
+            logado = bool(_campo(data, "loggedIn", "LoggedIn", padrao=False))
             out["state"] = ("CONNECTED" if conectado and logado
                             else "PAIRING" if conectado
                             else "DISCONNECTED")
-            out["instance"] = data.get("Name") or data.get("Id") or ""
-            out["raw"] = data
+            out["instance"] = _campo(data, "name", "Name", "id", "Id", padrao="")
+            # Número pareado, sem o sufixo de aparelho. Nada além disso sai daqui:
+            # a resposta do wuzapi traz o TOKEN do usuário, e antes ela ia inteira
+            # (`raw`) para qualquer pessoa logada no Bluutime.
+            jid = str(_campo(data, "jid", "JID", padrao="") or "")
+            out["numero"] = jid.split("@")[0].split(":")[0]
+            out["webhookConfigurado"] = bool(_campo(data, "webhook", "Webhook", padrao=""))
         except Exception as exc:
             out["state"] = "UNREACHABLE"
             out["reason"] = type(exc).__name__
@@ -105,8 +121,8 @@ class Wuzapi(Channel):
             async with self._client() as c:
                 r = await c.get("/session/qr")
             data = (r.json() or {}).get("data", {}) if r.status_code < 400 else {}
-            return {"ok": bool(data.get("QRCode")), "qrcode": data.get("QRCode", ""),
-                    "status": r.status_code}
+            qr = _campo(data, "QRCode", "qrcode", "qrCode", padrao="")
+            return {"ok": bool(qr), "qrcode": qr, "status": r.status_code}
         except Exception as exc:
             return {"ok": False, "error": type(exc).__name__}
 
@@ -129,6 +145,22 @@ class Wuzapi(Channel):
             return {"ok": False, "error": type(exc).__name__}
 
 
+    async def configurar_webhook(self, url: str) -> dict:
+        """Aponta o webhook do usuário do wuzapi para o Bluutime.
+
+        Estava vazio em produção: nenhuma resposta de lead chegava. Manda os
+        dois nomes de campo porque a API mudou entre versões."""
+        ok, why = self.configured()
+        if not ok:
+            return {"ok": False, "error": why}
+        try:
+            async with self._client() as c:
+                r = await c.post("/webhook", json={"webhookURL": url, "webhook": url,
+                                                   "events": ["Message"]})
+            return {"ok": r.status_code < 400, "status": r.status_code}
+        except Exception as exc:
+            return {"ok": False, "error": type(exc).__name__}
+
     async def check_number(self, phone: str) -> bool | None:
         ok, _ = self.configured()
         num = to_phone(phone)
@@ -139,8 +171,9 @@ class Wuzapi(Channel):
                 r = await c.post("/user/check", json={"Phone": [num]})
             if r.status_code >= 400:
                 return None
-            users = ((r.json() or {}).get("data", {}) or {}).get("Users", [])
-            return bool(users and users[0].get("IsInWhatsapp"))
+            dados = (r.json() or {}).get("data", {}) or {}
+            users = _campo(dados, "Users", "users", padrao=[])
+            return bool(users and _campo(users[0], "IsInWhatsapp", "isInWhatsapp", padrao=False))
         except Exception:
             return None
 
@@ -159,7 +192,7 @@ class Wuzapi(Channel):
                 return SendResult("FAILED", "wuzapi",
                                   error=str(data.get("error") or data)[:200], detail=data)
             return SendResult("SENT", "wuzapi",
-                              provider_id=str((data.get("data") or {}).get("Id", "")),
+                              provider_id=str(_campo(data.get("data") or {}, "Id", "id", padrao="")),
                               detail=data)
         except Exception as exc:
             return SendResult("FAILED", "wuzapi", error=type(exc).__name__)

@@ -64,8 +64,9 @@ def _hash(token: str) -> str:
 def criar(user_id: int, nome: str, escopo: str = "leitura") -> dict:
     """Cria um token e devolve o valor EM CLARO (única vez que ele existe assim)."""
     nome = (nome or "").strip() or "sem nome"
-    if escopo not in ("leitura", "consulta"):
-        raise ValueError("escopo deve ser 'leitura' (base local) ou 'consulta' (permite gastar).")
+    if escopo not in ("leitura", "consulta", "whatsapp"):
+        raise ValueError("escopo deve ser 'leitura' (base local), 'consulta' (permite gastar) "
+                         "ou 'whatsapp' (envia mensagens pelo Bluutime).")
     prefixo = secrets.token_hex(4)
     segredo = secrets.token_urlsafe(24)
     token = f"{PREFIXO}_{prefixo}_{segredo}"

@@ -534,6 +534,10 @@ class Message(Base):
     status: Mapped[str] = mapped_column(String(12), default="SENT")
     provider_id: Mapped[str] = mapped_column(String(120), default="", index=True)
     error: Mapped[str] = mapped_column(String(240), default="")
+    # Envio pela API externa (/api/v1/whatsapp): de qual token veio e a
+    # referência do cliente, que torna o reenvio idempotente.
+    origem: Mapped[str] = mapped_column(String(80), default="")
+    referencia: Mapped[str] = mapped_column(String(120), default="", index=True)
 
 
 class Delivery(Base):

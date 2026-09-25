@@ -68,6 +68,34 @@ Isso não é teórico: a Evolution `v2.1.1` do blueprint do Render ficou presa n
 versão de cliente que o WhatsApp já não aceita, entrava em laço de reconexão e
 **nem chegava a gerar QR**. Só voltou a funcionar na `v2.3.7`.
 
+### Enviar WhatsApp por outro sistema (API)
+
+```bash
+curl -X POST https://bluu.capiblu.net/api/v1/whatsapp/mensagens   -H "Authorization: Bearer capi_xxxxxxxx_..." -H "Content-Type: application/json"   -d '{"telefone": "(41) 99999-8888", "mensagem": "Olá!", "referencia": "pedido-123"}'
+```
+
+- **Token:** Ajustes → Tokens de API → Gerar token, escopo **WhatsApp**. É o mesmo cadastro
+  dos tokens do CapiBLU; um token de WhatsApp não lê dados do CapiBLU, e um de leitura não
+  envia mensagem.
+- **Travas:** as mesmas da tela, e nesta ordem: não perturbe (número de lead marcado → 403,
+  sem exceção), janela 9h–18h (`"foraDaJanela": true` quando for intencional) e freio de mão
+  (`BLUUTIME_SEND` ≠ 1 → `SIMULATED`).
+- **Limites:** 30 mensagens por minuto e 500 por dia, por token.
+- **Idempotência:** a mesma `referencia` pelo mesmo token devolve o envio anterior
+  (`"repetida": true`) em vez de mandar de novo.
+- **Consultar:** `GET /api/v1/whatsapp/mensagens/{id}` (só as do próprio token) e
+  `GET /api/v1/whatsapp/status` (canal pronto? número pareado?).
+- A mensagem entra na conversa do número e, se ele for de um lead, no histórico de entregas
+  do lead. Todo envio fica na trilha de auditoria (`WHATSAPP_API`).
+
+### Receber respostas
+
+O webhook do usuário do wuzapi precisa apontar para
+`https://bluu.capiblu.net/api/whatsapp/webhook?token=<EVOLUTION_WEBHOOK_TOKEN>` — pela URL
+pública, porque o contêiner não alcança o `127.0.0.1` do servidor. Configura-se pelo botão
+**Configurar recebimento** em Canais e entregas. Mensagem de grupo e do próprio número é
+ignorada; o casamento com o lead é pelos últimos 8 dígitos, com ou sem máscara no cadastro.
+
 ## E-mail — SMTP
 
 ```bash

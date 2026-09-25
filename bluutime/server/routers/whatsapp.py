@@ -163,10 +163,13 @@ async def send_message(cid: int, payload: dict = Body(...), db: Session = Depend
     c = db.get(Conversation, cid)
     if not c:
         raise HTTPException(404, "Conversa não encontrada.")
-    perm.exigir_dono_lead(db, perm.ator(db), c.lead)
+    ator = perm.ator(db)
+    perm.exigir_dono_lead(db, ator, c.lead)
     body = (payload.get("body") or "").strip()
     if not body:
         raise HTTPException(400, "Mensagem vazia.")
+    if len(body) > 4096:
+        raise HTTPException(400, "Mensagem longa demais (máximo de 4096 caracteres).")
     lead = c.lead
     # Sem escape por parâmetro: para falar com este lead, tira-se a marca no
     # cadastro dele — ato deliberado — em vez de repetir a chamada com um flag.
@@ -181,7 +184,9 @@ async def send_message(cid: int, payload: dict = Body(...), db: Session = Depend
                 provider_id=r.provider_id, error=r.error, sent_at=r.at)
     db.add(m)
     if lead:
-        db.add(Delivery(lead_id=lead.id, user_id=payload.get("userId"),
+        # O autor é quem está logado: `userId` no corpo deixava atribuir o
+        # envio a outra pessoa e distorcer as métricas dela.
+        db.add(Delivery(lead_id=lead.id, user_id=ator.user_id,
                         channel="WHATSAPP", to_address=destino, body=body,
                         status=r.status, provider=r.provider,
                         provider_id=r.provider_id, error=r.error))
@@ -189,6 +194,34 @@ async def send_message(cid: int, payload: dict = Body(...), db: Session = Depend
     db.commit()
     return {"id": m.id, "direction": m.direction, "body": m.body,
             "sentAt": iso(m.sent_at), **r.as_dict()}
+
+
+def digitos(tel: str) -> str:
+    return re.sub(r"\D", "", tel or "")
+
+
+def mesmo_numero(a: str, b: str) -> bool:
+    """Mesmo telefone? Pelos últimos 8 dígitos: DDI e o nono dígito entram e
+    saem conforme a origem do cadastro. Comparar o texto errava sempre que o
+    lead estava gravado com máscara, "(41) 99999-8888"."""
+    da, db_ = digitos(a), digitos(b)
+    return len(da) >= 8 and len(db_) >= 8 and da[-8:] == db_[-8:]
+
+
+def achar_conversa(db: Session, tel: str) -> Conversation | None:
+    fim = digitos(tel)[-4:]
+    candidatas = db.query(Conversation).filter(Conversation.phone.like(f"%{fim}%")).all() if fim else []
+    return next((c for c in candidatas if mesmo_numero(c.phone, tel)), None)
+
+
+def achar_leads(db: Session, tel: str) -> list[Lead]:
+    """Todos os leads com esse telefone (em qualquer um dos números do cadastro)."""
+    fim = digitos(tel)[-4:]
+    if not fim:
+        return []
+    candidatos = db.query(Lead).filter(Lead.phone.like(f"%{fim[:2]}%{fim[2:]}%")).all()
+    return [l for l in candidatos
+            if any(mesmo_numero(t, tel) for t in re.split(r"[,;/|]", l.phone or ""))]
 
 
 def _ler_entrada(payload: dict) -> tuple[str, str, bool]:
@@ -210,6 +243,10 @@ def _ler_entrada(payload: dict) -> tuple[str, str, bool]:
         texto = (msg.get("conversation")
                  or (msg.get("extendedTextMessage") or {}).get("text") or "").strip()
         remetente = str(info.get("Sender") or info.get("Chat") or "")
+        # Grupo não é conversa com lead: a mensagem de um participante viraria
+        # "lead respondeu" para quem tivesse o número parecido.
+        if info.get("IsGroup") or "@g.us" in str(info.get("Chat") or ""):
+            return "", "", True
         numero = remetente.split("@")[0].split(":")[0]
         return texto, numero, bool(info.get("IsFromMe"))
 
@@ -223,8 +260,30 @@ def _ler_entrada(payload: dict) -> tuple[str, str, bool]:
     return texto, numero, bool(key.get("fromMe"))
 
 
+async def _corpo_webhook(request: Request) -> dict:
+    """O wuzapi manda JSON ou formulário com o JSON no campo `jsonData`,
+    conforme a versão e a configuração; a Evolution manda JSON."""
+    import json
+    tipo = request.headers.get("content-type", "")
+    if "form" in tipo:
+        form = await request.form()
+        bruto = form.get("jsonData") or "{}"
+        try:
+            dados = json.loads(bruto)
+        except ValueError:
+            dados = {}
+        if form.get("token") and "token" not in dados:
+            dados["token"] = form.get("token")
+        return dados if isinstance(dados, dict) else {}
+    try:
+        dados = await request.json()
+    except ValueError:
+        return {}
+    return dados if isinstance(dados, dict) else {}
+
+
 @router.post("/webhook")
-async def webhook(request: Request, payload: dict = Body(...), db: Session = Depends(get_db)):
+async def webhook(request: Request, db: Session = Depends(get_db)):
     """Mensagem que chega da Evolution API.
 
     Aberta sem autenticação de usuário porque quem chama é o provedor, não o
@@ -247,7 +306,11 @@ async def webhook(request: Request, payload: dict = Body(...), db: Session = Dep
         # externo criar conversa/mensagem falsa e até disparar "lead
         # respondeu" (pausa cadência de verdade).
         raise HTTPException(503, "EVOLUTION_WEBHOOK_TOKEN não configurado no servidor.")
-    if not hmac.compare_digest(str(payload.get("token") or ""), esperado):
+    payload = await _corpo_webhook(request)
+    # O token pode vir na URL (`?token=`), que é como o wuzapi é configurado:
+    # ele não repete no corpo um segredo nosso.
+    recebido = request.query_params.get("token") or str(payload.get("token") or "")
+    if not hmac.compare_digest(recebido, esperado):
         raise HTTPException(401, "Token de webhook inválido.")
 
     texto, jid, proprio = _ler_entrada(payload)
@@ -256,13 +319,12 @@ async def webhook(request: Request, payload: dict = Body(...), db: Session = Dep
     if not texto or not jid:
         return {"ok": True, "ignored": "sem texto ou remetente"}
 
-    # Casa pelos últimos 8 dígitos: o nono dígito do celular e o DDI entram e
-    # saem conforme a origem do cadastro, e comparar a string inteira erra.
-    sufixo = jid[-8:]
-    conv = (db.query(Conversation)
-            .filter(Conversation.phone.like(f"%{sufixo}")).first())
+    conv = achar_conversa(db, jid)
     if not conv:
-        lead = db.query(Lead).filter(Lead.phone.like(f"%{sufixo}")).first()
+        leads = achar_leads(db, jid)
+        # Com mais de um lead no mesmo número, fica o que está em prospecção.
+        lead = next((l for l in leads if l.status in ("EXECUTING", "ON_EXTRA_ACTIVITY")),
+                    leads[0] if leads else None)
         conv = Conversation(lead_id=lead.id if lead else None, phone=jid,
                             title=(lead.name if lead else jid))
         db.add(conv)

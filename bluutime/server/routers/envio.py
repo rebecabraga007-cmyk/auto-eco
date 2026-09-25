@@ -14,7 +14,7 @@ import secrets
 from datetime import datetime
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -76,6 +76,26 @@ async def whatsapp_desconectar(payload: dict = Body(default={}), db: Session = D
         raise HTTPException(400, f"O provedor {channels.provedor_whatsapp()} "
                                  "não expõe desconexão por aqui.")
     return await ch.disconnect(logout=bool(payload.get("logout")))
+
+
+@router.post("/whatsapp/webhook")
+async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
+    """Aponta o webhook do provedor para o Bluutime, com o token na URL.
+
+    Estava vazio em produção: nenhuma resposta de lead entrava nas conversas.
+    A URL é a pública (`BLUUTIME_PUBLIC_URL`, ou o endereço desta chamada),
+    porque o contêiner do wuzapi não alcança o 127.0.0.1 do servidor."""
+    import os
+    perm.ator(db).exigir("gestor", "configurar o webhook do WhatsApp")
+    ch = channels.get("WHATSAPP")
+    if not hasattr(ch, "configurar_webhook"):
+        raise HTTPException(400, f"O provedor {channels.provedor_whatsapp()} não é configurado por aqui.")
+    token = os.environ.get("EVOLUTION_WEBHOOK_TOKEN", "")
+    if not token:
+        raise HTTPException(400, "Defina EVOLUTION_WEBHOOK_TOKEN no .env antes de configurar o webhook.")
+    base = (os.environ.get("BLUUTIME_PUBLIC_URL") or str(request.base_url)).rstrip("/")
+    r = await ch.configurar_webhook(f"{base}/api/whatsapp/webhook?token={token}")
+    return {**r, "url": f"{base}/api/whatsapp/webhook?token=•••"}
 
 
 @router.get("/quem-sou-eu")

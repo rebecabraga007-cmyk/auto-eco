@@ -73,6 +73,10 @@ def _contexto(authorization: str) -> Contexto:
     tok = api_tokens.autenticar(authorization.split(" ", 1)[1].strip())
     if not tok:
         raise HTTPException(status_code=401, detail="Token inválido ou revogado.")
+    # Token 'whatsapp' só envia mensagem pelo Bluutime: não lê as bases daqui.
+    if tok["escopo"] not in ("leitura", _PAGO):
+        raise HTTPException(status_code=403,
+                            detail=f"Token do escopo '{tok['escopo']}' não acessa esta API.")
     usuarios = {u["id"]: u for u in _auth.list_users()}
     user = usuarios.get(tok["user_id"])
     if not user or not user.get("ativo"):

@@ -9250,6 +9250,7 @@ async function abaTokens() {
   const rows = (r.tokens || []).map((t) => ({ cells: [
     `<strong>${h(t.nome || t.name || "—")}</strong>`,
     h(t.email || t.usuario || "—"),
+    `<span class="pill ${t.escopo === "whatsapp" ? "green" : t.escopo === "consulta" ? "amber" : ""}">${h(t.escopo || "leitura")}</span>${t.ativo === false ? ` <span class="pill red">revogado</span>` : ""}`,
     t.criado_em ? fmtDate(epoch(t.criado_em)) : "—",
     t.ultimo_uso ? fmtDateTime(epoch(t.ultimo_uso)) : "nunca usado",
     `<button class="btn btn-default btn-xs tk-del" data-id="${t.id}">Revogar</button>`,
@@ -9261,13 +9262,14 @@ async function abaTokens() {
           e criar dados no Bluutime.</small></h1>
     </div>
     <div class="alert alert-primary">
-      <a href="/docs" target="_blank" rel="noopener" class="alert-link">Clique aqui</a>
+      <a href="/swagger" target="_blank" rel="noopener" class="alert-link">Clique aqui</a>
       para acessar a
-      <a href="/docs" target="_blank" rel="noopener" class="alert-link">documentação</a>
-      da API do Bluutime.
+      <a href="/swagger" target="_blank" rel="noopener" class="alert-link">documentação</a>
+      da API do Bluutime. Para enviar WhatsApp por outro sistema, gere um token de escopo
+      <b>WhatsApp</b> e chame <code>POST /api/v1/whatsapp/mensagens</code>.
     </div>
     ${panel("Token de API", rows.length
-      ? table(["Nome", "Dono", "Criado", "Último uso", ""], rows)
+      ? table(["Nome", "Dono", "Escopo", "Criado", "Último uso", ""], rows)
       : emptyState("Nenhum token gerado.",
                    "O token permite chamar a API sem passar pelo login."),
       { subtitle: "O token é gerado uma única vez, o qual permite consultar e enviar dados na sua "
@@ -9284,7 +9286,14 @@ async function abaTokens() {
                <select class="form-control" id="tnUser">
                  ${(r.usuarios || []).map((u) =>
                    `<option value="${u.id}">${h(u.email)}</option>`).join("")}
-               </select></div>`,
+               </select></div>
+             <div class="field"><label for="tnEscopo">Escopo</label>
+               <select class="form-control" id="tnEscopo">
+                 <option value="leitura">Leitura — consulta a base local do CapiBLU</option>
+                 <option value="consulta">Consulta — permite gastar consulta paga</option>
+                 <option value="whatsapp">WhatsApp — envia mensagens pelo Bluutime (POST /api/v1/whatsapp/mensagens)</option>
+               </select>
+               <div class="text-muted text-size-small">Um token de WhatsApp não lê dados; um de leitura não envia mensagem.</div></div>`,
       footer: `<button class="btn btn-default btn-sm" data-cancel>Cancelar</button>
                <button class="btn btn-main btn-sm" data-ok>Gerar</button>`,
     });
@@ -9294,7 +9303,8 @@ async function abaTokens() {
       if (!nome) return toast("Dê um nome ao token.", "err");
       try {
         const novo = await api("/api/admin/tokens", { method: "POST", body: {
-          nome, user_id: Number(m.root.querySelector("#tnUser").value) } });
+          nome, user_id: Number(m.root.querySelector("#tnUser").value),
+          escopo: m.root.querySelector("#tnEscopo").value } });
         m.close();
         // O valor só existe agora: o servidor guarda o hash.
         const valor = novo.token || novo.valor || JSON.stringify(novo);
@@ -9603,8 +9613,11 @@ async function abaCanais() {
         ${c.channel === "WHATSAPP" && c.configured && c.state !== "CONNECTED"
           ? `<button class="btn btn-main btn-sm ml-5" id="waParear">Parear número</button>`
           : ""}
+        ${c.channel === "WHATSAPP" && c.configured
+          ? `<button class="btn btn-default btn-sm ml-5" id="waWebhook"
+               title="Faz as respostas dos leads entrarem nas conversas">${c.webhookConfigurado ? "Reconfigurar" : "Configurar"} recebimento</button>` : ""}
         ${c.channel === "WHATSAPP" && c.state === "CONNECTED"
-          ? `<span class="text-muted text-size-small ml-5">Número pareado.</span>
+          ? `<span class="text-muted text-size-small ml-5">Número pareado${c.numero ? ` (${h(c.numero)})` : ""}.</span>
              <button class="btn btn-default btn-sm ml-5" id="waCair">Desconectar</button>
              <button class="btn btn-danger btn-sm ml-5" id="waSair">Desparear número</button>` : ""}
       </div>
@@ -9615,6 +9628,14 @@ async function abaCanais() {
   });
   const parear = document.getElementById("waParear");
   if (parear) parear.onclick = () => parearWhatsapp();
+  const wh = document.getElementById("waWebhook");
+  if (wh) wh.onclick = async () => {
+    try {
+      const r = await api("/api/envio/whatsapp/webhook", { method: "POST", body: {} });
+      toast(r.ok ? "Recebimento configurado: as respostas dos leads entram nas conversas." : `O provedor recusou (${r.status || r.error}).`, r.ok ? "ok" : "err");
+      go("envio");
+    } catch (e) { toast(e.message, "err"); }
+  };
   // Derrubar a sessão e desparear são coisas diferentes: a primeira volta
   // sozinha no próximo connect, a segunda exige ler o QR de novo.
   const cair = document.getElementById("waCair");
