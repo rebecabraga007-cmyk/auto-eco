@@ -8113,22 +8113,29 @@ function enrichAvisaDecisores() {
           }).then(r => r.json());
           (parcial.pessoas || []).forEach(x => d.pessoas.push(x));
         }
-        /* O funil completo devolve CPF, não telefone: ele é o funil de
-           IDENTIFICAÇÃO. Achado o CPF, o telefone é uma consulta direta --
-           e sem ela a consulta profunda entregaria um número de CPF para
-           quem estava atrás de um número de telefone. */
+        /* O FUNIL ACHA O CPF; O TELEFONE É SEMPRE DA ASSERTIVA, PELO CPF.
+           Regra da Rebeca (25/set/2026). O funil completo é de
+           IDENTIFICAÇÃO e não devolve telefone; o número vem de
+           `/api/funil/pessoa` com o CPF, que consulta a Assertiva e ordena
+           pela confiança dela (não perturbe por último, titular, WhatsApp,
+           celular, contato recente).
+
+           Dois erros que isto corrige: quando o caso fechava de graça, a
+           tela usava o telefone cru da ficha da WorkAPI; e quando pedia a
+           Assertiva, lia `dp.telefones` -- campo que não existe (a resposta
+           é `{identificacao, dossie: {telefones}}`) -- e mostrava "—" depois
+           de pagar a consulta. Se o funil já consultou a ficha desse CPF na
+           Assertiva, a resposta sai do cache dela e não cobra de novo. */
         for (const p of (d.pessoas || [])) {
           if (!p || !p.cpf) continue;
-          let tels = p.telefones || [];
-          if (!tels.length) {
-            try {
-              const dp = await fetch(`${API}/api/funil/pessoa`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cpf: p.cpf, teto_brl: 3 }),
-              }).then(r => r.json());
-              tels = dp.telefones || (dp.pessoa || {}).telefones || [];
-            } catch (err) { /* fica sem telefone, com o CPF que já é ganho */ }
-          }
+          let tels = [];
+          try {
+            const dp = await fetch(`${API}/api/funil/pessoa`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ cpf: p.cpf, teto_brl: 3 }),
+            }).then(r => r.json());
+            tels = (dp.dossie || {}).telefones || [];
+          } catch (err) { /* fica sem telefone, com o CPF que já é ganho */ }
           achados.push({ ...p, telefones: tels, _empresa: e.empresa });
         }
       } catch (err) { /* uma empresa falhar não pode parar as outras */ }

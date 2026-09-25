@@ -831,6 +831,13 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
         _lembrado = None
 
     def saida(situacao, cpf="", confianca=0, **extra):
+        # ESTE FUNIL ACHA CPF, NÃO TELEFONE. Os telefones que as etapas
+        # grátis juntam (ficha do MK/WorkAPI) servem para DECIDIR e ficam
+        # aqui dentro: o número entregue vem SEMPRE da Assertiva pelo CPF
+        # (`dossie_pessoa`, ordenado por `_ordem_telefone`) -- regra da
+        # Rebeca, 25/set/2026. Devolvê-los fazia a tela da consulta profunda
+        # mostrar o número cru da WorkAPI nos casos que fechavam de graça.
+        extra.pop("telefones", None)
         if nome != nome_exibido:
             etapas.insert(0, "slug:%s" % nome)
         # GRAVA O QUE CUSTOU PARA DESCOBRIR -- inclusive o "nao achei".
