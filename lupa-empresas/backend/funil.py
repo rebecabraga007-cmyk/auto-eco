@@ -85,6 +85,7 @@ import socio_unico
 import mkbuscas
 import rais
 import workapi
+import workapi_suspensa
 
 PRECO_ASSERTIVA = 0.119
 
@@ -551,9 +552,19 @@ async def _pelo_mk(candidatos: list[dict[str, Any]], cidade: str, uf: str,
     """
     toks_alvo = I._tokens_empresa(empresa)
     saida = []
+    # WORKAPI SUSPENSA: o MK deixa de ser gratis. Cada candidato conferido aqui
+    # vira uma consulta da Assertiva (R$), entao entra no teto do lote como
+    # qualquer outra consulta paga -- sem isso, uma lista de 12 homonimos
+    # gastaria 12 consultas por fora do limitador.
+    suspensa = workapi_suspensa.ativo()
     for c in candidatos[:MAX_MK]:
+        if suspensa:
+            if gasto.estourou():
+                break
+            gasto.assertiva += 1
+        else:
+            gasto.mk += 1
         d = await mkbuscas.consulta_cpf(c["cpf"])
-        gasto.mk += 1
         if d.get("status") != "ok":
             continue
         dd = d.get("data") or {}
@@ -600,7 +611,13 @@ async def _pela_workapi(nome: str, gasto: Gasto) -> list[dict[str, Any]]:
     ia parar na busca paga, que voltava vazia.
 
     Três tentativas porque o gateway recusa rajada com 403; ver `workapi.py`.
+
+    WORKAPI SUSPENSA: devolve vazio em vez de cair na Assertiva. A etapa 08
+    (`_pela_assertiva`) já faz essa mesma busca por nome, com teto de gasto;
+    trocar aqui pagaria a mesma consulta duas vezes no mesmo caso.
     """
+    if workapi_suspensa.ativo():
+        return []
     r = await workapi.nome_search(nome, limit=60, tentativas=3)
     gasto.workapi += 1
     if r.get("status") != "ok":
@@ -931,7 +948,8 @@ async def resolver_pessoa(perfil: dict[str, Any], emp: Empresa, gasto: Gasto,
         if f:
             livres = f
     ends = {_cpf(p["cpf"]): p["endereco"] for p in livres if _cpf(p["cpf"])}
-    etapas.append("06 WorkAPI:%d" % len(livres))
+    etapas.append("06 WorkAPI:%s" % ("suspensa" if workapi_suspensa.ativo()
+                                     else len(livres)))
 
     # A WorkAPI pode achar quem a JBR não achou (e vice-versa). Une os dois.
     candidatos = {c["cpf"]: c for c in jbr}
@@ -1359,6 +1377,12 @@ async def _telefones_do_cpf(cpf: str, gasto: Gasto) -> list[dict[str, Any]]:
             if tels:
                 return tels
 
+    # WORKAPI SUSPENSA: o recuo para o MK é justamente para quando o teto da
+    # Assertiva acabou -- e com a contingência ligada o "MK" É a Assertiva.
+    # Seguir aqui gastaria além do teto (ou repetiria a consulta que acabou de
+    # voltar vazia). Sem telefone é a resposta honesta.
+    if workapi_suspensa.ativo():
+        return []
     m = await mkbuscas.consulta_cpf(d)
     gasto.mk += 1
     if m.get("status") != "ok":

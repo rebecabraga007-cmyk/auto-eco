@@ -3989,6 +3989,8 @@ function useRenderMap(colunas) {
 })();
 
 function admCarregar() {
+  admWsuspCarregar();
+  admVigiaCarregar();
   admCustoTotal(30);
   admPrecosCarregar();
   admTokensCarregar();
@@ -5528,6 +5530,258 @@ async function admCustoBd(dias) {
 // A Assertiva não devolve preço em lugar nenhum da API; só o contrato diz.
 // Enquanto não preenchido, tudo é calculado pelo padrão (0,119) e o total do
 // relatório é estimativa.
+// ── Contingência "Work API Suspenso" ─────────────────────────────────
+// Liga/desliga a troca WorkAPI → Assertiva (backend/workapi_suspensa.py) e
+// mostra se a WorkAPI está respondendo AGORA, para a decisão não ser no escuro:
+// 522/523 é a origem da WorkAPI fora do ar, não o nosso túnel.
+let _wsuspAtivo = false;
+
+function admWsuspPinta(d) {
+  _wsuspAtivo = !!d.ativo;
+  const badge = document.getElementById('adm-wsusp-badge');
+  const botao = document.getElementById('adm-wsusp-botao');
+  const trocas = document.getElementById('adm-wsusp-trocas');
+  if (!badge || !botao) return;
+  const quando = d.desde ? new Date(d.desde * 1000).toLocaleString('pt-BR') : '';
+  badge.innerHTML = d.ativo
+    ? `<span style="color:#9A3324;font-weight:600">● LIGADO</span> — respostas vindo da Assertiva${quando ? ` desde ${esc(quando)}` : ''}${d.por ? ` (por ${esc(d.por)})` : ''}`
+    : `<span style="color:#2F6B4F;font-weight:600">● desligado</span> — usando a WorkAPI${quando && d.por ? ` · desligado em ${esc(quando)} por ${esc(d.por)}` : ''}`;
+  botao.disabled = false;
+  botao.className = d.ativo ? 'btn-secondary' : 'btn-primary';
+  botao.textContent = d.ativo ? '✅ WorkAPI voltou — desligar contingência' : '⚠️ Ligar contingência (usar Assertiva)';
+  if (!d.assertiva_ok && !d.ativo) {
+    botao.disabled = true;
+    botao.title = 'A Assertiva não está configurada neste serviço.';
+  }
+  if (trocas && d.trocas) {
+    trocas.innerHTML = `<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Função</th><th>Normal</th><th>Com a contingência</th></tr></thead><tbody>`
+      + d.trocas.map(x => `<tr${d.ativo ? '' : ' style="opacity:.75"'}><td>${esc(x.funcao)}</td><td>${esc(x.de)}</td><td>${esc(x.para)}</td></tr>`).join('')
+      + `</tbody></table></div>`
+      + `<p class="pf-advanced-hint" style="display:block;margin:8px 0 0">Enquanto ligada: renda e score (dados econômicos) e parentes não aparecem na ficha do CPF — a Assertiva não os entrega nessa consulta. `
+      + `O funil passa a pular a busca por nome da WorkAPI (a etapa paga da Assertiva já faz) e confere homônimos dentro do teto de gasto do lote; `
+      + `a lista de funcionários só desempata quem tem até 3 homônimos.</p>`;
+  }
+}
+
+function admWsuspSonda(w) {
+  const box = document.getElementById('adm-wsusp-sonda');
+  if (!box || !w) return;
+  box.innerHTML = w.no_ar
+    ? `✅ WorkAPI respondendo agora (HTTP ${esc(String(w.codigo))}, ${w.ms} ms)`
+    : `🔴 WorkAPI fora do ar agora — ${esc(w.motivo || '')}${w.codigo ? ` (HTTP ${esc(String(w.codigo))})` : ''}, ${w.ms} ms`;
+}
+
+async function admWsuspCarregar() {
+  const box = document.getElementById('adm-wsusp-sonda');
+  if (!box) return;
+  box.textContent = 'testando a WorkAPI…';
+  try {
+    const d = await fetch(`${API}/api/config/workapi-suspenso`).then(r => r.json());
+    if (d.status !== 'ok') { box.innerHTML = `<p class="msg error">${esc(d.detail || d.message || 'Falha ao carregar.')}</p>`; return; }
+    admWsuspPinta(d);
+    admWsuspSonda(d.workapi);
+  } catch (e) {
+    box.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`;
+  }
+}
+
+async function admWsuspAlternar() {
+  const ligar = !_wsuspAtivo;
+  if (ligar && !confirm('Ligar a contingência "Work API Suspenso"?' + String.fromCharCode(10, 10)
+      + 'CPF, telefone reverso e busca por nome passam a consultar a Assertiva — '
+      + 'cada consulta será COBRADA. Lembre de desligar quando a WorkAPI voltar.')) return;
+  const botao = document.getElementById('adm-wsusp-botao');
+  const status = document.getElementById('adm-wsusp-status');
+  botao.disabled = true;
+  status.textContent = 'salvando…';
+  try {
+    const d = await fetch(`${API}/api/config/workapi-suspenso`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ativo: ligar }),
+    }).then(r => r.json());
+    if (d.status !== 'ok') { status.textContent = '❌ ' + (d.message || d.detail || 'Falhou.'); botao.disabled = false; return; }
+    admWsuspPinta(d);
+    status.textContent = ligar ? '✅ Contingência ligada — vale em até 5 s para todas as telas.'
+                               : '✅ Contingência desligada — de volta à WorkAPI.';
+    if (typeof admVigiaCarregar === 'function') admVigiaCarregar();
+  } catch (e) {
+    status.textContent = 'Erro: ' + e.message;
+    botao.disabled = false;
+  }
+}
+
+(function () {
+  const b = document.getElementById('adm-wsusp-botao');
+  if (b) b.addEventListener('click', admWsuspAlternar);
+  const s = document.getElementById('adm-wsusp-sondar');
+  if (s) s.addEventListener('click', admWsuspCarregar);
+})();
+
+// ── Vigia de APIs ────────────────────────────────────────────────────
+// Mostra a última verificação do vigia (backend/vigia_apis.py), deixa mudar o
+// intervalo e ligar/desligar a troca automática, e liga/desliga cada troca à
+// mão. "Verificar agora" roda a mesma verificação do timer.
+function admVigiaHora(ts) {
+  return ts ? new Date(ts * 1000).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+}
+
+function admVigiaPinta(d) {
+  const cfg = d.config || {};
+  const badge = document.getElementById('adm-vigia-badge');
+  if (!badge) return;
+  document.getElementById('adm-vigia-ligado').checked = !!cfg.ligado;
+  const sel = document.getElementById('adm-vigia-intervalo');
+  const iv = String(cfg.intervalo_h);
+  if (![...sel.options].some(o => o.value === iv)) sel.insertAdjacentHTML('beforeend', `<option value="${esc(iv)}">${esc(iv)} h</option>`);
+  sel.value = iv;
+  badge.innerHTML = (cfg.ligado ? '<span style="color:#2F6B4F;font-weight:600">● vigiando</span>'
+                                : '<span style="color:#8C6A16;font-weight:600">● troca automática desligada</span>')
+    + ` — última verificação ${esc(admVigiaHora(d.ultima))}${d.quem ? ` (${esc(d.quem)})` : ''}`
+    + (d.proxima && cfg.ligado ? ` · próxima ~${esc(admVigiaHora(d.proxima))}` : '');
+  admAlertaApis(d);
+  const linhas = (d.apis || []).map(a => {
+    const st = a.no_ar === true ? '<span style="color:#2F6B4F;font-weight:600">no ar</span>'
+          + (a.instavel ? `<br><span style="color:#8C6A16" title="Só respondeu depois de ${a.tentativas} tentativas">instável</span>` : '')
+      : a.no_ar === false ? '<span style="color:#9A3324;font-weight:600">FORA</span>'
+          + (a.fora_desde ? `<br><span class="pf-advanced-hint" style="display:inline">desde ${esc(admVigiaHora(a.fora_desde))}</span>` : '')
+      : a.no_ar === null ? '<span class="pf-advanced-hint" style="display:inline">não configurada</span>'
+      : '<span class="pf-advanced-hint" style="display:inline">ainda não testada</span>';
+    let troca = esc(a.substituta || '—');
+    if (a.troca) {
+      const t = a.troca;
+      troca = `${esc(a.substituta)}<br>`
+        + (t.ativo
+          ? `<span style="color:#9A3324;font-weight:600">● trocada</span> <span class="pf-advanced-hint" style="display:inline">${t.auto ? 'pelo vigia' : 'à mão por ' + esc(t.por || 'admin')} em ${esc(admVigiaHora(t.desde))}</span>`
+          : '<span class="pf-advanced-hint" style="display:inline">não está trocada</span>')
+        + `<br><button class="btn-secondary adm-vigia-troca" data-api="${esc(a.id)}" data-ligar="${t.ativo ? '0' : '1'}" style="padding:2px 10px;font-size:.8rem;margin-top:4px">${t.ativo ? 'Desligar troca' : 'Ligar troca à mão'}</button>`;
+    }
+    const resp = `${a.codigo != null ? esc(String(a.codigo)) + ' · ' : ''}${esc(a.motivo || '')}`;
+    return `<tr><td>${esc(a.nome)}</td><td>${st}</td><td>${resp}</td><td>${troca}</td></tr>`;
+  }).join('');
+  document.getElementById('adm-vigia-tabela').innerHTML =
+    `<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>API</th><th>Situação</th><th>Última resposta</th><th>Substituta</th></tr></thead><tbody>${linhas}</tbody></table></div>`;
+  const ev = d.eventos || [];
+  document.getElementById('adm-vigia-eventos').innerHTML = ev.length
+    ? `<div class="pf-advanced-hint" style="display:block"><strong>Trocas recentes:</strong><br>${ev.map(e => `${esc(admVigiaHora(e.quando))} — ${esc(e.texto)}`).join('<br>')}</div>`
+    : '';
+  document.querySelectorAll('.adm-vigia-troca').forEach(b => b.addEventListener('click', admVigiaTroca));
+}
+
+// Faixa no topo do Painel administrativo + contador no botão do menu. Os dois
+// vêm do mesmo lugar (última verificação do vigia) para nunca discordarem.
+function admAlertaApis(d) {
+  const probs = d.problemas || [];
+  const box = document.getElementById('adm-alerta-apis');
+  if (box) {
+    box.innerHTML = !probs.length ? '' :
+      `<div role="alert" style="border:1px solid #C9826F;background:#F7EAE7;color:#6B2317;border-radius:10px;padding:12px 16px;margin:0 0 16px">
+         <strong>🚨 ${probs.length === 1 ? '1 API fora do ar' : probs.length + ' APIs fora do ar'}</strong>
+         <span style="font-size:.85rem"> — última verificação ${esc(admVigiaHora(d.ultima))}</span>
+         <ul style="margin:6px 0 0 18px;padding:0">${probs.map(p => `<li><b>${esc(p.nome)}</b> desde ${esc(admVigiaHora(p.desde))} — `
+           + (p.trocada ? `<span style="color:#2F6B4F">trocada por ${esc(p.substituta)}, telas funcionando</span>`
+                        : `<span>sem substituta: as telas dessa função mostram “Manutenção!”</span>`) + `</li>`).join('')}</ul>
+         <div style="font-size:.85rem;margin-top:6px">Os administradores recebem e-mail quando uma API cai e quando volta. Detalhes em <a href="#adm-vigia">Vigia de APIs</a>.</div>
+       </div>`;
+  }
+  const nav = document.getElementById('nav-admin');
+  if (nav) {
+    let b = nav.querySelector('.nav-alerta-apis');
+    if (!probs.length) { if (b) b.remove(); return; }
+    if (!b) {
+      b = document.createElement('span');
+      b.className = 'nav-alerta-apis';
+      b.style.cssText = 'display:inline-block;min-width:18px;padding:0 5px;margin-left:6px;border-radius:9px;'
+        + 'background:#9A3324;color:#fff;font-size:.72rem;font-weight:700;line-height:18px;text-align:center;vertical-align:middle';
+      nav.firstChild ? nav.insertBefore(b, nav.firstChild.nextSibling) : nav.appendChild(b);
+    }
+    b.textContent = String(probs.length);
+    b.title = probs.length + ' API(s) fora do ar: ' + probs.map(p => p.nome).join(', ');
+  }
+}
+
+// Para admin: confere o radar ao abrir o app e a cada 10 min, sem esperar a
+// pessoa entrar no Painel administrativo. O botão só existe visível para admin.
+async function admRadarMenu() {
+  const nav = document.getElementById('nav-admin');
+  if (!nav || nav.hidden) return;
+  try {
+    const d = await fetch(`${API}/api/config/vigia-apis`).then(r => r.ok ? r.json() : null);
+    if (d && d.status === 'ok') admAlertaApis(d);
+  } catch (e) { /* o radar nunca atrapalha a tela */ }
+}
+setTimeout(admRadarMenu, 4000);
+setInterval(admRadarMenu, 10 * 60 * 1000);
+
+async function admVigiaCarregar() {
+  const box = document.getElementById('adm-vigia-tabela');
+  if (!box) return;
+  try {
+    const d = await fetch(`${API}/api/config/vigia-apis`).then(r => r.json());
+    if (d.status !== 'ok') { box.innerHTML = `<p class="msg error">${esc(d.detail || d.message || 'Falha ao carregar.')}</p>`; return; }
+    admVigiaPinta(d);
+  } catch (e) { box.innerHTML = `<p class="msg error">Erro: ${esc(e.message)}</p>`; }
+}
+
+async function admVigiaSalvar() {
+  const status = document.getElementById('adm-vigia-status');
+  status.textContent = 'salvando…';
+  try {
+    const d = await fetch(`${API}/api/config/vigia-apis`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ligado: document.getElementById('adm-vigia-ligado').checked,
+                             intervalo_h: Number(document.getElementById('adm-vigia-intervalo').value) }),
+    }).then(r => r.json());
+    if (d.status !== 'ok') { status.textContent = '❌ ' + (d.message || d.detail || 'Falhou.'); return; }
+    admVigiaPinta(d);
+    status.textContent = '✅ salvo';
+  } catch (e) { status.textContent = 'Erro: ' + e.message; }
+}
+
+async function admVigiaAgora() {
+  const status = document.getElementById('adm-vigia-status');
+  const b = document.getElementById('adm-vigia-agora');
+  b.disabled = true;
+  status.textContent = 'testando todas as APIs… (até ~30 s se alguma estiver fora)';
+  try {
+    const d = await fetch(`${API}/api/config/vigia-apis/verificar`, { method: 'POST' }).then(r => r.json());
+    if (d.status !== 'ok') { status.textContent = '❌ ' + (d.message || d.detail || 'Falhou.'); return; }
+    admVigiaPinta(d);
+    status.textContent = (d.acoes && d.acoes.length) ? '✅ ' + d.acoes.join(' · ') : '✅ verificado — nenhuma troca mudou';
+    admWsuspCarregar();
+  } catch (e) { status.textContent = 'Erro: ' + e.message; }
+  finally { b.disabled = false; }
+}
+
+async function admVigiaTroca(ev) {
+  const api = ev.currentTarget.dataset.api;
+  const ligar = ev.currentTarget.dataset.ligar === '1';
+  const aviso = api === 'workapi'
+    ? ' Cada consulta passa a ser cobrada pela Assertiva.'
+    : ' A busca na base é mais lenta (~30 s) e pode ter dados de semanas atrás.';
+  if (ligar && !confirm('Ligar a troca à mão? Ela fica ligada até um admin desligar (o vigia não desliga troca manual).' + aviso)) return;
+  const status = document.getElementById('adm-vigia-status');
+  status.textContent = 'salvando…';
+  try {
+    const d = await fetch(`${API}/api/config/contingencia`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api, ativo: ligar }),
+    }).then(r => r.json());
+    if (d.status !== 'ok') { status.textContent = '❌ ' + (d.message || d.detail || 'Falhou.'); return; }
+    admVigiaPinta(d);
+    status.textContent = ligar ? '✅ troca ligada (vale em até 5 s)' : '✅ troca desligada';
+    admWsuspCarregar();
+  } catch (e) { status.textContent = 'Erro: ' + e.message; }
+}
+
+(function () {
+  const l = document.getElementById('adm-vigia-ligado');
+  if (l) l.addEventListener('change', admVigiaSalvar);
+  const i = document.getElementById('adm-vigia-intervalo');
+  if (i) i.addEventListener('change', admVigiaSalvar);
+  const a = document.getElementById('adm-vigia-agora');
+  if (a) a.addEventListener('click', admVigiaAgora);
+})();
+
 async function admPrecosCarregar() {
   const box = document.getElementById('adm-precos-form');
   if (!box) return;

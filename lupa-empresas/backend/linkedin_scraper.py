@@ -19,6 +19,8 @@ from typing import Any
 from urllib.parse import quote_plus, urlparse
 
 import httpx
+
+import brightdata_contingencia
 from bs4 import BeautifulSoup
 
 # ---- Bright Data ----
@@ -322,8 +324,26 @@ async def _brightdata_employees(company_name: str, company_legal: str = "") -> d
     company_rec: dict[str, Any] | None = None
     best_unmatched: dict[str, Any] | None = None
     match_ref = f"{company_legal} {company_name}".strip()
-    for url in _company_url_candidates(company_name, company_legal):
-        status, payload = await _brightdata_call(DATASET_COMPANY, [url])
+    candidatos = list(_company_url_candidates(company_name, company_legal))
+    contingencia = brightdata_contingencia.ativo()
+    if contingencia:
+        # WEB SCRAPER FORA DO AR: todas as candidatas numa busca só na base
+        # (~30 s cada busca; uma por candidata estouraria os 100 s da
+        # Cloudflare). O laço abaixo segue igual, lendo os registros já
+        # trazidos, na mesma ordem das candidatas.
+        st, lote = await brightdata_contingencia.por_url(
+            DATASET_COMPANY, candidatos, BRIGHTDATA_API_KEY,
+            detalhe="employees: " + (company_name or company_legal))
+        if st >= 400:
+            return _blocked(f"Bright Data (contingência) retornou {st}: {str(lote)[:150]}")
+        por_url = {brightdata_contingencia._url_padrao(str(r.get("url") or "")): r
+                   for r in lote if isinstance(r, dict)}
+    for url in candidatos:
+        if contingencia:
+            rec_c = por_url.get(brightdata_contingencia._url_padrao(url))
+            status, payload = 200, ([rec_c] if rec_c else [])
+        else:
+            status, payload = await _brightdata_call(DATASET_COMPANY, [url])
         if status == 401:
             return _blocked("BRIGHTDATA_API_KEY invalida ou conta inativa.")
         if status == 402:
@@ -394,8 +414,13 @@ async def _brightdata_employees(company_name: str, company_legal: str = "") -> d
         }
 
     # 2) Enriquece cargo via dataset de perfis (batch, ate 20 URLs).
+    # Na contingência isto fica de fora: seria outra busca de ~30 s na base, e
+    # a da empresa já gastou a maior parte do tempo que a Cloudflare dá.
     profile_urls = [e["url"] for e in featured][:20]
-    status, payload = await _brightdata_call(DATASET_PEOPLE_PROFILE, profile_urls)
+    if contingencia:
+        status, payload = 200, []
+    else:
+        status, payload = await _brightdata_call(DATASET_PEOPLE_PROFILE, profile_urls)
     roles: dict[str, str] = {}
     names: dict[str, str] = {}
     cities: dict[str, str] = {}
@@ -425,10 +450,12 @@ async def _brightdata_employees(company_name: str, company_legal: str = "") -> d
 
     return {
         "status": "ok",
-        "source": "brightdata",
+        "source": "brightdata-base" if contingencia else "brightdata",
         "employees": employees,
         "company": company_info,
-        "message": "",
+        "message": ("Leitura ao vivo do LinkedIn fora do ar: dados vindos da base da "
+                    "Bright Data (podem ter algumas semanas), sem cargo dos funcionários."
+                    if contingencia else ""),
     }
 
 

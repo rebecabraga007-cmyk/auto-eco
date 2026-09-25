@@ -1607,6 +1607,71 @@
       <p class="module-sub">Histórico de navegação de todos os usuários e custo Assertiva de todos os modelos salvos.</p>
     </div>
 
+    <!-- Faixa de alerta: APIs fora do ar segundo a última verificação do vigia.
+         Some sozinha quando tudo volta. Pintada por admVigiaPinta (capiblux.js). -->
+    <div id="adm-alerta-apis"></div>
+
+    <!-- CONTINGÊNCIA "WORK API SUSPENSO": quando a WorkAPI cai (522/523, a origem
+         DELES não responde), CPF → telefone, telefone → dono e nome → CPF param
+         em todas as telas. Este interruptor manda as três para a Assertiva, no
+         mesmo formato, sem mexer em tela nenhuma. Ver backend/workapi_suspensa.py. -->
+    <div class="search-panel" id="adm-wsusp">
+      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:0 0 6px">
+        <h3 style="margin:0;font-size:1.05rem">Work API Suspenso</h3>
+        <span id="adm-wsusp-badge" class="pf-advanced-hint" style="display:inline"></span>
+      </div>
+      <p class="pf-advanced-hint" style="display:block;margin:0 0 10px">
+        Ligue quando a WorkAPI sair do ar. As consultas de <strong>CPF</strong>,
+        <strong>telefone reverso</strong> e <strong>busca por nome</strong> passam a ser
+        atendidas pela <strong>Assertiva</strong> em todas as telas, no Bluutime e na API v1.
+        <strong>Cada consulta passa a ser paga</strong> (a WorkAPI é cota diária) e aparece no
+        relatório de uso abaixo. Desligue quando a WorkAPI voltar.
+      </p>
+      <div id="adm-wsusp-sonda" class="en-fname" style="margin-bottom:8px"></div>
+      <div class="filter-row" style="margin:0 0 10px;gap:10px;flex-wrap:wrap">
+        <button id="adm-wsusp-botao" class="btn-primary" disabled>…</button>
+        <button id="adm-wsusp-sondar" class="btn-secondary">🔄 Testar a WorkAPI agora</button>
+        <span id="adm-wsusp-status" class="pf-advanced-hint" style="display:inline"></span>
+      </div>
+      <div id="adm-wsusp-trocas"></div>
+    </div>
+
+    <!-- VIGIA DE APIs: a cada X horas testa cada fornecedor (chamadas que não
+         gastam crédito). Caiu e tem substituta no ar: liga a troca sozinho;
+         voltou: desliga o que ELE ligou. Ver backend/vigia_apis.py. -->
+    <div class="search-panel" id="adm-vigia">
+      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:0 0 6px">
+        <h3 style="margin:0;font-size:1.05rem">Vigia de APIs</h3>
+        <span id="adm-vigia-badge" class="pf-advanced-hint" style="display:inline"></span>
+      </div>
+      <p class="pf-advanced-hint" style="display:block;margin:0 0 10px">
+        Testa cada API no intervalo escolhido, com chamadas que <strong>não gastam crédito</strong>.
+        Se uma API cai e existe substituta no ar, a troca é <strong>ligada sozinha</strong> e fica
+        até a verificação em que a API voltar — aí é desligada sozinha. Troca ligada à mão
+        continua ligada até um admin desligar. Toda queda abre um chamado.
+      </p>
+      <div class="filter-row" style="margin:0 0 10px;gap:10px;flex-wrap:wrap;align-items:center">
+        <label style="display:inline-flex;align-items:center;gap:6px">
+          <input type="checkbox" id="adm-vigia-ligado"> troca automática ligada
+        </label>
+        <label>Verificar a cada
+          <select id="adm-vigia-intervalo" class="filter-select">
+            <option value="0.5">30 min</option>
+            <option value="1">1 hora</option>
+            <option value="2">2 horas</option>
+            <option value="3">3 horas</option>
+            <option value="6">6 horas</option>
+            <option value="12">12 horas</option>
+            <option value="24">24 horas</option>
+          </select>
+        </label>
+        <button id="adm-vigia-agora" class="btn-secondary">🔎 Verificar agora</button>
+        <span id="adm-vigia-status" class="pf-advanced-hint" style="display:inline"></span>
+      </div>
+      <div id="adm-vigia-tabela"></div>
+      <div id="adm-vigia-eventos" style="margin-top:10px"></div>
+    </div>
+
     <div class="search-panel">
       <h3 style="margin:0 0 12px;font-size:1.05rem">Relatório de uso TOTAL (Assertiva)</h3>
       <div class="filter-row" style="margin-top:0">

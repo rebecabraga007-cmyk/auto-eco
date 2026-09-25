@@ -23,6 +23,8 @@ from typing import Any
 
 import httpx
 
+import workapi_suspensa
+
 # Defaults ja apontam para a WorkAPI (gateway por tras da Mk Buscas).
 BASE_URL = os.environ.get("MK_BASE_URL", "https://api.workapi.dev/v1/gateway").strip().rstrip("/")
 # O MODULO DE CPF CHAMA-SE `integrax-cpf`. Sem "l", e sem "v2".
@@ -72,8 +74,9 @@ _tel_cache: dict[str, dict[str, Any]] = {}
 
 
 def enabled() -> bool:
-    # Ativa quando a chave (WORKAPI_KEY / MK_AUTH_VALUE) esta presente.
-    return bool(AUTH_VALUE and BASE_URL)
+    # Ativa quando a chave (WORKAPI_KEY / MK_AUTH_VALUE) esta presente -- ou
+    # quando a contingencia "Work API Suspenso" responde por ela (Assertiva).
+    return bool(AUTH_VALUE and BASE_URL) or workapi_suspensa.ativo()
 
 
 def only_digits(s: str) -> str:
@@ -87,6 +90,10 @@ def _norm(s: str) -> str:
 
 async def consulta_cpf(cpf: str) -> dict[str, Any]:
     """Consulta bruta por CPF. Retorna {status, data|message}."""
+    if workapi_suspensa.ativo():
+        # Admin marcou a WorkAPI como fora do ar: a Assertiva responde, no
+        # formato do MK. Ver workapi_suspensa.py.
+        return await workapi_suspensa.cpf(cpf)
     if not enabled():
         return {"status": "unavailable", "message": "Mk nao configurada (defina MK_BASE_URL)."}
     doc = only_digits(cpf).zfill(11)[:11]
@@ -166,6 +173,10 @@ def _extract_companies(mk_data: dict[str, Any]) -> list[str]:
     return names
 
 
+_SINAIS_ASSERTIVA = ("nao_perturbe", "ultimo_contato", "meses_sem_contato", "hotphone",
+                     "plus", "relacao", "priority", "classification", "fonte")
+
+
 def _extract_phones(mk_data: dict[str, Any]) -> list[dict[str, Any]]:
     """Dual-schema: work-cpf (phones[areaCode/number]) ou rico (telefones[telefone])."""
     out = []
@@ -173,14 +184,22 @@ def _extract_phones(mk_data: dict[str, Any]) -> list[dict[str, Any]]:
     for t in mk_data.get("telefones") or []:
         if isinstance(t, dict) and (t.get("telefone") or t.get("numero")):
             num = str(t.get("telefone") or t.get("numero") or "")
-            out.append({
+            item = {
                 "telefone": num,
                 "ddd": str(t.get("ddd") or ""),
                 "number": num,
                 "tipo": t.get("tipo") or "",
                 "operadora": t.get("operadora") or "",
                 "whatsapp": t.get("whatsapp"),
-            })
+            }
+            # Quando a ficha veio da Assertiva (contingencia WorkAPI suspensa),
+            # ela traz o que o MK nunca teve: nao perturbe, ultimo contato,
+            # relacao. Sem repassar, o `refine_phones` ordenava sem eles e um
+            # numero em "nao perturbe" podia sair como o primeiro da lista.
+            for k in _SINAIS_ASSERTIVA:
+                if t.get(k) is not None:
+                    item[k] = t[k]
+            out.append(item)
     # Formato work-cpf (en): phones[].areaCode / number / typeId
     for t in mk_data.get("phones") or []:
         if not isinstance(t, dict):
@@ -511,6 +530,8 @@ async def consulta_telefone(phone: str) -> dict[str, Any]:
 
     status: ok | no_access (módulo não habilitado) | unavailable | error.
     """
+    if workapi_suspensa.ativo():
+        return await workapi_suspensa.telefone(phone)
     if not (TEL_AUTH_VALUE and BASE_URL):
         return {"status": "unavailable", "message": "Telefone reverso não configurado (MK_TEL_KEY)."}
     digits = only_digits(phone)

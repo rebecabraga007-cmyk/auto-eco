@@ -1,0 +1,10 @@
+[Unit]
+Description=Acorda o vigia de APIs do CapiBLU de 10 em 10 minutos
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

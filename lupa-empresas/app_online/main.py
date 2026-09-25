@@ -210,6 +210,15 @@ async def proxy(path: str, request: Request):
         return JSONResponse(
             {"detail": f"Serviço de dados indisponível (túnel/PC offline?): {str(exc)[:120]}"},
             status_code=502)
+    # ROTA GRATUITA QUE CUSTOU. Com a contingência "Work API Suspenso" ligada,
+    # a busca por nome (gratuita em `_ROTAS_GRATUITAS`) passa a consultar a
+    # Assertiva. Só o serviço de dados sabe se a chamada pagou -- ele avisa por
+    # cabeçalho, e a conta entra depois do fato (não bloqueia esta, mas a
+    # próxima paga já encontra a cota atualizada).
+    if (user and user.get("role") != "admin" and cota_agora is None
+            and r.headers.get("x-consulta-paga") == "1"):
+        cota_agora = _auth.registrar_consumo(user["id"])
+        cota_limite = _auth.limite_efetivo(user)
     resp_headers = {k: v for k, v in r.headers.items() if k.lower() not in _SKIP_RESP_HEADERS}
     if cota_agora is not None and cota_limite is not None:
         resp_headers["X-Cota-Usada"] = str(cota_agora)

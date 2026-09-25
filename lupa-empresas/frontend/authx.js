@@ -79,10 +79,42 @@
             showLogin('Sua sessão expirou. Entre novamente para continuar.');
           }
         }
+        const manut = resp.headers.get('X-Manutencao');
+        if (manut !== null) avisoManutencao(JSON.parse(decodeURIComponent(manut)));
       } catch (e) { /* nunca atrapalhar a chamada original */ }
       return resp;
     };
   }
+  /* ── AVISO DE "MANUTENÇÃO!" ─────────────────────────────────────────
+     O serviço de dados marca com `X-Manutencao` a resposta das funções cujo
+     fornecedor está fora do ar no radar do vigia de APIs e SEM substituta
+     (backend/vigia_apis.py). Sem este aviso, a tela mostrava "nada
+     encontrado" -- e "não achei" e "o fornecedor caiu" são coisas muito
+     diferentes para quem está prospectando. Lista vazia = a função está no
+     ar de novo: o aviso some. */
+  function avisoManutencao(itens) {
+    const aba = document.querySelector('.tab-section.active');
+    if (!aba) return;
+    let box = aba.querySelector('.aviso-manutencao');
+    if (!itens || !itens.length) { if (box) box.remove(); return; }
+    if (!box) {
+      box = document.createElement('div');
+      box.className = 'aviso-manutencao';
+      box.setAttribute('role', 'status');
+      box.style.cssText = 'border:1px solid #D9A441;background:#FBF3E0;color:#5C4210;'
+        + 'border-radius:10px;padding:12px 16px;margin:0 0 14px;font-size:.92rem;line-height:1.45';
+      const alvo = aba.querySelector('[id$="-results"],[id$="-resultado"]');
+      if (alvo) alvo.parentNode.insertBefore(box, alvo);
+      else (aba.querySelector('.module-header') || aba.firstElementChild).insertAdjacentElement('afterend', box);
+    }
+    const hora = ts => ts ? new Date(ts * 1000).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+    box.innerHTML = '<strong style="font-size:1rem">🛠️ Manutenção!</strong> '
+      + itens.map(i => `<b>${esc(i.funcao)}</b> está temporariamente fora do ar — ${esc(i.api)} não responde`
+        + (i.desde ? ` desde ${esc(hora(i.desde))}` : '')).join('; ')
+      + '. Não há substituto disponível agora, então o resultado pode vir vazio ou incompleto.'
+      + ' A equipe já foi avisada; tente de novo mais tarde.';
+  }
+
   function showApp() {
     document.getElementById('login-overlay').hidden = true;
     document.body.classList.remove('locked');

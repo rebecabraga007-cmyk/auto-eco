@@ -26,6 +26,7 @@ from typing import Any
 
 import httpx
 
+import brightdata_contingencia
 import cargos
 import cidades
 import funcoes
@@ -117,22 +118,31 @@ async def empresa_por_url(url: str) -> dict[str, Any]:
                                    if "cnpj_confianca" in antes.keys() else "") or "nenhuma",
                 "url": limpo, "destaque": [], "aviso_tamanho": ""}
 
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(180.0)) as cli:
-            r = await cli.post(
-                "%s?dataset_id=%s&format=json" % (SCRAPE_URL, DATASET_EMPRESA),
-                headers=_headers(), json=[{"url": limpo}])
-    except Exception as exc:
-        return {"status": "error", "message": "Falha ao falar com a Bright Data: %s"
-                                              % str(exc)[:140]}
-    if r.status_code >= 400:
-        return {"status": "error",
-                "message": "Bright Data %s: %s" % (r.status_code, r.text[:200])}
-    import json as _json
-    try:
-        d = _json.loads(r.content)          # bytes: a resposta e UTF-8 sem charset
-    except Exception:
-        return {"status": "error", "message": "Resposta invalida da Bright Data."}
+    if brightdata_contingencia.ativo():
+        # Web Scraper fora do ar: o mesmo registro vem da busca na base (mais
+        # lento, ~30 s, e do snapshot). Ver brightdata_contingencia.py.
+        cod, d = await brightdata_contingencia.por_url(DATASET_EMPRESA, [limpo], CHAVE,
+                                                       detalhe="empresa-por-url")
+        if cod >= 400:
+            return {"status": "error",
+                    "message": "Bright Data (contingência) %s: %s" % (cod, str(d)[:200])}
+    else:
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(180.0)) as cli:
+                r = await cli.post(
+                    "%s?dataset_id=%s&format=json" % (SCRAPE_URL, DATASET_EMPRESA),
+                    headers=_headers(), json=[{"url": limpo}])
+        except Exception as exc:
+            return {"status": "error", "message": "Falha ao falar com a Bright Data: %s"
+                                                  % str(exc)[:140]}
+        if r.status_code >= 400:
+            return {"status": "error",
+                    "message": "Bright Data %s: %s" % (r.status_code, r.text[:200])}
+        import json as _json
+        try:
+            d = _json.loads(r.content)          # bytes: a resposta e UTF-8 sem charset
+        except Exception:
+            return {"status": "error", "message": "Resposta invalida da Bright Data."}
     if isinstance(d, list):
         d = d[0] if d else {}
     if not isinstance(d, dict) or not d.get("name"):

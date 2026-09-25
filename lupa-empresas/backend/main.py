@@ -25,7 +25,7 @@ import sys
 import time
 import uuid
 
-from fastapi import Body, FastAPI, File, Form, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -48,6 +48,9 @@ import serasa
 import dossie
 import mistral
 import workapi
+import workapi_suspensa
+import contingencias
+import vigia_apis
 import brightdata_pessoas
 import empresas_li
 import linkedin_cache
@@ -126,6 +129,23 @@ async def health():
 
 
 @app.middleware("http")
+async def _aviso_manutencao(request, call_next):
+    """Marca a resposta das funções cujo fornecedor está fora do ar no radar do
+    vigia (vigia_apis.py) sem substituta: a tela lê `X-Manutencao` e mostra o
+    aviso de "Manutenção!" em cima do resultado. `[]` = rota vigiada e tudo no
+    ar (a tela tira um aviso antigo)."""
+    resp = await call_next(request)
+    try:
+        itens = vigia_apis.manutencao_para(request.url.path)
+        if itens is not None:
+            from urllib.parse import quote as _q
+            resp.headers["X-Manutencao"] = _q(json.dumps(itens, ensure_ascii=False))
+    except Exception:
+        pass
+    return resp
+
+
+@app.middleware("http")
 async def _proxy_guard(request, call_next):
     path = request.url.path
     if request.method == "OPTIONS" or not path.startswith("/api/") or path == "/api/health":
@@ -183,6 +203,7 @@ def _enrich_qsa_cpf(company: dict) -> None:
 
 @app.get("/api/person/name-search")
 async def person_name_search(
+    response: Response,
     q: str = "", broad: bool = False, limit: int = 40, offset: int = 0, uf: str = ""
 ):
     """Busca pessoas por nome em JBR (local) + WorkAPI (online). broad=true usa LIKE.
@@ -221,9 +242,14 @@ async def person_name_search(
         jbr_res = {"pessoas": [], "total": 0, "erro": str(exc)[:80]}
 
     if workapi.enabled():
-        wa_res = await workapi.nome_search(q, limit=limit)
+        wa_res = await workapi.nome_search(q, limit=limit, uf=uf)
         if wa_res.get("status") == "ok":
             workapi_res = wa_res.get("pessoas", [])
+        # Com a WorkAPI suspensa esta busca vira consulta PAGA na Assertiva, e
+        # a rota é gratuita na cota diária (`_ROTAS_GRATUITAS` no app online).
+        # O cabeçalho avisa o app online para contar esta chamada na cota.
+        if wa_res.get("pago"):
+            response.headers["X-Consulta-Paga"] = "1"
 
     # Mescla: por CPF quando disponível, senão por nome
     por_cpf = {}
@@ -249,10 +275,11 @@ async def person_name_search(
                 for k, v in p.items():
                     if v and not atual.get(k):
                         atual[k] = v
-                if "WorkAPI" not in (atual.get("fonte") or ""):
-                    atual["fonte"] = (atual.get("fonte") or "JBR") + " + WorkAPI"
+                rotulo = p.get("fonte") or "WorkAPI"
+                if rotulo not in (atual.get("fonte") or ""):
+                    atual["fonte"] = (atual.get("fonte") or "JBR") + " + " + rotulo
             else:
-                por_cpf[chave] = {"fonte": "WorkAPI", **p}
+                por_cpf[chave] = {"fonte": p.get("fonte") or "WorkAPI", **p}
                 ordem.append(chave)
 
     resultado = [por_cpf[k] for k in ordem]
@@ -278,9 +305,15 @@ async def person_name_search(
     }
 
 
+# Contingência "Work API Suspenso": acima disto, homônimos não são conferidos um a
+# um (cada conferência vira consulta paga da Assertiva). Ver /employees.
+_MAX_HOMONIMOS_SUSPENSA = int(os.environ.get("WORKAPI_SUSPENSA_MAX_HOMONIMOS", "3"))
+
+
 @app.get("/api/person/{cpf}/mk")
 async def person_mk(cpf: str):
-    """Dados completos da Mk Buscas (intelgrax-cpfv2) para um CPF."""
+    """Ficha completa de um CPF (WorkAPI integrax-cpf; Assertiva, no mesmo
+    formato, quando o admin liga a contingência "Work API Suspenso")."""
     if not mkbuscas.enabled():
         return {"status": "unavailable", "message": "Mk não configurada."}
     return await mkbuscas.consulta_cpf(cpf)
@@ -951,6 +984,16 @@ async def employees(cnpj: str):
             if len(cands) == 1:
                 emp["cpf_status"] = "resolved"
                 emp["cpf"] = cands[0]["cpf"]
+                continue
+
+            # WORKAPI SUSPENSA: desambiguar consulta a ficha de CADA homonimo
+            # (ate 50), e com a contingencia ligada cada ficha e uma consulta
+            # paga da Assertiva. Por funcionario, numa lista de empresa. Acima
+            # de um punhado de candidatos o caso fica ambiguo em vez de gastar.
+            if (workapi_suspensa.ativo()
+                    and len(cands) > _MAX_HOMONIMOS_SUSPENSA):
+                emp["cpf_status"] = "ambiguous"
+                emp["cpf_candidates"] = len(cands)
                 continue
 
             # Varios homonimos: desambigua com sinais do Bright, se a Mk estiver ligada.
@@ -5576,6 +5619,109 @@ async def config_get(request: Request):
         "auth_header": meetime._auth_header(),
         "por_grupo": meetime.status_grupos(),
     }}
+
+
+# ---- Contingência "Work API Suspenso" ----
+# Fora de /api/admin/ de propósito: esse prefixo é atendido pelo app online e
+# não chega aqui. A checagem de admin é a mesma das outras rotas /api/config.
+
+def _estado_workapi_suspensa() -> dict:
+    e = workapi_suspensa.estado()
+    return {"ativo": bool(e.get("ativo")), "desde": e.get("desde"), "por": e.get("por") or "",
+            "auto": bool(e.get("auto")), "motivo": e.get("motivo") or "",
+            "assertiva_ok": assertiva.enabled(),
+            "trocas": [
+                {"funcao": "CPF → telefones, endereços, empregos",
+                 "de": "WorkAPI integrax-cpf", "para": "Assertiva /localize/v3/cpf"},
+                {"funcao": "Telefone → dono do número",
+                 "de": "WorkAPI intelgrax-tel", "para": "Assertiva /localize/v3/telefone"},
+                {"funcao": "Nome → pessoas (CPF)",
+                 "de": "WorkAPI intelgrax-nomev2", "para": "Base JBR + Assertiva /localize/v3/nome-endereco"},
+            ]}
+
+
+@app.get("/api/config/workapi-suspenso")
+async def config_workapi_suspenso_ler(request: Request, sondar: bool = True):
+    if not _is_admin(request):
+        return JSONResponse({"detail": "Requer admin."}, status_code=403)
+    res = _estado_workapi_suspensa()
+    if sondar:
+        res["workapi"] = await workapi_suspensa.sondar_workapi()
+    return {"status": "ok", **res}
+
+
+@app.post("/api/config/workapi-suspenso")
+async def config_workapi_suspenso_salvar(request: Request, payload: dict = Body(default={})):
+    """Body: {ativo: true|false}. Liga/desliga a troca WorkAPI -> Assertiva."""
+    if not _is_admin(request):
+        return JSONResponse({"detail": "Requer admin."}, status_code=403)
+    ligar = bool(payload.get("ativo"))
+    if ligar and not assertiva.enabled():
+        return JSONResponse({"status": "error",
+                             "message": "A Assertiva não está configurada neste serviço — "
+                                        "ligar a contingência deixaria tudo sem resposta."},
+                            status_code=400)
+    workapi_suspensa.definir(ligar, request.headers.get("x-user-email") or "")
+    print("[workapi-suspenso] %s por %s" % ("LIGADO" if ligar else "desligado",
+                                           request.headers.get("x-user-email") or "?"), flush=True)
+    return {"status": "ok", **_estado_workapi_suspensa()}
+
+
+# ---- Vigia de APIs (vigia_apis.py): testa a cada X horas e troca sozinho ----
+
+@app.get("/api/config/vigia-apis")
+async def config_vigia_ler(request: Request):
+    if not _is_admin(request):
+        return JSONResponse({"detail": "Requer admin."}, status_code=403)
+    return {"status": "ok", **vigia_apis.painel()}
+
+
+@app.post("/api/config/vigia-apis")
+async def config_vigia_salvar(request: Request, payload: dict = Body(default={})):
+    """Body: {ligado?: bool, intervalo_h?: número de horas entre verificações}."""
+    if not _is_admin(request):
+        return JSONResponse({"detail": "Requer admin."}, status_code=403)
+    try:
+        intervalo = float(payload["intervalo_h"]) if payload.get("intervalo_h") is not None else None
+    except (TypeError, ValueError):
+        return JSONResponse({"status": "error", "message": "Intervalo inválido."}, status_code=400)
+    vigia_apis.salvar_config(ligado=payload.get("ligado"), intervalo_h=intervalo)
+    return {"status": "ok", **vigia_apis.painel()}
+
+
+@app.post("/api/config/vigia-apis/verificar")
+async def config_vigia_verificar(request: Request):
+    """Roda a verificação agora (mesma do timer), com espera curta entre as
+    repetições para caber no tempo de uma requisição."""
+    if not _is_admin(request):
+        return JSONResponse({"detail": "Requer admin."}, status_code=403)
+    r = await vigia_apis.verificar(forcar=True, espera=3.0,
+                                   quem=request.headers.get("x-user-email") or "painel")
+    return {"status": "ok", "acoes": r.get("acoes") or [], **vigia_apis.painel()}
+
+
+@app.post("/api/config/contingencia")
+async def config_contingencia(request: Request, payload: dict = Body(default={})):
+    """Liga/desliga uma troca à mão. Body: {api: "workapi"|"brightdata", ativo: bool}.
+
+    Ligada à mão = o vigia não desliga sozinho quando a API voltar."""
+    if not _is_admin(request):
+        return JSONResponse({"detail": "Requer admin."}, status_code=403)
+    api = str(payload.get("api") or "")
+    if api not in contingencias.CHAVES:
+        return JSONResponse({"status": "error", "message": "API sem contingência."}, status_code=400)
+    ligar = bool(payload.get("ativo"))
+    quem = request.headers.get("x-user-email") or ""
+    if api == "workapi":
+        if ligar and not assertiva.enabled():
+            return JSONResponse({"status": "error", "message": "Assertiva não configurada."},
+                                status_code=400)
+        workapi_suspensa.definir(ligar, quem)
+    else:
+        contingencias.definir(api, ligar, quem)
+    print("[contingencia] %s %s por %s" % (api, "LIGADA" if ligar else "desligada", quem or "?"),
+          flush=True)
+    return {"status": "ok", **vigia_apis.painel()}
 
 
 @app.post("/api/config/meetime")

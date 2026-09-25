@@ -6,6 +6,8 @@ import time
 
 import httpx
 
+import workapi_suspensa
+
 WORKAPI_KEY = os.environ.get("WORKAPI_KEY", "").strip()
 WORKAPI_BASE = "https://api.workapi.dev/v1/gateway"
 _TIMEOUT = httpx.Timeout(30.0)
@@ -64,11 +66,12 @@ async def fechar() -> None:
 
 
 def enabled() -> bool:
-    """WorkAPI está configurada (WORKAPI_KEY no .env)?"""
-    return bool(WORKAPI_KEY)
+    """WorkAPI está configurada (WORKAPI_KEY no .env) -- ou a contingência
+    "Work API Suspenso" está respondendo por ela?"""
+    return bool(WORKAPI_KEY) or workapi_suspensa.ativo()
 
 
-async def nome_search(q: str, limit: int = 40, tentativas: int = 2) -> dict:
+async def nome_search(q: str, limit: int = 40, tentativas: int = 2, uf: str = "") -> dict:
     """Busca pessoas por nome na WorkAPI (intelgrax-nomev2).
 
     Retorna {status, pessoas:[{nome, cpf, dataNascimento, sexo, nomeMae,
@@ -80,7 +83,12 @@ async def nome_search(q: str, limit: int = 40, tentativas: int = 2) -> dict:
     esse zero como resposta final derruba etapa gratuita do funil e empurra o
     caso para consulta paga sem necessidade. A cota é 2000/dia — repetir uma
     vez custa cota, não dinheiro, e cada repetição só acontece no zero.
+
+    `uf` só é usado pela contingência (a Assertiva filtra por estado na origem,
+    o que importa porque ela corta em 50 resultados em ordem alfabética).
     """
+    if workapi_suspensa.ativo():
+        return await workapi_suspensa.nome(q, limit=limit, uf=uf)
     if not WORKAPI_KEY:
         return {"status": "unavailable", "pessoas": []}
     if not q or not q.strip():

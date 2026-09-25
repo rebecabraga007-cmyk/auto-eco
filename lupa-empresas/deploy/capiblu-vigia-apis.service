@@ -1,0 +1,11 @@
+[Unit]
+Description=CapiBLU - vigia de APIs (testa fornecedores e liga/desliga as trocas temporarias)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/capiblu/lupa-empresas/backend
+# O script so trabalha se ja passou o intervalo escolhido no painel
+# (vigia_apis.intervalo_h); nas outras execucoes sai na hora.
+ExecStart=/opt/capiblu/venv/bin/python vigia_apis.py --quieto
+TimeoutStartSec=300
