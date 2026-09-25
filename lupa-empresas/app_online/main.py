@@ -203,6 +203,9 @@ _ROTAS_GRATUITAS = (
 )
 
 
+_IDENTIDADE = {"x-user-email", "x-user-role", "x-user-grupo", "x-proxy-secret"}
+
+
 def _custa_consulta(full: str) -> bool:
     if any(full.startswith(g) for g in _ROTAS_GRATUITAS):
         return False
@@ -216,7 +219,13 @@ async def proxy(path: str, request: Request):
         # já deveria ter casado no router local; se chegou aqui, não existe.
         return JSONResponse({"detail": "Rota não encontrada."}, status_code=404)
     url = f"{DATA_SERVICE_URL}{full}"
-    headers = {k: v for k, v in request.headers.items() if k.lower() not in _SKIP_REQ_HEADERS}
+    # Identidade NUNCA vem do navegador: o serviço de dados decide admin, grupo
+    # e em nome de quem registrar custo por estes cabeçalhos. Antes eles eram
+    # copiados, e como o Starlette entrega a chave em minúsculas, o
+    # "x-user-role: admin" do cliente seguia ao lado do "X-User-Role" daqui — e
+    # o serviço lia o primeiro. Qualquer usuário virava admin.
+    headers = {k: v for k, v in request.headers.items()
+               if k.lower() not in _SKIP_REQ_HEADERS and k.lower() not in _IDENTIDADE}
     headers["Accept-Encoding"] = "identity"  # evita resposta comprimida pela Cloudflare
     if PROXY_SECRET:
         headers["X-Proxy-Secret"] = PROXY_SECRET
